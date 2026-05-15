@@ -234,7 +234,11 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
 
   // Detect if this show is a selection from a recent search result.
   try {
-    const { events: recentSearches } = readEvents({ type: "search" });
+    // D7: bound the query to the last 60 s so we never scan unbounded history
+    const { events: recentSearches } = readEvents({
+      type: "search",
+      since: new Date(Date.now() - 60_000).toISOString(),
+    });
     const cutoffMs = Date.now() - 60_000;
     const matchingSearch = [...recentSearches].reverse().find((e) => {
       if (!e.ts || new Date(e.ts).getTime() < cutoffMs) return false;

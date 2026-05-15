@@ -5,7 +5,7 @@ import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
-import { appendEvent, readEvents } from "../core/events";
+import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import {
   type ArchivedMemoryCleanupRecord,
@@ -20,6 +20,7 @@ import {
 } from "../core/memory-improve";
 import { getDbPath } from "../core/paths";
 import { listProposals } from "../core/proposals";
+import { openStateDatabase } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
   closeDatabase,
@@ -540,6 +541,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   const startMs = Date.now();
 
+  // I1: open a single state.db connection for the entire improve run so all
+  // appendEvent calls reuse one handle instead of open/migrate/close per call.
+  let eventsDb: import("bun:sqlite").Database | undefined;
+  let eventsCtx: EventsContext;
+  try {
+    eventsDb = openStateDatabase();
+    eventsCtx = { db: eventsDb };
+  } catch {
+    // If we cannot open state.db up-front, fall back to per-call opens.
+    eventsCtx = {};
+  }
+
   try {
     const preparation = await runImprovePreparationStage({
       scope,
@@ -554,6 +567,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       budgetMs,
     });
 
+    // D6: pre-load all proposal_rejected events from the last 30 days once,
+    // so the per-asset loop can use a Map lookup instead of N DB round trips.
+    const REJECTED_PROPOSAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+    const rejectedProposalSince = new Date(Date.now() - REJECTED_PROPOSAL_WINDOW_MS).toISOString();
+    const allRejectedProposalEvents = readEvents({ type: "proposal_rejected", since: rejectedProposalSince }).events;
+    const rejectedProposalsByRef = new Map<string, EventEnvelope>();
+    for (const e of allRejectedProposalEvents) {
+      if (e.ref && (!rejectedProposalsByRef.has(e.ref) || e.ts > (rejectedProposalsByRef.get(e.ref)?.ts ?? ""))) {
+        rejectedProposalsByRef.set(e.ref, e);
+      }
+    }
+
     const { reflectsWithErrorContext, memoryRefsForInference } = await runImproveLoopStage({
       scope,
       options,
@@ -566,6 +591,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       distillCooledRefs: preparation.distillCooledRefs,
       distillOnlyRefs: preparation.distillOnlyRefs,
       recentErrors: preparation.recentErrors,
+      rejectedProposalsByRef,
       startMs,
       budgetMs,
     });
@@ -641,7 +667,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
     };
-    if (!result.dryRun) emitImproveCompletedEvent(result, { memoryInferenceDurationMs, graphExtractionDurationMs });
+    if (!result.dryRun)
+      emitImproveCompletedEvent(result, { memoryInferenceDurationMs, graphExtractionDurationMs }, eventsCtx);
     return result;
   } catch (err) {
     // D3: emit improve_failed on unexpected crash so dashboards can detect failures.
@@ -660,12 +687,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     } catch {
       // ignore
     }
+    // I1: close the long-lived state.db connection opened at the top of the run.
+    try {
+      eventsDb?.close();
+    } catch {
+      // ignore — DB may already be closed
+    }
   }
 }
 
 function emitImproveCompletedEvent(
   result: AkmImproveResult,
   durations: { memoryInferenceDurationMs: number; graphExtractionDurationMs: number },
+  eventsCtx?: EventsContext,
 ): void {
   const actionCounts = {
     reflect: 0,
@@ -706,42 +740,47 @@ function emitImproveCompletedEvent(
     }
   }
 
-  appendEvent({
-    eventType: "improve_completed",
-    ref:
-      result.scope.mode === "ref" ? result.scope.value : `improve:${result.scope.mode}:${result.scope.value ?? "all"}`,
-    metadata: {
-      plannedRefs: result.plannedRefs.length,
-      reflectActions: actionCounts.reflect,
-      distillActions: actionCounts.distill,
-      distillSkippedActions: actionCounts.distillSkipped,
-      memoryPruneActions: actionCounts.memoryPrune,
-      memoryInferenceActions: actionCounts.memoryInference,
-      graphExtractionActions: actionCounts.graphExtraction,
-      errorActions: actionCounts.error,
-      reflectFailedActions: actionCounts.reflectFailed,
-      reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
-      coverageGapCount: result.coverageGaps?.length ?? 0,
-      executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
-      evalCasesWritten: result.evalCasesWritten ?? 0,
-      deadUrlCount: result.deadUrls?.length ?? 0,
-      memoryEligible: result.memorySummary.eligible,
-      memoryDerived: result.memorySummary.derived,
-      memoryCleanupPruneCandidates: result.memoryCleanup?.pruneCandidates.length ?? 0,
-      memoryCleanupContradictionCandidates: result.memoryCleanup?.contradictionCandidates.length ?? 0,
-      memoryCleanupBeliefStateTransitions: result.memoryCleanup?.beliefStateTransitions.length ?? 0,
-      memoryCleanupConsolidationCandidates: result.memoryCleanup?.consolidationCandidates.length ?? 0,
-      memoryCleanupArchived: result.memoryCleanup?.archived?.length ?? 0,
-      memoryCleanupWarnings: result.memoryCleanup?.warnings?.length ?? 0,
-      consolidationProcessed: result.consolidation?.processed ?? 0,
-      consolidationDurationMs: result.consolidation?.durationMs ?? 0,
-      memoryInferenceWrites: result.memoryInference?.writtenFacts ?? 0,
-      memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
-      graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
-      graphExtractionDurationMs: durations.graphExtractionDurationMs,
-      feedbackRatioUsed: true,
+  appendEvent(
+    {
+      eventType: "improve_completed",
+      ref:
+        result.scope.mode === "ref"
+          ? result.scope.value
+          : `improve:${result.scope.mode}:${result.scope.value ?? "all"}`,
+      metadata: {
+        plannedRefs: result.plannedRefs.length,
+        reflectActions: actionCounts.reflect,
+        distillActions: actionCounts.distill,
+        distillSkippedActions: actionCounts.distillSkipped,
+        memoryPruneActions: actionCounts.memoryPrune,
+        memoryInferenceActions: actionCounts.memoryInference,
+        graphExtractionActions: actionCounts.graphExtraction,
+        errorActions: actionCounts.error,
+        reflectFailedActions: actionCounts.reflectFailed,
+        reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
+        coverageGapCount: result.coverageGaps?.length ?? 0,
+        executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
+        evalCasesWritten: result.evalCasesWritten ?? 0,
+        deadUrlCount: result.deadUrls?.length ?? 0,
+        memoryEligible: result.memorySummary.eligible,
+        memoryDerived: result.memorySummary.derived,
+        memoryCleanupPruneCandidates: result.memoryCleanup?.pruneCandidates.length ?? 0,
+        memoryCleanupContradictionCandidates: result.memoryCleanup?.contradictionCandidates.length ?? 0,
+        memoryCleanupBeliefStateTransitions: result.memoryCleanup?.beliefStateTransitions.length ?? 0,
+        memoryCleanupConsolidationCandidates: result.memoryCleanup?.consolidationCandidates.length ?? 0,
+        memoryCleanupArchived: result.memoryCleanup?.archived?.length ?? 0,
+        memoryCleanupWarnings: result.memoryCleanup?.warnings?.length ?? 0,
+        consolidationProcessed: result.consolidation?.processed ?? 0,
+        consolidationDurationMs: result.consolidation?.durationMs ?? 0,
+        memoryInferenceWrites: result.memoryInference?.writtenFacts ?? 0,
+        memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
+        graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
+        graphExtractionDurationMs: durations.graphExtractionDurationMs,
+        feedbackRatioUsed: true,
+      },
     },
-  });
+    eventsCtx,
+  );
 }
 
 async function runImprovePreparationStage(args: {
@@ -1038,8 +1077,11 @@ async function runImprovePreparationStage(args: {
   const reflectCooledRefs = new Set<string>();
   const distillCooledRefs = new Set<string>();
 
-  if (REFLECT_COOLDOWN_DAYS > 0 || DISTILL_COOLDOWN_DAYS > 0) {
-    const bulkWindowMs = Math.max(REFLECT_COOLDOWN_DAYS, DISTILL_COOLDOWN_DAYS, 14) * 24 * 60 * 60 * 1000;
+  const effectiveReflectCooldown = REFLECT_COOLDOWN_DAYS;
+  const effectiveDistillCooldown = DISTILL_COOLDOWN_DAYS;
+
+  if (effectiveReflectCooldown > 0 || effectiveDistillCooldown > 0) {
+    const bulkWindowMs = Math.max(effectiveReflectCooldown, effectiveDistillCooldown) * 24 * 60 * 60 * 1000;
     const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
 
     const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
@@ -1204,6 +1246,8 @@ async function runImproveLoopStage(args: {
   /** Refs that should only run the distill path (reflect-cooled but distill expired, Bug D2). */
   distillOnlyRefs: ImproveEligibleRef[];
   recentErrors: string[];
+  /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
+  rejectedProposalsByRef: Map<string, EventEnvelope>;
   startMs: number;
   budgetMs: number;
 }): Promise<ImproveLoopResult> {
@@ -1219,6 +1263,7 @@ async function runImproveLoopStage(args: {
     distillCooledRefs,
     distillOnlyRefs,
     recentErrors,
+    rejectedProposalsByRef,
     startMs,
     budgetMs,
   } = args;
@@ -1357,19 +1402,18 @@ async function runImproveLoopStage(args: {
             slug: `${slug}-${Date.now()}`,
           });
         }
-        const rejectedProposals = readEvents({ type: "proposal_rejected", ref: planned.ref }).events.filter(
-          (e) => new Date(e.ts).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000,
-        );
-        if (rejectedProposals.length > 0 && primaryStashDir) {
+        // D6: use pre-loaded map instead of per-iteration DB query
+        const rejectedProposalEvent = rejectedProposalsByRef.get(planned.ref);
+        if (rejectedProposalEvent && primaryStashDir) {
           const slug = planned.ref
             .replace(/[^a-z0-9]/gi, "-")
             .toLowerCase()
             .slice(0, 60);
           writeEvalCase(primaryStashDir, {
             ref: planned.ref,
-            failureReason: (rejectedProposals[0].metadata?.reason as string | undefined) ?? "proposal rejected",
+            failureReason: (rejectedProposalEvent.metadata?.reason as string | undefined) ?? "proposal rejected",
             assetType: parseAssetRef(planned.ref).type ?? "unknown",
-            rejectedAt: new Date(rejectedProposals[0].ts).getTime(),
+            rejectedAt: new Date(rejectedProposalEvent.ts).getTime(),
             source: "proposal_rejected",
             slug: `${slug}-rejected`,
           });
@@ -1509,6 +1553,9 @@ async function runImprovePostLoopStage(args: {
     info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
   }
 
+  // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
+  const consolidationRan = !consolidationOnCooldown && consolidation.processed > 0;
+
   info("[improve] post-loop maintenance starting");
   const maintenanceResult = await runImproveMaintenancePasses({
     options,
@@ -1517,6 +1564,7 @@ async function runImprovePostLoopStage(args: {
     memoryRefsForInference,
     allWarnings,
     reindexFn,
+    consolidationRan,
   });
 
   let deadUrls: DeadUrl[] | undefined;
@@ -1563,8 +1611,10 @@ async function runImproveMaintenancePasses(args: {
   memoryRefsForInference: Set<string>;
   allWarnings: string[];
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  /** D9: true when consolidation ran and wrote at least one record this improve run. */
+  consolidationRan?: boolean;
 }): Promise<ImproveMaintenanceResult> {
-  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn } = args;
+  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, consolidationRan } = args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
   const config = options.config ?? loadConfig();
@@ -1632,6 +1682,18 @@ async function runImproveMaintenancePasses(args: {
       info("[improve] graph extraction starting");
       const extractionStart = Date.now();
       try {
+        // D9: if consolidation ran but memory inference did not reindex, force a reindex
+        // so graph extraction sees current DB state after consolidation writes.
+        if (consolidationRan && !reindexedAfterInference) {
+          info("[improve] reindexing after consolidation (graph extraction needs current state)");
+          try {
+            await reindexFn({ stashDir: primaryStashDir });
+            reindexedAfterInference = true;
+            info("[improve] reindex after consolidation complete");
+          } catch (err) {
+            allWarnings.push(`reindex after consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
         if (db && reindexedAfterInference) {
           closeDatabase(db);
           db = openDatabase(

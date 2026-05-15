@@ -22,6 +22,7 @@
  * - `ts` is ISO-8601 (UTC, millisecond precision).
  */
 
+import type { Database } from "bun:sqlite";
 import path from "node:path";
 import { getDataDir } from "./paths";
 import { insertEvent, openStateDatabase, readStateEvents } from "./state-db";
@@ -94,6 +95,19 @@ export interface EventsContext {
    * This is the primary test seam for isolating events to a tmpdir.
    */
   dbPath?: string;
+  /**
+   * I1: optional long-lived pre-opened state.db connection.
+   *
+   * When provided, `appendEvent` uses this handle directly without opening
+   * or closing the database — eliminating per-event open/migrate/close overhead
+   * for callers that emit many events in a single run (e.g. `akmImprove`).
+   *
+   * The caller is responsible for closing this connection in a `finally` block
+   * after all events have been appended.
+   *
+   * NOTE: `dbPath` is ignored when `db` is provided.
+   */
+  db?: Database;
 }
 
 /**
@@ -124,12 +138,33 @@ function resolveNow(ctx?: EventsContext): () => number {
  * stderr but never propagates — observability must not break mutation.
  *
  * Events are written exclusively to the `events` table in `state.db`.
+ *
+ * I1: when `ctx.db` is provided (a pre-opened long-lived connection), the
+ * function writes directly to that handle without opening or closing the DB.
+ * This eliminates per-event open/migrate/close overhead for high-frequency
+ * callers such as `akmImprove`.
  */
 export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void {
-  const dbPath = resolveDbPath(ctx);
   const now = resolveNow(ctx);
   const ts = new Date(now()).toISOString();
 
+  // Fast path: caller provided a long-lived connection — use it directly.
+  if (ctx?.db) {
+    try {
+      insertEvent(ctx.db, {
+        eventType: input.eventType,
+        ts,
+        ref: input.ref,
+        metadata: input.metadata,
+      });
+    } catch (err) {
+      error(`akm: appendEvent failed: ${String(err)}`);
+    }
+    return;
+  }
+
+  // Default path: open, insert, close.
+  const dbPath = resolveDbPath(ctx);
   try {
     const db = openStateDatabase(dbPath);
     try {

@@ -225,9 +225,12 @@ function logSearchEvent(
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  // D8: include registry hit refs so a show following a registry-only search generates a select event
+  const registryHitRefs = (response.registryHits ?? []).map((h) => `registry:${h.id}`);
+  const allResultRefs = [...stashHits.map((h) => h.ref), ...registryHitRefs];
   appendEvent({
     eventType: "search",
-    metadata: { query, hitCount: stashHits.length, resultRefs: stashHits.map((h) => h.ref), mode },
+    metadata: { query, hitCount: stashHits.length, resultRefs: allResultRefs, mode },
   });
 
   try {
