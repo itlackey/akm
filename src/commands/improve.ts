@@ -461,6 +461,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
 
   const acquireLock = (): void => {
+    // TODO(refactor): extract shared withExclusiveFileLock helper. Currently duplicated in vault.ts and lockfile.ts with subtly different retry/timeout/mtime semantics; deferred until the three lock contracts can be unified.
     let lockFd = -1;
     try {
       lockFd = fs.openSync(resolvedLockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
@@ -1103,6 +1104,7 @@ async function runImprovePreparationStage(args: {
     const bulkWindowMs = daysToMs(Math.max(effectiveReflectCooldown, effectiveDistillCooldown));
     const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
 
+    // TODO(refactor): 4 separate readEvents calls with same time bound — could be one WHERE type IN (...) query if readEvents grew a `types?: string[]` option. Marginal win with WAL+long-lived connection, defer.
     const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
     const bulkDistills = readEvents({ type: "distill_invoked", since: bulkSince }).events;
     const bulkPromoted = readEvents({ type: "promoted", since: bulkSince }).events;
@@ -1192,6 +1194,7 @@ async function runImprovePreparationStage(args: {
       if (onDistillCooldown && isDistillCandidate) {
         // Bug D1: pre-emit synthetic distill-skipped action before any LLM call.
         actions.push({ ref: r.ref, mode: "distill-skipped", result: { ok: true, reason: "distill cooldown" } });
+        // TODO(refactor): 7 inline appendEvent calls with eventType "improve_skipped". A helper emitImproveSkipped(ref, reason, extra?) would consolidate them, but each site has slightly different metadata shape — defer until shapes converge.
         appendEvent(
           {
             eventType: "improve_skipped",
@@ -1255,6 +1258,7 @@ async function runImprovePreparationStage(args: {
   };
 }
 
+// TODO(refactor): 13 args including `actions`/`recentErrors` mutation channels. Restructure into immutable plan + mutable context objects — deferred to dedicated refactor with isolated testing.
 async function runImproveLoopStage(args: {
   scope: ImproveScope;
   options: AkmImproveOptions;
@@ -1399,6 +1403,7 @@ async function runImproveLoopStage(args: {
       // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
       // refs; non-candidate refs in the set are blocked here.
       if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal && !distillCooledRefs.has(planned.ref)) {
+        // TODO(refactor): single call site needs both lesson+knowledge refs for proposal dedup. If a third target ref type is added, extract deriveAllTargetRefs(inputRef): string[].
         const lessonRef = deriveLessonRef(planned.ref);
         const knowledgeRef = deriveKnowledgeRef(planned.ref);
         const dedupeStashDir = primaryStashDir ?? options.stashDir;
@@ -1551,6 +1556,7 @@ async function runImprovePostLoopStage(args: {
       }
     : baseConfig;
 
+  // TODO(refactor): the reflect/distill cooldown above and this consolidation gate share the "is the most recent event of type X within window" pattern. Unifying would muddy the per-ref tier logic above — defer.
   const consolidateCooldownDays = options.consolidateCooldownDays ?? 14;
   const CONSOLIDATE_COOLDOWN_MS = daysToMs(consolidateCooldownDays);
   const consolidationCutoff = new Date(Date.now() - CONSOLIDATE_COOLDOWN_MS).toISOString();
@@ -1664,6 +1670,7 @@ async function runImprovePostLoopStage(args: {
   };
 }
 
+// TODO(refactor): mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass.
 async function runImproveMaintenancePasses(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;

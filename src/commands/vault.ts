@@ -39,6 +39,7 @@ import { isProcessAlive, writeFileAtomic } from "../core/common";
  * process is still alive the retry loop continues normally.
  */
 function withVaultLock<T>(vaultPath: string, fn: () => T): T {
+  // TODO(refactor): see improve.ts acquireLock and lockfile.ts acquireLockSentinel — three implementations of the same O_EXCL+PID-staleness pattern.
   const lockPath = `${vaultPath}.lock`;
   const deadline = Date.now() + 5000;
   let fd = -1;

@@ -50,6 +50,7 @@ function getLockSentinelPath(): string {
 }
 
 async function acquireLockSentinel(): Promise<boolean> {
+  // TODO(refactor): see improve.ts acquireLock and vault.ts withVaultLock — three implementations of the same O_EXCL+PID-staleness pattern.
   const sentinelPath = getLockSentinelPath();
   // Ensure the directory exists before attempting to create the sentinel
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
