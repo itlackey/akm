@@ -93,6 +93,10 @@ All notable changes to this project will be documented in this file.
 
 - **Docker Bun install matrix**: Fixed the Bun-based Docker build path by declaring `@opencode-ai/sdk` as a package dependency and copying `scripts/` into the Bun image build context, bringing the release-check Docker matrix back to green.
 
+- **`akm agent <profile> [<agent-ref>]`**: Agent command now accepts an optional agent asset ref as a second positional. The agent asset's content becomes the system prompt, its `model:` frontmatter sets the model, and its `tools:` frontmatter sets the tool policy — all translated to platform-specific CLI flags automatically. Use `--model <alias-or-id>` to override the asset's model for this invocation.
+
+- **Platform-specific command builders for `akm agent`**: A new builder strategy translates platform-agnostic dispatch parameters to the exact argv each agent CLI expects. OpenCode receives `opencode run [--system-prompt "..."] [--model opencode/<model>] "<prompt>"`; Claude Code receives `claude [--system-prompt "..."] [--model <model>] [--allowedTools ...] --print "<prompt>"`. Built-in model aliases (`opus`, `sonnet`, `haiku`) resolve to the correct platform model ID automatically. Custom aliases configurable per profile in `agent.profiles.<name>.modelAliases`.
+
 ### Migration
 
 See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for the complete step-by-step guide.

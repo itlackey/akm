@@ -105,6 +105,24 @@ This makes it easier to validate an upgraded installation after migration or to
 spot regressions in task execution and improve-loop maintenance without querying
 SQLite tables directly.
 
+## Agent Command Builder: Platform-Aware Dispatch
+
+`akm agent` can now embody a stash agent asset — setting the system prompt, model, and tool policy automatically from the asset's metadata:
+
+```sh
+akm agent opencode agent:code-reviewer --prompt "review src/commands/"
+akm agent claude agent:planner --model sonnet --prompt "plan the next sprint"
+```
+
+The `<agent-ref>` positional resolves the agent asset's content as the system prompt, its `model:` frontmatter as the model, and its `tools:` frontmatter as the allowed tool set. Each platform gets the exact flags its CLI expects:
+
+- **opencode**: `opencode run --system-prompt "..." --model opencode/claude-opus-4-7 "<prompt>"`
+- **claude**: `claude --system-prompt "..." --model claude-opus-4-7 --allowedTools read,edit --print "<prompt>"`
+
+Built-in model aliases (`opus`, `sonnet`, `haiku`) resolve to the correct model string per platform. Add custom aliases in `agent.profiles.<name>.modelAliases`. Override any asset's model for a single run with `--model`.
+
+Without a prompt or agent-ref, `akm agent opencode` still launches the agent interactively — unchanged.
+
 ## Migration Guidance
 
 Breaking changes in 0.8.0:
