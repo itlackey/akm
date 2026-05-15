@@ -716,6 +716,36 @@ const addCommand = defineCommand({
           writable: args.writable === true,
         },
       });
+
+      // ── Post-install vault key audit ────────────────────────────────────────
+      // Resolve the stash root from the install result and scan any vault files
+      // for dangerous env var keys.  This is warn-only — it never blocks the
+      // install or causes a non-zero exit.
+      try {
+        const installedStashRoot =
+          result.installed?.stashRoot ??
+          (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
+        if (installedStashRoot) {
+          const { checkVaultForDangerousKeys } = await import("./commands/lint/vault-key-rules.js");
+          const vaultsDir = path.join(installedStashRoot, "vaults");
+          if (fs.existsSync(vaultsDir)) {
+            const envFiles = fs.readdirSync(vaultsDir).filter((f: string) => f.endsWith(".env"));
+            for (const envFile of envFiles) {
+              const vaultPath = path.join(vaultsDir, envFile);
+              const baseName = path.basename(envFile, ".env");
+              const vaultRef = baseName === "" ? "vault:default" : `vault:${baseName}`;
+              const relPath = path.join("vaults", envFile);
+              const findings = checkVaultForDangerousKeys(vaultPath, relPath, vaultRef);
+              for (const finding of findings) {
+                warn(`[dangerous-vault-key] ${finding.file}: ${finding.detail}`);
+              }
+            }
+          }
+        }
+      } catch {
+        // Vault key audit is best-effort; never fail the install on audit errors.
+      }
+
       output("add", result);
     });
   },

@@ -7,6 +7,7 @@ import { parseFrontmatter } from "../../core/frontmatter";
 import { resolveSourceEntries } from "../../indexer/search-source";
 import { getLinterForType } from "./registry";
 import type { LintIssue } from "./types";
+import { checkVaultForDangerousKeys } from "./vault-key-rules";
 
 // ── Public API types (re-exported for consumers) ──────────────────────────────
 
@@ -124,6 +125,35 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
       }
 
       if (fileDeleted) continue; // file is gone — skip any remaining checks
+    }
+  }
+
+  // ── Vault dangerous-key pass ───────────────────────────────────────────────
+  // Scan every `.env` file under <stashRoot>/vaults/ (and secondary stash
+  // roots) for keys that are known to enable process-execution hijacking.
+  // This is a warn-only pass — findings go into `flagged`, never `fixed`.
+  const vaultRoots = [stashRoot, ...extraStashRoots];
+  for (const root of vaultRoots) {
+    const vaultsDir = path.join(root, "vaults");
+    if (!fs.existsSync(vaultsDir)) continue;
+    let envFiles: string[];
+    try {
+      envFiles = fs
+        .readdirSync(vaultsDir)
+        .filter((f) => f.endsWith(".env"))
+        .map((f) => path.join(vaultsDir, f));
+    } catch {
+      continue;
+    }
+    for (const vaultPath of envFiles) {
+      const baseName = path.basename(vaultPath, ".env");
+      // canonical vault ref: "default" (or empty) maps to ".env" → vault:default
+      const vaultRef = baseName === "" ? "vault:default" : `vault:${baseName}`;
+      const relPath = path.relative(root, vaultPath);
+      const issues = checkVaultForDangerousKeys(vaultPath, relPath, vaultRef);
+      for (const issue of issues) {
+        flagged.push(issue);
+      }
     }
   }
 
