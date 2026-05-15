@@ -73,6 +73,17 @@ All notable changes to this project will be documented in this file.
 
 - **Improve-owned maintenance refreshes the final corpus state**: `akm improve` now runs memory inference after distill/consolidation, reindexes when inference writes new derived memories, and refreshes graph extraction against the settled post-improve state.
 
+### Security
+
+- **Directory traversal prevention**: `vault set`, `vault create`, `vault path`, and `vault run` now validate that the resolved vault path stays within the stash's `vaults/` directory. Names like `../../evil` are rejected with a `UsageError` (exit 2).
+- **Atomic temp file hardening**: `writeFileAtomic` now opens the temp file with mode `0o600` from the start (no world-readable window before chmod), and uses `crypto.randomBytes` instead of `Math.random` for the temp filename.
+- **Stdin cap on `vault set`**: stdin reads are capped at 1 MB; values larger than that are rejected with a `UsageError`.
+- **Vault path stripped from JSON output**: `vault list --format json` and `show vault:<name> --format json` no longer include the absolute `path` field. Use `akm vault path vault:<name>` when you need the path.
+- **Write lock on `vault set` / `vault unset`**: both commands now acquire an exclusive lock file (`<vault>.lock`) around the read-modify-write cycle. Concurrent writers in CI no longer silently drop each other's keys. Lock times out after 5 s.
+- **Orphaned comment cleanup in `vault unset`**: `vault unset KEY` now also removes the `# comment` line immediately above the removed key.
+- **Lint ref extension fix**: `akm lint` now correctly resolves `vault:<name>` refs to `vaults/<name>.env` (was incorrectly using `.md`).
+- **Dangerous vault key detection**: `akm lint` and `akm add` now scan vault files for 23 environment variable names that can be used for process-execution hijacking (`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, etc.). `akm lint` reports these as `dangerous-vault-key` findings (non-blocking). `akm add` pauses and prompts for confirmation (default: No) when dangerous keys are found; in non-interactive mode the install fails unless `--allow-insecure` is passed. `--allow-insecure` on `akm add` now covers both plain-HTTP sources and dangerous vault key bypass.
+
 ### Bug Fixes
 
 - **EISDIR on `akm improve`**: Fixed a crash when the improve pipeline encountered a directory entry where it expected a file. Directory paths are now validated and skipped with a warning rather than throwing an uncaught EISDIR error.

@@ -591,8 +591,36 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
 | `--trust` | Bypass install-audit blocking for this add invocation only |
+| `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous vault key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) vault keys that can hijack process execution. Use only after reviewing the stash manually |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
+
+#### Dangerous vault key audit
+
+When `akm add` installs a stash that contains vault files, it scans every
+vault file for environment variable names that can be used for
+process-execution hijacking. The flagged key names are: `LD_PRELOAD`,
+`LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `DYLD_INSERT_LIBRARIES`,
+`DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`, `BASH_ENV`, `ENV`,
+`PROMPT_COMMAND`, `PS1`, `PS2`, `NODE_OPTIONS`, `NODE_PATH`,
+`PYTHONSTARTUP`, `PYTHONPATH`, `PYTHONINSPECT`, `RUBYLIB`, `RUBYOPT`,
+`PERL5LIB`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, and
+`_JAVA_OPTIONS` (23 keys total).
+
+When dangerous keys are found, `akm add` pauses and prompts for
+confirmation (default: No). In non-interactive mode (CI, scripts) the
+install fails with exit 2 unless `--allow-insecure` is passed.
+
+```sh
+# Interactive: prompts before continuing
+akm add github:owner/repo-with-sensitive-vault
+
+# Non-interactive: fails unless bypassed
+akm add github:owner/repo-with-sensitive-vault --allow-insecure
+```
+
+Stash publishers: see the [Stash Maker's Guide](stash-makers.md#vault-security)
+for guidance on vault files that legitimately need these keys.
 
 #### Website sources
 
@@ -1183,8 +1211,9 @@ akm vault list
 ```
 
 `vault list` returns one entry per vault across all configured stashes. The
-structured shape is `vaults: [{ ref, path, keys }]` and values are never
-included.
+structured shape is `vaults: [{ ref, keys }]` and values are never
+included. The absolute `path` field is omitted from JSON output — use
+`akm vault path vault:<name>` when you need the filesystem path.
 
 Text output uses Markdown sections so the result is readable in terminals and
 copy-paste friendly in agent transcripts:
@@ -1242,14 +1271,24 @@ preceding comment is also updated. Existing unrelated comments are preserved.
 | `--comment` | Attach a comment line above the key |
 | `--from-env <VAR>` | Read value from the named environment variable instead of stdin |
 
+> **Stdin cap:** stdin reads are limited to 1 MB. Values larger than 1 MB are
+> rejected with a `UsageError` (exit 2).
+
+> **Write lock:** `vault set` acquires an exclusive lock file (`<vault>.lock`)
+> around the read-modify-write cycle. If two `vault set` processes run
+> concurrently in CI, one waits up to 5 s for the other to finish rather than
+> silently dropping keys. A lock that cannot be acquired within 5 s raises an
+> error.
+
 #### vault unset
 
 ```sh
 akm vault unset vault:prod DATABASE_URL
 ```
 
-Removes the key and its associated comment from the vault. Exits 0 whether or
-not the key existed.
+Removes the key and its associated `# comment` line immediately above it from
+the vault. Exits 0 whether or not the key existed. The same write lock used by
+`vault set` is held for the duration of the removal.
 
 #### vault run
 

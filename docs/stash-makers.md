@@ -399,6 +399,42 @@ stashes.
 You can mount multiple directories. They are searched in the order listed,
 after the working stash.
 
+## Vault Security
+
+If your stash includes vault files under `vaults/`, be aware of how `akm`
+handles them during install.
+
+**Dangerous key detection.** `akm add` and `akm lint` scan vault files for
+environment variable names that can be used to hijack process execution when
+the vault is loaded via `akm vault run`. The flagged names include
+`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and 20 others.
+When these keys are found, `akm add` pauses in interactive mode and asks the
+user to confirm before continuing. In non-interactive (CI) mode the install
+fails unless the user passes `--allow-insecure`.
+
+This is not a ban — it is a speed bump. If your stash legitimately needs one
+of these keys (for example, a `PATH` override for a hermetic toolchain), do
+the following before publishing:
+
+1. Document the reason clearly in your `README.md`. Explain which key is set,
+   why it is needed, and what the value does.
+2. Run `akm lint` against your stash locally to see the `dangerous-vault-key`
+   findings before your users do:
+
+   ```sh
+   akm lint
+   ```
+
+3. Consider whether the value can be set by the user after install rather than
+   shipped in the vault file. Vault files that ship without values — just key
+   names and comments — do not trigger the audit.
+
+**Key names are metadata, not secrets.** Vault key names appear in
+`vault list`, `vault show`, and search results by design. Only values are
+protected. The `--sensitive` flag on `vault create` hides a vault from
+`vault list` but does not prevent key names from appearing in search results
+or agent context when the vault is shown directly.
+
 ## Stash Structure Tips
 
 - **Keep it focused.** A stash with 5 great scripts is more useful than one with
