@@ -44,7 +44,7 @@ export interface ImproveHealthMetrics {
     graphExtraction: number;
     error: number;
   };
-  crossStepErrorsInjected: number;
+  reflectsWithErrorContext: number;
   feedbackRatioUsed: boolean;
   coverageGapCount: number;
   executionLogCandidateCount: number;
@@ -158,7 +158,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       graphExtraction: 0,
       error: 0,
     },
-    crossStepErrorsInjected: 0,
+    reflectsWithErrorContext: 0,
     feedbackRatioUsed: false,
     coverageGapCount: 0,
     executionLogCandidateCount: 0,
@@ -201,7 +201,7 @@ function summarizeImproveCompleted(events: ReturnType<typeof readEvents>["events
     metrics.actions.memoryInference += toFiniteNumber(meta.memoryInferenceActions);
     metrics.actions.graphExtraction += toFiniteNumber(meta.graphExtractionActions);
     metrics.actions.error += toFiniteNumber(meta.errorActions);
-    metrics.crossStepErrorsInjected += toFiniteNumber(meta.crossStepErrorsInjected);
+    metrics.reflectsWithErrorContext += toFiniteNumber(meta.reflectsWithErrorContext);
     metrics.coverageGapCount += toFiniteNumber(meta.coverageGapCount);
     metrics.executionLogCandidateCount += toFiniteNumber(meta.executionLogCandidateCount);
     metrics.evalCasesWritten += toFiniteNumber(meta.evalCasesWritten);
