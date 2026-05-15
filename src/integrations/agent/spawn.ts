@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
@@ -259,7 +260,6 @@ export async function runAgent(
 
   // Build argv via the platform-specific builder when dispatch params are
   // provided; fall back to the legacy positional-prompt form otherwise.
-  const { getCommandBuilder } = await import("./builders");
   let builtArgv: readonly string[];
   let builtEnv: Record<string, string> | undefined;
   if (options.dispatch !== undefined) {
