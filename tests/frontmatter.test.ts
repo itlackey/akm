@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar, toStringOrUndefined } from "../src/core/frontmatter";
+import { asNonEmptyString } from "../src/core/common";
+import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar } from "../src/core/frontmatter";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
 
@@ -204,26 +205,26 @@ describe("parseYamlScalar", () => {
   });
 });
 
-// ── toStringOrUndefined ─────────────────────────────────────────────────────
+// ── asNonEmptyString (was: toStringOrUndefined) ──────────────────────────────
 
-describe("toStringOrUndefined", () => {
+describe("asNonEmptyString", () => {
   test("returns string for non-empty string", () => {
-    expect(toStringOrUndefined("hello")).toBe("hello");
+    expect(asNonEmptyString("hello")).toBe("hello");
   });
 
   test("returns undefined for empty string", () => {
-    expect(toStringOrUndefined("")).toBeUndefined();
+    expect(asNonEmptyString("")).toBeUndefined();
   });
 
   test("returns undefined for whitespace-only string", () => {
-    expect(toStringOrUndefined("   ")).toBeUndefined();
+    expect(asNonEmptyString("   ")).toBeUndefined();
   });
 
   test("returns undefined for non-string values", () => {
-    expect(toStringOrUndefined(42)).toBeUndefined();
-    expect(toStringOrUndefined(null)).toBeUndefined();
-    expect(toStringOrUndefined(undefined)).toBeUndefined();
-    expect(toStringOrUndefined(true)).toBeUndefined();
-    expect(toStringOrUndefined({})).toBeUndefined();
+    expect(asNonEmptyString(42)).toBeUndefined();
+    expect(asNonEmptyString(null)).toBeUndefined();
+    expect(asNonEmptyString(undefined)).toBeUndefined();
+    expect(asNonEmptyString(true)).toBeUndefined();
+    expect(asNonEmptyString({})).toBeUndefined();
   });
 });

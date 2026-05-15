@@ -10,8 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listKeys as listVaultKeys } from "../commands/vault";
-import { hasErrnoCode } from "../core/common";
-import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { parseFrontmatter } from "../core/frontmatter";
 import {
   extractFrontmatterOnly,
   extractLineRange,
@@ -209,7 +209,7 @@ const skillMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Read and follow the instructions below",
-      description: toStringOrUndefined(parsed.data.description),
+      description: asNonEmptyString(parsed.data.description),
       ...(tags ? { tags } : {}),
       content: parsed.content,
     };
@@ -231,11 +231,11 @@ const commandMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Fill $ARGUMENTS placeholders in the template, then dispatch",
-      description: toStringOrUndefined(parsedMd.data.description),
+      description: asNonEmptyString(parsedMd.data.description),
       ...(tags ? { tags } : {}),
       template,
       modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
-      agent: toStringOrUndefined(parsedMd.data.agent),
+      agent: asNonEmptyString(parsedMd.data.agent),
       parameters: extractParameters(template),
     };
   },
@@ -254,7 +254,7 @@ const agentMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
-      description: toStringOrUndefined(parsedMd.data.description),
+      description: asNonEmptyString(parsedMd.data.description),
       prompt: parsedMd.content,
       toolPolicy: parsedMd.data.tools as ShowResponse["toolPolicy"],
       modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
@@ -347,8 +347,8 @@ const lessonMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const parsed = parseFrontmatter(ctx.content());
-    const description = toStringOrUndefined(parsed.data.description);
-    const whenToUse = toStringOrUndefined(parsed.data.when_to_use);
+    const description = asNonEmptyString(parsed.data.description);
+    const whenToUse = asNonEmptyString(parsed.data.when_to_use);
     const action = whenToUse
       ? `Apply this lesson when: ${whenToUse}`
       : "Apply this lesson when its `when_to_use` trigger matches the current task.";
@@ -500,7 +500,7 @@ function applyTocMetadata(entry: StashEntry, ctx: RenderContext): void {
 function applyFrontmatterDescriptionAndTags(entry: StashEntry, ctx: RenderContext): Record<string, unknown> {
   const parsed = parseFrontmatter(ctx.content());
   const fm = parsed.data;
-  const desc = toStringOrUndefined(fm.description);
+  const desc = asNonEmptyString(fm.description);
   if (desc && !entry.description) {
     entry.description = desc;
     entry.source = "frontmatter";
@@ -518,7 +518,7 @@ function applyFrontmatterDescriptionAndTags(entry: StashEntry, ctx: RenderContex
 function applyLessonMetadata(entry: StashEntry, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
-    const whenToUse = toStringOrUndefined(fm.when_to_use);
+    const whenToUse = asNonEmptyString(fm.when_to_use);
     if (whenToUse) {
       const hints = new Set<string>(entry.searchHints ?? []);
       hints.add(`when_to_use:${whenToUse}`);
@@ -528,14 +528,13 @@ function applyLessonMetadata(entry: StashEntry, ctx: RenderContext): void {
     // Non-fatal: skip metadata extraction on parse error
   }
 }
-
 function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
     const hints = new Set<string>(entry.searchHints ?? []);
-    const source = toStringOrUndefined(fm.source);
+    const source = asNonEmptyString(fm.source);
     if (source) hints.add(source);
-    const fmObservedAt = toStringOrUndefined(fm.observed_at);
+    const fmObservedAt = asNonEmptyString(fm.observed_at);
     if (fmObservedAt) {
       hints.add(`observed_at:${fmObservedAt}`);
     } else {
@@ -546,7 +545,7 @@ function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
         // Non-fatal: skip mtime fallback on stat error
       }
     }
-    const expires = toStringOrUndefined(fm.expires);
+    const expires = asNonEmptyString(fm.expires);
     if (expires) hints.add(`expires:${expires}`);
     if (fm.subjective === true) hints.add("subjective");
     if (hints.size > 0) {
@@ -556,7 +555,6 @@ function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
     // Non-fatal: skip metadata extraction on error
   }
 }
-
 function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
   if (ctx.ext === ".md") return;
   const commentDesc = extractDescriptionFromComments(ctx.absPath);
@@ -585,18 +583,17 @@ function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
     entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
     const hints = new Set<string>(entry.searchHints ?? []);
-    const schedule = toStringOrUndefined(fm.schedule);
+    const schedule = asNonEmptyString(fm.schedule);
     if (schedule) hints.add(`schedule:${schedule}`);
-    const workflow = toStringOrUndefined(fm.workflow);
+    const workflow = asNonEmptyString(fm.workflow);
     if (workflow) hints.add(`workflow:${workflow}`);
-    const prompt = toStringOrUndefined(fm.prompt);
+    const prompt = asNonEmptyString(fm.prompt);
     if (prompt) hints.add(`prompt:${prompt}`);
     if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
   } catch {
     // Non-fatal: skip metadata extraction on error
   }
 }
-
 registerMetadataContributor({
   name: "toc-metadata",
   appliesTo: ({ rendererName }) => rendererName === "knowledge-md" || rendererName === "wiki-md",

@@ -657,20 +657,20 @@ function getUpsertStmts(db: Database): UpsertStmts {
   return stmts;
 }
 
-export function deleteEntriesByDir(db: Database, dirPath: string): void {
+function deleteEntriesWhere(db: Database, column: "dir_path" | "stash_dir", value: string): void {
   db.transaction(() => {
-    const ids = db.prepare("SELECT id FROM entries WHERE dir_path = ?").all(dirPath) as Array<{ id: number }>;
+    const ids = db.prepare(`SELECT id FROM entries WHERE ${column} = ?`).all(value) as Array<{ id: number }>;
     deleteRelatedRows(db, ids);
-    db.prepare("DELETE FROM entries WHERE dir_path = ?").run(dirPath);
+    db.prepare(`DELETE FROM entries WHERE ${column} = ?`).run(value);
   })();
 }
 
+export function deleteEntriesByDir(db: Database, dirPath: string): void {
+  deleteEntriesWhere(db, "dir_path", dirPath);
+}
+
 export function deleteEntriesByStashDir(db: Database, stashDir: string): void {
-  db.transaction(() => {
-    const ids = db.prepare("SELECT id FROM entries WHERE stash_dir = ?").all(stashDir) as Array<{ id: number }>;
-    deleteRelatedRows(db, ids);
-    db.prepare("DELETE FROM entries WHERE stash_dir = ?").run(stashDir);
-  })();
+  deleteEntriesWhere(db, "stash_dir", stashDir);
 }
 
 const SQLITE_CHUNK_SIZE = 500;
@@ -704,12 +704,6 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
     const placeholders = chunk.map(() => "?").join(",");
     try {
       db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* ignore */
-    }
-    // Also delete from FTS table so orphaned FTS rows don't remain
-    try {
-      db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
     } catch {
       /* ignore */
     }
@@ -1046,37 +1040,24 @@ export function sanitizeFtsQuery(query: string): string {
 
 // ── All entries ─────────────────────────────────────────────────────────────
 
-export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[] {
-  let sql: string;
-  let params: unknown[];
+type EntryRow = {
+  id: number;
+  entry_key: string;
+  dir_path: string;
+  file_path: string;
+  stash_dir: string;
+  entry_json: string;
+  search_text: string;
+};
 
-  if (entryType && entryType !== "any") {
-    sql =
-      "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries WHERE entry_type = ?";
-    params = [entryType];
-  } else {
-    sql = "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries";
-    params = [];
-  }
-
-  const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as Array<{
-    id: number;
-    entry_key: string;
-    dir_path: string;
-    file_path: string;
-    stash_dir: string;
-    entry_json: string;
-    search_text: string;
-  }>;
-
-  // Guard against corrupt JSON — skip the row rather than crashing
+function parseEntryRows(rows: Array<Record<string, unknown>>, context: string): DbIndexedEntry[] {
   const entries: DbIndexedEntry[] = [];
-  for (const row of rows) {
+  for (const row of rows as EntryRow[]) {
     let entry: StashEntry;
     try {
       entry = JSON.parse(row.entry_json) as StashEntry;
     } catch {
-      warn(`[db] getAllEntries: skipping entry id=${row.id} — corrupt entry_json`);
+      warn(`[db] ${context}: skipping entry id=${row.id} — corrupt entry_json`);
       continue;
     }
     entries.push({
@@ -1090,6 +1071,25 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
     });
   }
   return entries;
+}
+
+export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[] {
+  let sql: string;
+  let params: unknown[];
+
+  if (entryType && entryType !== "any") {
+    sql =
+      "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries WHERE entry_type = ?";
+    params = [entryType];
+  } else {
+    sql = "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries";
+    params = [];
+  }
+
+  const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as Array<
+    Record<string, unknown>
+  >;
+  return parseEntryRows(rows, "getAllEntries");
 }
 
 export function findEntryIdByRef(db: Database, ref: string): number | undefined {
@@ -1145,37 +1145,8 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
     .prepare(
       "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries WHERE dir_path = ?",
     )
-    .all(dirPath) as Array<{
-    id: number;
-    entry_key: string;
-    dir_path: string;
-    file_path: string;
-    stash_dir: string;
-    entry_json: string;
-    search_text: string;
-  }>;
-
-  // Guard against corrupt JSON — skip the row rather than crashing
-  const entries: DbIndexedEntry[] = [];
-  for (const row of rows) {
-    let entry: StashEntry;
-    try {
-      entry = JSON.parse(row.entry_json) as StashEntry;
-    } catch {
-      warn(`[db] getEntriesByDir: skipping entry id=${row.id} — corrupt entry_json`);
-      continue;
-    }
-    entries.push({
-      id: row.id,
-      entryKey: row.entry_key,
-      dirPath: row.dir_path,
-      filePath: row.file_path,
-      stashDir: row.stash_dir,
-      entry,
-      searchText: row.search_text,
-    });
-  }
-  return entries;
+    .all(dirPath) as Array<Record<string, unknown>>;
+  return parseEntryRows(rows, "getEntriesByDir");
 }
 
 // ── Utility score operations ────────────────────────────────────────────────
