@@ -780,10 +780,16 @@ const addCommand = defineCommand({
                 });
                 if (p.isCancel(confirmed) || confirmed !== true) {
                   // Roll back the install before aborting.
+                  // Use the canonical installed id (most reliably resolved by akmRemove) rather
+                  // than the raw user-supplied ref which may not match after URL normalisation.
+                  const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
+                  let rollbackWarning: string | undefined;
                   try {
-                    await akmRemove({ target: ref });
+                    await akmRemove({ target: rollbackTarget });
                   } catch {
-                    // Best-effort cleanup; don't mask the real abort message.
+                    rollbackWarning =
+                      `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
+                      `Remove it manually with: akm remove ${rollbackTarget}`;
                   }
                   console.error(
                     JSON.stringify(
@@ -792,6 +798,7 @@ const addCommand = defineCommand({
                         error:
                           "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-insecure to bypass.",
                         code: "DANGEROUS_VAULT_KEY",
+                        ...(rollbackWarning ? { rollbackWarning } : {}),
                       },
                       null,
                       2,
@@ -802,10 +809,16 @@ const addCommand = defineCommand({
               } else {
                 // Non-interactive path without bypass flag: fail hard.
                 // Roll back the install before exiting.
+                // Use the canonical installed id (most reliably resolved by akmRemove) rather
+                // than the raw user-supplied ref which may not match after URL normalisation.
+                const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
+                let rollbackWarning: string | undefined;
                 try {
-                  await akmRemove({ target: ref });
+                  await akmRemove({ target: rollbackTarget });
                 } catch {
-                  // Best-effort cleanup.
+                  rollbackWarning =
+                    `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
+                    `Remove it manually with: akm remove ${rollbackTarget}`;
                 }
                 const keyList = allFindings.map((f) => `  - ${f.keyName} (${f.vaultRef})`).join("\n");
                 console.error(
@@ -814,6 +827,7 @@ const addCommand = defineCommand({
                       ok: false,
                       error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the vault.`,
                       code: "DANGEROUS_VAULT_KEY",
+                      ...(rollbackWarning ? { rollbackWarning } : {}),
                     },
                     null,
                     2,

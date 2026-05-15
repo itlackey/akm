@@ -30,29 +30,57 @@ import { writeFileAtomic } from "../core/common";
  * back to a busy-wait counter.  After the deadline we throw rather than
  * silently proceeding — a timeout here is always a programming error or a
  * stale lock left by a crashed process.
+ *
+ * Stale lock detection: the current PID is written into the lock file on
+ * acquisition.  When a lock-acquire attempt fails, the PID stored in the
+ * existing lock file is read and tested with `process.kill(pid, 0)`.  If the
+ * signal call throws (ESRCH — no such process), the lock is stale and is
+ * deleted immediately so the next loop iteration can acquire it.  If the
+ * process is still alive the retry loop continues normally.
  */
 function withVaultLock<T>(vaultPath: string, fn: () => T): T {
   const lockPath = `${vaultPath}.lock`;
-  const deadline = Date.now() + 5000; // 5 s timeout
+  const deadline = Date.now() + 5000;
   let fd = -1;
 
   while (true) {
     try {
       fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
-      break; // lock acquired
+      // Write our PID so staleness can be detected by other waiters
+      fs.writeSync(fd, String(process.pid));
+      break;
     } catch {
       if (Date.now() > deadline) {
-        throw new Error(`Could not acquire vault lock for ${vaultPath} after 5 s. Is another process holding it?`);
+        throw new Error(`Could not acquire vault lock for ${vaultPath} after 5s. Is another process holding it?`);
       }
-      // Prefer Bun.sleepSync when available so we do not peg the CPU.
+      // Check for stale lock: read PID and test if that process is alive
+      try {
+        const rawPid = fs.readFileSync(lockPath, "utf8").trim();
+        const pid = Number.parseInt(rawPid, 10);
+        if (!Number.isNaN(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0); // throws ESRCH if process doesn't exist
+            // PID is alive — legitimate holder, wait
+          } catch {
+            // Process is dead — stale lock, remove and retry immediately
+            try {
+              fs.unlinkSync(lockPath);
+            } catch {
+              /* ignore */
+            }
+            continue;
+          }
+        }
+      } catch {
+        /* lock file unreadable, keep waiting */
+      }
+      // Yield before next attempt
       if (
-        typeof (globalThis as Record<string, unknown>).Bun !== "undefined" &&
         typeof (globalThis as Record<string, unknown> & { Bun?: { sleepSync?: (ms: number) => void } }).Bun
           ?.sleepSync === "function"
       ) {
         (globalThis as Record<string, unknown> & { Bun: { sleepSync: (ms: number) => void } }).Bun.sleepSync(10);
       } else {
-        // Fallback busy-wait
         let spin = 0;
         while (spin++ < 100_000) {
           /* yield */

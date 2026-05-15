@@ -164,6 +164,59 @@ describe("vault set (stdin default)", () => {
     expect(contents).not.toContain("myvalue\n=");
     expect(contents).toContain("KEY=myvalue");
   });
+
+  // moved from vault-qa-fixes.test.ts test 8
+  test("vault set accepts bare vault name without type prefix", () => {
+    const stashDir = makeTempDir("akm-vault-stdin-qa-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { status } = runCli(["vault", "set", "prod", "MY_KEY"], { AKM_STASH_DIR: stashDir }, "myvalue");
+    expect(status).toBe(0);
+    expect(fs.readFileSync(vaultPath, "utf8")).toContain("MY_KEY=myvalue");
+  });
+
+  // moved from vault-qa-fixes.test.ts test 10
+  test("vault set stdin value containing = is stored verbatim", () => {
+    const stashDir = makeTempDir("akm-vault-stdin-eq-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { status } = runCli(["vault", "set", "prod", "COMPLEX_KEY"], { AKM_STASH_DIR: stashDir }, "val1=val2");
+    expect(status).toBe(0);
+    expect(fs.readFileSync(vaultPath, "utf8")).toContain("COMPLEX_KEY=val1=val2");
+  });
+});
+
+describe("vault set stale lock recovery", () => {
+  test("succeeds when a .lock file containing a dead PID is present", () => {
+    const stashDir = makeTempDir("akm-vault-stalelock-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    // Write a stale lock file containing a PID that is guaranteed not to exist.
+    const lockPath = `${vaultPath}.lock`;
+    fs.writeFileSync(lockPath, "999999999", "utf8");
+
+    const { stdout, stderr, status } = runCli(
+      ["vault", "set", "vault:prod", "STALE_KEY"],
+      { AKM_STASH_DIR: stashDir },
+      "stale-value",
+    );
+
+    expect(status).toBe(0);
+    expect(stderr.trim()).toBe("");
+    const contents = fs.readFileSync(vaultPath, "utf8");
+    expect(contents).toContain("STALE_KEY=stale-value");
+    const out = JSON.parse(stdout.trim());
+    expect(out.key).toBe("STALE_KEY");
+
+    // Verify the stale lock was cleaned up.
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
 });
 
 describe("vault set --from-env", () => {
@@ -201,5 +254,20 @@ describe("vault set --from-env", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("DOES_NOT_EXIST_XYZ");
+  });
+
+  // moved from vault-qa-fixes.test.ts test 9
+  test("vault set --from-env accepts bare vault name without type prefix", () => {
+    const stashDir = makeTempDir("akm-vault-fromenv-qa-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { status } = runCli(["vault", "set", "prod", "ANOTHER_KEY", "--from-env", "AKM_VALUE"], {
+      AKM_STASH_DIR: stashDir,
+      AKM_VALUE: "anothervalue",
+    });
+    expect(status).toBe(0);
+    expect(fs.readFileSync(vaultPath, "utf8")).toContain("ANOTHER_KEY=anothervalue");
   });
 });
