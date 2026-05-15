@@ -198,6 +198,15 @@ interface ImprovePreparationResult {
   appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
   executionLogCandidates: string[];
+  /**
+   * Genuinely processable refs in priority order: post-validation, post-cooldown
+   * (fully reflect+distill cooled refs are excluded and their synthetic skip
+   * actions/events are emitted during preparation), post-signal-filter, and
+   * sorted by combined utility + feedback-negativity score. distillOnly refs
+   * participate in this set so --limit selects by score. Callers consuming
+   * `plannedRefs` in the result envelope and post-loop maintenance use this
+   * as the canonical "what got worked on this run" view.
+   */
   actionableRefs: ImproveEligibleRef[];
   signalBearingSet: Set<string>;
   validationFailures: Array<{ ref: string; reason: string }>;
@@ -869,131 +878,10 @@ async function runImprovePreparationStage(args: {
   const removed = new Set(archivedRefs);
   const postCleanupRefs = archivedRefs.length === 0 ? plannedRefs : plannedRefs.filter((r) => !removed.has(r.ref));
 
-  // Gap 6: only surface feedback signals from the last 30 days so that
-  // ancient one-off feedback events don't permanently lock an asset into
-  // every improve run. Assets with only stale signals fall through to the
-  // high-retrieval path (P0-A) or are skipped until new signals arrive.
-  const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
-  const feedbackSinceCutoff = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
-
-  // Pre-compute feedback summary per ref in a single pass so we don't issue
-  // two readEvents({type:"feedback", ref}) per asset (one for signal filtering,
-  // one for ratio computation).
-  const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
-  for (const candidate of postCleanupRefs) {
-    const { events } = readEvents({ type: "feedback", ref: candidate.ref });
-    let hasSignal = false;
-    let positive = 0;
-    let negative = 0;
-    for (const e of events) {
-      if (
-        !hasSignal &&
-        (e.ts ?? "") >= feedbackSinceCutoff &&
-        e.metadata !== undefined &&
-        (typeof e.metadata.signal === "string" || typeof e.metadata.note === "string")
-      ) {
-        hasSignal = true;
-      }
-      if (e.metadata?.signal === "positive") positive++;
-      else if (e.metadata?.signal === "negative") negative++;
-    }
-    feedbackSummary.set(candidate.ref, { hasSignal, positive, negative });
-  }
-
-  const signalFiltered = postCleanupRefs.filter((candidate) => feedbackSummary.get(candidate.ref)?.hasSignal === true);
-
-  // P0-A: also surface zero-feedback assets that have been retrieved many times.
-  const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
-
-  const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
-  const noFeedbackCandidates = postCleanupRefs.filter((r) => !signalBearingSet.has(r.ref));
-
-  let highRetrievalRefs: typeof postCleanupRefs = [];
-  let dbForRetrieval: import("bun:sqlite").Database | undefined;
-  try {
-    dbForRetrieval = openExistingDatabase();
-    const showEventCount = (
-      dbForRetrieval.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = 'show'").get() as {
-        cnt: number;
-      }
-    ).cnt;
-    if (showEventCount === 0) {
-      warn(
-        "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
-      );
-    }
-    const retrievalCounts = getRetrievalCounts(
-      dbForRetrieval,
-      noFeedbackCandidates.map((r) => r.ref),
-    );
-    highRetrievalRefs = noFeedbackCandidates.filter(
-      (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
-    );
-  } catch {
-    // best-effort: if DB unavailable, highRetrievalRefs stays empty
-  } finally {
-    if (dbForRetrieval) closeDatabase(dbForRetrieval);
-  }
-
-  // If the user explicitly scoped to a single ref, always act on it —
-  // skip the signal/retrieval filter entirely. The filter exists to avoid
-  // noisy "improve everything" runs; it should not gate an intentional
-  // per-ref invocation where the user's explicit choice is the signal.
-  //
-  // For type/all scope with no signals yet (fresh environment), fall back
-  // to all postCleanupRefs so that the first improve run is not a no-op.
-  const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
-  const mergedRefs =
-    scope.mode === "ref"
-      ? postCleanupRefs
-      : options.requireFeedbackSignal
-        ? signalFiltered
-        : signalAndRetrievalRefs.length === 0
-          ? postCleanupRefs
-          : signalAndRetrievalRefs;
-
-  const utilityMap = buildUtilityMap(mergedRefs);
-
-  // Load feedback ratio per ref from the pre-computed summary (no extra DB pass).
-  const feedbackRatios = new Map<string, number>();
-  for (const ref of mergedRefs) {
-    const summary = feedbackSummary.get(ref.ref);
-    const positive = summary?.positive ?? 0;
-    const negative = summary?.negative ?? 0;
-    const total = positive + negative;
-    // ratio = negative proportion (high = needs more improvement)
-    feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
-  }
-
-  // Sort: combine utility (desc) with feedback negativity (desc) — high-negative assets rank higher
-  const sorted = [...mergedRefs].sort((a, b) => {
-    const utilA = utilityMap.get(a.ref) ?? 0;
-    const utilB = utilityMap.get(b.ref) ?? 0;
-    const ratioA = feedbackRatios.get(a.ref) ?? 0;
-    const ratioB = feedbackRatios.get(b.ref) ?? 0;
-    // Combined score: 70% utility, 30% negative ratio
-    const scoreA = utilA * 0.7 + ratioA * 0.3;
-    const scoreB = utilB * 0.7 + ratioB * 0.3;
-    return scoreB - scoreA;
-  });
-  // Phase 0: surface coverage gaps from zero-result search queries
-  let coverageGaps: string[] = [];
-  try {
-    const dbForGaps = openExistingDatabase();
-    try {
-      coverageGaps = getZeroResultSearches(dbForGaps);
-    } finally {
-      closeDatabase(dbForGaps);
-    }
-  } catch {
-    // best-effort
-  }
-
-  // Bug B1: keep the full sorted set for reporting/telemetry; --limit is applied
-  // AFTER all cooldown filters so that cooled assets cannot consume limit slots
-  // and displace uncooled assets that would receive LLM calls.
-  const actionableRefs = sorted;
-
+  // ── Phase 1: validation pass + schema repair (run on full postCleanupRefs) ──
+  // Identifies refs whose on-disk asset has structural problems. Validation
+  // failures are excluded from every downstream bucket. Run early so the
+  // cooldown partition operates on a clean set.
   if (appliedCleanup) {
     for (const candidate of memoryCleanupPlan?.pruneCandidates ?? []) {
       const archived = appliedCleanup.archived.find((record) => record.ref === candidate.ref);
@@ -1014,7 +902,7 @@ async function runImprovePreparationStage(args: {
   }
 
   const validationFailures: Array<{ ref: string; reason: string }> = [];
-  for (const candidate of actionableRefs) {
+  for (const candidate of postCleanupRefs) {
     try {
       const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
       if (!filePath) {
@@ -1086,12 +974,11 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  // ── Cooldown pre-filter ───────────────────────────────────────────────────
+  // ── Phase 2: cooldown sets built EARLY ────────────────────────────────────
   // Read all cooldown-relevant events in 4 bulk queries and materialise two
-  // Sets that the loop checks with O(1) Set.has() instead of N per-ref
-  // readEvents() + listProposals() calls. This eliminates the N×3 DB/FS
-  // round trips that caused per-asset "reflect cooldown" noise for every
-  // asset in the stash.
+  // Sets used by the partition (next phase). Doing this before signal/feedback/
+  // utility/sort means the expensive ranking work only runs on refs that can
+  // actually be processed this run.
   //
   // SM-2 tier for reflect uses promoted/rejected events (recorded by
   // `akm proposal accept/reject`) rather than the per-ref listProposals()
@@ -1174,21 +1061,28 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  // ── Cooldown pre-filter (Bugs B1, D1, D2) ──────────────────────────────────
-  // Three buckets:
-  //   reflectAndDistillRefs  — not reflect-cooled, not validation-failed (normal path)
-  //   distillOnlyRefs        — reflect-cooled, distill-cooldown expired, is a distill
-  //                            candidate → skip reflect but allow distill (Bug D2)
-  //   emit-only              — reflect-cooled AND (distill-cooled OR not a candidate)
-  //                            → emit synthetic skip action and exclude entirely
+  // ── Phase 3: partition postCleanupRefs by cooldown BEFORE signal/sort ─────
+  // Three buckets (validation failures are excluded entirely):
+  //   eligibleRefs        — not reflect-cooled (normal reflect path; distill
+  //                         guard remains in the loop for distill-cooled refs).
+  //   distillOnlyRefs     — reflect-cooled, distill-cooldown expired, is a distill
+  //                         candidate → skip reflect but allow distill (Bug D2).
+  //   fullySkippedCount   — reflect-cooled AND (distill-cooled OR not a candidate)
+  //                         → emit synthetic skip action and exclude from further
+  //                         processing (signal/sort never sees these).
   //
   // Bug D1: distill-cooled distill-candidates that are NOT reflect-cooled have their
   // synthetic distill-skipped action emitted here before any LLM call or budget check.
+  // Bug B1: synthetic skip emissions for the fully-skipped bucket happen here so
+  // telemetry (improve_skipped events with reason=reflect_cooldown/distill_cooldown)
+  // remains accurate even though these refs do not enter ranking.
   const DISTILL_COOLDOWN_DAYS_PREFILT = options.distillCooldownDays ?? 30;
-  const reflectAndDistillRefs: ImproveEligibleRef[] = [];
+  const eligibleRefs: ImproveEligibleRef[] = [];
   const distillOnlyRefs: ImproveEligibleRef[] = [];
+  let fullySkippedCount = 0;
+  const preCooldownCount = postCleanupRefs.length;
 
-  for (const r of actionableRefs) {
+  for (const r of postCleanupRefs) {
     if (validationFailureRefs.has(r.ref)) continue;
 
     const onReflectCooldown = reflectCooledRefs.has(r.ref);
@@ -1209,14 +1103,17 @@ async function runImprovePreparationStage(args: {
           eventsCtx,
         );
       }
-      // Asset is not on reflect cooldown — allow reflect (distill guard is in the loop).
-      reflectAndDistillRefs.push(r);
+      // Asset is not on reflect cooldown — allow reflect (distill-cooled path
+      // already emitted its synthetic action above; the loop's distillCooledRefs
+      // guard prevents the actual distill call).
+      eligibleRefs.push(r);
     } else {
       if (!onDistillCooldown && isDistillCandidate) {
         // Bug D2: reflect-cooled but distill cooldown expired and is a distill candidate.
         distillOnlyRefs.push(r);
       } else {
         // Fully cooled or not a distill candidate — emit synthetic skip and exclude.
+        fullySkippedCount++;
         actions.push({
           ref: r.ref,
           mode: "distill-skipped",
@@ -1227,28 +1124,177 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  // Bug B1 final step: apply --limit to the actually-processable set.
-  const allLoopRefs = [...reflectAndDistillRefs, ...distillOnlyRefs];
+  // ── Phase 4: signal/feedback/utility/sort on the reduced set ──────────────
+  // Everything from here works only on (eligibleRefs ∪ distillOnlyRefs). The
+  // fully-skipped bucket has already been routed and emitted; we deliberately
+  // avoid spending DB/CPU on refs that cannot enter the loop.
+  const processableRefs: ImproveEligibleRef[] = [...eligibleRefs, ...distillOnlyRefs];
+
+  // Gap 6: only surface feedback signals from the last 30 days so that
+  // ancient one-off feedback events don't permanently lock an asset into
+  // every improve run. Assets with only stale signals fall through to the
+  // high-retrieval path (P0-A) or are skipped until new signals arrive.
+  const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
+  const feedbackSinceCutoff = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
+
+  // Pre-compute feedback summary per ref in a single pass so we don't issue
+  // two readEvents({type:"feedback", ref}) per asset (one for signal filtering,
+  // one for ratio computation).
+  const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
+  for (const candidate of processableRefs) {
+    const { events } = readEvents({ type: "feedback", ref: candidate.ref });
+    let hasSignal = false;
+    let positive = 0;
+    let negative = 0;
+    for (const e of events) {
+      if (
+        !hasSignal &&
+        (e.ts ?? "") >= feedbackSinceCutoff &&
+        e.metadata !== undefined &&
+        (typeof e.metadata.signal === "string" || typeof e.metadata.note === "string")
+      ) {
+        hasSignal = true;
+      }
+      if (e.metadata?.signal === "positive") positive++;
+      else if (e.metadata?.signal === "negative") negative++;
+    }
+    feedbackSummary.set(candidate.ref, { hasSignal, positive, negative });
+  }
+
+  const signalFiltered = processableRefs.filter((candidate) => feedbackSummary.get(candidate.ref)?.hasSignal === true);
+
+  // P0-A: also surface zero-feedback assets that have been retrieved many times.
+  const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
+
+  const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
+  const noFeedbackCandidates = processableRefs.filter((r) => !signalBearingSet.has(r.ref));
+
+  let highRetrievalRefs: ImproveEligibleRef[] = [];
+  let dbForRetrieval: import("bun:sqlite").Database | undefined;
+  try {
+    dbForRetrieval = openExistingDatabase();
+    const showEventCount = (
+      dbForRetrieval.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = 'show'").get() as {
+        cnt: number;
+      }
+    ).cnt;
+    if (showEventCount === 0) {
+      warn(
+        "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
+      );
+    }
+    const retrievalCounts = getRetrievalCounts(
+      dbForRetrieval,
+      noFeedbackCandidates.map((r) => r.ref),
+    );
+    highRetrievalRefs = noFeedbackCandidates.filter(
+      (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
+    );
+  } catch {
+    // best-effort: if DB unavailable, highRetrievalRefs stays empty
+  } finally {
+    if (dbForRetrieval) closeDatabase(dbForRetrieval);
+  }
+
+  // If the user explicitly scoped to a single ref, always act on it —
+  // skip the signal/retrieval filter entirely. The filter exists to avoid
+  // noisy "improve everything" runs; it should not gate an intentional
+  // per-ref invocation where the user's explicit choice is the signal.
+  //
+  // For type/all scope with no signals yet (fresh environment), fall back
+  // to all processableRefs so that the first improve run is not a no-op.
+  const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
+  const mergedRefs =
+    scope.mode === "ref"
+      ? processableRefs
+      : options.requireFeedbackSignal
+        ? signalFiltered
+        : signalAndRetrievalRefs.length === 0
+          ? processableRefs
+          : signalAndRetrievalRefs;
+
+  const utilityMap = buildUtilityMap(mergedRefs);
+
+  // Load feedback ratio per ref from the pre-computed summary (no extra DB pass).
+  const feedbackRatios = new Map<string, number>();
+  for (const ref of mergedRefs) {
+    const summary = feedbackSummary.get(ref.ref);
+    const positive = summary?.positive ?? 0;
+    const negative = summary?.negative ?? 0;
+    const total = positive + negative;
+    // ratio = negative proportion (high = needs more improvement)
+    feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
+  }
+
+  // Sort: combine utility (desc) with feedback negativity (desc) — high-negative assets rank higher
+  const sorted = [...mergedRefs].sort((a, b) => {
+    const utilA = utilityMap.get(a.ref) ?? 0;
+    const utilB = utilityMap.get(b.ref) ?? 0;
+    const ratioA = feedbackRatios.get(a.ref) ?? 0;
+    const ratioB = feedbackRatios.get(b.ref) ?? 0;
+    // Combined score: 70% utility, 30% negative ratio
+    const scoreA = utilA * 0.7 + ratioA * 0.3;
+    const scoreB = utilB * 0.7 + ratioB * 0.3;
+    return scoreB - scoreA;
+  });
+
+  // Phase 0: surface coverage gaps from zero-result search queries
+  let coverageGaps: string[] = [];
+  try {
+    const dbForGaps = openExistingDatabase();
+    try {
+      coverageGaps = getZeroResultSearches(dbForGaps);
+    } finally {
+      closeDatabase(dbForGaps);
+    }
+  } catch {
+    // best-effort
+  }
+
+  // actionableRefs is the post-cooldown, post-validation, post-signal, post-sort
+  // set — i.e. the genuinely processable refs in priority order. Note: this is
+  // a semantic shift from earlier code where actionableRefs was the pre-cooldown
+  // sorted set; the new meaning matches reality and is documented on
+  // ImprovePreparationResult.actionableRefs.
+  const actionableRefs = sorted;
+
+  // Re-split actionableRefs (sorted) into reflect-path vs distill-only-path while
+  // preserving sort order. distillOnlyRefs participate in the sort so --limit
+  // picks them by score, not by arbitrary position.
+  const distillOnlyRefSetForSort = new Set(distillOnlyRefs.map((r) => r.ref));
+  const reflectAndDistillRefsAfterSort: ImproveEligibleRef[] = [];
+  const distillOnlyRefsAfterSort: ImproveEligibleRef[] = [];
+  for (const r of actionableRefs) {
+    if (distillOnlyRefSetForSort.has(r.ref)) {
+      distillOnlyRefsAfterSort.push(r);
+    } else {
+      reflectAndDistillRefsAfterSort.push(r);
+    }
+  }
+
+  // ── Phase 5: --limit applies to the post-cooldown actionable set ──────────
+  const allLoopRefs = [...reflectAndDistillRefsAfterSort, ...distillOnlyRefsAfterSort];
   const loopRefs = options.limit ? allLoopRefs.slice(0, options.limit) : allLoopRefs;
 
-  const reflectCooledSkipCount = actionableRefs.filter(
-    (r) => reflectCooledRefs.has(r.ref) && !distillOnlyRefs.some((d) => d.ref === r.ref),
-  ).length;
-  const totalReflectCooled = reflectCooledSkipCount + distillOnlyRefs.length;
+  // Update the returned distillOnlyRefs to the sorted order so callers see the
+  // ranked view (loop stage uses it as a Set so order is irrelevant, but the
+  // shape change keeps downstream consumers consistent).
+  const distillOnlyRefsResult = distillOnlyRefsAfterSort;
+
+  const totalReflectCooled = fullySkippedCount + distillOnlyRefs.length;
   if (totalReflectCooled > 0) {
     info(
-      `[improve] ${totalReflectCooled}/${actionableRefs.length} on reflect cooldown ` +
-        `(${reflectCooledSkipCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
+      `[improve] ${totalReflectCooled} of ${preCooldownCount} eligible refs on reflect cooldown ` +
+        `(${fullySkippedCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
     );
   }
   if (validationFailureRefs.size > 0) {
-    info(`[improve] ${validationFailureRefs.size} assets with validation failures excluded from loop`);
+    info(`[improve] ${validationFailureRefs.size} with validation failures excluded`);
   }
+  const deferredCount = actionableRefs.length - loopRefs.length;
   info(
-    `[improve] ${loopRefs.length} assets will be processed` +
-      (options.limit && allLoopRefs.length > options.limit
-        ? ` (--limit ${options.limit} applied; ${allLoopRefs.length - options.limit} eligible deferred)`
-        : ""),
+    `[improve] ${actionableRefs.length} actionable; ${loopRefs.length} will be processed` +
+      (options.limit && deferredCount > 0 ? ` (--limit ${options.limit} applied; ${deferredCount} deferred)` : ""),
   );
 
   return {
@@ -1264,7 +1310,7 @@ async function runImprovePreparationStage(args: {
     lintSummary,
     loopRefs,
     distillCooledRefs,
-    distillOnlyRefs,
+    distillOnlyRefs: distillOnlyRefsResult,
     coverageGaps,
     recentErrors,
   };
