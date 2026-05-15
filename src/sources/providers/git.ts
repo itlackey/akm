@@ -30,8 +30,6 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 /** Maximum stale age allowed when refresh fails (7 days). */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
-const GIT_STASH_TYPES = new Set(["git"]);
-
 interface ParsedRepoUrl {
   cloneUrl: string;
   ref: string | null;
@@ -476,7 +474,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
     const config = loadConfig();
     const stash = findGitStashByTarget(getSources(config), name);
     if (!stash) throw new UsageError(`No git stash found with name "${name}"`);
-    if (!GIT_STASH_TYPES.has(stash.type)) {
+    if (stash.type !== "git") {
       throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
     }
     if (!stash.url) throw new UsageError(`Stash "${name}" has no URL configured`);
@@ -551,7 +549,7 @@ function findGitStashByTarget(stashes: SourceConfigEntry[], target: string): Sou
 }
 
 function matchesGitStashTarget(stash: SourceConfigEntry, target: string): boolean {
-  if (!GIT_STASH_TYPES.has(stash.type)) return false;
+  if (stash.type !== "git") return false;
   if (stash.name === target || stash.url === target) return true;
   if (!stash.url) return false;
 

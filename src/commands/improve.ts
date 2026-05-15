@@ -169,7 +169,6 @@ export interface AkmImproveResult {
   consolidation?: ConsolidateResult;
   lintSummary?: { fixed: number; flagged: number };
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
-  feedbackRatioUsed?: boolean;
   coverageGaps?: string[];
   executionLogCandidates?: string[];
   evalCasesWritten?: number;
@@ -200,7 +199,6 @@ interface ImprovePreparationResult {
   lintSummary?: { fixed: number; flagged: number };
   loopRefs: ImproveEligibleRef[];
   distillCooledRefs: Set<string>;
-  feedbackRatioUsed: boolean;
   coverageGaps: string[];
   recentErrors: string[];
 }
@@ -381,12 +379,6 @@ function memoryCleanupParentRef(
   return makeAssetRef("memory", parsed.name.slice(0, -".derived".length));
 }
 
-function filterRemovedPlannedRefs(plannedRefs: ImproveEligibleRef[], archivedRefs: string[]): ImproveEligibleRef[] {
-  if (archivedRefs.length === 0) return plannedRefs;
-  const removed = new Set(archivedRefs);
-  return plannedRefs.filter((planned) => !removed.has(planned.ref));
-}
-
 function isLessonCandidate(ref: string): boolean {
   const parsed = parseAssetRef(ref);
   return parsed.type !== "lesson" && parsed.type !== "memory";
@@ -563,7 +555,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
       ...(preparation.lintSummary !== undefined ? { lintSummary: preparation.lintSummary } : {}),
       ...(preparation.memoryIndexHealth !== undefined ? { memoryIndexHealth: preparation.memoryIndexHealth } : {}),
-      feedbackRatioUsed: preparation.feedbackRatioUsed,
       ...(preparation.coverageGaps.length > 0 ? { coverageGaps: preparation.coverageGaps } : {}),
       ...(preparation.executionLogCandidates.length > 0
         ? { executionLogCandidates: preparation.executionLogCandidates }
@@ -635,7 +626,6 @@ function emitImproveCompletedEvent(result: AkmImproveResult): void {
       graphExtractionActions: actionCounts.graphExtraction,
       errorActions: actionCounts.error,
       crossStepErrorsInjected: result.crossStepErrorsInjected ?? 0,
-      feedbackRatioUsed: result.feedbackRatioUsed,
       coverageGapCount: result.coverageGaps?.length ?? 0,
       executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
       evalCasesWritten: result.evalCasesWritten ?? 0,
@@ -735,7 +725,8 @@ async function runImprovePreparationStage(args: {
   }
 
   const archivedRefs = appliedCleanup?.archived.map((record) => record.ref) ?? [];
-  const postCleanupRefs = filterRemovedPlannedRefs(plannedRefs, archivedRefs);
+  const removed = new Set(archivedRefs);
+  const postCleanupRefs = archivedRefs.length === 0 ? plannedRefs : plannedRefs.filter((r) => !removed.has(r.ref));
 
   // Gap 6: only surface feedback signals from the last 30 days so that
   // ancient one-off feedback events don't permanently lock an asset into
@@ -828,8 +819,6 @@ async function runImprovePreparationStage(args: {
     const scoreB = utilB * 0.7 + ratioB * 0.3;
     return scoreB - scoreA;
   });
-  const feedbackRatioUsed = true;
-
   // Phase 0: surface coverage gaps from zero-result search queries
   let coverageGaps: string[] = [];
   try {
@@ -1030,7 +1019,6 @@ async function runImprovePreparationStage(args: {
     lintSummary,
     loopRefs,
     distillCooledRefs,
-    feedbackRatioUsed,
     coverageGaps,
     recentErrors,
   };
