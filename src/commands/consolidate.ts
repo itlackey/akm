@@ -104,44 +104,6 @@ export function isConsolidationEligibleMemoryName(name: string): boolean {
   return !name.endsWith(".derived");
 }
 
-function loadMemoriesFromDb(sourceFilterPath?: string): MemoryEntry[] {
-  let db: ReturnType<typeof openExistingDatabase> | undefined;
-  try {
-    db = openExistingDatabase();
-    const entries: DbIndexedEntry[] = getAllEntries(db, "memory");
-    return entries
-      .filter((e) => {
-        if (!sourceFilterPath) return true;
-        return path.resolve(e.stashDir) === path.resolve(sourceFilterPath);
-      })
-      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name))
-      .map((e) => ({
-        name: e.entry.name,
-        filePath: e.filePath,
-        description: e.entry.description ?? "",
-        tags: e.entry.tags ?? [],
-        stashDir: e.stashDir,
-      }));
-  } catch {
-    return [];
-  } finally {
-    if (db) closeDatabase(db);
-  }
-}
-
-function loadMemoriesFromFs(memoriesDir: string, stashDir: string): MemoryEntry[] {
-  if (!fs.existsSync(memoriesDir)) return [];
-  const entries: MemoryEntry[] = [];
-  for (const fname of fs.readdirSync(memoriesDir)) {
-    if (!fname.endsWith(".md")) continue;
-    const filePath = path.join(memoriesDir, fname);
-    const name = fname.replace(/\.md$/, "");
-    if (!isConsolidationEligibleMemoryName(name)) continue;
-    entries.push({ name, filePath, description: "", tags: [], stashDir });
-  }
-  return entries;
-}
-
 // ── Chunk sizing ─────────────────────────────────────────────────────────────
 
 /**
@@ -901,22 +863,49 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function loadMemoriesForSource(source: string | undefined, stashDir: string, warnings: string[]): MemoryEntry[] {
-  let memories = loadMemoriesFromDb(source ? resolveSourcePath(source) : undefined);
+  // Load from DB first
+  let memories: MemoryEntry[] = [];
+  let db: ReturnType<typeof openExistingDatabase> | undefined;
+  try {
+    db = openExistingDatabase();
+    const entries: DbIndexedEntry[] = getAllEntries(db, "memory");
+    memories = entries
+      .filter((e) => {
+        if (!source) return true;
+        return path.resolve(e.stashDir) === path.resolve(source);
+      })
+      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name))
+      .map((e) => ({
+        name: e.entry.name,
+        filePath: e.filePath,
+        description: e.entry.description ?? "",
+        tags: e.entry.tags ?? [],
+        stashDir: e.stashDir,
+      }));
+  } catch {
+    memories = [];
+  } finally {
+    if (db) closeDatabase(db);
+  }
+
   if (memories.length === 0) {
     // DB fallback: walk filesystem
     const memoriesDir = path.join(source ?? stashDir, "memories");
-    memories = loadMemoriesFromFs(memoriesDir, source ?? stashDir);
+    const fsStashDir = source ?? stashDir;
+    if (fs.existsSync(memoriesDir)) {
+      for (const fname of fs.readdirSync(memoriesDir)) {
+        if (!fname.endsWith(".md")) continue;
+        const filePath = path.join(memoriesDir, fname);
+        const name = fname.replace(/\.md$/, "");
+        if (!isConsolidationEligibleMemoryName(name)) continue;
+        memories.push({ name, filePath, description: "", tags: [], stashDir: fsStashDir });
+      }
+    }
     if (memories.length > 0) {
       warnings.push("DB not found or empty — loaded memories directly from filesystem.");
     }
   }
   return memories;
-}
-
-function resolveSourcePath(sourceName: string): string {
-  // If it looks like an absolute path, use directly
-  if (path.isAbsolute(sourceName)) return sourceName;
-  return sourceName;
 }
 
 async function generateMergedContent(

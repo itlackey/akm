@@ -1,7 +1,5 @@
 import { resolveStashDir } from "../../core/common";
-import type { SourceConfigEntry } from "../../core/config";
 import { ConfigError } from "../../core/errors";
-import type { ProviderContext, SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
 
 /**
@@ -11,34 +9,21 @@ import { registerSourceProvider } from "../provider-factory";
  * just `{ name, kind, init, path }`. No `sync()` — content is the user's
  * own directory, never refreshed by akm.
  */
-class FilesystemSourceProvider implements SourceProvider {
-  readonly kind = "filesystem" as const;
-  readonly name: string;
-  readonly #stashDir: string;
-
-  constructor(entry: SourceConfigEntry) {
-    if (entry.type !== "filesystem") {
-      throw new ConfigError(`FilesystemSourceProvider invoked with type="${entry.type}"`);
-    }
-    this.#stashDir = entry.path ?? resolveStashDir();
-    if (!this.#stashDir) {
-      throw new ConfigError("filesystem source requires a `path`");
-    }
-    this.name = entry.name ?? this.#stashDir;
+registerSourceProvider("filesystem", (entry) => {
+  if (entry.type !== "filesystem") {
+    throw new ConfigError(`filesystem source invoked with type="${entry.type}"`);
   }
-
-  async init(_ctx: ProviderContext): Promise<void> {
-    // Filesystem sources resolve their path eagerly in the constructor;
-    // init has nothing to do beyond letting the registry know we're ready.
+  const stashDir = entry.path ?? resolveStashDir();
+  if (!stashDir) {
+    throw new ConfigError("filesystem source requires a `path`");
   }
-
-  path(): string {
-    return this.#stashDir;
-  }
-}
-
-// ── Self-register ───────────────────────────────────────────────────────────
-
-registerSourceProvider("filesystem", (config) => new FilesystemSourceProvider(config));
-
-export { FilesystemSourceProvider };
+  const name = entry.name ?? stashDir;
+  return {
+    kind: "filesystem" as const,
+    name,
+    async init(_ctx) {},
+    path() {
+      return stashDir;
+    },
+  };
+});

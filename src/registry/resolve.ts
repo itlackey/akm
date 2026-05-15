@@ -396,6 +396,7 @@ async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistr
 
 async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedRegistryArtifact> {
   const gitUrl = `https://github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}.git`;
+  const repoBase = `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`;
 
   // Prefer git-backed installs so private GitHub repos work with the user's
   // normal git credential helper rather than requiring API-specific auth.
@@ -415,7 +416,7 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
 
   if (parsed.requestedRef) {
     const commit = await tryFetchJson<Record<string, unknown>>(
-      `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/commits/${encodeURIComponent(parsed.requestedRef)}`,
+      `${repoBase}/commits/${encodeURIComponent(parsed.requestedRef)}`,
       headers,
     );
     const resolvedRevision = asString(commit?.sha) ?? parsed.requestedRef;
@@ -423,16 +424,13 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
       id: parsed.id,
       source: parsed.source,
       ref: parsed.ref,
-      artifactUrl: `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/tarball/${encodeURIComponent(parsed.requestedRef)}`,
+      artifactUrl: `${repoBase}/tarball/${encodeURIComponent(parsed.requestedRef)}`,
       resolvedRevision,
       resolvedVersion: parsed.requestedRef,
     };
   }
 
-  const latestRelease = await tryFetchJson<Record<string, unknown>>(
-    `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/releases/latest`,
-    headers,
-  );
+  const latestRelease = await tryFetchJson<Record<string, unknown>>(`${repoBase}/releases/latest`, headers);
   if (latestRelease) {
     const tarballUrl = asString(latestRelease.tarball_url);
     if (tarballUrl) {
@@ -447,17 +445,14 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     }
   }
 
-  const repoMeta = await fetchJson<Record<string, unknown>>(
-    `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`,
-    headers,
-  );
+  const repoMeta = await fetchJson<Record<string, unknown>>(repoBase, headers);
   const defaultBranch = asString(repoMeta.default_branch);
   if (!defaultBranch) {
     throw new Error(`Unable to resolve default branch for ${parsed.owner}/${parsed.repo}.`);
   }
 
   const commit = await tryFetchJson<Record<string, unknown>>(
-    `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/commits/${encodeURIComponent(defaultBranch)}`,
+    `${repoBase}/commits/${encodeURIComponent(defaultBranch)}`,
     headers,
   );
 
@@ -465,7 +460,7 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     id: parsed.id,
     source: parsed.source,
     ref: parsed.ref,
-    artifactUrl: `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/tarball/${encodeURIComponent(defaultBranch)}`,
+    artifactUrl: `${repoBase}/tarball/${encodeURIComponent(defaultBranch)}`,
     resolvedVersion: defaultBranch,
     resolvedRevision: asString(commit?.sha) ?? defaultBranch,
   };
@@ -482,16 +477,7 @@ function resolveGitRevisionFromRemote(url: string, requestedRef?: string): strin
 }
 
 async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {
-  validateGitUrl(parsed.url);
-  const ref = parsed.requestedRef ?? "HEAD";
-  if (parsed.requestedRef) validateGitRef(parsed.requestedRef);
-  const result = spawnSync("git", ["ls-remote", parsed.url, ref], { encoding: "utf8", timeout: 30_000 });
-  let resolvedRevision: string | undefined;
-  if (result.status === 0) {
-    const firstLine = result.stdout.trim().split(/\r?\n/)[0];
-    resolvedRevision = firstLine?.split(/\s/)[0] || undefined;
-  }
-
+  const resolvedRevision = resolveGitRevisionFromRemote(parsed.url, parsed.requestedRef);
   return {
     id: parsed.id,
     source: parsed.source,
