@@ -35,6 +35,7 @@ import {
   upsertWorkflowDocument,
   warnIfVecMissing,
 } from "./db";
+import { deleteStoredGraph } from "./graph-db";
 import type { IndexRunContext } from "./index-context";
 import {
   applyCuratedFrontmatter,
@@ -170,6 +171,7 @@ async function runSourceCachePhase(ctx: IndexRunContext): Promise<void> {
           ctx.hadRemovedSources = true;
           deleteEntriesByStashDir(db, dir);
           deleteIndexDirStatesByStashDir(db, dir);
+          deleteStoredGraph(db, dir);
         }
       }
     }

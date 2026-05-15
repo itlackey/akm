@@ -1533,3 +1533,71 @@ test("enhanceDirsWithLlm does not call LLM for entries that are already complete
     globalThis.fetch = originalFetch2;
   }
 });
+
+// ── Regression: graph rows are cleaned up when a stash source is removed ─────
+
+test("akmIndex removes graph rows when a stash source is no longer configured", async () => {
+  const primaryStash = tmpStash();
+  const secondaryStash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-graph-secondary-"));
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
+    fs.mkdirSync(path.join(secondaryStash, sub), { recursive: true });
+  }
+  writeFile(path.join(primaryStash, "knowledge", "primary.md"), "# Primary\n");
+  writeFile(path.join(secondaryStash, "knowledge", "secondary.md"), "# Secondary\n");
+
+  process.env.AKM_STASH_DIR = primaryStash;
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: secondaryStash, name: "secondary" }],
+  });
+
+  // First index: register both stash dirs in index_meta.stashDirs.
+  await akmIndex({ stashDir: primaryStash, full: true });
+
+  // Seed graph rows for the secondary stash directly into the database.
+  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/graph-db");
+  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
+  const seedDb = openDatabase();
+  try {
+    replaceStoredGraph(seedDb, {
+      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+      generatedAt: "2026-05-15T00:00:00.000Z",
+      stashRoot: secondaryStash,
+      files: [
+        {
+          path: path.join(secondaryStash, "knowledge", "secondary.md"),
+          type: "knowledge",
+          entities: ["alpha", "beta"],
+          relations: [{ from: "alpha", to: "beta" }],
+        },
+      ],
+      entities: ["alpha", "beta"],
+      relations: [{ from: "alpha", to: "beta" }],
+      quality: {
+        consideredFiles: 1,
+        extractedFiles: 1,
+        entityCount: 2,
+        relationCount: 1,
+        extractionCoverage: 1,
+        density: 0.5,
+      },
+    });
+  } finally {
+    closeDatabase(seedDb);
+  }
+
+  // Sanity: graph_meta row exists for the secondary stash.
+  const beforeMeta = loadStoredGraphMeta(secondaryStash);
+  expect(beforeMeta).not.toBeNull();
+
+  // Drop the secondary source so it is treated as removed on the next run.
+  saveConfig({ semanticSearchMode: "off", sources: [] });
+
+  await akmIndex({ stashDir: primaryStash });
+
+  // After removal, graph rows for the orphaned stash should be gone.
+  const afterMeta = loadStoredGraphMeta(secondaryStash);
+  expect(afterMeta).toBeNull();
+
+  fs.rmSync(secondaryStash, { recursive: true, force: true });
+});
