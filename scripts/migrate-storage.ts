@@ -1,20 +1,27 @@
 #!/usr/bin/env bun
 /**
- * migrate-storage.ts — One-off migration from legacy akm flat-file locations
- * to the new XDG-compliant directory structure.
+ * migrate-storage.ts — Versioned akm storage migration tool.
  *
  * Usage:
- *   bun scripts/migrate-storage.ts [--dry-run] [--yes]
+ *   bun scripts/migrate-storage.ts [--dry-run] [--yes] [--from <version>] [--list]
  *
  * Flags:
- *   --dry-run   Print what would happen without making any changes (default: false).
- *   --yes       Skip the confirmation prompt and run immediately.
+ *   --dry-run        Print what would happen without making any changes.
+ *   --yes            Skip the confirmation prompt and run immediately.
+ *   --from <ver>     Only run migrations whose source version is >= <ver>.
+ *                    Example: `--from 0.8` skips the 0.7 → 0.8 migration.
+ *   --list           Print the available migrations and exit.
  *
- * Each migration step is independent. If one step fails the others continue.
- * A summary of successes, skips, and failures is printed at the end.
+ * Architecture:
+ *   Each migration version is an object that conforms to MigrationVersion.
+ *   The MIGRATIONS array is executed in order; each `run()` is called only
+ *   when its `isNeeded()` returns true. Within a version, each step is
+ *   independently wrapped so one failure does not block the others.
  *
  * Safety guarantees:
- *   - Never deletes source files. Leaves them in place so rollback is possible.
+ *   - Never deletes source files. Sources are left in place so rollback is
+ *     possible. Some steps may rename a legacy file with a `.migrated`
+ *     suffix to mark it consumed, but contents are preserved.
  *   - Verifies each destination before declaring success.
  *   - Wraps every step in a try/catch so one failure cannot block the rest.
  */
@@ -24,21 +31,29 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
+import { getCacheDir, getConfigDir } from "../src/core/paths";
+
 // ── Argument parsing ─────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
 const YES = args.includes("--yes");
+const LIST_ONLY = args.includes("--list");
+
+function parseFromArg(): string | null {
+  const idx = args.indexOf("--from");
+  if (idx === -1) return null;
+  const val = args[idx + 1];
+  if (!val || val.startsWith("--")) {
+    console.error("Error: --from requires a version argument (e.g. --from 0.8).");
+    process.exit(2);
+  }
+  return val;
+}
+const FROM_VERSION = parseFromArg();
 
 // ── Path resolution ──────────────────────────────────────────────────────────
 
-// Import existing helpers for $CACHE and $CONFIG.
-// These live in the same repo, so we import them directly.
-import { getCacheDir, getConfigDir } from "../src/core/paths.ts";
-
-// $DATA and $STATE helpers don't exist yet in paths.ts — inline XDG logic here.
-// This script is intentionally self-contained so it can run ahead of the main
-// implementation and be distributed as a standalone asset.
 const dataDir =
   process.env.AKM_DATA_DIR?.trim() ??
   (process.env.XDG_DATA_HOME?.trim()
@@ -54,22 +69,44 @@ const stateDir =
 const cacheDir = getCacheDir();
 const configDir = getConfigDir();
 const stateDbPath = path.join(dataDir, "state.db");
+const indexDbPath = path.join(dataDir, "index.db");
+
+export interface ResolvedPaths {
+  cacheDir: string;
+  configDir: string;
+  dataDir: string;
+  stateDir: string;
+  stateDbPath: string;
+  indexDbPath: string;
+}
+
+const PATHS: ResolvedPaths = {
+  cacheDir,
+  configDir,
+  dataDir,
+  stateDir,
+  stateDbPath,
+  indexDbPath,
+};
 
 // ── Result tracking ──────────────────────────────────────────────────────────
 
 type StepStatus = "success" | "skipped" | "failed";
 
-interface StepResult {
+export interface StepResult {
   name: string;
   status: StepStatus;
   detail: string;
 }
 
-const results: StepResult[] = [];
-
-function record(name: string, status: StepStatus, detail: string): void {
-  results.push({ name, status, detail });
+interface VersionRunReport {
+  label: string;
+  ran: boolean;
+  skipReason?: string;
+  results: StepResult[];
 }
+
+const versionReports: VersionRunReport[] = [];
 
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
@@ -79,11 +116,6 @@ function ensureDir(dir: string): void {
   }
 }
 
-/**
- * Copy a single file from src to dest. Verifies the destination exists and
- * has the same byte size as the source before returning.
- * Returns true on success.
- */
 function copyAndVerify(src: string, dest: string): boolean {
   fs.copyFileSync(src, dest);
   const srcStat = fs.statSync(src);
@@ -91,10 +123,6 @@ function copyAndVerify(src: string, dest: string): boolean {
   return destStat.size === srcStat.size;
 }
 
-/**
- * Recursively copy a directory tree from src to dest.
- * Returns { copied, failed } counts.
- */
 function copyDirRecursive(src: string, dest: string): { copied: number; failed: number } {
   let copied = 0;
   let failed = 0;
@@ -124,9 +152,6 @@ function copyDirRecursive(src: string, dest: string): { copied: number; failed: 
   return { copied, failed };
 }
 
-/**
- * Count all regular files in a directory tree recursively.
- */
 function countFilesRecursive(dir: string): number {
   let count = 0;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -139,183 +164,122 @@ function countFilesRecursive(dir: string): number {
   return count;
 }
 
-// ── Dry-run summary ──────────────────────────────────────────────────────────
+// ── Versioned migration types ────────────────────────────────────────────────
 
-function printDryRunSummary(): void {
-  console.log("\nakm storage migration — v0.8 → v0.9 — DRY RUN SUMMARY");
-  console.log("=======================================================");
-  console.log(`  $CACHE  = ${cacheDir}`);
-  console.log(`  $CONFIG = ${configDir}`);
-  console.log(`  $DATA   = ${dataDir}`);
-  console.log(`  $STATE  = ${stateDir}`);
-  console.log();
-  console.log("  Steps:");
-  console.log("    1. index.db          $CACHE → $DATA (copy)");
-  console.log("    2. workflow.db        $CACHE → $DATA (copy)");
-  console.log("    3. events.jsonl       $CACHE → state.db events table (import)");
-  console.log("    4. tasks/history/     $CACHE → $STATE (file copy)");
-  console.log("    5. akm.lock           $CONFIG → $DATA (copy)");
-  console.log("    6. config-backups/    $CACHE → $DATA (recursive copy)");
-  console.log("    7. task history JSONL $CACHE/tasks/history/*.jsonl → state.db task_history (import)");
-  console.log("    8. registry-index/    note: old $CACHE/registry-index/*.json files are ignored in v0.9");
-  console.log();
-
-  const steps: Array<{ src: string; dest: string; note?: string }> = [
-    {
-      src: path.join(cacheDir, "index.db"),
-      dest: path.join(dataDir, "index.db"),
-      note: "copy only — source left in place",
-    },
-    {
-      src: path.join(cacheDir, "workflow.db"),
-      dest: path.join(dataDir, "workflow.db"),
-      note: "copy only — source left in place",
-    },
-    {
-      src: path.join(cacheDir, "events.jsonl"),
-      dest: stateDbPath + " (events table)",
-      note: "JSONL lines imported into state.db — source left in place",
-    },
-    {
-      src: path.join(cacheDir, "tasks", "history"),
-      dest: path.join(stateDir, "tasks", "history"),
-      note: "*.jsonl files copied — sources left in place",
-    },
-    {
-      src: path.join(configDir, "akm.lock"),
-      dest: path.join(dataDir, "akm.lock"),
-      note: "copy only — source left in place; akm reads ONLY from $DATA/akm.lock going forward. " +
-        "If not migrated, akm starts with an empty lockfile and 'akm add' will rebuild it.",
-    },
-    {
-      src: path.join(cacheDir, "config-backups"),
-      dest: path.join(dataDir, "config-backups"),
-      note: "recursive copy — sources left in place",
-    },
-    {
-      src: path.join(cacheDir, "tasks", "history") + "/*.jsonl",
-      dest: stateDbPath + " (task_history table)",
-      note: "JSONL lines parsed as TaskRunResult and upserted into state.db — sources left in place. " +
-        "runner.ts no longer reads JSONL fallback; history in old files is inaccessible without this step.",
-    },
-    {
-      src: path.join(cacheDir, "registry-index", "*.json"),
-      dest: "(none — regenerable)",
-      note: "Old $CACHE/registry-index/*.json files are ignored in v0.9. " +
-        "Registry index cache will be rebuilt on next 'akm registry search'. " +
-        "You may delete these files after migration.",
-    },
-  ];
-
-  for (const [i, s] of steps.entries()) {
-    const srcBase = s.src.replace(/\/\*\.jsonl$/, "");
-    const srcExists = fs.existsSync(srcBase);
-    const destExists = s.dest.includes("state.db") || s.dest.includes("(none")
-      ? false
-      : fs.existsSync(s.dest);
-    const status = !srcExists
-      ? "skip (source not found)"
-      : destExists
-        ? "skip (dest already exists)"
-        : "would migrate";
-    console.log(`  Step ${i + 1}: ${path.basename(s.src)}`);
-    console.log(`      src : ${s.src}`);
-    console.log(`      dest: ${s.dest}`);
-    console.log(`      note: ${s.note}`);
-    console.log(`      status: ${status}`);
-    console.log();
-  }
+export interface MigrationContext {
+  dryRun: boolean;
+  recordStep: (result: StepResult) => void;
+  paths: ResolvedPaths;
 }
 
-// ── Confirmation prompt ──────────────────────────────────────────────────────
-
-async function confirm(): Promise<boolean> {
-  if (YES) return true;
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question("Proceed with migration? [y/N] ", (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === "y");
-    });
-  });
+export interface MigrationVersion {
+  /** Version label, e.g. "0.7 → 0.8" or "0.8 → 0.9". */
+  label: string;
+  /** Lower-bound version key used for --from filtering, e.g. "0.7" or "0.8". */
+  sourceVersion: string;
+  /** Detect whether this migration is needed. Return true only when there is work to do. */
+  isNeeded: (paths: ResolvedPaths) => boolean | Promise<boolean>;
+  /** Run the migration steps. Each step independently catches errors. */
+  run: (ctx: MigrationContext) => Promise<void>;
 }
 
-// ── Migration steps ──────────────────────────────────────────────────────────
+// ── 0.7 → 0.8 step implementations ───────────────────────────────────────────
 
-// Step 1 & 2: Copy a single SQLite database from $CACHE to $DATA.
-function migrateDb(filename: string): void {
-  const src = path.join(cacheDir, filename);
-  const dest = path.join(dataDir, filename);
+function migrateDb(ctx: MigrationContext, filename: string): void {
+  const src = path.join(ctx.paths.cacheDir, filename);
+  const dest = path.join(ctx.paths.dataDir, filename);
 
   if (!fs.existsSync(src)) {
-    record(filename, "skipped", "source not found");
+    ctx.recordStep({ name: filename, status: "skipped", detail: "source not found" });
     return;
   }
   if (fs.existsSync(dest)) {
-    record(filename, "skipped", "destination already exists");
+    ctx.recordStep({ name: filename, status: "skipped", detail: "destination already exists" });
     return;
   }
 
-  ensureDir(dataDir);
+  if (ctx.dryRun) {
+    ctx.recordStep({ name: filename, status: "success", detail: `[dry-run] would copy ${src} → ${dest}` });
+    return;
+  }
+
+  ensureDir(ctx.paths.dataDir);
   const ok = copyAndVerify(src, dest);
   if (ok) {
-    record(filename, "success", `copied to ${dest} — source left at ${src} (delete manually when ready)`);
+    ctx.recordStep({
+      name: filename,
+      status: "success",
+      detail: `copied to ${dest} — source left at ${src} (delete manually when ready)`,
+    });
   } else {
-    record(filename, "failed", `size mismatch after copy: ${src} → ${dest}`);
+    ctx.recordStep({ name: filename, status: "failed", detail: `size mismatch after copy: ${src} → ${dest}` });
   }
 }
 
-// Step 3: Import events.jsonl into state.db events table.
-async function migrateEventsJsonl(): Promise<void> {
-  const src = path.join(cacheDir, "events.jsonl");
+async function migrateEventsJsonl(ctx: MigrationContext): Promise<void> {
+  const src = path.join(ctx.paths.cacheDir, "events.jsonl");
 
   if (!fs.existsSync(src)) {
-    record("events.jsonl → state.db", "skipped", "source not found");
+    ctx.recordStep({ name: "events.jsonl → state.db", status: "skipped", detail: "source not found" });
+    return;
+  }
+
+  if (ctx.dryRun) {
+    ctx.recordStep({
+      name: "events.jsonl → state.db",
+      status: "success",
+      detail: `[dry-run] would import ${src} into ${ctx.paths.stateDbPath}`,
+    });
     return;
   }
 
   try {
-    ensureDir(dataDir);
-
-    // Import using the existing importEventsJsonl helper from state-db.ts.
-    const { openStateDatabase, importEventsJsonl } = await import("../src/core/state-db.ts");
-    const db = openStateDatabase(stateDbPath);
+    ensureDir(ctx.paths.dataDir);
+    const { openStateDatabase, importEventsJsonl } = await import("../src/core/state-db");
+    const db = openStateDatabase(ctx.paths.stateDbPath);
     try {
       const { imported, maxId } = await importEventsJsonl(db, src);
-      record(
-        "events.jsonl → state.db",
-        "success",
-        `imported ${imported} events (max id: ${maxId}) — source left at ${src} (delete manually when ready)`,
-      );
+      ctx.recordStep({
+        name: "events.jsonl → state.db",
+        status: "success",
+        detail: `imported ${imported} events (max id: ${maxId}) — source left at ${src} (delete manually when ready)`,
+      });
     } finally {
       db.close();
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    record("events.jsonl → state.db", "failed", msg);
+    ctx.recordStep({ name: "events.jsonl → state.db", status: "failed", detail: msg });
   }
 }
 
-// Step 4: Copy task history JSONL files from $CACHE to $STATE.
-function migrateTaskHistory(): void {
-  const src = path.join(cacheDir, "tasks", "history");
-  const dest = path.join(stateDir, "tasks", "history");
+function migrateTaskHistory(ctx: MigrationContext): void {
+  const src = path.join(ctx.paths.cacheDir, "tasks", "history");
+  const dest = path.join(ctx.paths.stateDir, "tasks", "history");
 
   if (!fs.existsSync(src)) {
-    record("tasks/history/", "skipped", "source directory not found");
+    ctx.recordStep({ name: "tasks/history/", status: "skipped", detail: "source directory not found" });
     return;
   }
 
   try {
-    ensureDir(dest);
-
     const files = fs.readdirSync(src).filter((f) => f.endsWith(".jsonl"));
 
     if (files.length === 0) {
-      record("tasks/history/", "skipped", "no *.jsonl files found in source directory");
+      ctx.recordStep({ name: "tasks/history/", status: "skipped", detail: "no *.jsonl files found in source directory" });
       return;
     }
+
+    if (ctx.dryRun) {
+      ctx.recordStep({
+        name: "tasks/history/",
+        status: "success",
+        detail: `[dry-run] would copy ${files.length} *.jsonl file(s) from ${src} → ${dest}`,
+      });
+      return;
+    }
+
+    ensureDir(dest);
 
     let copied = 0;
     let failed = 0;
@@ -335,60 +299,83 @@ function migrateTaskHistory(): void {
     }
 
     if (failed === 0) {
-      record(
-        "tasks/history/",
-        "success",
-        `copied ${copied} files to ${dest} — sources left in place (delete manually when ready)`,
-      );
+      ctx.recordStep({
+        name: "tasks/history/",
+        status: "success",
+        detail: `copied ${copied} files to ${dest} — sources left in place (delete manually when ready)`,
+      });
     } else {
-      record("tasks/history/", "failed", `copied ${copied}/${files.length} files; ${failed} failed`);
+      ctx.recordStep({
+        name: "tasks/history/",
+        status: "failed",
+        detail: `copied ${copied}/${files.length} files; ${failed} failed`,
+      });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    record("tasks/history/", "failed", msg);
+    ctx.recordStep({ name: "tasks/history/", status: "failed", detail: msg });
   }
 }
 
-// Step 5: Copy akm.lock from $CONFIG to $DATA.
-function migrateLockfile(): void {
-  const src = path.join(configDir, "akm.lock");
-  const dest = path.join(dataDir, "akm.lock");
+function migrateLockfile(ctx: MigrationContext): void {
+  const src = path.join(ctx.paths.configDir, "akm.lock");
+  const dest = path.join(ctx.paths.dataDir, "akm.lock");
 
   if (!fs.existsSync(src)) {
-    record("akm.lock", "skipped", "source not found");
+    ctx.recordStep({ name: "akm.lock", status: "skipped", detail: "source not found" });
     return;
   }
   if (fs.existsSync(dest)) {
-    record("akm.lock", "skipped", "destination already exists");
+    ctx.recordStep({ name: "akm.lock", status: "skipped", detail: "destination already exists" });
     return;
   }
 
-  ensureDir(dataDir);
+  if (ctx.dryRun) {
+    ctx.recordStep({ name: "akm.lock", status: "success", detail: `[dry-run] would copy ${src} → ${dest}` });
+    return;
+  }
+
+  ensureDir(ctx.paths.dataDir);
   const ok = copyAndVerify(src, dest);
   if (ok) {
-    record(
-      "akm.lock",
-      "success",
-      `copied to ${dest} — source left at ${src}.\n` +
+    ctx.recordStep({
+      name: "akm.lock",
+      status: "success",
+      detail:
+        `copied to ${dest} — source left at ${src}.\n` +
         `      IMPORTANT: akm now reads ONLY from $DATA/akm.lock. If this step is skipped,\n` +
         `      akm will start with an empty lockfile and 'akm add' will rebuild it from scratch.`,
-    );
+    });
   } else {
-    record("akm.lock", "failed", `size mismatch after copy: ${src} → ${dest}`);
+    ctx.recordStep({ name: "akm.lock", status: "failed", detail: `size mismatch after copy: ${src} → ${dest}` });
   }
 }
 
-// Step 6: Copy config-backups/ directory from $CACHE to $DATA.
-function migrateConfigBackups(): void {
-  const src = path.join(cacheDir, "config-backups");
-  const dest = path.join(dataDir, "config-backups");
+function migrateConfigBackups(ctx: MigrationContext): void {
+  const src = path.join(ctx.paths.cacheDir, "config-backups");
+  const dest = path.join(ctx.paths.dataDir, "config-backups");
 
   if (!fs.existsSync(src)) {
-    record("config-backups/", "skipped", "source directory not found");
+    ctx.recordStep({ name: "config-backups/", status: "skipped", detail: "source directory not found" });
     return;
   }
   if (fs.existsSync(dest)) {
-    record("config-backups/", "skipped", "destination already exists");
+    ctx.recordStep({ name: "config-backups/", status: "skipped", detail: "destination already exists" });
+    return;
+  }
+
+  if (ctx.dryRun) {
+    let srcCount = 0;
+    try {
+      srcCount = countFilesRecursive(src);
+    } catch {
+      // best-effort count for dry-run output
+    }
+    ctx.recordStep({
+      name: "config-backups/",
+      status: "success",
+      detail: `[dry-run] would recursively copy ${srcCount} file(s) from ${src} → ${dest}`,
+    });
     return;
   }
 
@@ -398,45 +385,57 @@ function migrateConfigBackups(): void {
     const destCount = fs.existsSync(dest) ? countFilesRecursive(dest) : 0;
 
     if (failed === 0 && destCount === srcCount) {
-      record(
-        "config-backups/",
-        "success",
-        `copied ${copied} files to ${dest} — sources left in place (delete manually when ready)`,
-      );
+      ctx.recordStep({
+        name: "config-backups/",
+        status: "success",
+        detail: `copied ${copied} files to ${dest} — sources left in place (delete manually when ready)`,
+      });
     } else {
-      record(
-        "config-backups/",
-        "failed",
-        `file count mismatch: source ${srcCount}, destination ${destCount}; ${failed} copy errors`,
-      );
+      ctx.recordStep({
+        name: "config-backups/",
+        status: "failed",
+        detail: `file count mismatch: source ${srcCount}, destination ${destCount}; ${failed} copy errors`,
+      });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    record("config-backups/", "failed", msg);
+    ctx.recordStep({ name: "config-backups/", status: "failed", detail: msg });
   }
 }
 
-// Step 7: Parse JSONL task history files and upsert into state.db task_history table.
-async function migrateTaskHistoryToDb(): Promise<void> {
-  const src = path.join(cacheDir, "tasks", "history");
+async function migrateTaskHistoryToDb(ctx: MigrationContext): Promise<void> {
+  const src = path.join(ctx.paths.cacheDir, "tasks", "history");
 
   if (!fs.existsSync(src)) {
-    record("tasks/history/ → state.db", "skipped", "source directory not found");
+    ctx.recordStep({ name: "tasks/history/ → state.db", status: "skipped", detail: "source directory not found" });
     return;
   }
 
   const files = fs.readdirSync(src).filter((f) => f.endsWith(".jsonl"));
 
   if (files.length === 0) {
-    record("tasks/history/ → state.db", "skipped", "no *.jsonl files found in source directory");
+    ctx.recordStep({
+      name: "tasks/history/ → state.db",
+      status: "skipped",
+      detail: "no *.jsonl files found in source directory",
+    });
+    return;
+  }
+
+  if (ctx.dryRun) {
+    ctx.recordStep({
+      name: "tasks/history/ → state.db",
+      status: "success",
+      detail: `[dry-run] would parse ${files.length} *.jsonl file(s) and import rows into ${ctx.paths.stateDbPath}`,
+    });
     return;
   }
 
   try {
-    ensureDir(dataDir);
+    ensureDir(ctx.paths.dataDir);
 
-    const { openStateDatabase, upsertTaskHistory } = await import("../src/core/state-db.ts");
-    const db = openStateDatabase(stateDbPath);
+    const { openStateDatabase, upsertTaskHistory } = await import("../src/core/state-db");
+    const db = openStateDatabase(ctx.paths.stateDbPath);
 
     let imported = 0;
     let failed = 0;
@@ -449,8 +448,6 @@ async function migrateTaskHistoryToDb(): Promise<void> {
 
         for (const line of lines) {
           try {
-            // Each line is a TaskRunResult:
-            //   { id, status, startedAt, finishedAt, durationMs, log, target, detail? }
             const row = JSON.parse(line) as {
               id: string;
               status: string;
@@ -490,97 +487,422 @@ async function migrateTaskHistoryToDb(): Promise<void> {
     }
 
     if (failed === 0) {
-      record(
-        "tasks/history/ → state.db",
-        "success",
-        `imported ${imported} task history row(s) from ${files.length} JSONL file(s) into state.db — sources left in place (delete manually when ready)`,
-      );
+      ctx.recordStep({
+        name: "tasks/history/ → state.db",
+        status: "success",
+        detail: `imported ${imported} task history row(s) from ${files.length} JSONL file(s) into state.db — sources left in place (delete manually when ready)`,
+      });
     } else {
-      record(
-        "tasks/history/ → state.db",
-        "failed",
-        `imported ${imported} row(s); ${failed} line(s) could not be parsed`,
-      );
+      ctx.recordStep({
+        name: "tasks/history/ → state.db",
+        status: "failed",
+        detail: `imported ${imported} row(s); ${failed} line(s) could not be parsed`,
+      });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    record("tasks/history/ → state.db", "failed", msg);
+    ctx.recordStep({ name: "tasks/history/ → state.db", status: "failed", detail: msg });
   }
 }
 
-// Step 8: Note registry index cache files (regenerable — no copy needed).
-function noteRegistryIndexCache(): void {
-  const src = path.join(cacheDir, "registry-index");
+function noteRegistryIndexCache(ctx: MigrationContext): void {
+  const src = path.join(ctx.paths.cacheDir, "registry-index");
 
   if (!fs.existsSync(src)) {
-    record("registry-index/ (note)", "skipped", "no old $CACHE/registry-index/ directory found");
+    ctx.recordStep({ name: "registry-index/ (note)", status: "skipped", detail: "no old $CACHE/registry-index/ directory found" });
     return;
   }
 
-  // Count legacy JSON files (exclude website mirror dirs which use a different naming scheme).
   const legacyFiles = fs.readdirSync(src).filter((f) => f.endsWith(".json") && !f.startsWith("website-"));
 
   if (legacyFiles.length === 0) {
-    record("registry-index/ (note)", "skipped", "no old *.json cache files found");
+    ctx.recordStep({ name: "registry-index/ (note)", status: "skipped", detail: "no old *.json cache files found" });
     return;
   }
 
-  console.log(
-    `\n  Note: found ${legacyFiles.length} old registry-index JSON file(s) in ${src}.` +
-      `\n        These are ignored in v0.9 — data is now stored in the registry_index_cache` +
-      `\n        table in $DATA/index.db and will be rebuilt on next 'akm registry search'.` +
-      `\n        You may safely delete these files after migration:\n` +
-      legacyFiles.map((f) => `          ${path.join(src, f)}`).join("\n"),
-  );
+  if (!ctx.dryRun) {
+    console.log(
+      `\n  Note: found ${legacyFiles.length} old registry-index JSON file(s) in ${src}.` +
+        `\n        These are ignored in v0.9 — data is now stored in the registry_index_cache` +
+        `\n        table in $DATA/index.db and will be rebuilt on next 'akm registry search'.` +
+        `\n        You may safely delete these files after migration:\n` +
+        legacyFiles.map((f) => `          ${path.join(src, f)}`).join("\n"),
+    );
+  }
 
-  record(
-    "registry-index/ (note)",
-    "success",
-    `${legacyFiles.length} old file(s) noted at ${src} — registry index cache will be rebuilt on next ` +
+  ctx.recordStep({
+    name: "registry-index/ (note)",
+    status: "success",
+    detail:
+      `${legacyFiles.length} old file(s) noted at ${src} — registry index cache will be rebuilt on next ` +
       `'akm registry search'. Safe to delete: ${src}/*.json`,
-  );
+  });
 }
 
-// ── Final summary ─────────────────────────────────────────────────────────────
+// ── 0.7 → 0.8 migration ──────────────────────────────────────────────────────
 
-function printSummary(): void {
-  const successes = results.filter((r) => r.status === "success");
-  const skipped = results.filter((r) => r.status === "skipped");
-  const failures = results.filter((r) => r.status === "failed");
+const v07To08Migration: MigrationVersion = {
+  label: "0.7 → 0.8",
+  sourceVersion: "0.7",
+  isNeeded: (paths) => {
+    // Needed if any legacy source exists in the old locations.
+    const candidates = [
+      path.join(paths.cacheDir, "index.db"),
+      path.join(paths.cacheDir, "workflow.db"),
+      path.join(paths.cacheDir, "events.jsonl"),
+      path.join(paths.cacheDir, "tasks", "history"),
+      path.join(paths.configDir, "akm.lock"),
+      path.join(paths.cacheDir, "config-backups"),
+      path.join(paths.cacheDir, "registry-index"),
+    ];
+    return candidates.some((p) => fs.existsSync(p));
+  },
+  run: async (ctx) => {
+    migrateDb(ctx, "index.db"); // Step 1
+    migrateDb(ctx, "workflow.db"); // Step 2
+    await migrateEventsJsonl(ctx); // Step 3
+    migrateTaskHistory(ctx); // Step 4
+    migrateLockfile(ctx); // Step 5
+    migrateConfigBackups(ctx); // Step 6
+    await migrateTaskHistoryToDb(ctx); // Step 7
+    noteRegistryIndexCache(ctx); // Step 8
+  },
+};
 
+// ── 0.8 → 0.9 step: graph file → DB ──────────────────────────────────────────
+
+/**
+ * Candidate locations for legacy file-based graph snapshots. The akm codebase
+ * never wrote graph data to files (since 0.8 graph data lives entirely in
+ * index.db), so this is mostly a forward-looking placeholder. We still scan
+ * a small set of conventional paths so that any external tool that exported
+ * a snapshot can be re-imported.
+ */
+function legacyGraphCandidatePaths(ctx: MigrationContext): string[] {
+  return [
+    path.join(ctx.paths.cacheDir, "graph-snapshot.json"),
+    path.join(ctx.paths.dataDir, "graph-snapshot.json"),
+    path.join(ctx.paths.dataDir, "graph-export.json"),
+  ];
+}
+
+function findLegacyGraphFile(ctx: MigrationContext): string | null {
+  for (const candidate of legacyGraphCandidatePaths(ctx)) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  // Also accept any *.json under $CACHE/graph/ if present.
+  const graphDir = path.join(ctx.paths.cacheDir, "graph");
+  if (fs.existsSync(graphDir) && fs.statSync(graphDir).isDirectory()) {
+    try {
+      const json = fs
+        .readdirSync(graphDir)
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => path.join(graphDir, f));
+      if (json.length > 0) return json[0]!;
+    } catch {
+      // ignored
+    }
+  }
+  return null;
+}
+
+interface LegacyGraphSnapshotShape {
+  schemaVersion?: number;
+  generatedAt?: string;
+  stashRoot?: string;
+  files?: Array<{
+    path: string;
+    type: string;
+    bodyHash?: string;
+    entities?: string[];
+    relations?: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+    confidence?: number;
+  }>;
+  entities?: string[];
+  relations?: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+  quality?: {
+    consideredFiles?: number;
+    extractedFiles?: number;
+    entityCount?: number;
+    relationCount?: number;
+    extractionCoverage?: number;
+    density?: number;
+  };
+}
+
+function validateGraphSnapshot(parsed: unknown): { ok: true; data: LegacyGraphSnapshotShape } | { ok: false; reason: string } {
+  if (parsed == null || typeof parsed !== "object") return { ok: false, reason: "root is not an object" };
+  const obj = parsed as LegacyGraphSnapshotShape;
+  if (typeof obj.stashRoot !== "string" || obj.stashRoot.length === 0) {
+    return { ok: false, reason: "missing string field 'stashRoot'" };
+  }
+  if (!Array.isArray(obj.files)) return { ok: false, reason: "missing array field 'files'" };
+  for (const [i, f] of obj.files.entries()) {
+    if (!f || typeof f !== "object") return { ok: false, reason: `files[${i}] is not an object` };
+    if (typeof f.path !== "string") return { ok: false, reason: `files[${i}].path must be a string` };
+    if (typeof f.type !== "string") return { ok: false, reason: `files[${i}].type must be a string` };
+    if (!Array.isArray(f.entities)) return { ok: false, reason: `files[${i}].entities must be an array` };
+    if (!Array.isArray(f.relations)) return { ok: false, reason: `files[${i}].relations must be an array` };
+  }
+  return { ok: true, data: obj };
+}
+
+async function migrateGraphFileToDb(ctx: MigrationContext): Promise<void> {
+  const name = "Graph snapshot import";
+
+  const legacyFile = findLegacyGraphFile(ctx);
+  if (!legacyFile) {
+    ctx.recordStep({ name, status: "skipped", detail: "no legacy graph file found" });
+    return;
+  }
+
+  if (!fs.existsSync(ctx.paths.indexDbPath)) {
+    ctx.recordStep({
+      name,
+      status: "skipped",
+      detail: `index.db not found at ${ctx.paths.indexDbPath}; run akm to initialize, then re-run this migration`,
+    });
+    return;
+  }
+
+  if (ctx.dryRun) {
+    ctx.recordStep({
+      name,
+      status: "success",
+      detail: `[dry-run] would parse ${legacyFile} and import into ${ctx.paths.indexDbPath} graph tables`,
+    });
+    return;
+  }
+
+  try {
+    const raw = fs.readFileSync(legacyFile, "utf8");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.recordStep({ name, status: "failed", detail: `${legacyFile} is not valid JSON: ${msg}` });
+      return;
+    }
+
+    const validation = validateGraphSnapshot(parsed);
+    if (!validation.ok) {
+      ctx.recordStep({
+        name,
+        status: "failed",
+        detail: `${legacyFile} does not match expected GraphSnapshot shape: ${validation.reason}`,
+      });
+      return;
+    }
+    const snapshot = validation.data;
+
+    const { openExistingDatabase, closeDatabase } = await import("../src/indexer/db");
+    const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/graph-db");
+
+    const db = openExistingDatabase(ctx.paths.indexDbPath);
+    try {
+      const graph = {
+        schemaVersion: snapshot.schemaVersion ?? 2,
+        generatedAt: snapshot.generatedAt ?? new Date().toISOString(),
+        stashRoot: snapshot.stashRoot!,
+        files: (snapshot.files ?? []).map((f) => ({
+          path: f.path,
+          type: f.type,
+          ...(f.bodyHash ? { bodyHash: f.bodyHash } : {}),
+          entities: f.entities ?? [],
+          relations: (f.relations ?? []).map((r) => ({
+            from: r.from,
+            to: r.to,
+            ...(r.type ? { type: r.type } : {}),
+            ...(typeof r.confidence === "number" ? { confidence: r.confidence } : {}),
+          })),
+          ...(typeof f.confidence === "number" ? { confidence: f.confidence } : {}),
+        })),
+        ...(snapshot.entities ? { entities: snapshot.entities } : {}),
+        ...(snapshot.relations
+          ? {
+              relations: snapshot.relations.map((r) => ({
+                from: r.from,
+                to: r.to,
+                ...(r.type ? { type: r.type } : {}),
+                ...(typeof r.confidence === "number" ? { confidence: r.confidence } : {}),
+              })),
+            }
+          : {}),
+        ...(snapshot.quality
+          ? {
+              quality: {
+                consideredFiles: snapshot.quality.consideredFiles ?? 0,
+                extractedFiles: snapshot.quality.extractedFiles ?? 0,
+                entityCount: snapshot.quality.entityCount ?? 0,
+                relationCount: snapshot.quality.relationCount ?? 0,
+                extractionCoverage: snapshot.quality.extractionCoverage ?? 0,
+                density: snapshot.quality.density ?? 0,
+              },
+            }
+          : {}),
+      };
+
+      // GraphFile type from src/indexer/graph-extraction.ts. The cast is safe
+      // because validateGraphSnapshot enforced the required fields above.
+      replaceStoredGraph(db, graph as unknown as Parameters<typeof replaceStoredGraph>[1]);
+
+      const meta = loadStoredGraphMeta(snapshot.stashRoot!, db);
+      if (!meta) {
+        ctx.recordStep({
+          name,
+          status: "failed",
+          detail: `import did not produce a graph_meta row for stash ${snapshot.stashRoot}`,
+        });
+        return;
+      }
+
+      // Rename source so a re-run does not double-import. Contents preserved.
+      const renamed = `${legacyFile}.migrated`;
+      try {
+        fs.renameSync(legacyFile, renamed);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.recordStep({
+          name,
+          status: "success",
+          detail: `imported graph for ${snapshot.stashRoot} into ${ctx.paths.indexDbPath} but could not rename ${legacyFile}: ${msg}`,
+        });
+        return;
+      }
+
+      ctx.recordStep({
+        name,
+        status: "success",
+        detail:
+          `imported graph snapshot from ${legacyFile} into ${ctx.paths.indexDbPath} ` +
+          `(stash ${snapshot.stashRoot}; ${graph.files.length} file(s)). ` +
+          `Source renamed to ${renamed} — delete manually when ready.`,
+      });
+    } finally {
+      closeDatabase(db);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.recordStep({ name, status: "failed", detail: msg });
+  }
+}
+
+// ── 0.8 → 0.9 migration ──────────────────────────────────────────────────────
+
+const v08To09Migration: MigrationVersion = {
+  label: "0.8 → 0.9",
+  sourceVersion: "0.8",
+  isNeeded: (_paths) => {
+    // The graph import step is a no-op when no legacy file exists, but we
+    // still want this migration listed so the user sees the step it would
+    // perform. Returning true ensures the run() executes and records a
+    // "skipped" step rather than silently omitting the whole section.
+    return true;
+  },
+  run: async (ctx) => {
+    await migrateGraphFileToDb(ctx);
+  },
+};
+
+// ── Registry ─────────────────────────────────────────────────────────────────
+
+export const MIGRATIONS: MigrationVersion[] = [v07To08Migration, v08To09Migration];
+
+// ── Confirmation prompt ──────────────────────────────────────────────────────
+
+async function confirm(): Promise<boolean> {
+  if (YES) return true;
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question("Proceed with migration? [y/N] ", (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === "y");
+    });
+  });
+}
+
+// ── --list output ────────────────────────────────────────────────────────────
+
+function printList(): void {
+  console.log("akm storage migrations (in execution order):");
+  for (const m of MIGRATIONS) {
+    console.log(`  • ${m.label}    [sourceVersion=${m.sourceVersion}]`);
+  }
+  console.log();
+  console.log("Resolved paths:");
+  console.log(`  $CACHE  = ${cacheDir}`);
+  console.log(`  $CONFIG = ${configDir}`);
+  console.log(`  $DATA   = ${dataDir}`);
+  console.log(`  $STATE  = ${stateDir}`);
+}
+
+// ── Filtering ────────────────────────────────────────────────────────────────
+
+/**
+ * Compare two dotted version strings ("0.7", "0.8.0", etc.) numerically.
+ * Returns negative if a < b, positive if a > b, 0 if equal.
+ */
+function compareVersion(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/, "")
+      .split(".")
+      .map((p) => Number.parseInt(p, 10))
+      .map((n) => (Number.isFinite(n) ? n : 0));
+  const aa = parse(a);
+  const bb = parse(b);
+  const len = Math.max(aa.length, bb.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (aa[i] ?? 0) - (bb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function filteredMigrations(): MigrationVersion[] {
+  if (!FROM_VERSION) return MIGRATIONS;
+  return MIGRATIONS.filter((m) => compareVersion(m.sourceVersion, FROM_VERSION) >= 0);
+}
+
+// ── Summary printing ─────────────────────────────────────────────────────────
+
+function printGroupedSummary(): void {
   console.log("\nakm storage migration — RESULTS");
   console.log("================================");
 
-  if (successes.length > 0) {
-    console.log(`\nMigrated (${successes.length}):`);
-    for (const r of successes) {
-      console.log(`  ✓ ${r.name}`);
-      console.log(`      ${r.detail}`);
+  let totalFailures = 0;
+
+  for (const report of versionReports) {
+    console.log(`\n=== Migration: ${report.label} ===`);
+    if (!report.ran) {
+      console.log(`  (not run — ${report.skipReason ?? "isNeeded returned false"})`);
+      continue;
+    }
+    if (report.results.length === 0) {
+      console.log("  (no steps recorded)");
+      continue;
+    }
+    for (const r of report.results) {
+      const glyph = r.status === "success" ? "✓" : r.status === "skipped" ? "⊘" : "✗";
+      console.log(`  ${glyph} ${r.name}${r.status === "skipped" ? ` — ${r.detail}` : ""}`);
+      if (r.status !== "skipped") {
+        console.log(`      ${r.detail}`);
+      }
+      if (r.status === "failed") totalFailures += 1;
     }
   }
 
-  if (skipped.length > 0) {
-    console.log(`\nSkipped (${skipped.length}):`);
-    for (const r of skipped) {
-      console.log(`  - ${r.name} — ${r.detail}`);
-    }
-  }
-
-  if (failures.length > 0) {
-    console.log(`\nFailed (${failures.length}):`);
-    for (const r of failures) {
-      console.log(`  ✗ ${r.name}`);
-      console.log(`      ${r.detail}`);
-    }
-    console.log();
+  if (totalFailures > 0) {
+    console.log(`\n${totalFailures} step(s) failed.`);
     process.exitCode = 1;
   } else {
     console.log("\nMigration complete. No errors.");
   }
 
-  if (successes.length > 0) {
-    console.log(`
-Old files at the original locations are safe to delete manually:
+  console.log(`
+Old files at the original locations are safe to delete manually after verifying akm works:
   ${path.join(cacheDir, "index.db")}
   ${path.join(cacheDir, "workflow.db")}
   ${path.join(cacheDir, "events.jsonl")}
@@ -588,9 +910,7 @@ Old files at the original locations are safe to delete manually:
   ${path.join(cacheDir, "config-backups")}
   ${path.join(configDir, "akm.lock")}
 
-Run 'akm' to verify everything works before deleting.
-
-Next step — repopulate graph data:
+Next step — repopulate graph data (if migrating from 0.7):
   The 0.8.0 graph schema redesign (DB_VERSION 12 → 13) rebuilds the graph
   tables in index.db. Non-graph tables regenerate automatically on first
   open, but graph extraction requires LLM calls. Run:
@@ -599,38 +919,110 @@ Next step — repopulate graph data:
   graph-boosted search ranking) have data to work with. See
   docs/migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade.
 `);
+}
+
+// ── Runner ───────────────────────────────────────────────────────────────────
+
+export async function runMigrations(opts: { dryRun: boolean; paths?: ResolvedPaths } = { dryRun: DRY_RUN }): Promise<VersionRunReport[]> {
+  const paths = opts.paths ?? PATHS;
+  const reports: VersionRunReport[] = [];
+
+  const migrations = filteredMigrations();
+
+  for (const migration of migrations) {
+    const stepResults: StepResult[] = [];
+    const ctx: MigrationContext = {
+      dryRun: opts.dryRun,
+      recordStep: (r) => stepResults.push(r),
+      paths,
+    };
+
+    let needed = false;
+    try {
+      needed = await migration.isNeeded(paths);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reports.push({
+        label: migration.label,
+        ran: false,
+        skipReason: `isNeeded() threw: ${msg}`,
+        results: [],
+      });
+      continue;
+    }
+
+    if (!needed) {
+      reports.push({ label: migration.label, ran: false, skipReason: "isNeeded() returned false", results: [] });
+      continue;
+    }
+
+    try {
+      await migration.run(ctx);
+      reports.push({ label: migration.label, ran: true, results: stepResults });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      stepResults.push({ name: "(migration aborted)", status: "failed", detail: msg });
+      reports.push({ label: migration.label, ran: true, results: stepResults });
+    }
   }
+
+  return reports;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  printDryRunSummary();
+  if (LIST_ONLY) {
+    printList();
+    return;
+  }
+
+  console.log("akm storage migration");
+  console.log("=====================");
+  console.log(`  $CACHE  = ${cacheDir}`);
+  console.log(`  $CONFIG = ${configDir}`);
+  console.log(`  $DATA   = ${dataDir}`);
+  console.log(`  $STATE  = ${stateDir}`);
+  console.log();
+  console.log("Planned migrations (after --from filter):");
+  for (const m of filteredMigrations()) {
+    console.log(`  • ${m.label}`);
+  }
+  if (FROM_VERSION) console.log(`  (filtered: --from ${FROM_VERSION})`);
+  console.log();
+
+  if (!DRY_RUN) {
+    const proceed = await confirm();
+    if (!proceed) {
+      console.log("Aborted. No changes made.");
+      return;
+    }
+  } else {
+    console.log("[dry-run] No changes will be written.\n");
+  }
+
+  const reports = await runMigrations({ dryRun: DRY_RUN, paths: PATHS });
+  versionReports.push(...reports);
+
+  printGroupedSummary();
 
   if (DRY_RUN) {
     console.log("Dry run complete. No changes made.");
-    return;
   }
-
-  const proceed = await confirm();
-  if (!proceed) {
-    console.log("Aborted. No changes made.");
-    return;
-  }
-
-  console.log("\nRunning migration steps...\n");
-
-  // Steps run independently — each is wrapped in its own error handling.
-  migrateDb("index.db");                   // Step 1
-  migrateDb("workflow.db");                // Step 2
-  await migrateEventsJsonl();              // Step 3
-  migrateTaskHistory();                    // Step 4
-  migrateLockfile();                       // Step 5
-  migrateConfigBackups();                  // Step 6
-  await migrateTaskHistoryToDb();          // Step 7
-  noteRegistryIndexCache();                // Step 8
-
-  printSummary();
 }
 
-await main();
+// Run main only when this file is executed directly (not when imported by tests).
+const invokedDirectly = (() => {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return false;
+    const here = new URL(import.meta.url).pathname;
+    return path.resolve(entry) === here;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) {
+  await main();
+}
