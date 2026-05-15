@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
@@ -48,12 +49,17 @@ export function isAssetType(type: string): type is AkmAssetType {
 /**
  * Write content to a file atomically via a temp file + rename.
  * Prevents partial-write corruption on crash.
- * An optional `mode` (e.g. 0o600) is applied with `chmod` after the rename.
+ * The temp file is opened with the target `mode` (default 0o600) from the
+ * start, so it is never world-readable even briefly.
  */
 export function writeFileAtomic(target: string, content: string, mode?: number): void {
-  const tmp = `${target}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  fs.writeFileSync(tmp, content, "utf8");
-  if (mode !== undefined) fs.chmodSync(tmp, mode);
+  const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
+  const fd = fs.openSync(tmp, "w", mode ?? 0o600);
+  try {
+    fs.writeSync(fd, content);
+  } finally {
+    fs.closeSync(fd);
+  }
   fs.renameSync(tmp, target);
 }
 
