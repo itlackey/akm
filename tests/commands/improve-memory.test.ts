@@ -1112,7 +1112,12 @@ describe("akm improve memory cleanup", () => {
       },
       graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
         callOrder.push("graphExtraction");
-        expect(options).toBeUndefined();
+        // Phase 1 perf fix: improve now passes candidatePaths filtered to refs
+        // actually touched this run (here: memory:vpn). The set must include
+        // the resolved file for the processed memory so graph extraction can
+        // rescan only the changed files.
+        expect(options?.candidatePaths).toBeDefined();
+        expect(options?.candidatePaths?.size).toBeGreaterThan(0);
         return {
           considered: 1,
           extracted: 1,

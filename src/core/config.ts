@@ -422,24 +422,28 @@ export interface OutputConfig {
  * configuration is deliberately out of scope — any non-boolean value for
  * `llm`, or any other key, fails at config load with a `ConfigError`.
  *
- * Batch-size knobs (opt-in, default 1 preserves existing single-asset
- * behaviour):
+ * Batch-size knobs:
  *   - `graphExtractionBatchSize` — how many asset bodies to pack into one
- *     graph-extraction LLM call. Default: 1 (one call per asset).
+ *     graph-extraction LLM call. Default: 4 (chosen to amortise per-call HTTP
+ *     overhead while staying within typical 8K–16K context windows). When
+ *     `llm.contextLength` is set, the runtime clamps the effective batch size
+ *     via {@link resolveBatchSize} to fit within the context window.
  *   - `graphExtractionIncludeTypes` — asset types eligible for graph extraction.
  *     Default: ["memory", "knowledge"] (backwards compatible).
  *   - `memoryInferenceBatchSize` — same for the memory-inference pass.
  *     Default: 1 (one call per memory).
- * Set to values > 1 to amortise LLM HTTP round-trips across multiple assets.
+ * Set higher values to amortise LLM HTTP round-trips across more assets.
  */
 export interface IndexPassConfig {
   /** When `false`, the pass skips its LLM call even if `akm.llm` is set. */
   llm?: boolean;
   /**
    * Number of asset bodies to batch into a single graph-extraction LLM call.
-   * Default: 1 (one call per asset — existing behaviour, fully opt-in).
-   * Practical range: 1–10. Higher values reduce HTTP round-trips at the cost
-   * of larger prompts; values above ~10 risk hitting context limits.
+   * Default: {@link DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE} (4). Practical range:
+   * 1–10. Higher values reduce HTTP round-trips at the cost of larger prompts;
+   * values above ~10 risk hitting context limits. The effective value is
+   * additionally clamped at runtime by {@link resolveBatchSize} when
+   * `llm.contextLength` is set.
    */
   graphExtractionBatchSize?: number;
   /**
@@ -462,6 +466,38 @@ export interface IndexPassConfig {
  * configure via the same shape) but their entries are validated for shape.
  */
 export type IndexConfig = Record<string, IndexPassConfig>;
+
+/**
+ * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
+ * empirically: 4 amortises the per-call HTTP overhead 4× while keeping the
+ * combined prompt size well under common 8K/16K context windows (each body is
+ * sliced to ~4000 chars in the graph-extract prompt builder).
+ */
+export const DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE = 4;
+
+/**
+ * Approximate character budget per asset body inside a batched
+ * graph-extraction prompt — used by {@link resolveBatchSize} to derive a
+ * context-window ceiling when `llm.contextLength` is configured. Keeping this
+ * conservative leaves room for the JSON wrapper, instructions, and the model's
+ * own reply tokens.
+ */
+const GRAPH_EXTRACTION_CHARS_PER_BODY = 8000;
+
+/**
+ * Clamp a configured batch size against the model's known context window.
+ *
+ * `configured` defaults to {@link DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE} when
+ * `undefined`. When `contextLength` is provided, the result is the smaller of
+ * `configured` and `floor(contextLength / GRAPH_EXTRACTION_CHARS_PER_BODY)`,
+ * with a floor of 1 so the batched path always processes at least one body.
+ */
+export function resolveBatchSize(configured: number | undefined, contextLength?: number): number {
+  const base = configured && configured > 0 ? configured : DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
+  if (!contextLength || contextLength <= 0) return base;
+  const ceiling = Math.max(1, Math.floor(contextLength / GRAPH_EXTRACTION_CHARS_PER_BODY));
+  return Math.max(1, Math.min(base, ceiling));
+}
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 

@@ -37,13 +37,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { concurrentMap } from "../core/concurrent";
-import type { AkmConfig } from "../core/config";
+import { type AkmConfig, resolveBatchSize } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import type { GraphRelation } from "../llm/graph-extract";
 import * as graphExtract from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { computeBodyHash, GRAPH_SCHEMA_VERSION, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import {
+  computeBodyHash,
+  GRAPH_SCHEMA_VERSION,
+  getLlmCacheEntriesByRefs,
+  type LlmCacheEntry,
+  upsertLlmCacheEntry,
+} from "./db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "./graph-db";
 import { deduplicateGraph } from "./graph-dedup";
 import { withLlmCache } from "./llm-cache";
@@ -370,9 +376,10 @@ export async function runGraphExtractionPass(
   let extracted = 0;
   onProgress?.({ processed, total: considered, extracted, totalEntities, totalRelations });
 
-  // Read the configured batch size. Default of 1 preserves the existing
-  // per-asset behaviour and is fully opt-in.
-  const batchSize = config.index?.graph?.graphExtractionBatchSize ?? 1;
+  // Resolve the effective batch size. Falls back to
+  // DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE (4) when unset, and clamps against
+  // `llm.contextLength` if the model's context window is configured.
+  const batchSize = resolveBatchSize(config.index?.graph?.graphExtractionBatchSize, llmConfig.contextLength);
 
   const onFallback = (evt: { feature: string; reason: string }) => {
     warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
@@ -390,7 +397,8 @@ export async function runGraphExtractionPass(
 
         let cached: GraphCacheShape | undefined;
         if (db) {
-          // withLlmCache handles hash computation, cache lookup, LLM call, and cache write.
+          // withLlmCache handles cache lookup, LLM call, and cache write.
+          // We pass the precomputed bodyHash to avoid re-hashing inside the wrapper.
           // When cache misses and this run is not forced, attempt graph-node reuse before LLM.
           cached = await withLlmCache<GraphCacheShape>(
             db,
@@ -417,24 +425,11 @@ export async function runGraphExtractionPass(
               };
             },
             validateGraphCacheShape,
+            bodyHash,
           );
         } else if (!(reEnrich ?? false)) {
+          // No DB — best-effort reuse from the previous in-memory graph.
           cached = reuseGraphNode(previousNodes, candidate, bodyHash);
-        }
-
-        if (!cached) {
-          const extraction = await graphExtract.extractGraphFromBody(
-            llmConfig,
-            candidate.body,
-            signal,
-            config,
-            onFallback,
-          );
-          cached = {
-            entities: extraction.entities,
-            relations: extraction.relations,
-            ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
-          };
         }
 
         if (!cached || cached.entities.length === 0) return undefined;
@@ -469,10 +464,21 @@ export async function runGraphExtractionPass(
 
         // Pre-resolve cache hits for this chunk; track which positions need LLM.
         const bodyHashes: string[] = chunk.map((c) => computeBodyHash(c.body));
+        // Batch the cache lookup: one IN(...) query for the whole chunk instead
+        // of N individual SELECTs. The map covers every ref in this chunk that
+        // has any cached row; the per-position hash check happens below.
+        const chunkCache: Map<string, LlmCacheEntry> =
+          db && !reEnrich
+            ? getLlmCacheEntriesByRefs(
+                db,
+                chunk.map((c) => c.absPath),
+              )
+            : new Map();
         const needsLlm: boolean[] = chunk.map((c, j) => {
           if (!db || reEnrich) return true;
-          const cached = getLlmCacheEntry(db, c.absPath, bodyHashes[j] ?? "");
-          if (!cached) return true;
+          const cached = chunkCache.get(c.absPath);
+          // Hash mismatch → body changed, treat as cache miss.
+          if (!cached || cached.bodyHash !== (bodyHashes[j] ?? "")) return true;
           try {
             const parsed = validateGraphCacheShape(JSON.parse(cached.resultJson));
             if (!parsed) return true;

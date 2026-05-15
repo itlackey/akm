@@ -14,13 +14,17 @@ import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
  * otherwise calls llmFn(), caches the result, and returns it.
  * Returns undefined if llmFn() returns undefined or throws.
  *
- * @param db        - SQLite database holding the LLM result cache.
- * @param cacheKey  - Stable identifier for this asset (typically its absolute path).
- * @param body      - The content being processed; its hash determines cache validity.
- * @param reEnrich  - When true the cache is bypassed and llmFn() is always called.
- * @param llmFn     - Async function that performs the actual LLM call.
- * @param validate  - Converts the raw parsed JSON back into the pass-specific type;
- *                    returns undefined when the cached data is unusable.
+ * @param db            - SQLite database holding the LLM result cache.
+ * @param cacheKey      - Stable identifier for this asset (typically its absolute path).
+ * @param body          - The content being processed; its hash determines cache validity.
+ * @param reEnrich      - When true the cache is bypassed and llmFn() is always called.
+ * @param llmFn         - Async function that performs the actual LLM call.
+ * @param validate      - Converts the raw parsed JSON back into the pass-specific type;
+ *                        returns undefined when the cached data is unusable.
+ * @param precomputedHash - Optional precomputed SHA-256 of `body`. When provided,
+ *                          the wrapper skips its internal hashing — callers that
+ *                          already hashed the body (e.g. to reuse it elsewhere)
+ *                          should pass this to avoid the redundant work.
  */
 export async function withLlmCache<T>(
   db: Database,
@@ -29,8 +33,9 @@ export async function withLlmCache<T>(
   reEnrich: boolean,
   llmFn: () => Promise<T | undefined>,
   validate: (raw: unknown) => T | undefined,
+  precomputedHash?: string,
 ): Promise<T | undefined> {
-  const bodyHash = computeBodyHash(body);
+  const bodyHash = precomputedHash ?? computeBodyHash(body);
   if (!reEnrich) {
     try {
       const cached = getLlmCacheEntry(db, cacheKey, bodyHash);

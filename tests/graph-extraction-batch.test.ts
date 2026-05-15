@@ -177,7 +177,7 @@ describe("runGraphExtractionPass — batch path", () => {
     }
   });
 
-  test("(h) default batchSize=1 uses per-asset path and behaves identically to original implementation", async () => {
+  test("(h) explicit batchSize=1 uses per-asset path and behaves identically to original implementation", async () => {
     writeMemory("m1", "Alpha body.");
     writeMemory("m2", "Beta body.");
 
@@ -189,11 +189,17 @@ describe("runGraphExtractionPass — batch path", () => {
       return { entities: [], relations: [] };
     };
 
-    // Use default (no graphExtractionBatchSize → defaults to 1).
+    // Phase 1 perf fix: the default batch size moved from 1 → 4, so callers
+    // that want the per-asset path must opt in with batchSize=1 explicitly.
     const db = openDatabase(path.join(tmpStash, "graph-default.db"));
     let result: GraphExtractionResult;
     try {
-      result = await runGraphExtractionPass(makeConfig(), sources(), undefined, db);
+      result = await runGraphExtractionPass(
+        makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
+        sources(),
+        undefined,
+        db,
+      );
     } finally {
       closeDatabase(db);
     }

@@ -1826,12 +1826,38 @@ async function runImproveMaintenancePasses(args: {
             config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
           );
         }
-        graphExtraction = await graphExtractionFn(config, sources, undefined, db, false, (event) => {
+        // Restrict graph extraction to refs actually touched this run. Without
+        // this filter the pass rescans the entire corpus on every improve call
+        // (cache hits still incur a per-file disk read + hash). When no refs
+        // were processed, fall back to a full scan (no candidatePaths option).
+        const touchedRefs = new Set<string>();
+        for (const r of args.actionableRefs) touchedRefs.add(r.ref);
+        for (const r of memoryRefsForInference) touchedRefs.add(r);
+        let candidatePaths: Set<string> | undefined;
+        if (touchedRefs.size > 0 && primaryStashDir) {
+          const writableDirSet = new Set(getWritableStashDirs(primaryStashDir).map((d) => path.resolve(d)));
+          const resolved = await Promise.all(
+            [...touchedRefs].map((ref) => findAssetFilePath(ref, primaryStashDir, writableDirSet).catch(() => null)),
+          );
+          candidatePaths = new Set(resolved.filter((p): p is string => typeof p === "string" && p.length > 0));
+          if (candidatePaths.size === 0) candidatePaths = undefined;
+        }
+        const progressHandler = (event: {
+          processed: number;
+          total: number;
+          extracted: number;
+          totalEntities: number;
+          totalRelations: number;
+          currentPath?: string;
+        }) => {
           const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
           info(
             `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
           );
-        });
+        };
+        graphExtraction = candidatePaths
+          ? await graphExtractionFn(config, sources, undefined, db, false, progressHandler, { candidatePaths })
+          : await graphExtractionFn(config, sources, undefined, db, false, progressHandler);
         graphExtractionDurationMs = Date.now() - extractionStart;
         actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
         info(
