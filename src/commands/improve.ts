@@ -4,7 +4,7 @@ import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
-import { ConfigError, NotFoundError } from "../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import {
@@ -43,6 +43,7 @@ import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-so
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
+import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { akmLint } from "./lint/index";
 import { type AkmReflectResult, akmReflect } from "./reflect";
@@ -119,7 +120,15 @@ export interface ImproveEligibleRef {
 
 export interface ImproveActionResult {
   ref: string;
-  mode: "reflect" | "distill" | "distill-skipped" | "memory-prune" | "memory-inference" | "graph-extraction" | "error";
+  mode:
+    | "reflect"
+    | "reflect-failed"
+    | "distill"
+    | "distill-skipped"
+    | "memory-prune"
+    | "memory-inference"
+    | "graph-extraction"
+    | "error";
   result:
     | AkmReflectResult
     | AkmDistillResult
@@ -174,7 +183,7 @@ export interface AkmImproveResult {
   evalCasesWritten?: number;
   deadUrls?: DeadUrl[];
   /** Number of reflect calls that had at least one error in the rolling window at call time. */
-  crossStepErrorsInjected?: number;
+  reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
 }
@@ -206,7 +215,7 @@ interface ImprovePreparationResult {
 }
 
 interface ImproveLoopResult {
-  crossStepErrorsInjected: number;
+  reflectsWithErrorContext: number;
   memoryRefsForInference: Set<string>;
 }
 
@@ -217,12 +226,16 @@ interface ImprovePostLoopResult {
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
   maintenanceActions?: ImproveActionResult[];
+  memoryInferenceDurationMs: number;
+  graphExtractionDurationMs: number;
 }
 
 interface ImproveMaintenanceResult {
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
   actions?: ImproveActionResult[];
+  memoryInferenceDurationMs: number;
+  graphExtractionDurationMs: number;
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -541,7 +554,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       budgetMs,
     });
 
-    const { crossStepErrorsInjected, memoryRefsForInference } = await runImproveLoopStage({
+    const { reflectsWithErrorContext, memoryRefsForInference } = await runImproveLoopStage({
       scope,
       options,
       primaryStashDir,
@@ -557,18 +570,26 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       budgetMs,
     });
 
-    const { allWarnings, consolidation, deadUrls, memoryInference, graphExtraction, maintenanceActions } =
-      await runImprovePostLoopStage({
-        scope,
-        options,
-        primaryStashDir,
-        actionableRefs: preparation.actionableRefs,
-        appliedCleanup: preparation.appliedCleanup,
-        cleanupWarnings: preparation.cleanupWarnings,
-        memorySummary,
-        memoryRefsForInference,
-        reindexFn,
-      });
+    const {
+      allWarnings,
+      consolidation,
+      deadUrls,
+      memoryInference,
+      graphExtraction,
+      maintenanceActions,
+      memoryInferenceDurationMs,
+      graphExtractionDurationMs,
+    } = await runImprovePostLoopStage({
+      scope,
+      options,
+      primaryStashDir,
+      actionableRefs: preparation.actionableRefs,
+      appliedCleanup: preparation.appliedCleanup,
+      cleanupWarnings: preparation.cleanupWarnings,
+      memorySummary,
+      memoryRefsForInference,
+      reindexFn,
+    });
 
     const finalActions =
       maintenanceActions && maintenanceActions.length > 0
@@ -616,12 +637,23 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         : {}),
       ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
       ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
-      ...(crossStepErrorsInjected > 0 ? { crossStepErrorsInjected } : {}),
+      ...(reflectsWithErrorContext > 0 ? { reflectsWithErrorContext } : {}),
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
     };
-    if (!result.dryRun) emitImproveCompletedEvent(result);
+    if (!result.dryRun) emitImproveCompletedEvent(result, { memoryInferenceDurationMs, graphExtractionDurationMs });
     return result;
+  } catch (err) {
+    // D3: emit improve_failed on unexpected crash so dashboards can detect failures.
+    appendEvent({
+      eventType: "improve_failed",
+      ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
+      metadata: {
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startMs,
+      },
+    });
+    throw err;
   } finally {
     try {
       fs.unlinkSync(resolvedLockPath);
@@ -631,9 +663,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   }
 }
 
-function emitImproveCompletedEvent(result: AkmImproveResult): void {
+function emitImproveCompletedEvent(
+  result: AkmImproveResult,
+  durations: { memoryInferenceDurationMs: number; graphExtractionDurationMs: number },
+): void {
   const actionCounts = {
     reflect: 0,
+    reflectFailed: 0,
     distill: 0,
     distillSkipped: 0,
     memoryPrune: 0,
@@ -645,6 +681,9 @@ function emitImproveCompletedEvent(result: AkmImproveResult): void {
     switch (action.mode) {
       case "reflect":
         actionCounts.reflect += 1;
+        break;
+      case "reflect-failed":
+        actionCounts.reflectFailed += 1;
         break;
       case "distill":
         actionCounts.distill += 1;
@@ -680,7 +719,8 @@ function emitImproveCompletedEvent(result: AkmImproveResult): void {
       memoryInferenceActions: actionCounts.memoryInference,
       graphExtractionActions: actionCounts.graphExtraction,
       errorActions: actionCounts.error,
-      crossStepErrorsInjected: result.crossStepErrorsInjected ?? 0,
+      reflectFailedActions: actionCounts.reflectFailed,
+      reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
       coverageGapCount: result.coverageGaps?.length ?? 0,
       executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
       evalCasesWritten: result.evalCasesWritten ?? 0,
@@ -696,9 +736,10 @@ function emitImproveCompletedEvent(result: AkmImproveResult): void {
       consolidationProcessed: result.consolidation?.processed ?? 0,
       consolidationDurationMs: result.consolidation?.durationMs ?? 0,
       memoryInferenceWrites: result.memoryInference?.writtenFacts ?? 0,
-      memoryInferenceDurationMs: 0,
+      memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
       graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
-      graphExtractionDurationMs: 0,
+      graphExtractionDurationMs: durations.graphExtractionDurationMs,
+      feedbackRatioUsed: true,
     },
   });
 }
@@ -757,10 +798,12 @@ async function runImprovePreparationStage(args: {
     // best-effort
   }
 
+  // eligibleCount = raw pre-filter count (before cooldown/signal/cleanup filters).
+  // improve_completed.plannedRefs = post-filter count of refs that actually entered the loop.
   appendEvent({
     eventType: "improve_invoked",
     ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-    metadata: { scope, dryRun: options.dryRun ?? false, assetCount: plannedRefs.length },
+    metadata: { scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
   });
 
   if (primaryStashDir) {
@@ -1033,14 +1076,30 @@ async function runImprovePreparationStage(args: {
 
     if (DISTILL_COOLDOWN_DAYS > 0) {
       const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+      // B5: track both queued and validation_failed outcomes for cooldown.
+      // validation_failed assets previously were never cooled so they re-distilled on every run.
+      const validationFailedCooldownMs = Math.ceil(DISTILL_COOLDOWN_DAYS / 2) * 24 * 60 * 60 * 1000;
       const latestQueuedDistill = new Map<string, string>();
+      const latestValidationFailed = new Map<string, string>();
       for (const e of bulkDistills) {
         if (e.ref && e.metadata?.outcome === "queued" && (e.ts ?? "") > (latestQueuedDistill.get(e.ref) ?? "")) {
           latestQueuedDistill.set(e.ref, e.ts ?? "");
         }
+        if (
+          e.ref &&
+          e.metadata?.outcome === "validation_failed" &&
+          (e.ts ?? "") > (latestValidationFailed.get(e.ref) ?? "")
+        ) {
+          latestValidationFailed.set(e.ref, e.ts ?? "");
+        }
       }
       for (const [ref, lastTs] of latestQueuedDistill) {
         if (lastTs && Date.now() - new Date(lastTs).getTime() < distillCooldownMs) {
+          distillCooledRefs.add(ref);
+        }
+      }
+      for (const [ref, lastTs] of latestValidationFailed) {
+        if (lastTs && Date.now() - new Date(lastTs).getTime() < validationFailedCooldownMs) {
           distillCooledRefs.add(ref);
         }
       }
@@ -1168,7 +1227,7 @@ async function runImproveLoopStage(args: {
   // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
   const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
   let completedCount = 0;
-  let crossStepErrorsInjected = 0;
+  let reflectsWithErrorContext = 0;
   const memoryRefsForInference = new Set<string>();
 
   for (const planned of loopRefs) {
@@ -1185,6 +1244,14 @@ async function runImproveLoopStage(args: {
           remaining,
         },
       });
+      // B11: Emit improve_skipped for all remaining assets that will not be processed.
+      for (const remainingRef of loopRefs.slice(completedCount + 1)) {
+        appendEvent({
+          eventType: "improve_skipped",
+          ref: remainingRef.ref,
+          metadata: { reason: "budget_exhausted_batch", remaining: loopRefs.length - completedCount - 1 },
+        });
+      }
       actions.push({
         ref: planned.ref,
         mode: "error",
@@ -1198,8 +1265,13 @@ async function runImproveLoopStage(args: {
       //         have their synthetic actions emitted in runImprovePreparationStage.
       const isDistillOnly = distillOnlyRefSet.has(planned.ref);
 
-      if (!isDistillOnly) {
-        if (recentErrors.length > 0) crossStepErrorsInjected++;
+      const parsedPlannedRef = parseAssetRef(planned.ref);
+      // B6: derived memories are machine-generated; skip reflect to avoid noisy proposals.
+      // shouldDistillMemoryRef already returns false for .derived refs, so the distill
+      // path is also a no-op for them — we just avoid unnecessary agent spawns.
+      // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
+      if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
+        if (recentErrors.length > 0) reflectsWithErrorContext++;
         const reflectResult = await reflectFn({
           ref: planned.ref,
           task: options.task,
@@ -1207,14 +1279,25 @@ async function runImproveLoopStage(args: {
           ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
           agentProcess: options.agentProcess ?? "reflect",
         });
-        actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
+        actions.push({
+          ref: planned.ref,
+          mode: reflectResult.ok ? "reflect" : "reflect-failed",
+          result: reflectResult,
+        });
         if (!reflectResult.ok) {
           const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
           recentErrors.push(errMsg);
           if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
         }
+      } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
+        // B6: .derived refs skip reflect; record synthetic skip action.
+        actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "derived-memory-reflect-skipped" },
+        });
       }
-      const parsedPlannedRef = parseAssetRef(planned.ref);
+      // isDistillOnly refs: no reflect action emitted — proceed directly to distill path below.
       const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
       const explicitRefScope = scope.mode === "ref";
       const shouldAttemptDistill =
@@ -1226,14 +1309,23 @@ async function runImproveLoopStage(args: {
       // refs; non-candidate refs in the set are blocked here.
       if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal && !distillCooledRefs.has(planned.ref)) {
         const lessonRef = deriveLessonRef(planned.ref);
+        const knowledgeRef = deriveKnowledgeRef(planned.ref);
         const dedupeStashDir = primaryStashDir ?? options.stashDir;
         if (dedupeStashDir) {
-          const existingProposals = listProposals(dedupeStashDir, { ref: lessonRef });
-          if (existingProposals.some((p) => p.status === "pending")) {
+          // B2: check both lesson ref and knowledge ref since auto-promoted memories
+          // create knowledge: proposals, not lesson: proposals.
+          const pendingProposals = listProposals(dedupeStashDir, { status: "pending" });
+          const hasExistingPending = pendingProposals.some((p) => p.ref === lessonRef || p.ref === knowledgeRef);
+          if (hasExistingPending) {
             actions.push({
               ref: planned.ref,
               mode: "distill-skipped",
               result: { ok: true, reason: "pending proposal exists" },
+            });
+            appendEvent({
+              eventType: "improve_skipped",
+              ref: planned.ref,
+              metadata: { reason: "pending_proposal_exists" },
             });
             completedCount++;
             info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
@@ -1295,17 +1387,28 @@ async function runImproveLoopStage(args: {
         });
       }
     } catch (err) {
-      actions.push({
-        ref: planned.ref,
-        mode: "error",
-        result: { ok: false, error: err instanceof Error ? err.message : String(err) },
-      });
+      // B7: UsageError thrown by akmDistill on validation_failed should be recorded
+      // as mode:"distill" with outcome:"validation_failed", NOT as a generic error.
+      // The distill_invoked event was already emitted inside akmDistill before the throw.
+      if (err instanceof UsageError) {
+        actions.push({
+          ref: planned.ref,
+          mode: "distill",
+          result: { ok: false, outcome: "validation_failed", error: err.message } as unknown as AkmDistillResult,
+        });
+      } else {
+        actions.push({
+          ref: planned.ref,
+          mode: "error",
+          result: { ok: false, error: err instanceof Error ? err.message : String(err) },
+        });
+      }
     }
     completedCount++;
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
   }
 
-  return { crossStepErrorsInjected, memoryRefsForInference };
+  return { reflectsWithErrorContext, memoryRefsForInference };
 }
 
 async function runImprovePostLoopStage(args: {
@@ -1448,6 +1551,8 @@ async function runImprovePostLoopStage(args: {
     ...(maintenanceResult.actions && maintenanceResult.actions.length > 0
       ? { maintenanceActions: maintenanceResult.actions }
       : {}),
+    memoryInferenceDurationMs: maintenanceResult.memoryInferenceDurationMs,
+    graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
   };
 }
 
@@ -1460,7 +1565,7 @@ async function runImproveMaintenancePasses(args: {
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
 }): Promise<ImproveMaintenanceResult> {
   const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn } = args;
-  if (!primaryStashDir) return {};
+  if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
   const config = options.config ?? loadConfig();
   const sources = resolveSourceEntries(options.stashDir, config);
@@ -1472,6 +1577,8 @@ async function runImproveMaintenancePasses(args: {
   let graphExtraction: GraphExtractionResult | undefined;
   let reindexedAfterInference = false;
   const actions: ImproveActionResult[] = [];
+  let memoryInferenceDurationMs = 0;
+  let graphExtractionDurationMs = 0;
 
   try {
     db = openDatabase(
@@ -1481,6 +1588,7 @@ async function runImproveMaintenancePasses(args: {
 
     if (memoryRefsForInference.size > 0) {
       info(`[improve] memory inference starting (${memoryRefsForInference.size} candidate refs)`);
+      const inferenceStart = Date.now();
       try {
         memoryInference = await memoryInferenceFn(
           config,
@@ -1498,11 +1606,13 @@ async function runImproveMaintenancePasses(args: {
             candidateRefs: memoryRefsForInference,
           } satisfies MemoryInferencePassOptions,
         );
+        memoryInferenceDurationMs = Date.now() - inferenceStart;
         actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
         info(
           `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
         );
       } catch (err) {
+        memoryInferenceDurationMs = Date.now() - inferenceStart;
         allWarnings.push(`memory inference failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -1520,6 +1630,7 @@ async function runImproveMaintenancePasses(args: {
 
     if (sources.length > 0) {
       info("[improve] graph extraction starting");
+      const extractionStart = Date.now();
       try {
         if (db && reindexedAfterInference) {
           closeDatabase(db);
@@ -1534,11 +1645,13 @@ async function runImproveMaintenancePasses(args: {
             `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
           );
         });
+        graphExtractionDurationMs = Date.now() - extractionStart;
         actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
         info(
           `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
         );
       } catch (err) {
+        graphExtractionDurationMs = Date.now() - extractionStart;
         allWarnings.push(`graph extraction failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -1550,6 +1663,8 @@ async function runImproveMaintenancePasses(args: {
     ...(memoryInference ? { memoryInference } : {}),
     ...(graphExtraction ? { graphExtraction } : {}),
     ...(actions.length > 0 ? { actions } : {}),
+    memoryInferenceDurationMs,
+    graphExtractionDurationMs,
   };
 }
 
