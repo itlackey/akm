@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import {
   akmGraphEntities,
+  akmGraphEntity,
   akmGraphExport,
+  akmGraphOrphans,
   akmGraphRelated,
   akmGraphRelations,
   akmGraphSummary,
@@ -312,5 +314,454 @@ describe("akm graph", () => {
     expect(result.bytes).toBeGreaterThan(0);
     const lines = fs.readFileSync(out, "utf8").trim().split("\n");
     expect(lines.length).toBe(6);
+  });
+
+  test("related result populates canonical ref alongside legacy path", async () => {
+    writeGraphArtifact();
+    seedGraphLookupIndex();
+    const result = await akmGraphRelated({ ref: "knowledge:k1" });
+    expect(result.shape).toBe("graph-related");
+    expect(result.related.length).toBe(1);
+    const first = result.related[0];
+    expect(first).toBeDefined();
+    expect(typeof first?.path).toBe("string");
+    // Canonical ref is `type:name`, with the stash-dir prefix stripped from
+    // entries.entry_key. The legacy `path` field must remain populated for
+    // back-compat consumers.
+    expect(first?.ref).toBe("memory:m1");
+    expect(first?.ref?.includes(stashDir)).toBe(false);
+    expect(first?.ref?.startsWith(":")).toBe(false);
+  });
+});
+
+// ── Gap 1: akm graph entity <name> ──────────────────────────────────────────
+
+function writeEntityFixture(): void {
+  const knowledgeDir = path.join(stashDir, "knowledge");
+  const memoryDir = path.join(stashDir, "memories");
+  fs.mkdirSync(knowledgeDir, { recursive: true });
+  fs.mkdirSync(memoryDir, { recursive: true });
+  const deployRunbookPath = path.join(knowledgeDir, "deploy-runbook.md");
+  const deployIncidentPath = path.join(memoryDir, "deploy-incident.md");
+  const otherPath = path.join(knowledgeDir, "other.md");
+  fs.writeFileSync(deployRunbookPath, "# Deploy runbook\n", "utf8");
+  fs.writeFileSync(deployIncidentPath, "# Deploy incident\n", "utf8");
+  fs.writeFileSync(otherPath, "# Other topic\n", "utf8");
+
+  const dbPath = getDbPath();
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = openDatabase(dbPath);
+  try {
+    const entries: Array<{ key: string; type: string; name: string; filePath: string; dirPath: string }> = [
+      {
+        key: `${stashDir}:knowledge:deploy-runbook`,
+        type: "knowledge",
+        name: "deploy-runbook",
+        filePath: deployRunbookPath,
+        dirPath: knowledgeDir,
+      },
+      {
+        key: `${stashDir}:memory:deploy-incident`,
+        type: "memory",
+        name: "deploy-incident",
+        filePath: deployIncidentPath,
+        dirPath: memoryDir,
+      },
+      {
+        key: `${stashDir}:knowledge:other`,
+        type: "knowledge",
+        name: "other",
+        filePath: otherPath,
+        dirPath: knowledgeDir,
+      },
+    ];
+    for (const e of entries) {
+      const entry = { name: e.name, type: e.type, filename: path.basename(e.filePath) };
+      upsertEntry(db, e.key, e.dirPath, e.filePath, stashDir, entry, buildSearchText(entry));
+    }
+    rebuildFts(db);
+    setMeta(db, "stashDir", stashDir);
+    setMeta(db, "builtAt", new Date().toISOString());
+    setMeta(db, "stashDirs", JSON.stringify([stashDir]));
+    replaceStoredGraph(db, {
+      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+      generatedAt: "2026-05-01T00:00:00.000Z",
+      stashRoot: stashDir,
+      files: [
+        {
+          path: deployRunbookPath,
+          type: "knowledge",
+          bodyHash: "deploy-runbook-hash",
+          entities: ["deploy", "rollback"],
+          relations: [],
+          confidence: 0.9,
+        },
+        {
+          path: deployIncidentPath,
+          type: "memory",
+          bodyHash: "deploy-incident-hash",
+          entities: ["deploy", "incident"],
+          relations: [],
+          confidence: 0.5,
+        },
+        {
+          path: otherPath,
+          type: "knowledge",
+          bodyHash: "other-hash",
+          entities: ["unrelated"],
+          relations: [],
+        },
+      ],
+    });
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+describe("akm graph entity (direct API)", () => {
+  test("returns the files that contain the entity, with refs and confidence", () => {
+    writeEntityFixture();
+    // AKM_STASH_DIR is set to stashDir by the beforeEach, so omitting
+    // `source` resolves to the same primary source.
+    const result = akmGraphEntity({ name: "deploy" });
+    expect(result.shape).toBe("graph-entity");
+    expect(result.entity).toBe("deploy");
+    expect(result.total).toBe(2);
+    expect(result.matches.length).toBe(2);
+    for (const match of result.matches) {
+      expect(typeof match.ref).toBe("string");
+      expect(match.ref).toMatch(/^(memory|knowledge):/);
+    }
+    // Sorted by confidence desc, so the runbook (0.9) appears before the
+    // incident memory (0.5).
+    expect(result.matches[0]?.ref).toBe("knowledge:deploy-runbook");
+    expect(result.matches[0]?.confidence).toBe(0.9);
+    expect(result.matches[1]?.ref).toBe("memory:deploy-incident");
+    expect(result.matches[1]?.confidence).toBe(0.5);
+  });
+
+  test("matches case-insensitively", () => {
+    writeEntityFixture();
+    const lower = akmGraphEntity({ name: "deploy" });
+    const upper = akmGraphEntity({ name: "DEPLOY" });
+    expect(upper.total).toBe(lower.total);
+    expect(upper.matches.map((m) => m.ref)).toEqual(lower.matches.map((m) => m.ref));
+  });
+});
+
+// ── Gap 2: akm graph orphans ────────────────────────────────────────────────
+
+function writeOrphanFixture(): { orphanPath: string } {
+  const knowledgeDir = path.join(stashDir, "knowledge");
+  const memoryDir = path.join(stashDir, "memories");
+  fs.mkdirSync(knowledgeDir, { recursive: true });
+  fs.mkdirSync(memoryDir, { recursive: true });
+  const richKnowledgePath = path.join(knowledgeDir, "rich-knowledge.md");
+  const richMemoryPath = path.join(memoryDir, "rich-memory.md");
+  const orphanPath = path.join(knowledgeDir, "orphan.md");
+  fs.writeFileSync(richKnowledgePath, "# Rich knowledge\n", "utf8");
+  fs.writeFileSync(richMemoryPath, "# Rich memory\n", "utf8");
+  fs.writeFileSync(orphanPath, "# Orphan\n", "utf8");
+
+  const dbPath = getDbPath();
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = openDatabase(dbPath);
+  try {
+    const entries: Array<{ key: string; type: string; name: string; filePath: string; dirPath: string }> = [
+      {
+        key: `${stashDir}:knowledge:rich-knowledge`,
+        type: "knowledge",
+        name: "rich-knowledge",
+        filePath: richKnowledgePath,
+        dirPath: knowledgeDir,
+      },
+      {
+        key: `${stashDir}:memory:rich-memory`,
+        type: "memory",
+        name: "rich-memory",
+        filePath: richMemoryPath,
+        dirPath: memoryDir,
+      },
+      {
+        key: `${stashDir}:knowledge:orphan`,
+        type: "knowledge",
+        name: "orphan",
+        filePath: orphanPath,
+        dirPath: knowledgeDir,
+      },
+    ];
+    for (const e of entries) {
+      const entry = { name: e.name, type: e.type, filename: path.basename(e.filePath) };
+      upsertEntry(db, e.key, e.dirPath, e.filePath, stashDir, entry, buildSearchText(entry));
+    }
+    rebuildFts(db);
+    setMeta(db, "stashDir", stashDir);
+    setMeta(db, "builtAt", new Date().toISOString());
+    setMeta(db, "stashDirs", JSON.stringify([stashDir]));
+    replaceStoredGraph(db, {
+      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+      generatedAt: "2026-05-01T00:00:00.000Z",
+      stashRoot: stashDir,
+      files: [
+        {
+          path: richKnowledgePath,
+          type: "knowledge",
+          bodyHash: "rich-knowledge-hash",
+          entities: ["alpha", "beta"],
+          relations: [],
+        },
+        {
+          path: richMemoryPath,
+          type: "memory",
+          bodyHash: "rich-memory-hash",
+          entities: ["beta", "gamma"],
+          relations: [],
+        },
+        {
+          path: orphanPath,
+          type: "knowledge",
+          bodyHash: "orphan-hash",
+          entities: [],
+          relations: [],
+        },
+      ],
+    });
+  } finally {
+    closeDatabase(db);
+  }
+  return { orphanPath };
+}
+
+describe("akm graph orphans (direct API)", () => {
+  test("identifies entity-less graph files and surfaces refs", () => {
+    const { orphanPath } = writeOrphanFixture();
+    const result = akmGraphOrphans();
+    expect(result.shape).toBe("graph-orphans");
+    expect(result.totalConsidered).toBe(3);
+    expect(result.total).toBe(1);
+    expect(result.orphans.length).toBe(1);
+    const orphan = result.orphans[0];
+    expect(orphan?.path).toBe(orphanPath);
+    expect(orphan?.type).toBe("knowledge");
+    expect(orphan?.ref).toBe("knowledge:orphan");
+  });
+});
+
+// ── Gap 3: ON DELETE CASCADE from entries → graph rows ──────────────────────
+
+describe("graph row cascade delete on entries removal", () => {
+  test("removing an entry deletes all graph_* rows for that entry", () => {
+    const knowledgeDir = path.join(stashDir, "knowledge");
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    const filePath = path.join(knowledgeDir, "cascade.md");
+    fs.writeFileSync(filePath, "# Cascade\n", "utf8");
+
+    const dbPath = getDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = openDatabase(dbPath);
+    try {
+      // Defensive: confirm FK enforcement is actually on. openDatabase enables
+      // it (PRAGMA foreign_keys = ON in src/indexer/db.ts) but the assertion
+      // would silently pass without cascading if a future regression turned
+      // it off.
+      const fkRow = db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number };
+      if (fkRow.foreign_keys !== 1) db.exec("PRAGMA foreign_keys = ON");
+
+      const entry = { name: "cascade", type: "knowledge", filename: "cascade.md" };
+      upsertEntry(db, `${stashDir}:knowledge:cascade`, knowledgeDir, filePath, stashDir, entry, buildSearchText(entry));
+      rebuildFts(db);
+      setMeta(db, "stashDir", stashDir);
+      setMeta(db, "builtAt", new Date().toISOString());
+      setMeta(db, "stashDirs", JSON.stringify([stashDir]));
+      replaceStoredGraph(db, {
+        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          {
+            path: filePath,
+            type: "knowledge",
+            bodyHash: "cascade-hash",
+            entities: ["cascadeA", "cascadeB"],
+            relations: [{ from: "cascadeA", to: "cascadeB", type: "uses" }],
+          },
+        ],
+      });
+
+      const entryRow = db.prepare("SELECT id FROM entries WHERE entry_key = ?").get(`${stashDir}:knowledge:cascade`) as
+        | { id: number }
+        | undefined;
+      expect(entryRow).toBeDefined();
+      const entryId = entryRow?.id;
+      if (entryId === undefined) throw new Error("expected entry id");
+
+      // Pre-condition: all three graph tables have rows for this entry.
+      const beforeFiles = db.prepare("SELECT COUNT(*) AS c FROM graph_files WHERE entry_id = ?").get(entryId) as {
+        c: number;
+      };
+      const beforeEntities = db
+        .prepare("SELECT COUNT(*) AS c FROM graph_file_entities WHERE entry_id = ?")
+        .get(entryId) as { c: number };
+      const beforeRelations = db
+        .prepare("SELECT COUNT(*) AS c FROM graph_file_relations WHERE entry_id = ?")
+        .get(entryId) as { c: number };
+      expect(beforeFiles.c).toBe(1);
+      expect(beforeEntities.c).toBe(2);
+      expect(beforeRelations.c).toBe(1);
+
+      // Cascade trigger.
+      db.prepare("DELETE FROM entries WHERE id = ?").run(entryId);
+
+      // Post-condition: every graph row pointing at the deleted entry is
+      // gone via cascading FKs.
+      const afterFiles = db.prepare("SELECT COUNT(*) AS c FROM graph_files WHERE entry_id = ?").get(entryId) as {
+        c: number;
+      };
+      const afterEntities = db
+        .prepare("SELECT COUNT(*) AS c FROM graph_file_entities WHERE entry_id = ?")
+        .get(entryId) as { c: number };
+      const afterRelations = db
+        .prepare("SELECT COUNT(*) AS c FROM graph_file_relations WHERE entry_id = ?")
+        .get(entryId) as { c: number };
+      expect(afterFiles.c).toBe(0);
+      expect(afterEntities.c).toBe(0);
+      expect(afterRelations.c).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Gap 4: replaceStoredGraph incremental upsert ────────────────────────────
+//
+// The Phase 2 incremental upsert is supposed to skip files whose
+// body_hash matches the row already in the DB — only touching changed
+// rows. Verify by stamping a sentinel entity onto each row before the
+// second pass: if the file's body_hash is unchanged the row is taken
+// down the UPDATE-only path (file_order/confidence only) and the
+// sentinel survives; if the body_hash changed, the row is delete-
+// inserted and the sentinel is wiped.
+
+describe("replaceStoredGraph incremental upsert", () => {
+  test("skips unchanged rows, rewrites changed rows, removes vanished rows, inserts new rows", () => {
+    const knowledgeDir = path.join(stashDir, "knowledge");
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    const file1Path = path.join(knowledgeDir, "f1.md");
+    const file2Path = path.join(knowledgeDir, "f2.md");
+    const file3Path = path.join(knowledgeDir, "f3.md");
+    const file4Path = path.join(knowledgeDir, "f4.md");
+    fs.writeFileSync(file1Path, "# F1\n", "utf8");
+    fs.writeFileSync(file2Path, "# F2\n", "utf8");
+    fs.writeFileSync(file3Path, "# F3\n", "utf8");
+    fs.writeFileSync(file4Path, "# F4\n", "utf8");
+
+    const dbPath = getDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = openDatabase(dbPath);
+    try {
+      for (const name of ["f1", "f2", "f3", "f4"]) {
+        const filePath = path.join(knowledgeDir, `${name}.md`);
+        const entry = { name, type: "knowledge", filename: `${name}.md` };
+        upsertEntry(
+          db,
+          `${stashDir}:knowledge:${name}`,
+          knowledgeDir,
+          filePath,
+          stashDir,
+          entry,
+          buildSearchText(entry),
+        );
+      }
+      rebuildFts(db);
+      setMeta(db, "stashDir", stashDir);
+      setMeta(db, "builtAt", new Date().toISOString());
+      setMeta(db, "stashDirs", JSON.stringify([stashDir]));
+
+      replaceStoredGraph(db, {
+        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          { path: file1Path, type: "knowledge", bodyHash: "f1-hash-v1", entities: ["e1"], relations: [] },
+          { path: file2Path, type: "knowledge", bodyHash: "f2-hash-v1", entities: ["e2"], relations: [] },
+          { path: file3Path, type: "knowledge", bodyHash: "f3-hash-v1", entities: ["e3"], relations: [] },
+        ],
+      });
+
+      // Stable-marker trick: stamp a sentinel entity onto every existing
+      // row. If the second pass leaves a row alone (body_hash matched),
+      // the sentinel survives; if it's delete-and-reinserted, the
+      // sentinel is wiped along with the rest of the children.
+      const beforeRows = db
+        .prepare("SELECT entry_id, file_path, body_hash FROM graph_files WHERE stash_root = ?")
+        .all(stashDir) as Array<{ entry_id: number; file_path: string; body_hash: string }>;
+      for (const row of beforeRows) {
+        db.prepare(
+          "INSERT INTO graph_file_entities (entry_id, entity_order, stash_root, entity) VALUES (?, ?, ?, ?)",
+        ).run(row.entry_id, 99, stashDir, "__sentinel__");
+      }
+
+      replaceStoredGraph(db, {
+        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+        generatedAt: "2026-05-02T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          // unchanged — same body_hash
+          { path: file1Path, type: "knowledge", bodyHash: "f1-hash-v1", entities: ["e1"], relations: [] },
+          // changed — different body_hash
+          { path: file2Path, type: "knowledge", bodyHash: "f2-hash-v2", entities: ["e2new"], relations: [] },
+          // file 3 missing → should be removed
+          // new file
+          { path: file4Path, type: "knowledge", bodyHash: "f4-hash-v1", entities: ["e4"], relations: [] },
+        ],
+      });
+
+      const afterRows = db
+        .prepare("SELECT entry_id, file_path, body_hash FROM graph_files WHERE stash_root = ?")
+        .all(stashDir) as Array<{ entry_id: number; file_path: string; body_hash: string }>;
+      const afterByPath = new Map(afterRows.map((r) => [r.file_path, r]));
+
+      const f1After = afterByPath.get(file1Path);
+      expect(f1After).toBeDefined();
+      expect(f1After?.body_hash).toBe("f1-hash-v1");
+
+      const f2After = afterByPath.get(file2Path);
+      expect(f2After).toBeDefined();
+      expect(f2After?.body_hash).toBe("f2-hash-v2");
+
+      // f3: removed.
+      expect(afterByPath.has(file3Path)).toBe(false);
+
+      // f4: new.
+      expect(afterByPath.has(file4Path)).toBe(true);
+      expect(afterByPath.get(file4Path)?.body_hash).toBe("f4-hash-v1");
+
+      // Entity tables prove which files were rewritten.
+      const entityRows = db
+        .prepare(
+          `SELECT gf.file_path AS file_path, gfe.entity AS entity
+             FROM graph_file_entities gfe
+             JOIN graph_files gf ON gf.entry_id = gfe.entry_id
+            WHERE gf.stash_root = ?
+            ORDER BY gf.file_path, gfe.entity_order`,
+        )
+        .all(stashDir) as Array<{ file_path: string; entity: string }>;
+      const entitiesByPath = new Map<string, string[]>();
+      for (const row of entityRows) {
+        const bucket = entitiesByPath.get(row.file_path) ?? [];
+        bucket.push(row.entity);
+        entitiesByPath.set(row.file_path, bucket);
+      }
+      // f1 unchanged: original entity plus our sentinel must both be present.
+      expect(entitiesByPath.get(file1Path)?.sort()).toEqual(["__sentinel__", "e1"]);
+      // f2 changed: only the new entity, sentinel got wiped.
+      expect(entitiesByPath.get(file2Path)).toEqual(["e2new"]);
+      // f3 removed: no entity rows survive.
+      expect(entitiesByPath.has(file3Path)).toBe(false);
+      // f4 new: fresh insert from snapshot.
+      expect(entitiesByPath.get(file4Path)).toEqual(["e4"]);
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

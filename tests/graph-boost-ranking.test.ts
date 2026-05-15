@@ -38,6 +38,7 @@ import {
   GRAPH_DIRECT_BOOST_PER_ENTITY,
   GRAPH_HOP_BOOST_CAP,
   GRAPH_HOP_BOOST_PER_ENTITY,
+  listRelatedPathsForFile,
   loadGraphBoostContext,
 } from "../src/indexer/graph-boost";
 import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
@@ -582,5 +583,69 @@ describe("graph boost — search-time integration (#207)", () => {
 
     expect(offBoost).toBeGreaterThan(blendBoost);
     expect(blendBoost).toBeGreaterThan(multiplyBoost);
+  });
+});
+
+// ── Gap 6: listRelatedPathsForFile SQL-backed correctness ───────────────────
+
+describe("listRelatedPathsForFile (SQL-backed)", () => {
+  test("orders neighbors by sharedEntities DESC and resolves canonical refs", () => {
+    installGraph();
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const related = listRelatedPathsForFile(stashDir, runbookPath, 10, db);
+      expect(related.length).toBeGreaterThan(0);
+      // Top neighbor must be the incident memory (3 shared entities).
+      const top = related[0];
+      expect(top?.path).toBe(path.join(stashDir, "memories", "incident-2024-shard.md"));
+      expect(top?.type).toBe("memory");
+      expect(top?.ref).toBe("memory:incident-2024-shard");
+      // Shared entities are sorted alphabetically by the helper.
+      expect(top?.sharedEntities).toEqual(["database", "outage", "recovery"]);
+      // Each consecutive neighbor must have a sharedEntities count ≤ the
+      // previous one (descending).
+      for (let i = 1; i < related.length; i += 1) {
+        const prev = related[i - 1]?.sharedEntities.length ?? 0;
+        const curr = related[i]?.sharedEntities.length ?? 0;
+        expect(curr).toBeLessThanOrEqual(prev);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("limit truncates the candidate list", () => {
+    installGraph();
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const unlimited = listRelatedPathsForFile(stashDir, runbookPath, 10, db);
+      // The fixture only has one real neighbor for the runbook — pad with a
+      // limit=1 call to assert truncation works deterministically even when
+      // the candidate set fits.
+      const limited = listRelatedPathsForFile(stashDir, runbookPath, 1, db);
+      expect(limited.length).toBe(Math.min(1, unlimited.length));
+      if (unlimited.length > 0) {
+        expect(limited[0]?.path).toBe(unlimited[0]?.path);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("entry with no shared entities returns no neighbors (not an error)", () => {
+    installGraph();
+    // incident-checklist's only graph entity is "playbook"; nothing else in
+    // the corpus references "playbook", so the JOIN yields zero candidate
+    // rows. The function must return [] cleanly rather than throwing.
+    const checklistPath = path.join(stashDir, "knowledge", "incident-checklist.md");
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const related = listRelatedPathsForFile(stashDir, checklistPath, 5, db);
+      expect(related).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
   });
 });
