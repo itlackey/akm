@@ -7,7 +7,8 @@ export type LintIssueType =
   | "stale-path"
   | "missing-skill-md"
   | "invalid-task-frontmatter"
-  | "missing-ref";
+  | "missing-ref"
+  | "dangerous-vault-key";
 
 export interface LintIssue {
   file: string;
