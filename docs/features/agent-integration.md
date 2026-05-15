@@ -155,8 +155,8 @@ per platform automatically:
 | Alias | opencode | claude |
 | --- | --- | --- |
 | `opus` | `opencode/claude-opus-4-7` | `claude-opus-4-7` |
-| `sonnet` | `opencode/claude-sonnet-4-7` | `claude-sonnet-4-7` |
-| `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5` |
+| `sonnet` | `opencode/claude-sonnet-4-6` | `claude-sonnet-4-6` |
+| `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
 Per-profile `modelAliases` in config can extend or override this table.
 
@@ -170,6 +170,7 @@ a known builder.
 
 ## See also
 
+- [Configuring Agent Profiles and Model Aliases](../configuration-agent-profiles.md) — built-in profiles, commandBuilder, custom model aliases, and headless variants
 - [Search & Discovery](search-discovery.md) — the full curate → show retrieval path
 - [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
 - [Improvement Loop](improvement-loop.md) — feeding back usage signals
