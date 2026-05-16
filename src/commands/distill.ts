@@ -57,7 +57,7 @@ import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
-import { createProposal, listProposals, type Proposal, type ProposalsContext } from "../core/proposals";
+import { createProposal, isProposalSkipped, listProposals, type Proposal, type ProposalsContext } from "../core/proposals";
 import { warnVerbose } from "../core/warn";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -505,7 +505,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       }
     }
     const knowledgeParsed = parseFrontmatter(promotion.content);
-    const proposal = createProposal(
+    const proposalResult = createProposal(
       stash,
       {
         ref: promotion.knowledgeRef,
@@ -519,6 +519,28 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       options.ctx,
     );
 
+    if (isProposalSkipped(proposalResult)) {
+      appendEvent({
+        eventType: "distill_invoked",
+        ref: inputRef,
+        metadata: {
+          outcome: "skipped" as const,
+          lessonRef: promotion.knowledgeRef,
+          message: proposalResult.message,
+          skipReason: proposalResult.reason,
+        },
+      });
+      return {
+        schemaVersion: 1,
+        ok: true,
+        outcome: "skipped",
+        inputRef,
+        lessonRef: promotion.knowledgeRef,
+        message: proposalResult.message,
+      };
+    }
+
+    const proposal: Proposal = proposalResult;
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
@@ -679,7 +701,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // structured payload alongside the raw content (matches the shape used by
   // other proposal sources).
   const parsed = parseFrontmatter(content);
-  const proposal = createProposal(
+  const proposalResult2 = createProposal(
     stash,
     {
       ref: effectiveLessonRef,
@@ -693,6 +715,28 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     options.ctx,
   );
 
+  if (isProposalSkipped(proposalResult2)) {
+    appendEvent({
+      eventType: "distill_invoked",
+      ref: inputRef,
+      metadata: {
+        outcome: "skipped" as const,
+        lessonRef: effectiveLessonRef,
+        message: proposalResult2.message,
+        skipReason: proposalResult2.reason,
+      },
+    });
+    return {
+      schemaVersion: 1,
+      ok: true,
+      outcome: "skipped",
+      inputRef,
+      lessonRef: effectiveLessonRef,
+      message: proposalResult2.message,
+    };
+  }
+
+  const proposal2: Proposal = proposalResult2;
   appendEvent({
     eventType: "distill_invoked",
     ref: inputRef,
@@ -701,7 +745,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       lessonRef: effectiveLessonRef,
       proposalRef: effectiveLessonRef,
       proposalKind: effectiveProposalKind,
-      proposalId: proposal.id,
+      proposalId: proposal2.id,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
     },
@@ -715,8 +759,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     lessonRef: effectiveLessonRef,
     proposalRef: effectiveLessonRef,
     proposalKind: effectiveProposalKind,
-    proposalId: proposal.id,
-    proposal,
+    proposalId: proposal2.id,
+    proposal: proposal2,
     ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
   };
 }

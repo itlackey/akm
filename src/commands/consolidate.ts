@@ -9,7 +9,7 @@ import { loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
 import { parseFrontmatter } from "../core/frontmatter";
 import { parseEmbeddedJsonResponse } from "../core/parse";
-import { createProposal, listProposals } from "../core/proposals";
+import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
 import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
@@ -814,13 +814,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
 
       try {
-        const proposal = createProposal(stashDir, {
+        const proposalResult = createProposal(stashDir, {
           ref: knowledgeRef,
           source: "consolidate",
           payload: { content: memoryContent },
         });
-        promoted.push(proposal.id);
-        markJournalCompleted(stashDir, op.ref);
+        if (isProposalSkipped(proposalResult)) {
+          warnings.push(
+            `Promote: skipped proposal for ${op.ref} (${proposalResult.reason}): ${proposalResult.message}`,
+          );
+        } else {
+          promoted.push(proposalResult.id);
+          markJournalCompleted(stashDir, op.ref);
+        }
       } catch (e) {
         warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);
       }

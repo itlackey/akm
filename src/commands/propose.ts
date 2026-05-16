@@ -15,7 +15,13 @@ import { TYPE_DIRS } from "../core/asset-spec";
 import { resolveStashDir } from "../core/common";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
+import {
+  type CreateProposalInput,
+  createProposal,
+  isProposalSkipped,
+  type Proposal,
+  type ProposalsContext,
+} from "../core/proposals";
 import {
   type AgentConfig,
   type AgentFailureReason,
@@ -294,13 +300,23 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     ref,
     source: "propose",
     sourceRun: `propose-${Date.now()}`,
+    // User-initiated proposals always bypass dedup/cooldown guards — the
+    // operator is explicitly asking for a new proposal.
+    force: true,
     payload: {
       content: payload.content,
       ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
     },
   };
-  const proposal = createProposal(stash, createInput, options.ctx);
+  const proposalResult = createProposal(stash, createInput, options.ctx);
 
+  // With force:true, the result is always a Proposal (never skipped).
+  if (isProposalSkipped(proposalResult)) {
+    // Should never happen when force:true, but be defensive.
+    throw new Error(`Unexpected skip in propose command: ${proposalResult.message}`);
+  }
+
+  const proposal: Proposal = proposalResult;
   return {
     schemaVersion: 1,
     ok: true,
