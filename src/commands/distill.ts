@@ -1004,7 +1004,16 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // Round-trip the parsed frontmatter so the proposal carries it as a
   // structured payload alongside the raw content (matches the shape used by
   // other proposal sources).
+  //
+  // D-7 / #398: Inject `sources: [inputRef]` into the LLM-path proposal
+  // frontmatter when the field is absent, providing reviewers with provenance
+  // without requiring them to open event history. A-MEM arXiv:2502.12110 —
+  // all notes carry explicit provenance links.
   const parsed = parseFrontmatter(content);
+  const frontmatterWithSources: Record<string, unknown> = { ...parsed.data };
+  if (!Array.isArray(frontmatterWithSources.sources) || (frontmatterWithSources.sources as unknown[]).length === 0) {
+    frontmatterWithSources.sources = [inputRef];
+  }
   const proposalResult2 = createProposal(
     stash,
     {
@@ -1013,7 +1022,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: {
         content,
-        ...(Object.keys(parsed.data).length > 0 ? { frontmatter: parsed.data } : {}),
+        frontmatter: frontmatterWithSources,
       },
     },
     options.ctx,
