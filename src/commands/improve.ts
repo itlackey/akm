@@ -21,7 +21,7 @@ import {
   type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { getDbPath } from "../core/paths";
-import { listProposals } from "../core/proposals";
+import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
 import { openStateDatabase } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
@@ -1662,9 +1662,33 @@ async function runImproveLoopStage(args: {
           const samples: AkmReflectResult[] = [];
           for (let s = 0; s < SC_N; s++) {
             if (remainingBudgetMs() <= 0) break;
-            samples.push(await reflectFn(reflectCallArgs));
+            // draftMode: skip DB write so each sample doesn't create a proposal.
+            samples.push(await reflectFn({ ...reflectCallArgs, draftMode: true }));
           }
-          reflectResult = pickMajorityVote(samples.length > 0 ? samples : [await reflectFn(reflectCallArgs)]);
+          const winner = pickMajorityVote(
+            samples.length > 0 ? samples : [await reflectFn({ ...reflectCallArgs, draftMode: true })],
+          );
+          // Persist only the majority-vote winner as a single real proposal.
+          if (winner.ok && primaryStashDir) {
+            const persistResult = createProposal(primaryStashDir, {
+              ref: winner.proposal.ref,
+              source: "reflect",
+              sourceRun: `reflect-sc-${Date.now()}`,
+              payload: winner.proposal.payload,
+            });
+            reflectResult = isProposalSkipped(persistResult)
+              ? {
+                  schemaVersion: 1,
+                  ok: false,
+                  reason: "parse_error" as const,
+                  error: `SC proposal skipped: ${persistResult.message}`,
+                  ref: winner.ref,
+                  exitCode: null,
+                }
+              : { ...winner, proposal: persistResult };
+          } else {
+            reflectResult = winner;
+          }
         } else {
           reflectResult = await reflectFn(reflectCallArgs);
         }

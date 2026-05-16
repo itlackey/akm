@@ -74,6 +74,7 @@ export const PROPOSAL_SOURCES = [
   "import",
   // Internal / system.
   "distill_quality_rejected",
+  "schema-repair",
 ] as const;
 
 /** Automated sources that SHOULD include a `sourceRun` for PROV-DM traceability. */
@@ -82,6 +83,7 @@ export const AUTOMATED_PROPOSAL_SOURCES = [
   "distill",
   "consolidate",
   "improve",
+  "schema-repair",
 ] as const satisfies ReadonlyArray<(typeof PROPOSAL_SOURCES)[number]>;
 
 /** Union of all valid proposal source values. */

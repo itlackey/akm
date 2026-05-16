@@ -125,6 +125,13 @@ export interface AkmReflectOptions {
    * early if the agent returns the same content as the previous iteration.
    */
   maxRefineIters?: number;
+  /**
+   * When true, run the full LLM pipeline but skip persisting the proposal.
+   * Used by the self-consistency sampling loop in `akm improve` to collect
+   * N candidate proposals before voting — only the winner is persisted by
+   * the caller (R-2 / #389, arXiv:2203.11171).
+   */
+  draftMode?: boolean;
 }
 
 export interface AkmReflectFailure {
@@ -339,7 +346,8 @@ function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, 
   if (!ref) return undefined;
   const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
-  if (!looksLikeAssetContent(trimmed, sdkMode)) return undefined;
+  const targetType = ref.split(":")[0];
+  if (!looksLikeAssetContent(trimmed, sdkMode, targetType)) return undefined;
   return { ref, content: trimmed };
 }
 
@@ -356,7 +364,7 @@ function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, 
  * - In SDK mode (`sdkMode === true`): additionally requires `when_to_use:` for
  *   lesson types (full structured output will replace this in a future PR).
  */
-function looksLikeAssetContent(value: string, sdkMode = false): boolean {
+function looksLikeAssetContent(value: string, sdkMode = false, targetType?: string): boolean {
   if (value.startsWith("---")) {
     // YAML frontmatter must contain at least a description field.
     const fmEnd = value.indexOf("\n---", 4);
@@ -364,8 +372,9 @@ function looksLikeAssetContent(value: string, sdkMode = false): boolean {
     const fmBlock = value.slice(0, fmEnd + 4);
     const hasDescription = /^description\s*:/m.test(fmBlock);
     if (!hasDescription) return false;
-    // In SDK mode, also require when_to_use for lesson-like frontmatter.
-    if (sdkMode && /^type\s*:\s*lesson/m.test(fmBlock)) {
+    // In SDK mode, lesson assets additionally require a when_to_use field.
+    // Use the target ref type rather than frontmatter type: (which is non-standard).
+    if (sdkMode && targetType === "lesson") {
       return /^when_to_use\s*:/m.test(fmBlock);
     }
     return true;
@@ -679,6 +688,34 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const payloadFrontmatterWithProvenance: Record<string, unknown> = isLessonProposal
     ? { ...basePayloadFrontmatter, derived_from_reflect: true }
     : basePayloadFrontmatter;
+
+  // Draft mode: skip DB persistence — the SC sampling loop in improve.ts persists
+  // only the majority-vote winner (R-2 / #389). Return a synthetic proposal so
+  // pickMajorityVote can compare content via Jaccard similarity.
+  if (options.draftMode) {
+    const draftProposal: Proposal = {
+      id: `sc-draft-${Date.now()}`,
+      ref: payload.ref,
+      source: "reflect",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      payload: {
+        content: payload.content,
+        ...(Object.keys(payloadFrontmatterWithProvenance).length > 0
+          ? { frontmatter: payloadFrontmatterWithProvenance }
+          : {}),
+      },
+    };
+    return {
+      schemaVersion: 1,
+      ok: true,
+      proposal: draftProposal,
+      ref: draftProposal.ref,
+      agentProfile: profile.name,
+      durationMs: result.durationMs,
+    };
+  }
 
   const createInput: CreateProposalInput = {
     ref: payload.ref,

@@ -1697,44 +1697,24 @@ const feedbackCommand = defineCommand({
       // whether the negative feedback is valid before the asset falls out of
       // the improve loop. Best-effort — failure is logged but does not fail the
       // feedback command.
+      // Emit a structured event rather than a proposal so the review-needed
+      // signal is queryable via `akm events list --type improve_review_needed`
+      // without risking accidental asset overwrite if the proposal is accepted.
       if (utilityResult?.crossedReviewThreshold) {
         try {
-          const stashDir = resolveSourceEntries()[0]?.path;
-          if (stashDir) {
-            const proposalResult = createProposal(stashDir, {
-              ref,
-              source: "feedback",
-              payload: {
-                content: [
-                  "---",
-                  `description: "Review needed: ${ref} utility crossed below 0.5 after negative feedback"`,
-                  "---",
-                  "# Review Needed: Utility Threshold Crossed",
-                  "",
-                  `Asset \`${ref}\` received negative feedback and its utility score dropped`,
-                  `from ${utilityResult.previousUtility.toFixed(3)} to ${utilityResult.nextUtility.toFixed(3)},`,
-                  "crossing below the review threshold (0.5).",
-                  "",
-                  "## Negative feedback reason",
-                  "",
-                  reason?.trim() ?? "(no reason provided)",
-                  "",
-                  "## Recommended action",
-                  "",
-                  "Review the asset's content and recent feedback. If the negative feedback is",
-                  "valid, update or deprecate the asset. If the feedback is erroneous, record",
-                  "positive feedback to restore the score.",
-                  "",
-                ].join("\n"),
-              },
-            });
-            if (isProposalSkipped(proposalResult)) {
-              warn(`[feedback] Review-needed proposal skipped: ${proposalResult.message}`);
-            }
-          }
+          appendEvent({
+            eventType: "improve_review_needed",
+            ref,
+            metadata: {
+              previousUtility: utilityResult.previousUtility,
+              nextUtility: utilityResult.nextUtility,
+              reason: reason?.trim() ?? null,
+              failureMode: failureMode ?? null,
+            },
+          });
         } catch (escalationErr) {
           warn(
-            `[feedback] Could not create review-needed proposal for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
+            `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
           );
         }
       }
@@ -3358,9 +3338,16 @@ const acceptCommand = defineCommand({
       if (args.source && !args.id) {
         const { listProposals } = await import("./core/proposals");
         const stashDir = resolveStashDir();
-        const maxDiffLines = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
-        const olderThanDays = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
-        const olderThanMs = olderThanDays !== undefined ? olderThanDays * 86_400_000 : undefined;
+        const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+          throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+        }
+        const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+          throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+        }
+        const maxDiffLines = rawMaxDiff;
+        const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
         const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
           if (p.source !== args.source) return false;
           if (maxDiffLines !== undefined) {
@@ -3438,9 +3425,16 @@ const rejectCommand = defineCommand({
       if (args.source && !args.id) {
         const { listProposals } = await import("./core/proposals");
         const stashDir = resolveStashDir();
-        const maxDiffLines = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
-        const olderThanDays = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
-        const olderThanMs = olderThanDays !== undefined ? olderThanDays * 86_400_000 : undefined;
+        const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+          throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+        }
+        const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+          throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+        }
+        const maxDiffLines = rawMaxDiff;
+        const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
         const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
           if (p.source !== args.source) return false;
           if (maxDiffLines !== undefined) {

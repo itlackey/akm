@@ -398,6 +398,8 @@ async function fetchTopSimilarLessons(
       query,
       type: "lesson",
       limit: n,
+      skipLogging: true,
+      eventSource: "improve",
     });
     const hits = result?.hits ?? [];
     return hits

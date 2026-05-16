@@ -139,7 +139,11 @@ function isDerivedMemory(filePath: string, frontmatter: Record<string, unknown>)
   return frontmatter.inferred === true;
 }
 
-function resolveParentRef(filePath: string, frontmatter: Record<string, unknown>): string | undefined {
+function resolveParentRef(
+  filePath: string,
+  frontmatter: Record<string, unknown>,
+  memoriesRootDir?: string,
+): string | undefined {
   // Prefer the explicit source: frontmatter.
   const source = frontmatter.source;
   if (typeof source === "string" && source.startsWith("memory:")) return source;
@@ -147,9 +151,10 @@ function resolveParentRef(filePath: string, frontmatter: Record<string, unknown>
   const base = path.basename(filePath, ".md");
   if (base.endsWith(".derived")) {
     const parentName = base.slice(0, -".derived".length);
-    const dir = path.dirname(filePath);
-    const memoriesDir = path.dirname(dir) === dir ? dir : path.dirname(filePath);
-    const rel = path.relative(memoriesDir, path.join(path.dirname(filePath), parentName));
+    // Use the stash memories root so nested paths (e.g. memories/nested/foo.derived.md)
+    // resolve to the correct relative ref (memory:nested/foo, not memory:foo).
+    const rootDir = memoriesRootDir ?? path.dirname(filePath);
+    const rel = path.relative(rootDir, path.join(path.dirname(filePath), parentName));
     return `memory:${rel.replace(/\\/g, "/")}`;
   }
   return undefined;
@@ -162,12 +167,13 @@ function resolveParentRef(filePath: string, frontmatter: Record<string, unknown>
  * Preserves all existing frontmatter keys; only adds/updates `contradictedBy`
  * and `beliefState: contradicted`.
  */
-function writeContradictedByEdge(filePath: string, contradictedByRef: string): void {
+/** Returns true if the edge was newly written, false if it already existed. */
+function writeContradictedByEdge(filePath: string, contradictedByRef: string): boolean {
   const raw = fs.readFileSync(filePath, "utf8");
   const parsed = parseFrontmatter(raw);
 
   const existing: string[] = Array.isArray(parsed.data.contradictedBy) ? (parsed.data.contradictedBy as string[]) : [];
-  if (existing.includes(contradictedByRef)) return; // Edge already written.
+  if (existing.includes(contradictedByRef)) return false; // Edge already written.
 
   const updatedContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
   const nextFrontmatter: Record<string, unknown> = {
@@ -180,6 +186,7 @@ function writeContradictedByEdge(filePath: string, contradictedByRef: string): v
   const body = parsed.content;
   const next = `---\n${fmStr}\n---\n${body}`;
   fs.writeFileSync(filePath, next, "utf8");
+  return true;
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -221,7 +228,7 @@ export async function detectAndWriteContradictions(
     }
     const parsed = parseFrontmatter(raw);
     if (!isDerivedMemory(filePath, parsed.data)) continue;
-    const parentRef = resolveParentRef(filePath, parsed.data);
+    const parentRef = resolveParentRef(filePath, parsed.data, memoriesDir);
     if (!parentRef) continue;
     const ref = toMemoryRef(memoriesDir, filePath);
     if (!ref) continue;
@@ -259,13 +266,18 @@ export async function detectAndWriteContradictions(
         const b = family[j];
         if (!a || !b) continue;
 
-        // Skip pairs where an edge already exists.
+        // Skip pairs where edges already exist in BOTH directions (no new information).
         const aRaw = fs.readFileSync(a.filePath, "utf8");
         const aParsed = parseFrontmatter(aRaw);
         const aCB: string[] = Array.isArray(aParsed.data.contradictedBy)
           ? (aParsed.data.contradictedBy as string[])
           : [];
-        if (aCB.includes(b.ref)) continue;
+        const bRaw = fs.readFileSync(b.filePath, "utf8");
+        const bParsed = parseFrontmatter(bRaw);
+        const bCB: string[] = Array.isArray(bParsed.data.contradictedBy)
+          ? (bParsed.data.contradictedBy as string[])
+          : [];
+        if (aCB.includes(b.ref) && bCB.includes(a.ref)) continue;
 
         const prompt = buildContradictionJudgePrompt(a, b);
         const judgeResult = await tryLlmFeature(
@@ -298,9 +310,9 @@ export async function detectAndWriteContradictions(
 
         // Write contradiction edges: both members get contradictedBy pointing to each other.
         try {
-          writeContradictedByEdge(a.filePath, b.ref);
-          writeContradictedByEdge(b.filePath, a.ref);
-          result.edgesWritten += 2;
+          const wroteA = writeContradictedByEdge(a.filePath, b.ref);
+          const wroteB = writeContradictedByEdge(b.filePath, a.ref);
+          result.edgesWritten += (wroteA ? 1 : 0) + (wroteB ? 1 : 0);
         } catch (err) {
           result.warnings.push(
             `Failed to write contradiction edge ${a.ref} <-> ${b.ref}: ${err instanceof Error ? err.message : String(err)}`,
