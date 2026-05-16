@@ -391,7 +391,7 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
 async function fetchTopSimilarLessons(
   query: string,
   n: number,
-  stashDir?: string,
+  _stashDir?: string,
 ): Promise<Array<{ ref: string; content: string }>> {
   try {
     const result = await akmSearch({

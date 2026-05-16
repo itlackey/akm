@@ -91,7 +91,6 @@ import {
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
-import { createProposal, isProposalSkipped } from "./core/proposals";
 import { clearLogFile, info, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
