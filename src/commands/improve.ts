@@ -131,6 +131,21 @@ export interface AkmImproveOptions {
    * prevent oscillation. MemRL — utility-based sampling prevents pure coverage.
    */
   explorationBudget?: number;
+  /**
+   * Self-consistency multi-sample voting for high-utility refs (R-2 / #389).
+   * When a ref's utility score is at or above this threshold, the improve loop
+   * runs N reflect samples and picks the majority-vote winner by Jaccard token
+   * overlap. Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot
+   * quality on reasoning tasks.
+   *
+   * Default: 0.7. Set to 1.0 to disable (no refs qualify).
+   */
+  selfConsistencyThreshold?: number;
+  /**
+   * Number of reflect samples to generate for high-utility refs (R-2 / #389).
+   * Must be >= 2 for voting to make sense. Default: 3. Capped at 5.
+   */
+  selfConsistencyN?: number;
 }
 
 export interface ImproveEligibleRef {
@@ -242,6 +257,8 @@ interface ImprovePreparationResult {
   /** Refs on reflect cooldown but eligible for distill-only processing (Bug D2). */
   distillOnlyRefs: ImproveEligibleRef[];
   coverageGaps: string[];
+  /** Per-ref utility scores (R-2 / #389): used for self-consistency threshold check. */
+  utilityMap: Map<string, number>;
   /**
    * Per-originator rolling error windows (O-5 / #378).
    *
@@ -647,6 +664,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       distillOnlyRefs: preparation.distillOnlyRefs,
       recentErrors: preparation.recentErrors,
       rejectedProposalsByRef,
+      utilityMap: preparation.utilityMap,
       startMs,
       budgetMs,
       eventsCtx,
@@ -1425,6 +1443,7 @@ async function runImprovePreparationStage(args: {
     distillOnlyRefs: distillOnlyRefsResult,
     coverageGaps,
     recentErrors,
+    utilityMap,
   };
 }
 
@@ -1445,6 +1464,8 @@ async function runImproveLoopStage(args: {
   recentErrors: Record<string, string[]>;
   /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
   rejectedProposalsByRef: Map<string, EventEnvelope>;
+  /** R-2 / #389: per-ref utility scores for self-consistency threshold check. */
+  utilityMap: Map<string, number>;
   startMs: number;
   budgetMs: number;
   eventsCtx?: EventsContext;
@@ -1462,6 +1483,7 @@ async function runImproveLoopStage(args: {
     distillOnlyRefs,
     recentErrors,
     rejectedProposalsByRef,
+    utilityMap,
     startMs,
     budgetMs,
     eventsCtx,
@@ -1472,6 +1494,66 @@ async function runImproveLoopStage(args: {
   const remainingBudgetMs = () => Math.max(0, budgetMs - (Date.now() - startMs));
 
   const RECENT_ERRORS_CAP = 3;
+
+  // R-2 / #389: Self-Consistency multi-sample voting helpers.
+  // Wang et al. arXiv:2203.11171 — N=3 samples beat single-shot on reasoning tasks.
+  const SC_THRESHOLD = options.selfConsistencyThreshold ?? 0.7;
+  const SC_N = Math.min(Math.max(2, options.selfConsistencyN ?? 3), 5);
+
+  /**
+   * Compute Jaccard token overlap between two strings.
+   * Tokenizes by whitespace; returns 0 when both are empty.
+   */
+  function jaccardSimilarity(a: string, b: string): number {
+    const tokensA = new Set(a.split(/\s+/).filter(Boolean));
+    const tokensB = new Set(b.split(/\s+/).filter(Boolean));
+    if (tokensA.size === 0 && tokensB.size === 0) return 1;
+    let intersection = 0;
+    for (const t of tokensA) {
+      if (tokensB.has(t)) intersection++;
+    }
+    const union = tokensA.size + tokensB.size - intersection;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  /**
+   * Given N reflect results, return the one with the highest average Jaccard
+   * similarity to all other successful results (majority-vote winner).
+   * Falls back to the first successful result when N < 2.
+   */
+  function pickMajorityVote(results: AkmReflectResult[]): AkmReflectResult {
+    const successful = results.filter((r): r is Extract<AkmReflectResult, { ok: true }> => r.ok);
+    if (successful.length === 0)
+      return (
+        results[0] ?? {
+          schemaVersion: 1,
+          ok: false,
+          reason: "non_zero_exit",
+          error: "all samples failed",
+          exitCode: null,
+        }
+      );
+    if (successful.length === 1) return successful[0];
+    let bestIdx = 0;
+    let bestScore = -1;
+    for (let i = 0; i < successful.length; i++) {
+      let totalSim = 0;
+      for (let j = 0; j < successful.length; j++) {
+        if (i === j) continue;
+        totalSim += jaccardSimilarity(
+          successful[i].proposal.payload.content ?? "",
+          successful[j].proposal.payload.content ?? "",
+        );
+      }
+      const avgSim = totalSim / (successful.length - 1);
+      if (avgSim > bestScore) {
+        bestScore = avgSim;
+        bestIdx = i;
+      }
+    }
+    return successful[bestIdx] ?? successful[0];
+  }
+
   // O-5 / #378: helper to push per-originator errors into the rolling window.
   function pushRecentError(originator: string, msg: string): void {
     if (!recentErrors[originator]) recentErrors[originator] = [];
@@ -1546,15 +1628,30 @@ async function runImproveLoopStage(args: {
         // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
         // bounded by the wall-clock deadline rather than the default per-profile timeout.
         const reflectBudgetMs = remainingBudgetMs();
-        const reflectResult = await reflectFn({
+        const reflectCallArgs = {
           ref: planned.ref,
           task: options.task,
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
           ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
           agentProcess: options.agentProcess ?? "reflect",
-          eventSource: "improve",
+          eventSource: "improve" as const,
           ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
-        });
+        };
+        // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
+        // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
+        const refUtility = utilityMap.get(planned.ref) ?? 0;
+        const useConsistency = refUtility >= SC_THRESHOLD && SC_N >= 2;
+        let reflectResult: AkmReflectResult;
+        if (useConsistency) {
+          const samples: AkmReflectResult[] = [];
+          for (let s = 0; s < SC_N; s++) {
+            if (remainingBudgetMs() <= 0) break;
+            samples.push(await reflectFn(reflectCallArgs));
+          }
+          reflectResult = pickMajorityVote(samples.length > 0 ? samples : [await reflectFn(reflectCallArgs)]);
+        } else {
+          reflectResult = await reflectFn(reflectCallArgs);
+        }
         actions.push({
           ref: planned.ref,
           mode: reflectResult.ok ? "reflect" : "reflect-failed",
