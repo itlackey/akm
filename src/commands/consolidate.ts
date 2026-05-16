@@ -1116,7 +1116,53 @@ async function generateMergedContent(
     return null;
   }
 
-  return result.content;
+  const mergedRaw = result.content;
+
+  // C-4 / #383: Content-preservation lint (mem0 §3.2, arXiv:2504.19413).
+  // Guards against LLM-generated merged content that silently drops information
+  // from the source assets. Two checks:
+  //   1. Body size: merged body must be >= 50% of the larger source body.
+  //   2. Frontmatter superset: merged frontmatter must contain all keys present
+  //      in both source frontmatters.
+  // Failures emit a warning and return null so the merge op is skipped rather
+  // than writing degraded content.
+  try {
+    const primaryFm = parseFrontmatter(primaryBody);
+    const secFm = parseFrontmatter(secBody);
+    const mergedFm = parseFrontmatter(mergedRaw);
+
+    // Check body size
+    const primaryBodyLen = (primaryFm.content ?? "").trim().length;
+    const secBodyLen = (secFm.content ?? "").trim().length;
+    const mergedBodyLen = (mergedFm.content ?? "").trim().length;
+    const largerBodyLen = Math.max(primaryBodyLen, secBodyLen);
+    if (largerBodyLen > 0 && mergedBodyLen < largerBodyLen * 0.5) {
+      warnings.push(
+        `Merge: content-preservation lint failed for ${primaryRef} — ` +
+          `merged body (${mergedBodyLen} chars) is less than 50% of larger source (${largerBodyLen} chars). ` +
+          `Skipping merge to prevent data loss.`,
+      );
+      return null;
+    }
+
+    // Check frontmatter superset
+    const primaryKeys = Object.keys(primaryFm.data ?? {});
+    const secKeys = Object.keys(secFm.data ?? {});
+    const mergedKeys = new Set(Object.keys(mergedFm.data ?? {}));
+    const missingKeys = [...primaryKeys, ...secKeys].filter((k) => !mergedKeys.has(k));
+    if (missingKeys.length > 0) {
+      warnings.push(
+        `Merge: content-preservation lint failed for ${primaryRef} — ` +
+          `merged frontmatter missing keys from sources: ${missingKeys.join(", ")}. ` +
+          `Skipping merge to prevent data loss.`,
+      );
+      return null;
+    }
+  } catch {
+    // parseFrontmatter failures are non-fatal — allow the merge to proceed.
+  }
+
+  return mergedRaw;
 }
 
 async function promptConfirm(message: string): Promise<boolean> {
