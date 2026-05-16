@@ -1739,6 +1739,7 @@ async function runImprovePostLoopStage(args: {
     merged: 0,
     deleted: 0,
     promoted: [],
+    contradicted: 0,
     warnings: [],
     durationMs: 0,
   };

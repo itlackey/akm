@@ -21,6 +21,8 @@ import {
   isConsolidationEligibleMemoryName,
   type MemoryEntry,
 } from "../src/commands/consolidate";
+import { parseFrontmatter } from "../src/core/frontmatter";
+import { writeContradictEdge } from "../src/core/memory-belief";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -332,5 +334,52 @@ describe("consolidation memory eligibility", () => {
   it("excludes inferred derived memories from consolidation input", () => {
     expect(isConsolidationEligibleMemoryName("release-process")).toBe(true);
     expect(isConsolidationEligibleMemoryName("release-process.derived")).toBe(false);
+  });
+});
+
+// ── C-3 / #382 — memory-belief.ts writeContradictEdge ────────────────────────
+
+describe("C-3: writeContradictEdge writes contradictedBy frontmatter edges (#382)", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes contradictedBy and beliefState: contradicted to memory frontmatter", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-c3-"));
+    tmpDirs.push(tmpDir);
+    const memFile = path.join(tmpDir, "auth-a.md");
+    fs.writeFileSync(memFile, "---\ndescription: Auth tips A\n---\nContent A.\n", "utf8");
+
+    writeContradictEdge(memFile, "memory:auth-b");
+
+    const content = fs.readFileSync(memFile, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.beliefState).toBe("contradicted");
+    expect(Array.isArray(parsed.data.contradictedBy)).toBe(true);
+    expect(parsed.data.contradictedBy as string[]).toContain("memory:auth-b");
+  });
+
+  it("is idempotent — does not write duplicate edges", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-c3-idem-"));
+    tmpDirs.push(tmpDir);
+    const memFile = path.join(tmpDir, "auth-a.md");
+    fs.writeFileSync(
+      memFile,
+      "---\nbeliefState: contradicted\ncontradictedBy:\n  - memory:auth-b\n---\nContent A.\n",
+      "utf8",
+    );
+
+    // Write the same edge again — should be a no-op
+    writeContradictEdge(memFile, "memory:auth-b");
+
+    const content = fs.readFileSync(memFile, "utf8");
+    const parsed = parseFrontmatter(content);
+    const refs = parsed.data.contradictedBy as string[];
+    // Still exactly one edge (no duplicate)
+    expect(refs.filter((r) => r === "memory:auth-b")).toHaveLength(1);
   });
 });

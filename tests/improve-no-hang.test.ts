@@ -89,6 +89,7 @@ function _makeStubConsolidate(result?: Partial<ConsolidateResult>) {
     merged: 0,
     deleted: 0,
     promoted: [],
+    contradicted: 0,
     warnings: [],
     durationMs: 0,
     ...result,
