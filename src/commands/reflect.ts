@@ -418,6 +418,34 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     }
   }
 
+  // 6b. Validate payload.ref === options.ref (R-3 / #366).
+  // A hallucinating agent can silently retarget proposals to a different ref.
+  // This guard normalises both refs through parseAssetRef so origin-prefix
+  // differences do not cause false positives, then rejects mismatches.
+  // References: CRITIC (arXiv:2305.11738), CoVe (arXiv:2309.11495).
+  if (options.ref) {
+    try {
+      const expectedParsed = parseAssetRef(options.ref);
+      const actualParsed = parseAssetRef(payload.ref);
+      // Compare type + name (drop origin — agent may omit origin prefix).
+      if (expectedParsed.type !== actualParsed.type || expectedParsed.name !== actualParsed.name) {
+        return {
+          schemaVersion: 1,
+          ok: false,
+          reason: "parse_error" as const,
+          error: `Agent retargeted proposal: expected ref "${options.ref}" but got "${payload.ref}". Proposal rejected to prevent silent ref hallucination.`,
+          ref: options.ref,
+          exitCode: result.exitCode,
+          stdout: result.stdout,
+          ...(result.stderr ? { stderr: result.stderr } : {}),
+        };
+      }
+    } catch {
+      // parseAssetRef failure means the agent returned a malformed ref — already
+      // caught downstream by createProposal; allow it to surface naturally.
+    }
+  }
+
   // 7. Create the proposal. The proposal queue is the ONLY thing reflect
   // writes — promotion to a real asset is gated by `akm proposal accept`.
   const createInput: CreateProposalInput = {
