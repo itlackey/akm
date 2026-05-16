@@ -544,6 +544,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   const startMs = Date.now();
 
+  // O-1 (#364): Create a shared AbortController derived from startMs + budgetMs.
+  // Every async seam receives this signal so a hung sub-call cannot extend the
+  // run past the declared budget.
+  // References: Anthropic *Building Effective Agents* (2024); CoALA §5 (arXiv:2309.02427).
+  const budgetAbortController = new AbortController();
+  const budgetTimer = setTimeout(() => budgetAbortController.abort("improve budget exhausted"), budgetMs);
+  // Clear the timer when the run ends to avoid keeping the event loop alive.
+  const clearBudgetTimer = () => clearTimeout(budgetTimer);
+
   // I1: open a single state.db connection for the entire improve run so all
   // appendEvent calls reuse one handle instead of open/migrate/close per call.
   let eventsDb: import("bun:sqlite").Database | undefined;
@@ -621,6 +630,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memoryRefsForInference,
       reindexFn,
       eventsCtx,
+      // O-1 (#364): propagate wall-clock budget signal to post-loop maintenance.
+      budgetSignal: budgetAbortController.signal,
     });
 
     const finalActions =
@@ -691,6 +702,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     );
     throw err;
   } finally {
+    // O-1 (#364): Clear the budget abort timer so it does not keep the event
+    // loop alive after the run completes.
+    clearBudgetTimer();
     try {
       fs.unlinkSync(resolvedLockPath);
     } catch {
@@ -1369,6 +1383,10 @@ async function runImproveLoopStage(args: {
     eventsCtx,
   } = args;
 
+  // O-1 (#364): compute remaining budget at call time so each sub-call
+  // receives only its fair share of the wall-clock budget.
+  const remainingBudgetMs = () => Math.max(0, budgetMs - (Date.now() - startMs));
+
   const RECENT_ERRORS_CAP = 3;
   // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
   const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
@@ -1432,6 +1450,9 @@ async function runImproveLoopStage(args: {
       // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
         if (recentErrors.length > 0) reflectsWithErrorContext++;
+        // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
+        // bounded by the wall-clock deadline rather than the default per-profile timeout.
+        const reflectBudgetMs = remainingBudgetMs();
         const reflectResult = await reflectFn({
           ref: planned.ref,
           task: options.task,
@@ -1439,6 +1460,7 @@ async function runImproveLoopStage(args: {
           ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
           agentProcess: options.agentProcess ?? "reflect",
           eventSource: "improve",
+          ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
         });
         actions.push({
           ref: planned.ref,
@@ -1602,6 +1624,8 @@ async function runImprovePostLoopStage(args: {
   memoryRefsForInference: Set<string>;
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   eventsCtx?: EventsContext;
+  /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
+  budgetSignal?: AbortSignal;
 }): Promise<ImprovePostLoopResult> {
   const {
     scope,
@@ -1614,6 +1638,7 @@ async function runImprovePostLoopStage(args: {
     memoryRefsForInference,
     reindexFn,
     eventsCtx,
+    budgetSignal,
   } = args;
   const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
 
@@ -1711,6 +1736,8 @@ async function runImprovePostLoopStage(args: {
     allWarnings,
     reindexFn,
     consolidationRan,
+    // O-1 (#364): forward the budget signal to memory inference + graph extraction.
+    budgetSignal,
   });
 
   let deadUrls: DeadUrl[] | undefined;
@@ -1760,8 +1787,11 @@ async function runImproveMaintenancePasses(args: {
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   /** D9: true when consolidation ran and wrote at least one record this improve run. */
   consolidationRan?: boolean;
+  /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
+  budgetSignal?: AbortSignal;
 }): Promise<ImproveMaintenanceResult> {
-  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, consolidationRan } = args;
+  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, consolidationRan, budgetSignal } =
+    args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
   const config = options.config ?? loadConfig();
@@ -1787,10 +1817,11 @@ async function runImproveMaintenancePasses(args: {
       info(`[improve] memory inference starting (${memoryRefsForInference.size} candidate refs)`);
       const inferenceStart = Date.now();
       try {
+        // O-1 (#364): pass budget signal so a hung inference call is cancelled.
         memoryInference = await memoryInferenceFn(
           config,
           sources,
-          undefined,
+          budgetSignal,
           db,
           false,
           (event) => {
@@ -1877,9 +1908,10 @@ async function runImproveMaintenancePasses(args: {
             `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
           );
         };
+        // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
         graphExtraction = candidatePaths
-          ? await graphExtractionFn(config, sources, undefined, db, false, progressHandler, { candidatePaths })
-          : await graphExtractionFn(config, sources, undefined, db, false, progressHandler);
+          ? await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler, { candidatePaths })
+          : await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler);
         graphExtractionDurationMs = Date.now() - extractionStart;
         actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
         info(
