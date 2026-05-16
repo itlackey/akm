@@ -1560,30 +1560,129 @@ export function getEntryByRef(db: Database, type: string, name: string): { id: n
 }
 
 /**
- * Upsert a utility score adjustment derived from accumulated feedback events.
+ * MemRL learning rate for feedback-driven utility updates (F-5 / #386).
  *
- * - positiveDelta: +0.05 per positive event
- * - negativeDelta: -0.03 per negative event
- * - Score is clamped to [0.0, 1.0]
- * - A new row starts at 0.5 + delta so the first positive feedback immediately
- *   lifts the entry above the neutral midpoint.
+ * Follows the bounded-step formula from MemRL (arXiv:2601.03192):
+ *   next = clamp(current + lr × (reward − current), 0, 1)
+ *
+ * This replaces the unbounded `-0.03 × negativeCount` delta that could
+ * silently remove high-utility assets from the improvement loop.
+ */
+const FEEDBACK_LR = 0.1;
+
+/**
+ * Positive reward signal for a single positive feedback event.
+ * Reward 1.0 means "fully correct / helpful".
+ */
+const FEEDBACK_REWARD_POSITIVE = 1.0;
+
+/**
+ * Negative reward signal for a single negative feedback event.
+ * Reward 0.0 means "not helpful" (lowest MemRL signal).
+ */
+const FEEDBACK_REWARD_NEGATIVE = 0.0;
+
+/**
+ * Maximum total negative utility delta allowed in a single
+ * `applyFeedbackToUtilityScore` call regardless of negativeCount.
+ *
+ * This caps the per-day negative impact (the function is called once per
+ * feedback event — spamming 10 negatives in one session can move utility
+ * at most `MAX_NEG_DELTA_PER_CALL`). The cap prevents a noisy negative-
+ * feedback stream from silently destroying a high-utility asset's ranking.
+ */
+const MAX_NEG_DELTA_PER_CALL = 0.15;
+
+/**
+ * Utility threshold below which a review-needed escalation is triggered.
+ * When a previously high-utility asset (≥ HIGH_UTILITY_THRESHOLD) drops
+ * below this value, the caller should create an escalation proposal.
+ */
+export const UTILITY_REVIEW_THRESHOLD = 0.5;
+
+/**
+ * Utility level considered "high" — assets above this are tracked for
+ * threshold-crossing escalation.
+ */
+export const HIGH_UTILITY_THRESHOLD = 0.5;
+
+/**
+ * Result returned by {@link applyFeedbackToUtilityScore} (F-5 / #386).
+ *
+ * When `crossedReviewThreshold` is true the asset was previously at or above
+ * {@link HIGH_UTILITY_THRESHOLD} and is now below {@link UTILITY_REVIEW_THRESHOLD}.
+ * The caller should create a review-needed escalation proposal.
+ */
+export interface FeedbackUtilityResult {
+  /** Utility value before the update. */
+  previousUtility: number;
+  /** Utility value after the update. */
+  nextUtility: number;
+  /** True when the update caused a high-utility asset to cross below the review threshold. */
+  crossedReviewThreshold: boolean;
+}
+
+/**
+ * Apply accumulated feedback counts to the utility score of an entry using the
+ * MemRL bounded-step EMA formula (F-5 / #386, arXiv:2601.03192).
+ *
+ * Replaces the previous unbounded `-0.03 × negativeCount` formula with:
+ *
+ *   reward   = weighted average of positive and negative signals
+ *   nextUtil = clamp(currentUtil + lr × (reward − currentUtil), 0, 1)
+ *
+ * The negative impact is additionally capped at {@link MAX_NEG_DELTA_PER_CALL}
+ * to prevent a noisy feedback stream from silently erasing a high-utility asset.
+ *
+ * A new entry starts at 0.5 (neutral midpoint) before the EMA step is applied.
+ *
+ * Returns a {@link FeedbackUtilityResult} so the caller can detect when a
+ * previously high-utility asset crosses below the review threshold and create
+ * an escalation proposal.
  */
 export function applyFeedbackToUtilityScore(
   db: Database,
   entryId: number,
   positiveCount: number,
   negativeCount: number,
-): void {
-  if (positiveCount === 0 && negativeCount === 0) return;
-  const delta = positiveCount * 0.05 - negativeCount * 0.03;
+): FeedbackUtilityResult {
+  const existing = getUtilityScore(db, entryId);
+  const previousUtility = existing?.utility ?? 0.5;
+
+  if (positiveCount === 0 && negativeCount === 0) {
+    return { previousUtility, nextUtility: previousUtility, crossedReviewThreshold: false };
+  }
+
+  const total = positiveCount + negativeCount;
+  // Weighted reward: proportion of positive signals.
+  const reward =
+    positiveCount > 0 && negativeCount === 0
+      ? FEEDBACK_REWARD_POSITIVE
+      : negativeCount > 0 && positiveCount === 0
+        ? FEEDBACK_REWARD_NEGATIVE
+        : (positiveCount * FEEDBACK_REWARD_POSITIVE + negativeCount * FEEDBACK_REWARD_NEGATIVE) / total;
+
+  // MemRL bounded-step EMA: lr × (reward − current)
+  let delta = FEEDBACK_LR * (reward - previousUtility);
+
+  // Per-call negative cap: if delta is negative (net negative feedback), cap it.
+  if (delta < 0) {
+    delta = Math.max(delta, -MAX_NEG_DELTA_PER_CALL);
+  }
+
+  const nextUtility = Math.max(0, Math.min(1, previousUtility + delta));
+
   const now = new Date().toISOString();
   db.prepare(`
     INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
-    VALUES (?, MAX(0.0, MIN(1.0, 0.5 + ?)), 0, 0, 0, ?, ?)
+    VALUES (?, ?, 0, 0, 0, ?, ?)
     ON CONFLICT(entry_id) DO UPDATE SET
-      utility    = MAX(0.0, MIN(1.0, utility + ?)),
+      utility    = ?,
       updated_at = ?
-  `).run(entryId, delta, now, now, delta, now);
+  `).run(entryId, nextUtility, now, now, nextUtility, now);
+
+  const crossedReviewThreshold = previousUtility >= HIGH_UTILITY_THRESHOLD && nextUtility < UTILITY_REVIEW_THRESHOLD;
+  return { previousUtility, nextUtility, crossedReviewThreshold };
 }
 
 /**

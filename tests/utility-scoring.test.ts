@@ -13,7 +13,13 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from "../src/indexer/db";
+import {
+  applyFeedbackToUtilityScore,
+  closeDatabase,
+  getUtilityScore,
+  openDatabase,
+  upsertUtilityScore,
+} from "../src/indexer/db";
 import { akmIndex, recomputeUtilityScores } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { recordUsageEvent } from "./helpers/usage-events";
@@ -633,6 +639,83 @@ describe("Production path end-to-end", () => {
         utility: number;
       }>;
       expect(scores.length).toBeGreaterThan(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── F-5 / #386 — MemRL bounded-step utility update ───────────────────────────
+
+describe("F-5: MemRL bounded-step applyFeedbackToUtilityScore (#386)", () => {
+  function openTestDb() {
+    const db = openDatabase(":memory:");
+    // Disable FK enforcement so these unit tests don't need to seed the entries
+    // table — we're testing utility math, not referential integrity.
+    db.exec("PRAGMA foreign_keys = OFF");
+    return db;
+  }
+
+  test("returns previousUtility=0.5 and higher nextUtility for pure positive feedback", () => {
+    const db = openTestDb();
+    try {
+      const result = applyFeedbackToUtilityScore(db, 1, 3, 0);
+      expect(result.previousUtility).toBeCloseTo(0.5, 2);
+      expect(result.nextUtility).toBeGreaterThan(0.5);
+      expect(result.crossedReviewThreshold).toBe(false);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("negative feedback lowers utility using MemRL EMA formula", () => {
+    const db = openTestDb();
+    try {
+      const result = applyFeedbackToUtilityScore(db, 2, 0, 3);
+      // lr=0.1, reward=0, prev=0.5 → delta = 0.1*(0-0.5) = -0.05 → next ≈ 0.45
+      expect(result.nextUtility).toBeLessThan(0.5);
+      expect(result.nextUtility).toBeGreaterThan(0.3); // not an unbounded -0.03*3 = -0.09 crash
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("large negative counts are capped by MAX_NEG_DELTA_PER_CALL (0.15)", () => {
+    const db = openTestDb();
+    try {
+      const result = applyFeedbackToUtilityScore(db, 3, 0, 1000);
+      const drop = result.previousUtility - result.nextUtility;
+      // With old formula: drop = 1000 * 0.03 = 30 → utility = 0.5 - 30 = clamped to 0
+      // With new formula: drop capped at MAX_NEG_DELTA_PER_CALL = 0.15
+      expect(drop).toBeLessThanOrEqual(0.15 + 0.0001);
+      expect(result.nextUtility).toBeGreaterThanOrEqual(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("crossedReviewThreshold is true when utility was ≥ 0.5 and crosses below it", () => {
+    const db = openTestDb();
+    try {
+      // Seed a first positive pass to write a row with utility ~0.55
+      // lr=0.1, reward=1, prev=0.5 → delta=0.05 → next=0.55
+      applyFeedbackToUtilityScore(db, 4, 1, 0);
+      // Now apply negative feedback: lr=0.1, reward=0, prev=0.55 → delta=-0.055 → next≈0.495
+      const result = applyFeedbackToUtilityScore(db, 4, 0, 5);
+      expect(result.previousUtility).toBeGreaterThanOrEqual(0.5);
+      expect(result.nextUtility).toBeLessThan(0.5);
+      expect(result.crossedReviewThreshold).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("zero feedback counts returns unchanged utility without db write", () => {
+    const db = openTestDb();
+    try {
+      const result = applyFeedbackToUtilityScore(db, 5, 0, 0);
+      expect(result.crossedReviewThreshold).toBe(false);
+      expect(result.previousUtility).toBe(result.nextUtility);
     } finally {
       closeDatabase(db);
     }

@@ -84,6 +84,7 @@ import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, s
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
+import { createProposal, isProposalSkipped } from "./core/proposals";
 import { clearLogFile, info, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
@@ -1594,6 +1595,7 @@ const feedbackCommand = defineCommand({
         await ensureIndex(sources[0].path);
       }
 
+      let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
       const db = openExistingDatabase();
       try {
         const entryId = findEntryIdByRef(db, ref);
@@ -1620,6 +1622,7 @@ const feedbackCommand = defineCommand({
         // positive/negative signals influence search ranking without requiring
         // a full reindex. We query the total accumulated feedback counts from
         // usage_events so the delta reflects the entire signal history.
+        // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
         try {
           const counts = db
             .prepare(
@@ -1632,7 +1635,7 @@ const feedbackCommand = defineCommand({
             .get(entryId) as { pos: number | null; neg: number | null } | undefined;
           const pos = counts?.pos ?? 0;
           const neg = counts?.neg ?? 0;
-          applyFeedbackToUtilityScore(db, entryId, pos, neg);
+          utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
         } catch {
           // best-effort — feedback recording succeeds even if utility update fails
         }
@@ -1645,6 +1648,54 @@ const feedbackCommand = defineCommand({
         ref,
         metadata: metadataObj,
       });
+
+      // F-5 / #386: When a high-utility asset crosses below the review threshold,
+      // auto-create a review-needed escalation proposal so a human can confirm
+      // whether the negative feedback is valid before the asset falls out of
+      // the improve loop. Best-effort — failure is logged but does not fail the
+      // feedback command.
+      if (utilityResult?.crossedReviewThreshold) {
+        try {
+          const stashDir = resolveSourceEntries()[0]?.path;
+          if (stashDir) {
+            const proposalResult = createProposal(stashDir, {
+              ref,
+              source: "feedback",
+              payload: {
+                content: [
+                  "---",
+                  `description: "Review needed: ${ref} utility crossed below 0.5 after negative feedback"`,
+                  "---",
+                  "# Review Needed: Utility Threshold Crossed",
+                  "",
+                  `Asset \`${ref}\` received negative feedback and its utility score dropped`,
+                  `from ${utilityResult.previousUtility.toFixed(3)} to ${utilityResult.nextUtility.toFixed(3)},`,
+                  "crossing below the review threshold (0.5).",
+                  "",
+                  "## Negative feedback reason",
+                  "",
+                  reason?.trim() ?? "(no reason provided)",
+                  "",
+                  "## Recommended action",
+                  "",
+                  "Review the asset's content and recent feedback. If the negative feedback is",
+                  "valid, update or deprecate the asset. If the feedback is erroneous, record",
+                  "positive feedback to restore the score.",
+                  "",
+                ].join("\n"),
+              },
+            });
+            if (isProposalSkipped(proposalResult)) {
+              warn(`[feedback] Review-needed proposal skipped: ${proposalResult.message}`);
+            }
+          }
+        } catch (escalationErr) {
+          warn(
+            `[feedback] Could not create review-needed proposal for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
+          );
+        }
+      }
+
       output("feedback", { ok: true, ref, signal, reason: reason?.trim() ?? null, tags: validatedTags });
     });
   },
