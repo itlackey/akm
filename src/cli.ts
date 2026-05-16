@@ -1776,6 +1776,13 @@ const historyCommand = defineCommand({
         "Default: false (usage_events only).",
       default: false,
     },
+    "accept-rate-by-source": {
+      type: "boolean",
+      description:
+        "Compute accept-rate-per-source metrics from the proposal store and include them in the output (F-4 / #385). " +
+        "Useful for measuring which generators (reflect, distill, …) produce the most accepted proposals.",
+      default: false,
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
   },
   run({ args }) {
@@ -1787,11 +1794,15 @@ const historyCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
+      const sources = resolveSourceEntries();
+      const stashDir = sources[0]?.path;
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
         source: sourceFlag,
         includeProposals: args["include-proposals"],
+        acceptRateBySource: args["accept-rate-by-source"] as boolean | undefined,
+        stashDir,
       });
       output("history", result);
     });

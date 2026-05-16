@@ -12,12 +12,16 @@ import {
 import type { AkmConfig } from "../src/core/config";
 import { readEvents } from "../src/core/events";
 import {
+  AUTOMATED_PROPOSAL_SOURCES,
   archiveProposal,
   createProposal,
   diffProposal,
   getProposal,
+  isAutomatedProposalSource,
   isProposalSkipped,
+  isValidProposalSource,
   listProposals,
+  PROPOSAL_SOURCES,
   validateProposal,
 } from "../src/core/proposals";
 
@@ -467,5 +471,58 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     expect(isProposalSkipped(distillResult)).toBe(false);
     const queue = listProposals(stash);
     expect(queue.length).toBe(2);
+  });
+});
+
+// ── F-4 / #385 — source allow-list + sourceRun advisory ──────────────────────
+
+describe("F-4: source allow-list validation and sourceRun advisory (#385)", () => {
+  test("isValidProposalSource returns true for known source values", () => {
+    for (const src of PROPOSAL_SOURCES) {
+      expect(isValidProposalSource(src)).toBe(true);
+    }
+  });
+
+  test("isValidProposalSource returns false for unknown strings", () => {
+    expect(isValidProposalSource("reflct")).toBe(false); // typo
+    expect(isValidProposalSource("")).toBe(false);
+    expect(isValidProposalSource("agent-custom")).toBe(false);
+  });
+
+  test("isAutomatedProposalSource returns true for reflect/distill/consolidate/improve", () => {
+    for (const src of AUTOMATED_PROPOSAL_SOURCES) {
+      expect(isAutomatedProposalSource(src)).toBe(true);
+    }
+  });
+
+  test("isAutomatedProposalSource returns false for human-initiated sources", () => {
+    expect(isAutomatedProposalSource("propose")).toBe(false);
+    expect(isAutomatedProposalSource("remember")).toBe(false);
+    expect(isAutomatedProposalSource("feedback")).toBe(false);
+  });
+
+  test("createProposal accepts valid sources without warnings in the proposal record", () => {
+    const stash = makeStashDir();
+    const result = createProposal(stash, {
+      ref: "lesson:f4-valid-source",
+      source: "reflect",
+      sourceRun: "run-abc-123",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(result)).toBe(false);
+    const proposal = result as import("../src/core/proposals").Proposal;
+    expect(proposal.source).toBe("reflect");
+    expect(proposal.sourceRun).toBe("run-abc-123");
+  });
+
+  test("createProposal accepts unknown source strings (backward-compatible)", () => {
+    const stash = makeStashDir();
+    // Unknown source should NOT throw — it emits a warning but creates the proposal.
+    const result = createProposal(stash, {
+      ref: "lesson:f4-unknown-source",
+      source: "custom-extension",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(result)).toBe(false);
   });
 });
