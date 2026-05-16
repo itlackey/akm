@@ -69,6 +69,7 @@ import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
+import { akmSearch } from "./search";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,13 @@ export interface AkmDistillOptions {
    * Only include feedback events whose metadata.tags contain ALL of these tags.
    */
   includeTags?: string[];
+  /**
+   * D-4 / #390: Optional seam to retrieve top-3 similar existing lessons for
+   * the judge prompt. When absent in production, `fetchTopSimilarLessons` is
+   * used (requires a configured embedding). Voyager arXiv:2305.16291 — skill
+   * library admission checks against the existing library.
+   */
+  fetchSimilarLessonsFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
 }
 
 export interface AkmDistillResult {
@@ -372,10 +380,61 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   return lines.join("\n");
 }
 
+// ── D-4 / #390: Top-3 similar lessons retrieval ──────────────────────────────
+
+/**
+ * Default implementation: use akmSearch to find top-N similar lesson assets.
+ * Returns empty array when search fails or returns no results.
+ * Requires embedding configured for semantic similarity; degrades gracefully.
+ */
+async function fetchTopSimilarLessons(
+  query: string,
+  n: number,
+  stashDir?: string,
+): Promise<Array<{ ref: string; content: string }>> {
+  try {
+    const result = await akmSearch({
+      query,
+      type: "lesson",
+      limit: n,
+    });
+    const hits = result?.hits ?? [];
+    return hits
+      .filter((h): h is import("../sources/types").SourceSearchHit => "path" in h && typeof h.path === "string")
+      .slice(0, n)
+      .map((h) => {
+        let content = "";
+        try {
+          if (h.path && fs.existsSync(h.path)) {
+            content = fs.readFileSync(h.path, "utf8");
+          }
+        } catch {
+          /* best-effort */
+        }
+        return { ref: h.ref, content };
+      });
+  } catch {
+    return [];
+  }
+}
+
 // ── LLM-as-judge quality gate (P2-B) ────────────────────────────────────────
 
-function buildJudgePrompt(lessonContent: string, sourceContent: string): string {
-  return [
+/**
+ * D-4 / #390: Build the LLM-as-judge prompt.
+ *
+ * When similarLessons are provided (top-3 by embedding similarity), they are
+ * included in the context so the judge can lower the score for near-duplicates.
+ * Voyager arXiv:2305.16291 — skill library admission requires similarity check
+ * against the existing library. A-MEM arXiv:2502.12110 — new notes are checked
+ * against existing notes before linking.
+ */
+function buildJudgePrompt(
+  lessonContent: string,
+  sourceContent: string,
+  similarLessons?: Array<{ ref: string; content: string }>,
+): string {
+  const lines = [
     "You are evaluating a proposed lesson asset for an akm knowledge base.",
     "",
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
@@ -387,14 +446,29 @@ function buildJudgePrompt(lessonContent: string, sourceContent: string): string 
     "```",
     sourceContent.slice(0, 2000),
     "```",
-    "",
-    "Proposed lesson content:",
-    "```",
-    lessonContent.slice(0, 1000),
-    "```",
-    "",
-    'Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}',
-  ].join("\n");
+  ];
+
+  if (similarLessons && similarLessons.length > 0) {
+    lines.push("");
+    lines.push(
+      "Existing similar lessons (top-3 by similarity). Rate lower if the proposed lesson is substantially similar to any of these:",
+    );
+    for (const sl of similarLessons) {
+      lines.push(`\nExisting lesson ref: ${sl.ref}`);
+      lines.push("```");
+      lines.push(sl.content.slice(0, 500));
+      lines.push("```");
+    }
+  }
+
+  lines.push("");
+  lines.push("Proposed lesson content:");
+  lines.push("```");
+  lines.push(lessonContent.slice(0, 1000));
+  lines.push("```");
+  lines.push("");
+  lines.push('Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}');
+  return lines.join("\n");
 }
 
 /**
@@ -411,6 +485,8 @@ export async function runLessonQualityJudge(
   lessonContent: string,
   sourceContent: string,
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
+  /** D-4 / #390: top-3 similar existing lessons for dedup check. */
+  similarLessons?: Array<{ ref: string; content: string }>,
 ): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
   if (!config.llm) {
     return { pass: true, score: -1, reason: "no LLM configured — passing through" };
@@ -421,7 +497,7 @@ export async function runLessonQualityJudge(
     const raw = await Promise.race([
       chat(judgeLlmConfig, [
         { role: "system", content: "Return only valid JSON. No prose." },
-        { role: "user", content: buildJudgePrompt(lessonContent, sourceContent) },
+        { role: "user", content: buildJudgePrompt(lessonContent, sourceContent, similarLessons) },
       ]),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("judge timeout")), JUDGE_TIMEOUT_MS)),
     ]);
@@ -525,6 +601,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const chat = options.chat ?? chatCompletion;
   const lookup = options.lookupFn ?? defaultLookup;
   const readEventsImpl = options.readEventsFn ?? readEvents;
+  // D-4 / #390: similar-lessons retrieval seam (test-injectable).
+  const fetchSimilarLessonsFn =
+    options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
 
   // Best-effort load: when the asset is not yet indexed we still proceed —
   // the LLM is asked to distil from "available signal" (feedback alone).
@@ -672,7 +751,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     // D-5 / #388: Three-band system — review_needed band queues to proposal
     // queue with review_needed outcome rather than auto-rejecting.
     if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
-      const judgeResult = await runLessonQualityJudge(config, resolvedPromotionContent, assetContent ?? "", chat);
+      // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
+      const similarLessons = await fetchSimilarLessonsFn(resolvedPromotionContent.slice(0, 500), 3);
+      const judgeResult = await runLessonQualityJudge(
+        config,
+        resolvedPromotionContent,
+        assetContent ?? "",
+        chat,
+        similarLessons.length > 0 ? similarLessons : undefined,
+      );
       if (!judgeResult.pass) {
         if (judgeResult.reviewNeeded) {
           // Uncertainty band (2.5–3.5): queue as review_needed instead of rejecting.
@@ -877,7 +964,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // D-5 / #388: Three-band system — review_needed band queues a proposal
   // with review_needed outcome rather than auto-rejecting.
   if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
-    const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat);
+    // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
+    const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
+    const judgeResult = await runLessonQualityJudge(
+      config,
+      content,
+      assetContent ?? "",
+      chat,
+      similarLessons.length > 0 ? similarLessons : undefined,
+    );
     if (!judgeResult.pass) {
       if (judgeResult.reviewNeeded) {
         return writeQualityRejection(
