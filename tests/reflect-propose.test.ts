@@ -640,7 +640,6 @@ describe("buildReflectPrompt — rejected proposals (Reflexion verbal-RL)", () =
     });
     archiveProposal(stash, proposal.id, "rejected", "Too vague");
 
-    const capturedPrompt = "";
     const result = await akmReflect({
       ref: "skill:deploy",
       stashDir: stash,
