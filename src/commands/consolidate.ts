@@ -7,6 +7,7 @@ import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
+import { appendEvent } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { writeContradictEdge } from "../core/memory-belief";
 import { parseEmbeddedJsonResponse } from "../core/parse";
@@ -990,7 +991,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   cleanupJournal(stashDir, timestamp);
 
-  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90)
+  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90).
+  // C-5 / #391: emit an `archive_cleanup` event before each deletion so the
+  // audit trail records what was lost. Outbox pattern (EIP, Hohpe-Woolf) —
+  // any event that is recorded must be queryable; silent deletes are an anti-pattern.
   const archiveDir = path.join(stashDir, ".akm", "archive");
   if (fs.existsSync(archiveDir)) {
     const retentionMs = (config.archiveRetentionDays ?? 90) * 86_400_000;
@@ -998,7 +1002,20 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     for (const fname of fs.readdirSync(archiveDir)) {
       const fp = path.join(archiveDir, fname);
       try {
-        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+        const stat = fs.statSync(fp);
+        if (stat.mtimeMs < cutoff) {
+          // Emit event before deletion so the record survives the purge.
+          appendEvent({
+            eventType: "archive_cleanup",
+            metadata: {
+              file: fname,
+              filePath: fp,
+              ageMs: Date.now() - stat.mtimeMs,
+              retentionMs,
+            },
+          });
+          fs.unlinkSync(fp);
+        }
       } catch {
         /* ignore race conditions */
       }
