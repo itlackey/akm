@@ -242,7 +242,15 @@ interface ImprovePreparationResult {
   /** Refs on reflect cooldown but eligible for distill-only processing (Bug D2). */
   distillOnlyRefs: ImproveEligibleRef[];
   coverageGaps: string[];
-  recentErrors: string[];
+  /**
+   * Per-originator rolling error windows (O-5 / #378).
+   *
+   * Errors from one sub-pass must NOT be injected into unrelated sub-passes as
+   * avoidPatterns — that is the cross-task contamination failure mode Reflexion
+   * (arXiv:2303.11366) warns against. Each originator key ("schema-repair",
+   * "reflect", "distill") maps to its own rolling window of last-N errors.
+   */
+  recentErrors: Record<string, string[]>;
 }
 
 interface ImproveLoopResult {
@@ -1013,15 +1021,26 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  const recentErrors: string[] = []; // rolling window, last 3 failures
+  // O-5 / #378: Per-originator rolling error windows.
+  // Reflexion (arXiv:2303.11366) warns that cross-task verbal critique
+  // contamination degrades below single-shot baseline. Each originator key
+  // ("schema-repair", "reflect") maintains its own rolling window so that
+  // schema-repair failures are not injected as avoidPatterns into reflect calls.
+  const recentErrors: Record<string, string[]> = {};
   const RECENT_ERRORS_CAP = 3;
 
-  // Seed the rolling window from any schema repair errors that occurred before the main loop.
+  // Helper: push an error onto an originator's rolling window.
+  function pushRecentError(originator: string, msg: string): void {
+    if (!recentErrors[originator]) recentErrors[originator] = [];
+    recentErrors[originator].push(msg);
+    if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
+  }
+
+  // Seed schema-repair originator window from any schema-repair errors.
   for (const repair of schemaRepairs) {
     if (repair.outcome === "error") {
       const errMsg = repair.error ?? `schema repair error: ${repair.reason}`;
-      recentErrors.push(errMsg);
-      if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+      pushRecentError("schema-repair", errMsg);
     }
   }
 
@@ -1422,7 +1441,8 @@ async function runImproveLoopStage(args: {
   distillCooledRefs: Set<string>;
   /** Refs that should only run the distill path (reflect-cooled but distill expired, Bug D2). */
   distillOnlyRefs: ImproveEligibleRef[];
-  recentErrors: string[];
+  /** Per-originator rolling error windows (O-5 / #378). */
+  recentErrors: Record<string, string[]>;
   /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
   rejectedProposalsByRef: Map<string, EventEnvelope>;
   startMs: number;
@@ -1452,6 +1472,12 @@ async function runImproveLoopStage(args: {
   const remainingBudgetMs = () => Math.max(0, budgetMs - (Date.now() - startMs));
 
   const RECENT_ERRORS_CAP = 3;
+  // O-5 / #378: helper to push per-originator errors into the rolling window.
+  function pushRecentError(originator: string, msg: string): void {
+    if (!recentErrors[originator]) recentErrors[originator] = [];
+    recentErrors[originator].push(msg);
+    if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
+  }
   // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
   const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
   let completedCount = 0;
@@ -1513,7 +1539,10 @@ async function runImproveLoopStage(args: {
       // path is also a no-op for them — we just avoid unnecessary agent spawns.
       // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-        if (recentErrors.length > 0) reflectsWithErrorContext++;
+        // O-5 / #378: only inject reflect-originator errors into the reflect call.
+        // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
+        const reflectErrors = recentErrors["reflect"] ?? [];
+        if (reflectErrors.length > 0) reflectsWithErrorContext++;
         // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
         // bounded by the wall-clock deadline rather than the default per-profile timeout.
         const reflectBudgetMs = remainingBudgetMs();
@@ -1521,7 +1550,7 @@ async function runImproveLoopStage(args: {
           ref: planned.ref,
           task: options.task,
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-          ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
+          ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
           agentProcess: options.agentProcess ?? "reflect",
           eventSource: "improve",
           ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
@@ -1533,8 +1562,7 @@ async function runImproveLoopStage(args: {
         });
         if (!reflectResult.ok) {
           const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-          recentErrors.push(errMsg);
-          if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+          pushRecentError("reflect", errMsg);
         }
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
         // B6: .derived refs skip reflect; record synthetic skip action.
