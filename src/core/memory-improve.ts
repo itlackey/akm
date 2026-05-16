@@ -80,6 +80,8 @@ export interface MemoryCleanupApplyResult {
   transitionLogPath?: string;
   transitionLogEntries?: number;
   warnings?: string[];
+  /** M-5 / #396: Number of relative-date expressions resolved to absolute dates. */
+  relativeDatesResolved?: number;
 }
 
 export interface MemoryCleanupOptions {
@@ -300,6 +302,33 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     }
   }
 
+  // M-5 / #396: Resolve relative dates for flagged candidates.
+  // Anchor: use the file's `createdAt` frontmatter field, or fall back to the
+  // file's mtime. Graphiti arXiv:2501.13956, HeidelTime (Strötgen & Gertz 2010).
+  let relativeDatesResolved = 0;
+  for (const candidate of plan.relativeDateCandidates) {
+    try {
+      const raw = fs.readFileSync(candidate.filePath, "utf8");
+      const fm = parseFrontmatter(raw);
+      const createdAtStr = fm.data.createdAt as string | undefined;
+      let referenceDate: Date;
+      if (createdAtStr) {
+        const parsed = new Date(createdAtStr);
+        referenceDate = Number.isNaN(parsed.getTime()) ? new Date(fs.statSync(candidate.filePath).mtimeMs) : parsed;
+      } else {
+        referenceDate = new Date(fs.statSync(candidate.filePath).mtimeMs);
+      }
+      const resolvedBody = resolveRelativeDates(fm.content ?? "", referenceDate);
+      if (resolvedBody === (fm.content ?? "")) continue; // no change
+      const fmStr = yamlStringify(fm.data).trimEnd();
+      const newContent = `---\n${fmStr}\n---\n${resolvedBody}`;
+      fs.writeFileSync(candidate.filePath, newContent, "utf8");
+      relativeDatesResolved++;
+    } catch (error) {
+      warnings.push(formatApplyWarning("relative-date-resolve", candidate.ref, error));
+    }
+  }
+
   archived.sort((a, b) => a.ref.localeCompare(b.ref));
   appliedBeliefTransitions.sort(compareBeliefTransitions);
   return {
@@ -307,6 +336,7 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     beliefStateTransitions: appliedBeliefTransitions,
     ...(transitionLogPath ? { transitionLogPath: path.relative(stashDir, transitionLogPath).replace(/\\/g, "/") } : {}),
     ...(transitionLogPath ? { transitionLogEntries: appliedBeliefTransitions.length } : {}),
+    ...(relativeDatesResolved > 0 ? { relativeDatesResolved } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
@@ -314,6 +344,46 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
 function formatApplyWarning(stage: string, ref: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   return `${stage} failed for ${ref}: ${detail}`;
+}
+
+/**
+ * M-5 / #396: Resolve relative date expressions to absolute ISO dates.
+ *
+ * Uses `referenceDate` as the anchor point (Graphiti arXiv:2501.13956,
+ * HeidelTime Strötgen & Gertz 2010 — document creation time as reference).
+ * Replaces patterns like "yesterday", "3 days ago", "last week" with their
+ * ISO 8601 date string (YYYY-MM-DD).
+ *
+ * Returns the rewritten string; returns the original if no matches.
+ */
+function resolveRelativeDates(text: string, referenceDate: Date): string {
+  const RELATIVE_DATE_RE =
+    /\b(yesterday|last week|last month|last year|\d+ days? ago|\d+ weeks? ago|\d+ months? ago)\b/gi;
+  return text.replace(RELATIVE_DATE_RE, (match) => {
+    const lower = match.toLowerCase().trim();
+    const d = new Date(referenceDate);
+    if (lower === "yesterday") {
+      d.setDate(d.getDate() - 1);
+    } else if (lower === "last week") {
+      d.setDate(d.getDate() - 7);
+    } else if (lower === "last month") {
+      d.setMonth(d.getMonth() - 1);
+    } else if (lower === "last year") {
+      d.setFullYear(d.getFullYear() - 1);
+    } else {
+      const numMatch = lower.match(/^(\d+)\s+(day|week|month)s?\s+ago$/);
+      if (numMatch) {
+        const n = Number.parseInt(numMatch[1] ?? "0", 10);
+        const unit = numMatch[2] ?? "day";
+        if (unit === "day") d.setDate(d.getDate() - n);
+        else if (unit === "week") d.setDate(d.getDate() - n * 7);
+        else if (unit === "month") d.setMonth(d.getMonth() - n);
+      } else {
+        return match; // unrecognized pattern — leave as-is
+      }
+    }
+    return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  });
 }
 
 function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContradictionResolution {
