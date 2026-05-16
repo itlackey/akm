@@ -138,6 +138,12 @@ export interface ReflectPromptInput {
    * proposals that have already been reviewed and refused.
    */
   rejectedProposals?: RejectedProposalContext[];
+  /**
+   * Prior draft content from the previous refinement iteration (R-1 / #372).
+   * When set, the agent is asked to critique the draft and produce a better
+   * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
+   */
+  priorDraft?: string;
 }
 
 /**
@@ -246,6 +252,24 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   if (input.avoidPatterns && input.avoidPatterns.length > 0) {
     sections.push(
       `## Avoid These Patterns\nPrevious assets in this run produced these errors — do not repeat them:\n${input.avoidPatterns.map((e) => `- ${e}`).join("\n")}`,
+    );
+  }
+
+  // R-1 / #372: Self-Refine (arXiv:2303.17651) — inject prior draft as critique target.
+  // On refinement iterations (iter > 0), the agent is shown its previous proposal
+  // and asked to self-critique and improve it rather than starting from scratch.
+  if (input.priorDraft?.trim()) {
+    sections.push(
+      "## Self-Refine: Critique and Improve\n" +
+        "The following is your previous draft proposal. " +
+        "Identify specific weaknesses: missing evidence, vague wording, incomplete frontmatter, " +
+        "or claims that duplicate existing content without adding new signal. " +
+        "Then produce an improved version that addresses those weaknesses. " +
+        "The revised proposal must be meaningfully better than the draft below — " +
+        "do not return the same content unchanged.\n\n" +
+        "Previous draft:\n```\n" +
+        input.priorDraft.trimEnd() +
+        "\n```",
     );
   }
 

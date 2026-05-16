@@ -115,6 +115,16 @@ export interface AkmReflectOptions {
    * filtered out of user-facing history.
    */
   eventSource?: "user" | "improve";
+  /**
+   * Maximum number of iterative self-refinement passes (R-1 / #372).
+   * Default: 1 (single-shot, no refinement — preserves existing behaviour).
+   * Capped at 3 to prevent runaway loops.
+   *
+   * On each pass beyond the first the prior draft is injected back into the
+   * prompt as Self-Refine critique context (arXiv:2303.17651). The loop stops
+   * early if the agent returns the same content as the previous iteration.
+   */
+  maxRefineIters?: number;
 }
 
 export interface AkmReflectFailure {
@@ -440,64 +450,101 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     throw err;
   }
 
-  // 4. Build the prompt.
-  // Keep reflect on the same captured JSON path the bench harness already
-  // uses successfully. The draft-file interactive path proved brittle with
-  // local opencode models and caused proposal generation failures.
+  // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
+  // proposals. These are stable across refinement iterations; only the
+  // `priorDraft` field changes per-iteration (R-1 / #372).
   const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const relatedLessons = options.ref && parsedRef ? await readRelatedLessons(stash, options.ref, parsedRef) : [];
   // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
   // reproducing proposals that have already been reviewed and refused.
   const rejectedProposals = readRejectedProposals(stash, options.ref);
-  const prompt = buildReflectPrompt({
-    ...(options.ref ? { ref: options.ref } : {}),
-    ...(parsedRef?.type ? { type: parsedRef.type } : {}),
-    ...(parsedRef?.name ? { name: parsedRef.name } : {}),
-    ...(assetContent !== undefined ? { assetContent } : {}),
-    ...(feedback.length > 0 ? { feedback } : {}),
-    ...(schemaHints.length > 0 ? { schemaHints } : {}),
-    ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
-    ...(options.task ? { task: options.task } : {}),
-    ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
-    ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
-  });
 
-  // 5. Spawn the agent.
-  // Fall back to raw runAgent when a custom spawn function is injected (test seam).
-  // Production path dispatches directly to runAgentSdk or runAgent.
+  // 5. Spawn the agent — with optional Self-Refine loop (R-1 / #372).
+  //
+  // maxRefineIters controls how many agent invocations are made:
+  //   - 1 (default): single-shot, same as pre-R-1 behaviour
+  //   - 2–3: on each subsequent pass, the prior draft is injected back into
+  //     the prompt as Self-Refine critique context (arXiv:2303.17651)
+  //
+  // The loop exits early when the agent returns the same content as before
+  // (no-op refinement) to avoid wasting tokens on identical iterations.
+  const MAX_REFINE_ITERS = 3;
+  const maxRefineIters = Math.min(Math.max(1, options.maxRefineIters ?? 1), MAX_REFINE_ITERS);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
-  let result: AgentRunResult;
-  if (options.runAgentOptions?.spawn) {
-    // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
-    const runOptions: RunAgentOptions = {
-      stdio: "captured",
-      parseOutput: "text",
-      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-      ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-      ...(options.runAgentOptions ?? {}),
-    };
-    result = await runAgent(profile, prompt, runOptions);
-  } else {
-    // Production path: dispatch directly to the appropriate runner.
-    const runOptions: RunAgentOptions = {
-      stdio: "captured",
-      parseOutput: "text",
-      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-      ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-    };
-    result = profile.sdkMode
-      ? await runAgentSdk(profile, prompt ?? "", runOptions)
-      : await runAgent(profile, prompt, runOptions);
+
+  // Initialized to a sentinel; always overwritten in the first loop iteration
+  // (maxRefineIters is clamped to >= 1 above). TypeScript cannot prove a
+  // for-loop always runs at least once, so we use a type assertion here.
+  let result = {} as AgentRunResult;
+  let priorDraft: string | undefined;
+
+  for (let iter = 0; iter < maxRefineIters; iter++) {
+    const prompt = buildReflectPrompt({
+      ...(options.ref ? { ref: options.ref } : {}),
+      ...(parsedRef?.type ? { type: parsedRef.type } : {}),
+      ...(parsedRef?.name ? { name: parsedRef.name } : {}),
+      ...(assetContent !== undefined ? { assetContent } : {}),
+      ...(feedback.length > 0 ? { feedback } : {}),
+      ...(schemaHints.length > 0 ? { schemaHints } : {}),
+      ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
+      ...(options.task ? { task: options.task } : {}),
+      ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
+      ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
+      // R-1: inject prior draft as self-critique target on iterations > 0
+      ...(priorDraft !== undefined ? { priorDraft } : {}),
+    });
+
+    let iterResult: AgentRunResult;
+    if (options.runAgentOptions?.spawn) {
+      // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
+      const runOptions: RunAgentOptions = {
+        stdio: "captured",
+        parseOutput: "text",
+        ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+        ...(options.runAgentOptions ?? {}),
+      };
+      iterResult = await runAgent(profile, prompt, runOptions);
+    } else {
+      // Production path: dispatch directly to the appropriate runner.
+      const runOptions: RunAgentOptions = {
+        stdio: "captured",
+        parseOutput: "text",
+        ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+      };
+      iterResult = profile.sdkMode
+        ? await runAgentSdk(profile, prompt ?? "", runOptions)
+        : await runAgent(profile, prompt, runOptions);
+    }
+
+    result = iterResult;
+
+    if (!iterResult.ok) break; // surface failure after loop
+
+    // On success, extract the draft content for the next iteration.
+    // If the agent returns the same content as the prior draft, stop early
+    // (no-op refinement) to avoid wasting tokens on identical iterations.
+    if (iter < maxRefineIters - 1) {
+      const nextDraft = iterResult.stdout ?? "";
+      if (priorDraft !== undefined && nextDraft === priorDraft) break;
+      priorDraft = nextDraft;
+    }
   }
 
-  if (!result.ok) {
+  const finalResult: AgentRunResult = result;
+
+  if (!finalResult.ok) {
     // B3: ENOENT / not-found gives an actionable hint.
-    if (isEnoentFailure(result)) {
-      return { ...failureEnvelope(result, options.ref), error: enoentHintMessage(profile.bin) };
+    if (isEnoentFailure(finalResult)) {
+      return { ...failureEnvelope(finalResult, options.ref), error: enoentHintMessage(profile.bin) };
     }
-    return failureEnvelope(result, options.ref);
+    return failureEnvelope(finalResult, options.ref);
   }
+
+  // Re-alias to `result` for the downstream code that references it.
+  result = finalResult;
 
   // 6. Resolve the proposal content from stdout JSON.
   let payload: ReturnType<typeof parseAgentProposalPayload>;
