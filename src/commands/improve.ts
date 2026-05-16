@@ -1085,8 +1085,20 @@ async function runImprovePreparationStage(args: {
   let fullySkippedCount = 0;
   const preCooldownCount = postCleanupRefs.length;
 
+  // O-2 (#365): When the user explicitly targets a single ref via `--scope`,
+  // their intent is unambiguous — they want a fresh evaluation now. Cooldown
+  // policies are designed for unattended nightly runs; silently blocking an
+  // explicit retry violates the principle of least surprise (Sagas, 1987).
+  const scopeRefBypass = scope.mode === "ref";
+
   for (const r of postCleanupRefs) {
     if (validationFailureRefs.has(r.ref)) continue;
+
+    // When --scope <ref> is active, bypass all cooldown checks for this ref.
+    if (scopeRefBypass) {
+      eligibleRefs.push(r);
+      continue;
+    }
 
     const onReflectCooldown = reflectCooledRefs.has(r.ref);
     const onDistillCooldown = DISTILL_COOLDOWN_DAYS_PREFILT > 0 && distillCooledRefs.has(r.ref);
@@ -1464,7 +1476,13 @@ async function runImproveLoopStage(args: {
 
       // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
       // refs; non-candidate refs in the set are blocked here.
-      if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal && !distillCooledRefs.has(planned.ref)) {
+      // O-2 (#365): bypass the distill cooldown when the user explicitly targeted
+      // this ref via --scope — their intent overrides unattended-run policies.
+      if (
+        shouldAttemptDistill &&
+        !skipMemoryDistillForWeakSignal &&
+        (!distillCooledRefs.has(planned.ref) || explicitRefScope)
+      ) {
         // TODO(refactor): single call site needs both lesson+knowledge refs for proposal dedup. If a third target ref type is added, extract deriveAllTargetRefs(inputRef): string[].
         const lessonRef = deriveLessonRef(planned.ref);
         const knowledgeRef = deriveKnowledgeRef(planned.ref);
