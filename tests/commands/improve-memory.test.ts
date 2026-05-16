@@ -1424,45 +1424,21 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
-    // Simulate recent reflect_invoked that would normally trigger the cooldown.
     appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" }, { now: () => now - 60 * 1000 });
 
     await akmImprove({
-      // scope "ref" targeting the cooled ref — should bypass cooldown.
       scope: "memory:auth-tips",
       stashDir,
       reflectCooldownDays: 7,
       ensureIndexFn: async () => false,
-      reindexFn: async () => ({
-        schemaVersion: 1,
-        ok: true,
-        indexed: 0,
-        warnings: [],
-        errors: [],
-        durationMs: 0,
-      }),
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
-        return {
-          schemaVersion: 1,
-          ok: true,
-          proposal: makeProposal(ref ?? "memory:missing"),
-          ref: ref ?? "",
-          agentProfile: "test",
-          durationMs: 1,
-        } satisfies AkmReflectResult;
+        return { schemaVersion: 1, ok: true, proposal: makeProposal(ref ?? "memory:missing"), ref: ref ?? "", agentProfile: "test", durationMs: 1 } satisfies AkmReflectResult;
       },
-      distillFn: async ({ ref }) =>
-        ({
-          schemaVersion: 1,
-          ok: true,
-          outcome: "queued",
-          inputRef: ref,
-          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-        }) satisfies AkmDistillResult,
+      distillFn: async ({ ref }) => ({ schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` }) satisfies AkmDistillResult,
     });
 
-    // With scope-ref bypass, the ref should have been reflected despite cooldown.
     expect(reflectedRefs).toContain("memory:auth-tips");
   });
 
@@ -1473,45 +1449,21 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
-    // Simulate recent reflect_invoked for the ref.
     appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips-2" }, { now: () => now - 60 * 1000 });
 
     await akmImprove({
-      // scope "type" (memory) — cooldown should still apply.
       scope: "memory",
       stashDir,
       reflectCooldownDays: 7,
       ensureIndexFn: async () => false,
-      reindexFn: async () => ({
-        schemaVersion: 1,
-        ok: true,
-        indexed: 0,
-        warnings: [],
-        errors: [],
-        durationMs: 0,
-      }),
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
-        return {
-          schemaVersion: 1,
-          ok: true,
-          proposal: makeProposal(ref ?? "memory:missing"),
-          ref: ref ?? "",
-          agentProfile: "test",
-          durationMs: 1,
-        } satisfies AkmReflectResult;
+        return { schemaVersion: 1, ok: true, proposal: makeProposal(ref ?? "memory:missing"), ref: ref ?? "", agentProfile: "test", durationMs: 1 } satisfies AkmReflectResult;
       },
-      distillFn: async ({ ref }) =>
-        ({
-          schemaVersion: 1,
-          ok: true,
-          outcome: "queued",
-          inputRef: ref,
-          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-        }) satisfies AkmDistillResult,
+      distillFn: async ({ ref }) => ({ schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` }) satisfies AkmDistillResult,
     });
 
-    // Without scope-ref bypass, the cooled ref should NOT be reflected.
     expect(reflectedRefs).not.toContain("memory:auth-tips-2");
   });
 });
@@ -1531,36 +1483,14 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       stashDir,
       timeoutMs: 60_000,
       ensureIndexFn: async () => false,
-      reindexFn: async () => ({
-        schemaVersion: 1,
-        ok: true,
-        indexed: 0,
-        warnings: [],
-        errors: [],
-        durationMs: 0,
-      }),
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => {
         capturedTimeouts.push(opts.timeoutMs);
-        return {
-          schemaVersion: 1,
-          ok: true,
-          proposal: makeProposal(opts.ref ?? "memory:budget-test"),
-          ref: opts.ref ?? "",
-          agentProfile: "test",
-          durationMs: 1,
-        } satisfies AkmReflectResult;
+        return { schemaVersion: 1, ok: true, proposal: makeProposal(opts.ref ?? "memory:budget-test"), ref: opts.ref ?? "", agentProfile: "test", durationMs: 1 } satisfies AkmReflectResult;
       },
-      distillFn: async ({ ref }) =>
-        ({
-          schemaVersion: 1,
-          ok: true,
-          outcome: "queued",
-          inputRef: ref,
-          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-        }) satisfies AkmDistillResult,
+      distillFn: async ({ ref }) => ({ schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` }) satisfies AkmDistillResult,
     });
 
-    // reflectFn should have been called with a positive timeoutMs bounded by the budget.
     expect(capturedTimeouts.length).toBeGreaterThan(0);
     const firstTimeout = capturedTimeouts[0];
     expect(firstTimeout).toBeDefined();
@@ -1578,31 +1508,89 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       stashDir,
       timeoutMs: 5_000,
       ensureIndexFn: async () => false,
-      reindexFn: async () => ({
-        schemaVersion: 1,
-        ok: true,
-        indexed: 0,
-        warnings: [],
-        errors: [],
-        durationMs: 0,
-      }),
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => ({
-        schemaVersion: 1,
-        ok: true,
+        schemaVersion: 1, ok: true,
         proposal: makeProposal(opts.ref ?? "memory:timer-test"),
-        ref: opts.ref ?? "",
-        agentProfile: "test",
-        durationMs: 1,
+        ref: opts.ref ?? "", agentProfile: "test", durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
-        schemaVersion: 1,
-        ok: true,
-        outcome: "queued",
-        inputRef: ref,
+        schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref,
         lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
       }),
     });
 
     expect(result.ok).toBe(true);
+  });
+});
+
+// ── D-2 / #370 — reject-aware distill cooldown ───────────────────────────────
+
+describe("D-2: reject-aware cooldown for distill (#370)", () => {
+  test("distill is skipped when the lesson for an asset was recently rejected", async () => {
+    const stashDir = makeTempDir("akm-d2-reject-cooldown-");
+    writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
+    await buildIndex(stashDir);
+
+    const distilledRefs: string[] = [];
+    const now = Date.now();
+    appendEvent(
+      { eventType: "proposal_rejected", ref: "lesson:memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
+      { now: () => now - 60 * 1000 },
+    );
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      distillCooldownDays: 30,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1, ok: true,
+        proposal: makeProposal(ref ?? "memory:auth-tips"),
+        ref: ref ?? "", agentProfile: "test", durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => {
+        if (ref) distilledRefs.push(ref);
+        return { schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(distilledRefs).not.toContain("memory:auth-tips");
+    const distillSkipped = result.actions?.find((a) => a.ref === "memory:auth-tips" && a.mode === "distill-skipped");
+    expect(distillSkipped).toBeDefined();
+  });
+
+  test("D-2: --scope <ref> bypasses distill reject cooldown (O-2 interaction)", async () => {
+    const stashDir = makeTempDir("akm-d2-scope-bypass-");
+    writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
+    await buildIndex(stashDir);
+
+    const distilledRefs: string[] = [];
+    const now = Date.now();
+    appendEvent(
+      { eventType: "proposal_rejected", ref: "lesson:memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
+      { now: () => now - 60 * 1000 },
+    );
+
+    await akmImprove({
+      scope: "memory:auth-tips",
+      stashDir,
+      distillCooldownDays: 30,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1, ok: true,
+        proposal: makeProposal(ref ?? "memory:auth-tips"),
+        ref: ref ?? "", agentProfile: "test", durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => {
+        if (ref) distilledRefs.push(ref);
+        return { schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(distilledRefs).toContain("memory:auth-tips");
   });
 });

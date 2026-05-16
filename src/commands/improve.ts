@@ -1531,6 +1531,42 @@ async function runImproveLoopStage(args: {
             info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
             continue;
           }
+
+          // D-2 (#370): reject-aware cooldown for distill. When the reviewer
+          // recently rejected a distilled lesson or knowledge proposal for this
+          // asset, skip re-distillation for DISTILL_REJECT_COOLDOWN_DAYS.
+          // Prevents the same rejected proposal from returning the next day.
+          // References: ExpeL arXiv:2308.10144, STaR arXiv:2203.14465.
+          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(options.distillCooldownDays ?? 30);
+          const recentlyRejectedLesson =
+            DISTILL_REJECT_COOLDOWN_MS > 0 &&
+            !explicitRefScope && // O-2: bypass when --scope <ref> is explicit
+            (rejectedProposalsByRef.has(lessonRef) || rejectedProposalsByRef.has(knowledgeRef));
+          if (recentlyRejectedLesson) {
+            const rejectedEntry = rejectedProposalsByRef.get(lessonRef) ?? rejectedProposalsByRef.get(knowledgeRef);
+            const rejectedAgeMs = rejectedEntry ? Date.now() - new Date(rejectedEntry.ts).getTime() : 0;
+            if (rejectedAgeMs < DISTILL_REJECT_COOLDOWN_MS) {
+              actions.push({
+                ref: planned.ref,
+                mode: "distill-skipped",
+                result: { ok: true, reason: "distill reject cooldown" },
+              });
+              appendEvent(
+                {
+                  eventType: "improve_skipped",
+                  ref: planned.ref,
+                  metadata: {
+                    reason: "distill_reject_cooldown",
+                    cooldownDays: options.distillCooldownDays ?? 30,
+                  },
+                },
+                eventsCtx,
+              );
+              completedCount++;
+              info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+              continue;
+            }
+          }
         }
 
         const distillResult = await distillFn({
