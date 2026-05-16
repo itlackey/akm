@@ -245,7 +245,7 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    if (!isPendingMemory(parsed.data)) continue;
+    if (!isPendingMemory(parsed.data, filePath)) continue;
 
     const relName = toMemoryName(memoriesDir, filePath);
     if (!relName) continue;
@@ -266,10 +266,26 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
  * Predicate: true when the parsed frontmatter indicates the memory has not
  * yet been split AND is not itself an inferred child.
  *
+ * Also guards against `.derived` files whose `inferred:` frontmatter key has
+ * been dropped by a manual edit or schema-repair rewrite. The file name suffix
+ * is structural and immutable; frontmatter flags are mutable. A file whose
+ * path contains `.derived` is always treated as a derived child regardless of
+ * its frontmatter state — this prevents `<name>.derived.derived.md` chains.
+ *
+ * @param frontmatter - Parsed YAML frontmatter from the memory file.
+ * @param filePath    - Optional absolute path to the memory file. When
+ *                      supplied, the name-based guard is applied.
+ *
  * Exported for direct unit testing — keeping the predicate in one place
  * avoids drift between the walker, tests, and any future consumers.
  */
-export function isPendingMemory(frontmatter: Record<string, unknown>): boolean {
+export function isPendingMemory(frontmatter: Record<string, unknown>, filePath?: string): boolean {
+  // Name-based guard: a `.derived` suffix in the path means this file is a
+  // derived child regardless of what its frontmatter currently says.
+  if (filePath !== undefined) {
+    const base = path.basename(filePath, ".md");
+    if (base.endsWith(".derived")) return false;
+  }
   if (frontmatter[FM_INFERRED] === true) return false;
   if (frontmatter[FM_INFERENCE_PROCESSED] === true) return false;
   return true;
