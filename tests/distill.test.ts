@@ -175,13 +175,66 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("(asset is not currently indexed");
   });
 
-  test("formats feedback events compactly", () => {
+  test("D-3: negative signal feedback goes into '## What failed' section", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skill:deploy",
       assetContent: null,
-      feedback: [{ ts: "2026-04-27T00:00:00Z", eventType: "feedback", metadata: { signal: "negative" } }],
+      feedback: [
+        {
+          ts: "2026-04-27T00:00:00Z",
+          eventType: "feedback",
+          metadata: { signal: "negative", reason: "Missed the rollback step" },
+        },
+      ],
     });
-    expect(prompt).toContain('2026-04-27T00:00:00Z feedback {"signal":"negative"}');
+    expect(prompt).toContain("## What failed");
+    expect(prompt).toContain("Missed the rollback step");
+    expect(prompt).not.toContain("## What worked");
+  });
+
+  test("D-3: positive signal feedback goes into '## What worked' section", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [
+        {
+          ts: "2026-04-27T00:00:00Z",
+          eventType: "feedback",
+          metadata: { signal: "positive", note: "Deploy succeeded first try" },
+        },
+      ],
+    });
+    expect(prompt).toContain("## What worked");
+    expect(prompt).toContain("Deploy succeeded first try");
+    expect(prompt).not.toContain("## What failed");
+  });
+
+  test("D-3: mixed signals produce both What-worked and What-failed sections", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [
+        { ts: "2026-04-26T00:00:00Z", eventType: "feedback", metadata: { signal: "positive", reason: "Quick" } },
+        { ts: "2026-04-27T00:00:00Z", eventType: "feedback", metadata: { signal: "negative", reason: "Broke prod" } },
+      ],
+    });
+    expect(prompt).toContain("## What worked");
+    expect(prompt).toContain("Quick");
+    expect(prompt).toContain("## What failed");
+    expect(prompt).toContain("Broke prod");
+  });
+
+  test("D-3: non-signal events fall back to flat format", () => {
+    // When no positive/negative signals are present, fall back to old format.
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [{ ts: "2026-04-27T00:00:00Z", eventType: "reflect_invoked", metadata: { profile: "test" } }],
+    });
+    expect(prompt).toContain("Recent feedback events (most recent last):");
+    expect(prompt).toContain("reflect_invoked");
+    expect(prompt).not.toContain("## What failed");
+    expect(prompt).not.toContain("## What worked");
   });
 
   test("uses knowledge wording when targeting knowledge output", () => {
@@ -790,8 +843,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     expect(result.outcome).toBe("queued");
     expect(result.filteredFeedbackCount).toBe(0);
     expect(result.feedbackFullyFiltered).toBe(false);
-    expect(receivedPrompt).toContain('"signal":"negative"');
-    expect(receivedPrompt).toContain('"signal":"positive"');
+    // D-3: negative/positive signals now appear in verbal contrast sections.
+    expect(receivedPrompt).toContain("## What failed");
+    expect(receivedPrompt).toContain("## What worked");
   });
 
   test("empty exclusion list is a no-op (no diagnostic fields stamped)", async () => {
