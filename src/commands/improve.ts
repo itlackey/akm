@@ -563,6 +563,22 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
       if (!pidIsAlive || lockAgeMs > MAX_LOCK_AGE_MS) {
         // Stale lock — remove and retry once with O_EXCL
+        // O-7 / #394: Emit improve_lock_recovered event before recovery so the
+        // audit trail records the abnormal prior-run exit (Temporal/Airflow pattern).
+        try {
+          appendEvent({
+            eventType: "improve_lock_recovered",
+            metadata: {
+              stalePid: lock?.pid ?? null,
+              lockedAt: lock?.startedAt ?? null,
+              recoveredAt: new Date().toISOString(),
+              lockAgeMs,
+              reason: !pidIsAlive ? "pid_not_alive" : "lock_age_exceeded",
+            },
+          });
+        } catch {
+          /* event emission is best-effort; never block lock recovery */
+        }
         try {
           fs.unlinkSync(resolvedLockPath);
         } catch {
