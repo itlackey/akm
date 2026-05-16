@@ -130,6 +130,22 @@ describe("isPendingMemory", () => {
     expect(isPendingMemory({ inferred: "yes" })).toBe(true);
     expect(isPendingMemory({ inferenceProcessed: 1 })).toBe(true);
   });
+
+  test("name-based guard: .derived suffix blocks re-walk regardless of frontmatter", () => {
+    expect(isPendingMemory({}, "/stash/memories/auth-tips.derived.md")).toBe(false);
+    expect(isPendingMemory({ description: "anything" }, "/stash/memories/auth-tips.derived.md")).toBe(false);
+    expect(isPendingMemory({ inferred: false }, "/stash/memories/auth-tips.derived.md")).toBe(false);
+  });
+
+  test("name-based guard: non-.derived path is not affected", () => {
+    expect(isPendingMemory({ description: "anything" }, "/stash/memories/auth-tips.md")).toBe(true);
+    expect(isPendingMemory({}, "/stash/memories/nested/note.md")).toBe(true);
+  });
+
+  test("name-based guard: absent filePath falls back to frontmatter-only check", () => {
+    expect(isPendingMemory({})).toBe(true);
+    expect(isPendingMemory({ inferred: true })).toBe(false);
+  });
 });
 
 // ── collectPendingMemories ──────────────────────────────────────────────────
