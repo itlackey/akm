@@ -8,6 +8,7 @@ import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
+import { detectAndWriteContradictions } from "../core/memory-contradiction-detect";
 import {
   type ArchivedMemoryCleanupRecord,
   analyzeMemoryCleanup,
@@ -440,6 +441,20 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     primaryStashDir = undefined;
   }
   const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
+
+  // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
+  // the SCC resolver in resolveFamilyContradictions has edges to work on.
+  // Best-effort: failures are warnings, never fatal.
+  if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
+    try {
+      const config = options.config ?? loadConfig();
+      await detectAndWriteContradictions(primaryStashDir, config);
+    } catch (err) {
+      // Non-fatal: contradiction detection is a best-effort pass.
+      warn(`[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
     ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
     : undefined;
