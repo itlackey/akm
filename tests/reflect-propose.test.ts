@@ -134,6 +134,12 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
   content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
 });
 
+/** Skill payload that targets `skill:deploy` — used by tests that pass ref: "skill:deploy". */
+const VALID_DEPLOY_SKILL_PAYLOAD = JSON.stringify({
+  ref: "skill:deploy",
+  content: "---\ndescription: Deploy apps safely\nwhen_to_use: When shipping a service\n---\n\nShip it carefully.\n",
+});
+
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-reflect-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-reflect-config-");
@@ -361,7 +367,8 @@ describe("akm reflect", () => {
       stashDir: stash,
       agentProfile: makeProfile(),
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture(VALID_SKILL_PAYLOAD, "", 0, (cmd) => {
+        // Use VALID_DEPLOY_SKILL_PAYLOAD so the payload.ref matches options.ref (R-3 guard).
+        spawn: fakeSpawnWithCapture(VALID_DEPLOY_SKILL_PAYLOAD, "", 0, (cmd) => {
           prompt = cmd.at(-1) ?? "";
         }),
       },
@@ -392,7 +399,8 @@ describe("akm reflect", () => {
       stashDir: stash,
       agentProfile: makeProfile(),
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture(VALID_SKILL_PAYLOAD, "", 0, (cmd) => {
+        // Use VALID_DEPLOY_SKILL_PAYLOAD so payload.ref matches options.ref (R-3 guard).
+        spawn: fakeSpawnWithCapture(VALID_DEPLOY_SKILL_PAYLOAD, "", 0, (cmd) => {
           prompt = cmd.at(-1) ?? "";
         }),
       },
@@ -660,6 +668,99 @@ describe("buildReflectPrompt — rejected proposals (Reflexion verbal-RL)", () =
 
     // The reflect run should succeed — we just verify it returns ok.
     // The prompt injection is verified at the unit level above.
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ── R-3 / #366 — payload.ref validation ─────────────────────────────────────
+
+describe("R-3: validate payload.ref === options.ref post-parse (#366)", () => {
+  test("agent returning correct ref produces a queued proposal", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      ref: "skill:deploy",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: fakeSpawn(
+          JSON.stringify({
+            ref: "skill:deploy",
+            content: "---\ndescription: deploy skill\nwhen_to_use: deploying\n---\nBody.",
+          }),
+          "",
+          0,
+        ),
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test("agent returning a different ref is rejected with parse_error", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      ref: "skill:deploy",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        // Agent hallucinated a different ref.
+        spawn: fakeSpawn(
+          JSON.stringify({
+            ref: "skill:unrelated-thing",
+            content: "---\ndescription: wrong\nwhen_to_use: never\n---\nWrong body.",
+          }),
+          "",
+          0,
+        ),
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("parse_error");
+    expect(result.error).toContain("retargeted");
+    expect(result.error).toContain("skill:deploy");
+    expect(result.error).toContain("skill:unrelated-thing");
+    // No proposal should have been created.
+    expect(listProposals(stash)).toHaveLength(0);
+  });
+
+  test("no options.ref set → no ref validation (free-form reflect)", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      // No ref — agent chooses the target.
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: fakeSpawn(
+          JSON.stringify({
+            ref: "lesson:anything",
+            content: "---\ndescription: a lesson\nwhen_to_use: always\n---\nBody.",
+          }),
+          "",
+          0,
+        ),
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test("origin prefix difference is tolerated (agent may omit origin)", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      ref: "skill:deploy",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        // Agent returns without origin prefix — type+name match, so it is accepted.
+        spawn: fakeSpawn(
+          JSON.stringify({
+            ref: "skill:deploy",
+            content: "---\ndescription: deploy skill\nwhen_to_use: deploying\n---\nBody.",
+          }),
+          "",
+          0,
+        ),
+      },
+    });
     expect(result.ok).toBe(true);
   });
 });
