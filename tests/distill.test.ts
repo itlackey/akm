@@ -194,6 +194,30 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("Produce the knowledge markdown file now.");
     expect(prompt).not.toContain("Produce the lesson markdown file now.");
   });
+
+  test("injects rejected proposals as Reflexion verbal-RL context when present", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [],
+      rejectedProposals: [
+        {
+          reason: "Too vague, missing concrete examples",
+          contentPreview: "---\ndescription: deploy stuff\n---\nBody.",
+        },
+        { reason: "Duplicate of existing lesson" },
+      ],
+    });
+    expect(prompt).toContain("Previously rejected proposals");
+    expect(prompt).toContain("Too vague, missing concrete examples");
+    expect(prompt).toContain("Duplicate of existing lesson");
+    expect(prompt).toContain("MUST differ meaningfully");
+  });
+
+  test("omits rejected proposals section when none provided", () => {
+    const prompt = buildDistillPrompt({ inputRef: "skill:deploy", assetContent: null, feedback: [] });
+    expect(prompt).not.toContain("Previously rejected proposals");
+  });
 });
 
 // ── Acceptance: gate disabled ───────────────────────────────────────────────

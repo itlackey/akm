@@ -93,6 +93,19 @@ function fileWriteContract(draftFilePath: string): string {
   ].join("\n");
 }
 
+/** A previously-rejected proposal injected as verbal-RL context (Reflexion pattern). */
+export interface RejectedProposalContext {
+  /** Asset ref the rejected proposal targeted. */
+  ref: string;
+  /** Human-readable rejection reason supplied at review time. */
+  reason: string;
+  /**
+   * Truncated preview of the rejected content (first 500 chars). Helps the
+   * agent understand what shape was already tried and refused.
+   */
+  contentPreview?: string;
+}
+
 export interface ReflectPromptInput {
   ref?: string;
   type?: string;
@@ -119,6 +132,12 @@ export interface ReflectPromptInput {
    * the same mistakes.
    */
   avoidPatterns?: string[];
+  /**
+   * Last 1–3 archived rejected proposals for this ref. Injected as
+   * Reflexion-style verbal-RL context so the agent does not regenerate
+   * proposals that have already been reviewed and refused.
+   */
+  rejectedProposals?: RejectedProposalContext[];
 }
 
 /**
@@ -202,6 +221,26 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
     sections.push(
       "If the guidance belongs in the main skill instructions, update the skill proposal. If it belongs in a companion reference document, return a `knowledge:skills/<skill>/references/<topic>` proposal instead.",
     );
+  }
+
+  if (input.rejectedProposals && input.rejectedProposals.length > 0) {
+    const lines: string[] = ["## Previously Rejected Proposals"];
+    lines.push(
+      "The following proposals for this ref were already reviewed and rejected. " +
+        "Do NOT reproduce the same content or the same structural shape. " +
+        "Your new proposal must meaningfully differ from each of these in its approach, framing, or evidence used.",
+    );
+    for (const rp of input.rejectedProposals) {
+      lines.push(`\nRef: ${rp.ref}`);
+      lines.push(`Rejection reason: ${rp.reason}`);
+      if (rp.contentPreview) {
+        lines.push("Rejected content preview:");
+        lines.push("```");
+        lines.push(rp.contentPreview);
+        lines.push("```");
+      }
+    }
+    sections.push(lines.join("\n"));
   }
 
   if (input.avoidPatterns && input.avoidPatterns.length > 0) {

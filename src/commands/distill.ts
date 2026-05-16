@@ -57,7 +57,7 @@ import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
-import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
+import { createProposal, listProposals, type Proposal, type ProposalsContext } from "../core/proposals";
 import { warnVerbose } from "../core/warn";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -259,6 +259,12 @@ interface BuildPromptInput {
   assetContent: string | null;
   feedback: { ts: string; eventType: string; metadata?: Record<string, unknown> }[];
   proposalKind?: "lesson" | "knowledge";
+  /**
+   * Last 1–3 archived rejected proposals for this ref. Injected as
+   * Reflexion-style verbal-RL context so the LLM does not regenerate
+   * proposals that have already been reviewed and refused.
+   */
+  rejectedProposals?: Array<{ reason: string; contentPreview?: string }>;
 }
 
 /** Pure: build the user-prompt body. Exported for tests. */
@@ -283,6 +289,20 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
     for (const event of input.feedback) {
       const meta = event.metadata ? ` ${JSON.stringify(event.metadata)}` : "";
       lines.push(`- ${event.ts} ${event.eventType}${meta}`);
+    }
+  }
+  if (input.rejectedProposals && input.rejectedProposals.length > 0) {
+    lines.push("");
+    lines.push("Previously rejected proposals for this ref (Reflexion context):");
+    lines.push(
+      "The following proposals were already reviewed and rejected. " +
+        "Your new proposal MUST differ meaningfully in approach, framing, or evidence.",
+    );
+    for (const rp of input.rejectedProposals) {
+      lines.push(`- Rejection reason: ${rp.reason}`);
+      if (rp.contentPreview) {
+        lines.push(`  Content preview: ${rp.contentPreview.slice(0, 200).replace(/\n/g, " ")}`);
+      }
     }
   }
   lines.push("");
@@ -531,7 +551,24 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const effectiveLessonRef =
     effectiveProposalKind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
 
-  const userPrompt = buildDistillPrompt({ inputRef, assetContent, feedback, proposalKind: effectiveProposalKind });
+  // Inject last 1–3 rejected proposals for this ref as Reflexion-style
+  // verbal-RL context so the LLM avoids regenerating refused proposals.
+  const MAX_REJECTED_PROPOSALS = 3;
+  const rejectedForRef = listProposals(stash, { ref: inputRef, status: "rejected", includeArchive: true })
+    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
+    .slice(0, MAX_REJECTED_PROPOSALS)
+    .map((p) => ({
+      reason: p.review?.reason ?? "no reason given",
+      contentPreview: p.payload.content.slice(0, 500),
+    }));
+
+  const userPrompt = buildDistillPrompt({
+    inputRef,
+    assetContent,
+    feedback,
+    proposalKind: effectiveProposalKind,
+    ...(rejectedForRef.length > 0 ? { rejectedProposals: rejectedForRef } : {}),
+  });
   const messages: ChatMessage[] = [
     { role: "system", content: effectiveProposalKind === "knowledge" ? KNOWLEDGE_SYSTEM_PROMPT : LESSON_SYSTEM_PROMPT },
     { role: "user", content: userPrompt },
