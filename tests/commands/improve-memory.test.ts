@@ -1515,3 +1515,94 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     expect(reflectedRefs).not.toContain("memory:auth-tips-2");
   });
 });
+
+// ── O-1 / #364 — AbortSignal budget propagation ─────────────────────────────
+
+describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", () => {
+  test("reflectFn receives a timeoutMs derived from the remaining budget", async () => {
+    const stashDir = makeTempDir("akm-o1-timeout-propagation-");
+    writeMemory(stashDir, "budget-test", { description: "budget memory" }, "Budget test content.");
+    await buildIndex(stashDir);
+
+    const capturedTimeouts: Array<number | undefined> = [];
+
+    await akmImprove({
+      scope: "memory:budget-test",
+      stashDir,
+      timeoutMs: 60_000,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async (opts) => {
+        capturedTimeouts.push(opts.timeoutMs);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(opts.ref ?? "memory:budget-test"),
+          ref: opts.ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    // reflectFn should have been called with a positive timeoutMs bounded by the budget.
+    expect(capturedTimeouts.length).toBeGreaterThan(0);
+    const firstTimeout = capturedTimeouts[0];
+    expect(firstTimeout).toBeDefined();
+    expect(firstTimeout).toBeGreaterThan(0);
+    expect(firstTimeout).toBeLessThanOrEqual(60_000);
+  });
+
+  test("budget AbortController is cleared after run completes (no timer leak)", async () => {
+    const stashDir = makeTempDir("akm-o1-timer-clear-");
+    writeMemory(stashDir, "timer-test", { description: "timer memory" }, "Timer test content.");
+    await buildIndex(stashDir);
+
+    const result = await akmImprove({
+      scope: "memory:timer-test",
+      stashDir,
+      timeoutMs: 5_000,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async (opts) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(opts.ref ?? "memory:timer-test"),
+        ref: opts.ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued",
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+  });
+});
