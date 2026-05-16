@@ -1,3 +1,32 @@
+/**
+ * M-4 / #395 — Index Consistency Architecture Decision Record
+ *
+ * AKM maintains four indexes per stash:
+ *   1. Frontmatter index (SQLite `entries` table) — asset metadata.
+ *   2. FTS5 full-text search index (SQLite `entries_fts` virtual table).
+ *   3. Vector (embedding) index (SQLite `embedding` / `vec_entries` table).
+ *   4. Graph index (SQLite `graph_nodes`, `graph_edges` tables).
+ *
+ * Decision (2026-05-16): No transactional boundary spans all four indexes.
+ * Each step is individually crash-tolerant; cross-step consistency is
+ * **opportunistic recovery** — subsequent index runs detect and heal drift.
+ *
+ * Audit findings:
+ *   - FTS5 is redundant with the main `entries` table when semantic search is
+ *     on, but is the primary search path for keyword-only stashes.
+ *   - The vector index depends on the `entries` table for entry IDs; orphan
+ *     detection in `clearStaleCacheEntries` covers most drift cases.
+ *   - The graph index is rebuilt from scratch on each extraction pass; it is
+ *     not incremental, so cross-step drift resolves on the next extraction.
+ *   - Eliminating any of the four indexes would break the current keyword/
+ *     semantic/graph search paths. Merge is not currently feasible.
+ *
+ * Accepted strategy: opportunistic recovery (reindex heals drift).
+ * CRDT-based convergence (Shapiro et al. 2011) would require per-operation
+ * CRDTs for all four stores — deferred pending a dedicated storage refactor.
+ *
+ * See docs/technical/index-consistency-adr.md for the full analysis.
+ */
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
