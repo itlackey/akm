@@ -12,7 +12,8 @@
  *
  *   - **Single bounded in-tree LLM call.** Wrapped in {@link tryLlmFeature}
  *     under the `feedback_distillation` gate (v1 spec §14). The wrapper
- *     enforces the 30 s hard timeout and converts disable / throw / timeout
+ *     enforces a hard timeout (default 600s / 10 min — overridable via
+ *     `opts.timeoutMs`) and converts disable / throw / timeout
  *     into a `null` return from `fn`, which we treat as a graceful
  *     "skipped" outcome (exit 0, no proposal, `distill_invoked` event with
  *     `outcome: "skipped"`).
@@ -875,8 +876,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     { role: "user", content: userPrompt },
   ];
 
-  // Single bounded LLM call. The wrapper handles the gate-check, 30 s
-  // timeout, and error fallback (returning `null`).
+  // Single bounded LLM call. The wrapper handles the gate-check, 600s
+  // (10 min) default timeout, and error fallback (returning `null`).
   const raw = await tryLlmFeature(
     "feedback_distillation",
     config,
