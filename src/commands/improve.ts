@@ -175,7 +175,8 @@ export interface AkmImproveResult {
   schemaRepairs?: Array<{
     ref: string;
     reason: string;
-    outcome: "written" | "skipped" | "error";
+    outcome: "queued" | "written" | "skipped" | "error";
+    proposalId?: string;
     error?: string;
   }>;
   consolidation?: ConsolidateResult;
@@ -214,7 +215,8 @@ interface ImprovePreparationResult {
   schemaRepairs: Array<{
     ref: string;
     reason: string;
-    outcome: "written" | "skipped" | "error";
+    outcome: "queued" | "written" | "skipped" | "error";
+    proposalId?: string;
     error?: string;
   }>;
   lintSummary?: { fixed: number; flagged: number };

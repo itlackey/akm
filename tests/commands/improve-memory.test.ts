@@ -1753,3 +1753,68 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     expect(result.edgesWritten).toBe(0);
   });
 });
+
+// ── M-3 / #387 — schema-repair routes through proposal queue ─────────────────
+
+describe("M-3: schema-repair routes through proposal queue (#387)", () => {
+  test("runSchemaRepairPass queues a proposal instead of writing directly to disk", async () => {
+    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+    const { listProposals } = await import("../../src/core/proposals");
+
+    const stashDir = makeTempDir("akm-m3-schema-repair-");
+    const memFile = path.join(stashDir, "memories", "auth-guide.md");
+    fs.mkdirSync(path.dirname(memFile), { recursive: true });
+    fs.writeFileSync(memFile, "---\n---\nAuth guide content.\n", "utf8");
+
+    const result = await runSchemaRepairPass([{ ref: "memory:auth-guide", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      stashDir,
+      llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
+      findFilePath: async () => memFile,
+      isLessonCandidateFn: () => false,
+      chatFn: async () => JSON.stringify({ description: "Authentication guide for the service." }),
+    });
+
+    // M-3: proposal queued (not written to disk directly)
+    expect(result.repairs.length).toBe(1);
+    const repair = result.repairs[0];
+    expect(repair?.outcome).toBe("queued");
+    expect(repair?.proposalId).toBeDefined();
+    expect(result.repairedRefs.has("memory:auth-guide")).toBe(true);
+
+    // File should NOT be modified (write went through proposal queue)
+    const fileContent = fs.readFileSync(memFile, "utf8");
+    expect(fileContent).not.toContain("Authentication guide");
+
+    // Proposal should exist in the queue
+    const proposals = listProposals(stashDir);
+    expect(proposals.length).toBe(1);
+    expect(proposals[0]?.ref).toBe("memory:auth-guide");
+    expect(proposals[0]?.payload.content).toContain("Authentication guide");
+  });
+
+  test("runSchemaRepairPass falls back to direct write when stashDir is absent", async () => {
+    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+
+    const stashDir = makeTempDir("akm-m3-fallback-");
+    const memFile = path.join(stashDir, "memories", "auth2.md");
+    fs.mkdirSync(path.dirname(memFile), { recursive: true });
+    fs.writeFileSync(memFile, "---\n---\nAuth content.\n", "utf8");
+
+    const result = await runSchemaRepairPass([{ ref: "memory:auth2", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      // No stashDir: triggers legacy direct-write path
+      llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
+      findFilePath: async () => memFile,
+      isLessonCandidateFn: () => false,
+      chatFn: async () => JSON.stringify({ description: "Auth content description." }),
+    });
+
+    // Fallback: direct write
+    expect(result.repairs[0]?.outcome).toBe("written");
+    const fileContent = fs.readFileSync(memFile, "utf8");
+    expect(fileContent).toContain("Auth content description.");
+  });
+});
