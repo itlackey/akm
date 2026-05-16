@@ -1413,3 +1413,105 @@ describe("akm improve memory cleanup", () => {
     expect(fs.existsSync(path.join(stashDir, ".akm", "consolidate-backup", staleBackupTs))).toBe(false);
   });
 });
+
+// ── O-2 / #365 — scope-ref cooldown bypass ──────────────────────────────────
+
+describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
+  test("explicit --scope <ref> reflects even when ref is on reflect cooldown", async () => {
+    const stashDir = makeTempDir("akm-o2-reflect-bypass-");
+    writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
+    await buildIndex(stashDir);
+
+    const reflectedRefs: string[] = [];
+    const now = Date.now();
+    // Simulate recent reflect_invoked that would normally trigger the cooldown.
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" }, { now: () => now - 60 * 1000 });
+
+    await akmImprove({
+      // scope "ref" targeting the cooled ref — should bypass cooldown.
+      scope: "memory:auth-tips",
+      stashDir,
+      reflectCooldownDays: 7,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    // With scope-ref bypass, the ref should have been reflected despite cooldown.
+    expect(reflectedRefs).toContain("memory:auth-tips");
+  });
+
+  test("non-ref scope (scope: 'memory') still respects reflect cooldown", async () => {
+    const stashDir = makeTempDir("akm-o2-no-bypass-");
+    writeMemory(stashDir, "auth-tips-2", { description: "auth memory 2" }, "Auth tips 2.");
+    await buildIndex(stashDir);
+
+    const reflectedRefs: string[] = [];
+    const now = Date.now();
+    // Simulate recent reflect_invoked for the ref.
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips-2" }, { now: () => now - 60 * 1000 });
+
+    await akmImprove({
+      // scope "type" (memory) — cooldown should still apply.
+      scope: "memory",
+      stashDir,
+      reflectCooldownDays: 7,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    // Without scope-ref bypass, the cooled ref should NOT be reflected.
+    expect(reflectedRefs).not.toContain("memory:auth-tips-2");
+  });
+});
