@@ -973,3 +973,116 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
   });
 });
+
+// ── D-1 / #369 — fast path forces LLM when destination knowledge exists ───────
+
+describe("D-1: fast path calls LLM merge when destination knowledge exists (#369)", () => {
+  test("NOOP: LLM says no update needed — proposal is skipped", async () => {
+    const stash = makeStashDir();
+    // Create an existing knowledge file at the destination
+    const existingKnowledgePath = path.join(stash, "knowledge", "auth-guide.md");
+    fs.mkdirSync(path.dirname(existingKnowledgePath), { recursive: true });
+    fs.writeFileSync(existingKnowledgePath, "---\ndescription: Auth guide\n---\nExisting auth content.\n", "utf8");
+
+    const memPath1 = path.join(stash, "memories", "auth-guide.md");
+    fs.mkdirSync(path.dirname(memPath1), { recursive: true });
+    fs.writeFileSync(
+      memPath1,
+      [
+        "---",
+        "description: VPN required",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "---",
+        "",
+        "Always connect the VPN.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    // LLM returns NOOP — keep existing content
+    const chatCalls: string[] = [];
+    const result = await akmDistill({
+      ref: "memory:auth-guide",
+      proposalKind: "auto",
+      stashDir: stash,
+      config: {
+        stashDir: stash,
+        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: { endpoint: "http://localhost/v1/chat", model: "test" },
+      } as import("../src/core/config").AkmConfig,
+      lookupFn: async (ref: string) => {
+        if (ref === "memory:auth-guide") return memPath1;
+        if (ref.includes("auth-guide")) return existingKnowledgePath;
+        return null;
+      },
+      readEventsFn: eventsFor("memory:auth-guide", ["positive", "positive"]),
+      chat: async (_cfg, msgs) => {
+        chatCalls.push(msgs[1]?.content ?? "");
+        return JSON.stringify({ action: "NOOP", content: "" });
+      },
+    });
+
+    // D-1: NOOP → proposal not created, outcome skipped
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("skipped");
+    expect(chatCalls.length).toBeGreaterThan(0); // LLM was called for merge resolution
+  });
+
+  test("UPDATE: LLM produces merged content — proposal queued with merged content", async () => {
+    const stash = makeStashDir();
+    const existingKnowledgePath = path.join(stash, "knowledge", "auth-guide2.md");
+    fs.mkdirSync(path.dirname(existingKnowledgePath), { recursive: true });
+    fs.writeFileSync(existingKnowledgePath, "---\ndescription: Auth guide v1\n---\nOld auth content.\n", "utf8");
+
+    const memPath2 = path.join(stash, "memories", "auth-guide2.md");
+    fs.mkdirSync(path.dirname(memPath2), { recursive: true });
+    fs.writeFileSync(
+      memPath2,
+      [
+        "---",
+        "description: VPN required v2",
+        "source: skill:deploy",
+        "observed_at: 2026-04-21",
+        "confidence: 0.95",
+        "---",
+        "",
+        "Updated auth tips.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const mergedContent = "---\ndescription: Auth guide v2 (merged)\n---\nMerged auth content.\n";
+    const result = await akmDistill({
+      ref: "memory:auth-guide2",
+      proposalKind: "auto",
+      stashDir: stash,
+      config: {
+        stashDir: stash,
+        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: { endpoint: "http://localhost/v1/chat", model: "test" },
+      } as import("../src/core/config").AkmConfig,
+      lookupFn: async (ref: string) => {
+        if (ref === "memory:auth-guide2") return memPath2;
+        if (ref.includes("auth-guide2")) return existingKnowledgePath;
+        return null;
+      },
+      readEventsFn: eventsFor("memory:auth-guide2", ["positive", "positive"]),
+      chat: async () => JSON.stringify({ action: "UPDATE", content: mergedContent }),
+    });
+
+    // D-1: UPDATE → proposal queued with merged content
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("queued");
+    const { listProposals } = await import("../src/core/proposals");
+    const proposals = listProposals(stash, { ref: result.lessonRef });
+    expect(proposals.length).toBeGreaterThan(0);
+    const proposal = proposals[0];
+    expect(proposal?.payload.content).toContain("Merged auth content");
+  });
+});
