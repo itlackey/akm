@@ -16,6 +16,7 @@ import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from ".
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
 import { chatCompletion } from "../llm/client";
+import { cosineSimilarity, embedBatch } from "../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -185,6 +186,75 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
   const tokensPerMemory = Math.max(Math.ceil(bodyTruncation / CHARS_PER_TOKEN), 1);
   const raw = Math.floor(usableTokens / tokensPerMemory);
   return Math.max(1, Math.min(50, raw));
+}
+
+// ── Similarity clustering (C-1 / #380) ──────────────────────────────────────
+
+/**
+ * Re-order memories so that similar ones are placed adjacent to each other
+ * before the memories are sliced into chunks. This ensures high-similarity
+ * memories land in the same LLM context window, allowing the consolidate
+ * model to detect and merge duplicates that would otherwise be split across
+ * chunks and survive indefinitely.
+ *
+ * Algorithm: greedy nearest-neighbour chain starting from the first memory.
+ * Each step selects the unused memory with the highest cosine similarity to
+ * the last-placed memory. O(n²) — acceptable for the expected N < 200.
+ *
+ * mem0 arXiv:2504.19413 — every candidate compared against whole store.
+ * A-MEM arXiv:2502.12110 — atomic notes linked by similarity.
+ *
+ * Returns the original order unchanged when:
+ *   - The embedding config is not present.
+ *   - Embedding requests fail (fail-open).
+ *   - There are fewer than 3 memories (no benefit to reordering).
+ */
+async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmConfig): Promise<MemoryEntry[]> {
+  if (memories.length < 3 || !config.embedding) return memories;
+
+  const texts = memories.map((m) => {
+    const parts: string[] = [];
+    if (m.description) parts.push(m.description);
+    if (m.tags.length > 0) parts.push(m.tags.join(" "));
+    return parts.join(". ") || m.name;
+  });
+
+  let embeddings: number[][] | null = null;
+  try {
+    embeddings = await embedBatch(texts, config.embedding);
+  } catch {
+    // Fail open: embedding failures degrade gracefully to original order.
+    return memories;
+  }
+  if (!embeddings || embeddings.length !== memories.length) return memories;
+
+  // Greedy nearest-neighbour chain.
+  const used = new Array<boolean>(memories.length).fill(false);
+  const ordered: MemoryEntry[] = [];
+  let current = 0; // start from the first memory
+
+  ordered.push(memories[current] as MemoryEntry);
+  used[current] = true;
+
+  for (let step = 1; step < memories.length; step++) {
+    const currentEmb = embeddings[current] as number[];
+    let bestIdx = -1;
+    let bestSim = -Infinity;
+    for (let j = 0; j < memories.length; j++) {
+      if (used[j]) continue;
+      const sim = cosineSimilarity(currentEmb, embeddings[j] as number[]);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestIdx = j;
+      }
+    }
+    if (bestIdx === -1) break;
+    ordered.push(memories[bestIdx] as MemoryEntry);
+    used[bestIdx] = true;
+    current = bestIdx;
+  }
+
+  return ordered;
 }
 
 // ── Chunk helpers ────────────────────────────────────────────────────────────
@@ -555,9 +625,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.target ?? stashDir;
+
+  // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
+  // This ensures that semantically similar memories land in the same LLM
+  // context window, allowing the model to detect and merge duplicates that
+  // would otherwise be split across chunks and survive indefinitely.
+  // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
+  // Fails open: if embeddings are unavailable or fail, original order is used.
+  const clusteredMemories = await clusterMemoriesBySimilarity(memories, config);
+
   const chunks: MemoryEntry[][] = [];
-  for (let i = 0; i < memories.length; i += chunkSize) {
-    chunks.push(memories.slice(i, i + chunkSize));
+  for (let i = 0; i < clusteredMemories.length; i += chunkSize) {
+    chunks.push(clusteredMemories.slice(i, i + chunkSize));
   }
 
   warn(`[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}`);
