@@ -57,7 +57,13 @@ import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
-import { createProposal, isProposalSkipped, listProposals, type Proposal, type ProposalsContext } from "../core/proposals";
+import {
+  createProposal,
+  isProposalSkipped,
+  listProposals,
+  type Proposal,
+  type ProposalsContext,
+} from "../core/proposals";
 import { warnVerbose } from "../core/warn";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
