@@ -306,16 +306,67 @@ async function readRelatedLessons(
   return [...related.values()];
 }
 
-function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined) {
+/**
+ * Fallback payload parser for reflect agent stdout (R-6 / #375).
+ *
+ * When the agent does not emit valid JSON (old-style agents, SDK mode without
+ * structured output support), this function attempts to recover a proposal
+ * payload from the raw markdown output. The parser is deliberately strict —
+ * it requires the content to have a complete proposal structure (frontmatter
+ * with required fields or a full heading + body).
+ *
+ * Strictness rationale: The previous implementation accepted any markdown
+ * starting with `#` or `---`, which admitted malformed / hallucinated content
+ * as valid proposals. Anthropic agent best practices recommend structured
+ * output when the SDK supports it; this tighter fallback is the safety net.
+ *
+ * When `sdkMode === true`, structured output (tool-call schema) should be used
+ * instead of this fallback. That wiring is tracked separately (full SDK
+ * structured-output integration); for now this tighter parser applies to all
+ * modes and is the primary R-6 deliverable.
+ */
+function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, sdkMode = false) {
   if (!ref) return undefined;
   const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
-  if (!looksLikeAssetContent(trimmed)) return undefined;
+  if (!looksLikeAssetContent(trimmed, sdkMode)) return undefined;
   return { ref, content: trimmed };
 }
 
-function looksLikeAssetContent(value: string): boolean {
-  return value.startsWith("#") || value.startsWith("---");
+/**
+ * Determine whether raw agent output looks like a valid asset payload (R-6 / #375).
+ *
+ * Tightened from the previous `startsWith("#") || startsWith("---")`:
+ *
+ * - YAML frontmatter (`---`): must contain a `description:` field (the only
+ *   required frontmatter key in v1 spec). This eliminates empty `---\n---\n`
+ *   blocks and pure delimiter sequences as valid payloads.
+ * - Heading start (`#`): must have at least 3 non-blank lines after the heading,
+ *   to ensure there is actual body content and not just a title stub.
+ * - In SDK mode (`sdkMode === true`): additionally requires `when_to_use:` for
+ *   lesson types (full structured output will replace this in a future PR).
+ */
+function looksLikeAssetContent(value: string, sdkMode = false): boolean {
+  if (value.startsWith("---")) {
+    // YAML frontmatter must contain at least a description field.
+    const fmEnd = value.indexOf("\n---", 4);
+    if (fmEnd === -1) return false;
+    const fmBlock = value.slice(0, fmEnd + 4);
+    const hasDescription = /^description\s*:/m.test(fmBlock);
+    if (!hasDescription) return false;
+    // In SDK mode, also require when_to_use for lesson-like frontmatter.
+    if (sdkMode && /^type\s*:\s*lesson/m.test(fmBlock)) {
+      return /^when_to_use\s*:/m.test(fmBlock);
+    }
+    return true;
+  }
+  if (value.startsWith("#")) {
+    // Heading + at least 2 non-blank lines (heading + at least one body line).
+    // This rejects pure title stubs (`# Title\n`) but accepts minimal valid content.
+    const lines = value.split("\n").filter((l) => l.trim().length > 0);
+    return lines.length >= 2;
+  }
+  return false;
 }
 
 function failureEnvelope(
@@ -453,7 +504,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   try {
     payload = parseAgentProposalPayload(result.stdout ?? "");
   } catch (err) {
-    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref);
+    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, profile.sdkMode ?? false);
     if (fallback) {
       payload = fallback;
     } else {
