@@ -245,3 +245,111 @@ describe("akm feedback", () => {
     expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
   });
 });
+
+// ── F-3 / #384 — requireReason default true + --failure-mode enum ─────────────
+
+describe("F-3: requireReason default + --failure-mode enum (#384)", () => {
+  test("negative feedback without --reason fails by default (requireReason default: true)", async () => {
+    const stashDir = makeTempDir("akm-f3-require-reason-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    // No --reason: should fail with exit code 2 by default (requireReason: true)
+    const result = runCli(["feedback", "memory:auth", "--negative", "--format=json"]);
+    expect(result.status).toBe(2);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toContain("requires --reason");
+  });
+
+  test("negative feedback with --reason succeeds", async () => {
+    const stashDir = makeTempDir("akm-f3-with-reason-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache2-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config2-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data2-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state2-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "memory:auth", "--negative", "--reason", "outdated content", "--format=json"]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    expect(out.signal).toBe("negative");
+  });
+
+  test("--failure-mode with valid enum value is accepted and appears in output", async () => {
+    const stashDir = makeTempDir("akm-f3-failure-mode-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache3-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config3-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data3-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state3-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:auth",
+      "--negative",
+      "--reason",
+      "content is wrong",
+      "--failure-mode",
+      "incorrect",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    expect(out.failureMode).toBe("incorrect");
+  });
+
+  test("--failure-mode with invalid value is rejected (exit 2)", async () => {
+    const stashDir = makeTempDir("akm-f3-bad-mode-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache4-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config4-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data4-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state4-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:auth",
+      "--negative",
+      "--reason",
+      "broken",
+      "--failure-mode",
+      "totally-invalid-mode",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(2);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toContain("totally-invalid-mode");
+  });
+
+  test("--failure-mode on --positive is rejected (exit 2)", async () => {
+    const stashDir = makeTempDir("akm-f3-mode-on-pos-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache5-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config5-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data5-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state5-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "memory:auth", "--positive", "--failure-mode", "incorrect", "--format=json"]);
+    expect(result.status).toBe(2);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toContain("only valid for negative");
+  });
+});

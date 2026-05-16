@@ -1434,9 +1434,23 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
-        return { schemaVersion: 1, ok: true, proposal: makeProposal(ref ?? "memory:missing"), ref: ref ?? "", agentProfile: "test", durationMs: 1 } satisfies AkmReflectResult;
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
       },
-      distillFn: async ({ ref }) => ({ schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` }) satisfies AkmDistillResult,
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
     });
 
     expect(reflectedRefs).toContain("memory:auth-tips");
@@ -1459,9 +1473,23 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
-        return { schemaVersion: 1, ok: true, proposal: makeProposal(ref ?? "memory:missing"), ref: ref ?? "", agentProfile: "test", durationMs: 1 } satisfies AkmReflectResult;
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
       },
-      distillFn: async ({ ref }) => ({ schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` }) satisfies AkmDistillResult,
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
     });
 
     expect(reflectedRefs).not.toContain("memory:auth-tips-2");
@@ -1486,9 +1514,23 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => {
         capturedTimeouts.push(opts.timeoutMs);
-        return { schemaVersion: 1, ok: true, proposal: makeProposal(opts.ref ?? "memory:budget-test"), ref: opts.ref ?? "", agentProfile: "test", durationMs: 1 } satisfies AkmReflectResult;
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(opts.ref ?? "memory:budget-test"),
+          ref: opts.ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
       },
-      distillFn: async ({ ref }) => ({ schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` }) satisfies AkmDistillResult,
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
     });
 
     expect(capturedTimeouts.length).toBeGreaterThan(0);
@@ -1510,12 +1552,18 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => ({
-        schemaVersion: 1, ok: true,
+        schemaVersion: 1,
+        ok: true,
         proposal: makeProposal(opts.ref ?? "memory:timer-test"),
-        ref: opts.ref ?? "", agentProfile: "test", durationMs: 1,
+        ref: opts.ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
-        schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref,
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued",
+        inputRef: ref,
         lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
       }),
     });
@@ -1546,13 +1594,22 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1, ok: true,
+        schemaVersion: 1,
+        ok: true,
         proposal: makeProposal(ref ?? "memory:auth-tips"),
-        ref: ref ?? "", agentProfile: "test", durationMs: 1,
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
         if (ref) distilledRefs.push(ref);
-        return { schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` } satisfies AkmDistillResult;
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        } satisfies AkmDistillResult;
       },
     });
 
@@ -1581,13 +1638,22 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1, ok: true,
+        schemaVersion: 1,
+        ok: true,
         proposal: makeProposal(ref ?? "memory:auth-tips"),
-        ref: ref ?? "", agentProfile: "test", durationMs: 1,
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
         if (ref) distilledRefs.push(ref);
-        return { schemaVersion: 1, ok: true, outcome: "queued", inputRef: ref, lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson` } satisfies AkmDistillResult;
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        } satisfies AkmDistillResult;
       },
     });
 
