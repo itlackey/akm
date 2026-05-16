@@ -545,21 +545,113 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         });
 
   if (promotion?.promote && promotion.content && (targetKind === "knowledge" || targetKind === "auto")) {
+    // D-1 / #369: When the destination knowledge file already exists, route
+    // through the LLM for contradiction resolution instead of silently
+    // overwriting. Follows mem0 ADD/UPDATE/DELETE/NOOP pattern (arXiv:2504.19413 §3.2)
+    // and A-MEM dynamic linking (arXiv:2502.12110).
+    let resolvedPromotionContent = promotion.content;
+    const existingKnowledgePath = await lookup(promotion.knowledgeRef);
+    const existingKnowledgeContent =
+      existingKnowledgePath && fs.existsSync(existingKnowledgePath)
+        ? (() => {
+            try {
+              return fs.readFileSync(existingKnowledgePath, "utf8");
+            } catch {
+              return null;
+            }
+          })()
+        : null;
+
+    if (existingKnowledgeContent && config?.llm) {
+      // Existing content found: call LLM for contradiction-resolution merge.
+      const mergePrompt = [
+        "You are merging two versions of a knowledge document.",
+        "Existing content is already committed; new content comes from a memory distillation run.",
+        "Choose one of: ADD (combine both), UPDATE (replace existing with new), NOOP (keep existing unchanged).",
+        'Return ONLY valid JSON: {"action": "ADD"|"UPDATE"|"NOOP", "content": "<merged markdown if ADD/UPDATE, empty string if NOOP>"}',
+        "",
+        "## Existing knowledge content",
+        "```",
+        existingKnowledgeContent.slice(0, 3000),
+        "```",
+        "",
+        "## New content from distillation",
+        "```",
+        promotion.content.slice(0, 3000),
+        "```",
+      ].join("\n");
+
+      try {
+        const mergeResponse = await chat(config.llm, [
+          { role: "system", content: "Return only valid JSON. No prose." },
+          { role: "user", content: mergePrompt },
+        ]);
+        const mergeResult = parseEmbeddedJsonResponse<{
+          action: "ADD" | "UPDATE" | "NOOP";
+          content?: string;
+        }>(mergeResponse);
+
+        if (mergeResult?.action === "NOOP") {
+          // Existing content is authoritative — no update needed.
+          appendEvent({
+            eventType: "distill_invoked",
+            ref: inputRef,
+            metadata: {
+              outcome: "skipped" as const,
+              lessonRef: promotion.knowledgeRef,
+              message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
+            },
+          });
+          return {
+            schemaVersion: 1,
+            ok: true,
+            outcome: "skipped",
+            inputRef,
+            lessonRef: promotion.knowledgeRef,
+            message: "Existing knowledge content unchanged (contradiction resolution: NOOP)",
+          };
+        }
+
+        if (mergeResult?.action && (mergeResult.action === "ADD" || mergeResult.action === "UPDATE")) {
+          if (mergeResult.content?.trim()) {
+            resolvedPromotionContent = mergeResult.content;
+          }
+        }
+      } catch {
+        // LLM merge failed — fall through with the original promotion content.
+        // The reviewer will see both versions in the proposal diff.
+      }
+    } else if (existingKnowledgeContent && !config?.llm) {
+      // No LLM configured: include existing content as context in the proposal
+      // so the reviewer can do the contradiction resolution manually.
+      resolvedPromotionContent = [
+        promotion.content,
+        "",
+        "---",
+        "<!-- D-1 / #369: Existing knowledge content is shown below for reviewer reference. -->",
+        "<!-- Review: decide whether to ADD (merge), UPDATE (replace), or NOOP (keep existing). -->",
+        "",
+        "## Existing content (for reviewer reference)",
+        "",
+        existingKnowledgeContent,
+      ].join("\n");
+    }
+
     // Apply quality gate to fast-path knowledge promotion (Risk 4 fix).
     if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
-      const judgeResult = await runLessonQualityJudge(config, promotion.content, assetContent ?? "", chat);
+      const judgeResult = await runLessonQualityJudge(config, resolvedPromotionContent, assetContent ?? "", chat);
       if (!judgeResult.pass) {
         return writeQualityRejection(
           stash,
           inputRef,
           promotion.knowledgeRef,
-          promotion.content,
+          resolvedPromotionContent,
           judgeResult.score,
           judgeResult.reason,
         );
       }
     }
-    const knowledgeParsed = parseFrontmatter(promotion.content);
+    const knowledgeParsed = parseFrontmatter(resolvedPromotionContent);
     const proposalResult = createProposal(
       stash,
       {
@@ -567,7 +659,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         source: "distill",
         ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
         payload: {
-          content: promotion.content,
+          content: resolvedPromotionContent,
           ...(Object.keys(knowledgeParsed.data).length > 0 ? { frontmatter: knowledgeParsed.data } : {}),
         },
       },
