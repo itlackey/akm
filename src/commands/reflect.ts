@@ -28,7 +28,13 @@ import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
-import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
+import {
+  type CreateProposalInput,
+  createProposal,
+  listProposals,
+  type Proposal,
+  type ProposalsContext,
+} from "../core/proposals";
 import { lookup } from "../indexer/indexer";
 import {
   type AgentConfig,
@@ -39,7 +45,11 @@ import {
   runAgent,
 } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
-import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import {
+  buildReflectPrompt,
+  parseAgentProposalPayload,
+  type RejectedProposalContext,
+} from "../integrations/agent/prompts";
 import { runAgentSdk } from "../integrations/agent/sdk-runner";
 import {
   baseFailureFields,
@@ -133,6 +143,31 @@ function readRecentFeedback(ref?: string): string[] {
       lines.push(!ref && event.ref ? `${event.ref} ${details}` : details);
     }
     return lines;
+  } catch {
+    return [];
+  }
+}
+
+const MAX_REJECTED_PROPOSALS = 3;
+
+/**
+ * Read the last 1–3 archived rejected proposals for a given ref from the
+ * proposal store. Best-effort — returns `[]` when the proposals dir is absent
+ * or the ref is undefined. Used to inject Reflexion-style verbal-RL context
+ * into the reflect prompt so the agent avoids re-proposing already-refused
+ * content (arXiv:2303.11366).
+ */
+function readRejectedProposals(stash: string, ref?: string): RejectedProposalContext[] {
+  if (!ref) return [];
+  try {
+    return listProposals(stash, { ref, status: "rejected", includeArchive: true })
+      .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
+      .slice(0, MAX_REJECTED_PROPOSALS)
+      .map((p) => ({
+        ref: p.ref,
+        reason: p.review?.reason ?? "no reason given",
+        contentPreview: p.payload.content.slice(0, 500),
+      }));
   } catch {
     return [];
   }
@@ -308,6 +343,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const relatedLessons = options.ref && parsedRef ? await readRelatedLessons(stash, options.ref, parsedRef) : [];
+  // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
+  // reproducing proposals that have already been reviewed and refused.
+  const rejectedProposals = readRejectedProposals(stash, options.ref);
   const prompt = buildReflectPrompt({
     ...(options.ref ? { ref: options.ref } : {}),
     ...(parsedRef?.type ? { type: parsedRef.type } : {}),
@@ -318,6 +356,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
     ...(options.task ? { task: options.task } : {}),
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
+    ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
   });
 
   // 5. Spawn the agent.
