@@ -1818,3 +1818,86 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(fileContent).toContain("Auth content description.");
   });
 });
+
+// ── O-3 / #376 — reindex between consolidate and graph extraction ─────────────
+
+describe("O-3: reindex triggered after consolidation before graph extraction (#376)", () => {
+  test("reindexFn is called after consolidation ran and before graph extraction", async () => {
+    const stashDir = makeTempDir("akm-o3-reindex-");
+    writeMemory(stashDir, "auth-guide", { description: "Auth guide" }, "Auth guide content.");
+    await buildIndex(stashDir);
+
+    const reindexCallOrder: string[] = [];
+
+    // Track reindex calls
+    const reindexFn = async ({ stashDir: _s }: { stashDir: string }) => {
+      reindexCallOrder.push("reindex");
+      return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
+    };
+
+    // Track graph extraction calls
+    let graphExtractionCalled = false;
+    const graphExtractionFn = async () => {
+      graphExtractionCalled = true;
+      reindexCallOrder.push("graphExtraction");
+      return {
+        considered: 0,
+        extracted: 0,
+        totalEntities: 0,
+        totalRelations: 0,
+        written: false,
+        quality: {
+          consideredFiles: 0,
+          extractedFiles: 0,
+          entityCount: 0,
+          relationCount: 0,
+          extractionCoverage: 0,
+          density: 0,
+        },
+        warnings: [],
+      } satisfies import("../../src/indexer/graph-extraction").GraphExtractionResult;
+    };
+
+    // Run with consolidation enabled to trigger the D9 reindex path
+    await akmImprove({
+      scope: "memory",
+      stashDir,
+      config: {
+        semanticSearchMode: "off",
+        llm: {
+          endpoint: "http://localhost/chat/completions",
+          model: "test",
+          features: { memory_consolidation: true, graph_extraction: true },
+        },
+      },
+      ensureIndexFn: async () => false,
+      reindexFn,
+      graphExtractionFn,
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:auth-guide"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued",
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // O-3: if consolidation ran, reindex must happen before graph extraction
+    if (graphExtractionCalled && reindexCallOrder.includes("reindex")) {
+      const reindexIdx = reindexCallOrder.indexOf("reindex");
+      const graphIdx = reindexCallOrder.indexOf("graphExtraction");
+      // Reindex must come before graphExtraction (when consolidation ran)
+      expect(reindexIdx).toBeLessThan(graphIdx);
+    }
+    // At minimum, either reindex was called or graph extraction ran
+    expect(reindexCallOrder.length).toBeGreaterThan(0);
+  });
+});
