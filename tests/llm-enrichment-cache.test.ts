@@ -317,6 +317,29 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, true);
     expect(graphExtractCallCount).toBe(2);
   });
+
+  test("(d) graph cache is versioned by extractor settings such as model", async () => {
+    writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
+
+    await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    expect(graphExtractCallCount).toBe(1);
+
+    await runGraphExtractionPass(
+      configWithLlm({
+        llm: {
+          endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+          model: "different-model",
+          features: { graph_extraction: true },
+        },
+      }),
+      sources(),
+      undefined,
+      db,
+      false,
+    );
+    expect(graphExtractCallCount).toBe(2);
+  });
 });
 
 // ── Memory inference cache ─────────────────────────────────────────────────────

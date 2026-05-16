@@ -260,15 +260,23 @@ echo "Database migration finished successfully."
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 function restoreEnv(): void {
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
   resetConfigCache();
@@ -282,13 +290,19 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
   let stashDir: string;
   let savedCacheDir: string;
   let savedConfigDir: string;
+  let savedDataDir: string;
+  let savedStateDir: string;
 
   beforeAll(async () => {
-    // Set up isolated cache and config directories
+    // Set up isolated cache, config, data, and state directories
     testCacheDir = createTmpDir("akm-semantic-e2e-cache-");
     testConfigDir = createTmpDir("akm-semantic-e2e-config-");
+    testDataDir = createTmpDir("akm-semantic-e2e-data-");
+    testStateDir = createTmpDir("akm-semantic-e2e-state-");
     process.env.XDG_CACHE_HOME = testCacheDir;
     process.env.XDG_CONFIG_HOME = testConfigDir;
+    process.env.XDG_DATA_HOME = testDataDir;
+    process.env.XDG_STATE_HOME = testStateDir;
     // Use the user's existing HuggingFace model cache to avoid re-downloading
     if (!process.env.HF_HOME) {
       process.env.HF_HOME = path.join(process.env.HOME ?? "/tmp", ".cache", "huggingface");
@@ -306,6 +320,8 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     // This will download the model on first run (cached at ~/.cache/huggingface)
     savedCacheDir = testCacheDir;
     savedConfigDir = testConfigDir;
+    savedDataDir = testDataDir;
+    savedStateDir = testStateDir;
 
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBeGreaterThan(0);
@@ -317,6 +333,8 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
   beforeEach(() => {
     process.env.XDG_CACHE_HOME = savedCacheDir;
     process.env.XDG_CONFIG_HOME = savedConfigDir;
+    process.env.XDG_DATA_HOME = savedDataDir;
+    process.env.XDG_STATE_HOME = savedStateDir;
     process.env.AKM_STASH_DIR = stashDir;
     resetConfigCache();
   });

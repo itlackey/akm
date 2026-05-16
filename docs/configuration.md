@@ -301,6 +301,34 @@ Disabling either layer after a previous run never deletes the existing graph
 rows — they remain in `index.db` and continue to contribute to ranking until a
 later refresh or full index rebuild replaces them.
 
+Graph extraction keeps durable latest-run telemetry in SQLite alongside the
+graph rows: extractor id, extraction run id, model, prompt version, effective
+batch size, cache hits/misses, truncation count, and failure count. Empty or
+failed files are now stored as considered graph rows with per-file `status` and
+`reason` values instead of disappearing from the artifact.
+
+Current `index.graph.*` knobs:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `index.graph.llm` | `true` | Per-pass opt-out. `false` skips graph extraction while leaving other LLM passes enabled. |
+| `index.graph.graphExtractionBatchSize` | `4` | Initial batch size before adaptive downsizing. When `llm.contextLength` is set, AKM clamps this ceiling to fit the configured context window. |
+| `index.graph.graphExtractionIncludeTypes` | `[`"memory"`, `"knowledge"`]` | Asset types eligible for graph extraction. |
+
+Batching is adaptive:
+
+- context-size failures retry with smaller batch groups before falling back to
+  single-asset extraction;
+- repeated non-array batch responses disable batching for the remainder of that
+  run;
+- long documents are extracted via section-aware chunking instead of the old
+  fixed-prefix truncation.
+
+The graph cache is versioned by extractor settings, not just body hash. Changes
+to the graph extractor prompt version, model, or other extractor fingerprint
+inputs invalidate prior graph cache rows automatically. Use `--re-enrich` to
+force a fresh graph refresh even when the cache variant still matches.
+
 ## Install Security Audit
 
 akm audits managed installs before they are registered. The audit scans code,
@@ -604,7 +632,7 @@ LLM is configured (though the passes also require `akm.llm` to be set and
 | `memory_consolidation` | `false` | `akm improve` memory consolidation phase | Consolidation returns a no-op result (`processed: 0`) |
 | `feedback_distillation` | `false` | `akm distill <ref>` / `akm improve <ref>` | The command exits 0 with `outcome: "skipped"` rather than failing |
 | `memory_inference` | `true` | `akm improve` memory-inference maintenance step (derives higher-signal child memories and marks parents processed) | The step is a no-op; existing inferred children remain on disk |
-| `graph_extraction` | `true` | `akm improve` graph-extraction maintenance step (refreshes `graph.json` for search boosting after improve writes settle) | The step is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
+| `graph_extraction` | `true` | `akm improve` graph-extraction maintenance step (refreshes SQLite `graph_*` tables in `$DATA/index.db` for search boosting after improve writes settle) | The step is a no-op; existing graph rows are preserved and still feed the boost component |
 | `lesson_quality_gate` | `false` | LLM-as-judge quality gate in `akm distill` | Judge step is skipped (distillation continues without judge scoring) |
 | `metadata_enhance` | `false` | `akm index` metadata-enhancement pass | Metadata enhancement is skipped (no description/searchHints/tags enrichment) |
 

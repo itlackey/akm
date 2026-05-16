@@ -851,11 +851,13 @@ export function formatHistoryPlain(r: Record<string, unknown>): string {
     const ref = entry.ref ? String(entry.ref) : null;
     const signal = entry.signal ? String(entry.signal) : null;
     const query = entry.query ? String(entry.query) : null;
+    const source = entry.source ? String(entry.source) : null;
 
     const head = ref ? `${created}  [${eventType}] ${ref}` : `${created}  [${eventType}]`;
     lines.push(head);
     if (signal) lines.push(`  signal: ${signal}`);
     if (query) lines.push(`  query: ${query}`);
+    if (source && source !== "user") lines.push(`  source: ${source}`);
     if (entry.metadata != null && entry.metadata !== "") {
       const meta = typeof entry.metadata === "string" ? entry.metadata : JSON.stringify(entry.metadata);
       lines.push(`  metadata: ${meta}`);

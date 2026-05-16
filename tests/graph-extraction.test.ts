@@ -56,6 +56,7 @@ const llmServer = Bun.serve({
 
 const { runGraphExtractionPass, collectEligibleFiles, GRAPH_FILE_SCHEMA_VERSION, getGraphExtractionIncludeTypes } =
   await import("../src/indexer/graph-extraction");
+const { GRAPH_EXTRACT_PROMPT_VERSION: graphExtractPromptVersion } = await import("../src/llm/graph-extract");
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
@@ -420,6 +421,10 @@ describe("runGraphExtractionPass — enabled", () => {
       extractionCoverage: 1,
       density: 0.6667,
     });
+    expect(result.telemetry?.model).toBe("llama3.2");
+    expect(result.telemetry?.promptVersion).toBe(graphExtractPromptVersion);
+    expect(typeof result.telemetry?.extractionRunId).toBe("string");
+    expect(result.telemetry?.batchSize).toBeGreaterThanOrEqual(1);
 
     if (!parsed) throw new Error("expected stored graph snapshot");
     expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
@@ -433,6 +438,8 @@ describe("runGraphExtractionPass — enabled", () => {
       extractionCoverage: 1,
       density: 0.6667,
     });
+    expect(parsed.telemetry?.model).toBe("llama3.2");
+    expect(parsed.telemetry?.promptVersion).toBe(graphExtractPromptVersion);
     const parentNode = parsed.files.find((file) => file.path.endsWith(path.join("memories", "parent.md")));
     const knowledgeNode = parsed.files.find((file) => file.path.endsWith(path.join("knowledge", "k1.md")));
     expect(parentNode?.entities).toEqual(["ServiceA", "ServiceB"]);
@@ -460,7 +467,7 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(result.extracted).toBe(2);
   });
 
-  test("files with no extracted entities are omitted but still considered", async () => {
+  test("files with no extracted entities are persisted with empty status while still considered", async () => {
     writeFile("memories/m1.md", {}, "Empty graph body.");
     writeFile("memories/m2.md", {}, "Has entities.");
     extractor = (body) => {
@@ -477,7 +484,9 @@ describe("runGraphExtractionPass — enabled", () => {
 
     const parsed = await withGraphDb("omit-empty-entities-read", (db) => loadStoredGraphSnapshot(tmpStash, db));
     if (!parsed) throw new Error("expected stored graph snapshot");
-    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files).toHaveLength(2);
+    expect(parsed.files.find((file) => file.path.endsWith("m1.md"))?.status).toBe("empty");
+    expect(parsed.files.find((file) => file.path.endsWith("m1.md"))?.reason).toBe("no_graph_content");
   });
 
   test("candidate-path refresh preserves unrelated nodes from the existing graph", async () => {
@@ -514,7 +523,7 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(parsed.entities.sort()).toEqual(["ServiceA2", "ServiceB"]);
   });
 
-  test("candidate-path refresh removes touched nodes that no longer yield graph entities", async () => {
+  test("candidate-path refresh keeps touched nodes as empty-status records when they no longer yield graph entities", async () => {
     const memoryPath = writeFile("memories/m1.md", {}, "Body about ServiceA.");
     writeFile("knowledge/k1.md", {}, "Body about ServiceB.");
     extractor = (body) => {
@@ -540,15 +549,17 @@ describe("runGraphExtractionPass — enabled", () => {
 
     expect(result.written).toBe(true);
     const parsed = (await withGraphDb("candidate-remove-read", (db) => loadStoredGraphSnapshot(tmpStash, db))) as {
-      files: Array<{ path: string; entities: string[] }>;
+      files: Array<{ path: string; entities: string[]; status?: string; reason?: string }>;
       entities: string[];
     };
-    expect(parsed.files).toHaveLength(1);
-    expect(parsed.files[0]?.path).toBe(path.join(tmpStash, "knowledge", "k1.md"));
+    expect(parsed.files).toHaveLength(2);
+    expect(parsed.files.find((file) => file.path === memoryPath)?.entities).toEqual([]);
+    expect(parsed.files.find((file) => file.path === memoryPath)?.status).toBe("empty");
+    expect(parsed.files.find((file) => file.path === memoryPath)?.reason).toBe("no_graph_content");
     expect(parsed.entities).toEqual(["ServiceB"]);
   });
 
-  test("leaves an existing stored graph untouched when every extraction returns no entities", async () => {
+  test("replaces an existing stored graph with an empty-status row when every extraction returns no entities", async () => {
     // Schema v2: graph_files.entry_id FKs entries.id. Use a single file
     // (m1.md) that is both the eligible source AND the existing graph row's
     // target — that way the prior snapshot survives the "no-op" path
@@ -582,9 +593,11 @@ describe("runGraphExtractionPass — enabled", () => {
 
     expect(result.considered).toBe(1);
     expect(result.extracted).toBe(0);
-    expect(result.written).toBe(false);
+    expect(result.written).toBe(true);
     if (!after) throw new Error("expected existing stored graph snapshot");
-    expect(after.files[0]?.entities).toEqual(["Sentinel"]);
+    expect(after.files[0]?.entities).toEqual([]);
+    expect(after.files[0]?.status).toBe("empty");
+    expect(after.files[0]?.reason).toBe("no_graph_content");
   });
 
   test("does not extract from cache-only sources (only the primary stash)", async () => {

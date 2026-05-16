@@ -747,12 +747,33 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<void> {
       // because validateGraphSnapshot enforced the required fields above.
       replaceStoredGraph(db, graph as unknown as Parameters<typeof replaceStoredGraph>[1]);
 
+      // Verify that at least one file was actually imported. If all files were
+      // orphans (no matching entries row), the import is effectively a no-op
+      // and we must not consume the source file.
+      const importedCount = (
+        db.prepare("SELECT COUNT(*) AS cnt FROM graph_files WHERE stash_root = ?").get(snapshot.stashRoot!) as {
+          cnt: number;
+        }
+      ).cnt;
+
       const meta = loadStoredGraphMeta(snapshot.stashRoot!, db);
       if (!meta) {
         ctx.recordStep({
           name,
           status: "failed",
           detail: `import did not produce a graph_meta row for stash ${snapshot.stashRoot}`,
+        });
+        return;
+      }
+
+      if (importedCount === 0) {
+        ctx.recordStep({
+          name,
+          status: "failed",
+          detail:
+            `import produced zero graph_files rows for stash ${snapshot.stashRoot} — ` +
+            `the entries table has no matching paths. Run "akm index" first, then retry the migration. ` +
+            `Source file ${legacyFile} was NOT renamed.`,
         });
         return;
       }
@@ -776,7 +797,7 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<void> {
         status: "success",
         detail:
           `imported graph snapshot from ${legacyFile} into ${ctx.paths.indexDbPath} ` +
-          `(stash ${snapshot.stashRoot}; ${graph.files.length} file(s)). ` +
+          `(stash ${snapshot.stashRoot}; ${importedCount} file(s) imported of ${graph.files.length} in source). ` +
           `Source renamed to ${renamed} — delete manually when ready.`,
       });
     } finally {

@@ -471,18 +471,18 @@ export type IndexConfig = Record<string, IndexPassConfig>;
  * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
  * empirically: 4 amortises the per-call HTTP overhead 4× while keeping the
  * combined prompt size well under common 8K/16K context windows (each body is
- * sliced to ~4000 chars in the graph-extract prompt builder).
+ * sliced to ~500 chars in the graph-extract prompt builder).
  */
 export const DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE = 4;
 
 /**
  * Approximate character budget per asset body inside a batched
  * graph-extraction prompt — used by {@link resolveBatchSize} to derive a
- * context-window ceiling when `llm.contextLength` is configured. Keeping this
- * conservative leaves room for the JSON wrapper, instructions, and the model's
- * own reply tokens.
+ * context-window ceiling when `llm.contextLength` is configured. This accounts
+ * for the actual `MAX_BODY_CHARS` (500) in graph-extract.ts plus the system
+ * prompt, user prompt wrapper, and expected JSON response overhead.
  */
-const GRAPH_EXTRACTION_CHARS_PER_BODY = 8000;
+const GRAPH_EXTRACTION_CHARS_PER_BODY = 1500;
 
 /**
  * Clamp a configured batch size against the model's known context window.

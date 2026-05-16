@@ -383,13 +383,13 @@ export function listRelatedPathsForFile(
                 gf.file_path   AS file_path,
                 gf.file_type   AS file_type,
                 COUNT(*)       AS shared
-           FROM graph_file_entities target
-           JOIN graph_file_entities e
-             ON e.stash_root = target.stash_root
-            AND e.entity     = target.entity
-            AND e.entry_id  != target.entry_id
-           JOIN graph_files gf
-             ON gf.entry_id = e.entry_id
+            FROM graph_file_entities target
+            JOIN graph_file_entities e
+              ON e.stash_root = target.stash_root
+             AND e.entity_norm = target.entity_norm
+             AND e.entry_id  != target.entry_id
+            JOIN graph_files gf
+              ON gf.entry_id = e.entry_id
           WHERE target.entry_id  = ?
             AND target.stash_root = ?
           GROUP BY gf.entry_id
@@ -413,10 +413,10 @@ export function listRelatedPathsForFile(
          FROM graph_file_entities e
          JOIN graph_file_entities target
            ON target.stash_root = e.stash_root
-          AND target.entity     = e.entity
-        WHERE e.entry_id IN (${placeholders})
-          AND target.entry_id = ?
-          AND target.stash_root = ?`,
+           AND target.entity_norm = e.entity_norm
+         WHERE e.entry_id IN (${placeholders})
+           AND target.entry_id = ?
+           AND target.stash_root = ?`,
     )
     .all(...candidateIds, targetEntryId, stashRoot) as Array<{ entry_id: number; entity: string }>;
 

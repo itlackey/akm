@@ -59,7 +59,7 @@
     },
     "index": {
       "type": "object",
-      "description": "Per-pass `akm index` configuration. Keys are pass names; values configure each pass.",
+      "description": "Per-pass indexer and improve-maintenance configuration. Keys are pass names; values configure each pass. Graph extraction and memory inference are improve-owned maintenance passes, not `akm index` side effects.",
       "additionalProperties": true
     },
     "security": {
@@ -266,7 +266,7 @@
                 },
                 "graph_extraction": {
                   "type": "boolean",
-                  "description": "Gates the `akm index` graph-extraction pass.",
+                  "description": "Gates the `akm improve` graph-extraction maintenance pass that refreshes SQLite graph tables in index.db.",
                   "default": true
                 },
                 "memory_consolidation": {

@@ -22,7 +22,7 @@ All paths below use these resolved base directories:
 
 ### `$DATA/index.db` — Main Search Index
 
-Schema version `DB_VERSION = 11`. WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
+Schema version `DB_VERSION = 14`. WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
 
 Opened by:
 - `openDatabase()` — full schema init, called by `akm index`
@@ -114,13 +114,17 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 
 | Column | Type | Notes |
 |---|---|---|
-| `asset_ref` | TEXT PRIMARY KEY | Absolute file path or `entryKey:passId` |
+| `asset_ref` | TEXT NOT NULL | Absolute file path or `entryKey:passId` |
+| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Graph extraction uses an extractor-specific variant; other passes currently use the empty-string default. |
 | `body_hash` | TEXT NOT NULL | SHA-256 hex digest of file body |
 | `result_json` | TEXT NOT NULL | Serialized LLM enrichment result |
 | `updated_at` | INTEGER NOT NULL | Unix ms timestamp |
 
-Cache miss on body change. Stale rows removed by `clearStaleCacheEntries()`. The
-cache can also be bypassed by internal forced re-enrichment callers.
+Primary key: `(asset_ref, cache_variant)`.
+
+Cache miss on body change or cache-variant change. Stale rows removed by
+`clearStaleCacheEntries()`. The cache can also be bypassed by internal forced
+re-enrichment callers.
 
 **What is cached:** metadata enhancement results, graph extraction (entities + relations), memory inference results.
 
@@ -371,7 +375,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
-| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. As of v0.8.0 (graph schema v2 / DB_VERSION 13), `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; `graph_file_entities` and `graph_file_relations` are re-keyed on `entry_id` and cascade through. `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity(stash_root, entity)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction / dropped and repopulated on `DB_VERSION` upgrade (next `akm improve` re-extracts) |
+| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. As of graph schema v3 / `DB_VERSION = 14`, `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; every considered file persists a `status` and `reason`; `graph_file_entities` stores both canonical `entity` and normalized `entity_norm`; `graph_file_relations` stores canonical endpoints plus `from_entity_norm` / `to_entity_norm`; `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. `graph_meta` also stores the latest graph telemetry: model, prompt version, batch size, cache hits/misses, truncation count, and failure count. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity_norm(stash_root, entity_norm)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction / dropped and repopulated on `DB_VERSION` upgrade (next `akm improve` re-extracts) |
 
 ---
 

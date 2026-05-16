@@ -1187,4 +1187,82 @@ describe("Edge cases", () => {
     expect(result).toBeDefined();
     expect(result.hits).toBeDefined();
   });
+
+  test("skipLogging prevents usage_events from being written", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(path.join(stashDir, "scripts", "logged", "logged.sh"), "#!/bin/bash\necho logged\n");
+    writeFile(
+      path.join(stashDir, "scripts", "logged", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "logged",
+            type: "script",
+            description: "A logged tool",
+            filename: "logged.sh",
+          },
+        ],
+      }),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const db = openDatabase();
+    try {
+      // Count usage_events before
+      const beforeCount = db.prepare("SELECT COUNT(*) as c FROM usage_events").get() as { c: number };
+
+      // Search with skipLogging=true
+      await akmSearch({ query: "logged", source: "local", skipLogging: true });
+
+      // Count usage_events after — should be unchanged
+      const afterCount = db.prepare("SELECT COUNT(*) as c FROM usage_events").get() as { c: number };
+      expect(afterCount.c).toBe(beforeCount.c);
+
+      // Search without skipLogging (default) — should create events
+      await akmSearch({ query: "logged", source: "local" });
+
+      const finalCount = db.prepare("SELECT COUNT(*) as c FROM usage_events").get() as { c: number };
+      expect(finalCount.c).toBeGreaterThan(beforeCount.c);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("usage_events source column defaults to user", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(path.join(stashDir, "scripts", "source-test", "source-test.sh"), "#!/bin/bash\necho source-test\n");
+    writeFile(
+      path.join(stashDir, "scripts", "source-test", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "source-test",
+            type: "script",
+            description: "A source test tool",
+            filename: "source-test.sh",
+          },
+        ],
+      }),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const db = openDatabase();
+    try {
+      // Search with default eventSource
+      await akmSearch({ query: "source-test", source: "local" });
+
+      // Verify source column is 'user'
+      const rows = db
+        .prepare("SELECT source FROM usage_events WHERE event_type = 'search' AND query = 'source-test'")
+        .all() as Array<{ source: string }>;
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((row) => row.source === "user")).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
+  });
 });

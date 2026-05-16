@@ -11,6 +11,7 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import type { LlmConnectionConfig } from "../core/config";
@@ -94,6 +95,11 @@ export async function runSchemaRepairPass(
 
     const filePath = await findFilePath(failure.ref, stashDir);
     if (!filePath) {
+      repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+      continue;
+    }
+
+    if (path.extname(filePath).toLowerCase() !== ".md") {
       repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
       continue;
     }

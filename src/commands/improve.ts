@@ -909,6 +909,9 @@ async function runImprovePreparationStage(args: {
         validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
         continue;
       }
+      if (path.extname(filePath).toLowerCase() !== ".md") {
+        continue;
+      }
       if (isLessonCandidate(candidate.ref)) {
         const raw = fs.readFileSync(filePath, "utf8");
         const fm = parseFrontmatter(raw).data;
@@ -1423,6 +1426,7 @@ async function runImproveLoopStage(args: {
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
           ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
           agentProcess: options.agentProcess ?? "reflect",
+          eventSource: "improve",
         });
         actions.push({
           ref: planned.ref,

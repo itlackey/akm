@@ -123,6 +123,12 @@ export async function akmShowUnified(input: {
    * out of scope" from "asset truly absent" via the standard error envelope.
    */
   scope?: StashEntryScope;
+  /**
+   * Event source for usage logging. Defaults to `"user"`. Set to
+   * `"improve"` when called from improve's reflect/distill agents
+   * so events can be filtered out of user-facing history.
+   */
+  eventSource?: "user" | "improve";
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
@@ -168,7 +174,7 @@ export async function akmShowUnified(input: {
   }
   // Count prior shows of this ref before logging the current one.
   const priorShowCount = recentShowCount(ref);
-  logShowEvent(ref);
+  logShowEvent(ref, undefined, input.eventSource);
   if (priorShowCount >= 2) {
     // Agent has shown this same asset 3+ times — inject a loop-break hint.
     (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
@@ -230,7 +236,11 @@ function recentShowCount(ref: string): number {
   }
 }
 
-function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {
+function logShowEvent(
+  ref: string,
+  existingDb?: import("bun:sqlite").Database,
+  eventSource: "user" | "improve" = "user",
+): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
   const parsed = parseAssetRef(ref);
@@ -271,6 +281,7 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
         event_type: "show",
         entry_ref: ref,
         entry_id: findEntryIdByRef(db, ref),
+        source: eventSource,
       });
     } finally {
       if (!existingDb) closeDatabase(db);

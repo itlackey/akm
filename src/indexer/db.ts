@@ -46,9 +46,9 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 13;
+export const DB_VERSION = 15;
 export const EMBEDDING_DIM = 384;
-export const GRAPH_SCHEMA_VERSION = 2;
+export const GRAPH_SCHEMA_VERSION = 3;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
@@ -264,10 +264,12 @@ function ensureSchema(db: Database, embeddingDim: number): void {
   // Entries are cleaned up when assets are removed or --re-enrich is used.
   db.exec(`
     CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
-      asset_ref   TEXT PRIMARY KEY,
-      body_hash   TEXT NOT NULL,
-      result_json TEXT NOT NULL,
-      updated_at  INTEGER NOT NULL
+      asset_ref     TEXT NOT NULL,
+      cache_variant TEXT NOT NULL,
+      body_hash     TEXT NOT NULL,
+      result_json   TEXT NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      PRIMARY KEY (asset_ref, cache_variant)
     );
 
      CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
@@ -295,7 +297,14 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       extraction_coverage REAL NOT NULL DEFAULT 0,
       density             REAL NOT NULL DEFAULT 0,
       extractor_id        TEXT,
-      extraction_run_id   TEXT
+      extraction_run_id   TEXT,
+      model               TEXT,
+      prompt_version      TEXT,
+      batch_size          INTEGER,
+      cache_hits          INTEGER NOT NULL DEFAULT 0,
+      cache_misses        INTEGER NOT NULL DEFAULT 0,
+      truncation_count    INTEGER NOT NULL DEFAULT 0,
+      failure_count       INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS graph_files (
@@ -306,6 +315,8 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       file_type         TEXT NOT NULL,
       body_hash         TEXT NOT NULL,
       confidence        REAL,
+      status            TEXT NOT NULL DEFAULT 'extracted',
+      reason            TEXT,
       extraction_run_id TEXT,
       UNIQUE(stash_root, file_path)
     );
@@ -317,17 +328,20 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       entry_id     INTEGER NOT NULL REFERENCES graph_files(entry_id) ON DELETE CASCADE,
       entity_order INTEGER NOT NULL,
       stash_root   TEXT NOT NULL,
+      entity_norm  TEXT NOT NULL,
       entity       TEXT NOT NULL,
       PRIMARY KEY (entry_id, entity_order)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity
-      ON graph_file_entities(stash_root, entity);
+    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity_norm
+      ON graph_file_entities(stash_root, entity_norm);
 
     CREATE TABLE IF NOT EXISTS graph_file_relations (
       entry_id       INTEGER NOT NULL REFERENCES graph_files(entry_id) ON DELETE CASCADE,
       relation_order INTEGER NOT NULL,
+      from_entity_norm TEXT NOT NULL,
       from_entity    TEXT NOT NULL,
+      to_entity_norm TEXT NOT NULL,
       to_entity      TEXT NOT NULL,
       relation_type  TEXT,
       confidence     REAL,
@@ -1263,6 +1277,7 @@ export function upsertUtilityScore(db: Database, entryId: number, data: UtilityS
  */
 export interface LlmCacheEntry {
   assetRef: string;
+  cacheVariant: string;
   bodyHash: string;
   resultJson: string;
   updatedAt: number;
@@ -1276,15 +1291,25 @@ export interface LlmCacheEntry {
  * cached). In both cases the caller should invoke the LLM and write a new
  * cache entry.
  */
-export function getLlmCacheEntry(db: Database, assetRef: string, currentBodyHash: string): LlmCacheEntry | undefined {
+export function getLlmCacheEntry(
+  db: Database,
+  assetRef: string,
+  currentBodyHash: string,
+  cacheVariant = "",
+): LlmCacheEntry | undefined {
   const row = db
-    .prepare("SELECT asset_ref, body_hash, result_json, updated_at FROM llm_enrichment_cache WHERE asset_ref = ?")
-    .get(assetRef) as { asset_ref: string; body_hash: string; result_json: string; updated_at: number } | undefined;
+    .prepare(
+      "SELECT asset_ref, cache_variant, body_hash, result_json, updated_at FROM llm_enrichment_cache WHERE asset_ref = ? AND cache_variant = ?",
+    )
+    .get(assetRef, cacheVariant) as
+    | { asset_ref: string; cache_variant: string; body_hash: string; result_json: string; updated_at: number }
+    | undefined;
   if (!row) return undefined;
   // Hash mismatch → body changed, treat as cache miss.
   if (row.body_hash !== currentBodyHash) return undefined;
   return {
     assetRef: row.asset_ref,
+    cacheVariant: row.cache_variant,
     bodyHash: row.body_hash,
     resultJson: row.result_json,
     updatedAt: row.updated_at,
@@ -1300,7 +1325,7 @@ export function getLlmCacheEntry(db: Database, assetRef: string, currentBodyHash
  * compare `entry.bodyHash` against the current body hash themselves. This lets
  * the batch path issue one DB query per chunk instead of one per file.
  */
-export function getLlmCacheEntriesByRefs(db: Database, refs: string[]): Map<string, LlmCacheEntry> {
+export function getLlmCacheEntriesByRefs(db: Database, refs: string[], cacheVariant = ""): Map<string, LlmCacheEntry> {
   const result = new Map<string, LlmCacheEntry>();
   if (refs.length === 0) return result;
   for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
@@ -1308,11 +1333,12 @@ export function getLlmCacheEntriesByRefs(db: Database, refs: string[]): Map<stri
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
       .prepare(
-        `SELECT asset_ref, body_hash, result_json, updated_at FROM llm_enrichment_cache
-         WHERE asset_ref IN (${placeholders})`,
+        `SELECT asset_ref, cache_variant, body_hash, result_json, updated_at FROM llm_enrichment_cache
+         WHERE cache_variant = ? AND asset_ref IN (${placeholders})`,
       )
-      .all(...(chunk as import("bun:sqlite").SQLQueryBindings[])) as Array<{
+      .all(cacheVariant, ...(chunk as import("bun:sqlite").SQLQueryBindings[])) as Array<{
       asset_ref: string;
+      cache_variant: string;
       body_hash: string;
       result_json: string;
       updated_at: number;
@@ -1320,6 +1346,7 @@ export function getLlmCacheEntriesByRefs(db: Database, refs: string[]): Map<stri
     for (const row of rows) {
       result.set(row.asset_ref, {
         assetRef: row.asset_ref,
+        cacheVariant: row.cache_variant,
         bodyHash: row.body_hash,
         resultJson: row.result_json,
         updatedAt: row.updated_at,
@@ -1332,15 +1359,21 @@ export function getLlmCacheEntriesByRefs(db: Database, refs: string[]): Map<stri
 /**
  * Insert or update a cached LLM result for the given asset_ref.
  */
-export function upsertLlmCacheEntry(db: Database, assetRef: string, bodyHash: string, resultJson: string): void {
+export function upsertLlmCacheEntry(
+  db: Database,
+  assetRef: string,
+  bodyHash: string,
+  resultJson: string,
+  cacheVariant = "",
+): void {
   db.prepare(
-    `INSERT INTO llm_enrichment_cache (asset_ref, body_hash, result_json, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(asset_ref) DO UPDATE SET
-       body_hash   = excluded.body_hash,
-       result_json = excluded.result_json,
-       updated_at  = excluded.updated_at`,
-  ).run(assetRef, bodyHash, resultJson, Date.now());
+    `INSERT INTO llm_enrichment_cache (asset_ref, cache_variant, body_hash, result_json, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(asset_ref, cache_variant) DO UPDATE SET
+        body_hash   = excluded.body_hash,
+        result_json = excluded.result_json,
+        updated_at  = excluded.updated_at`,
+  ).run(assetRef, cacheVariant, bodyHash, resultJson, Date.now());
 }
 
 /**

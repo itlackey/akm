@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1139,6 +1139,91 @@ describe("akm improve memory cleanup", () => {
     expect(callOrder).toEqual(["memoryInference", "reindex", "graphExtraction"]);
     expect(result.memoryInference?.writtenFacts).toBe(1);
     expect(result.graphExtraction?.written).toBe(true);
+  });
+
+  test("improve emits incremental graph extraction progress lines", async () => {
+    const stashDir = makeTempDir("akm-improve-graph-progress-");
+    writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
+    await buildIndex(stashDir);
+
+    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await akmImprove({
+        scope: "memory",
+        stashDir,
+        ensureIndexFn: async () => false,
+        reflectFn: async ({ ref }) => ({
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        }),
+        distillFn: async ({ ref }) => ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+          proposalRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+          proposalKind: "lesson",
+        }),
+        graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, onProgress) => {
+          onProgress?.({
+            processed: 1,
+            total: 3,
+            extracted: 1,
+            totalEntities: 2,
+            totalRelations: 1,
+            currentPath: path.join(stashDir, "memories", "vpn.md"),
+          });
+          onProgress?.({
+            processed: 2,
+            total: 3,
+            extracted: 1,
+            totalEntities: 2,
+            totalRelations: 1,
+            currentPath: path.join(stashDir, "memories", "deploy.md"),
+          });
+          onProgress?.({
+            processed: 3,
+            total: 3,
+            extracted: 2,
+            totalEntities: 4,
+            totalRelations: 2,
+            currentPath: path.join(stashDir, "memories", "release.md"),
+          });
+          return {
+            considered: 3,
+            extracted: 2,
+            totalEntities: 4,
+            totalRelations: 2,
+            written: true,
+            quality: {
+              consideredFiles: 3,
+              extractedFiles: 2,
+              entityCount: 4,
+              relationCount: 2,
+              extractionCoverage: 2 / 3,
+              density: 2,
+            },
+          } satisfies GraphExtractionResult;
+        },
+      });
+
+      const lines = warnSpy.mock.calls
+        .map((args) => args.map((arg) => String(arg)).join(" "))
+        .filter((line) => line.startsWith("[improve] graph extraction "));
+
+      expect(lines.some((line) => line.includes("1/3") && line.includes("vpn.md"))).toBe(true);
+      expect(lines.some((line) => line.includes("2/3") && line.includes("deploy.md"))).toBe(true);
+      expect(lines.some((line) => line.includes("3/3") && line.includes("release.md"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test("improve emits maintenance action counts in completed events", async () => {

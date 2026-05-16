@@ -4,7 +4,7 @@ import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { GraphRelation } from "../llm/graph-extract";
 import { closeDatabase, openExistingDatabase } from "./db";
-import type { GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-extraction";
+import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-extraction";
 
 export interface StoredGraphSnapshot {
   stashPath: string;
@@ -12,6 +12,7 @@ export interface StoredGraphSnapshot {
   schemaVersion: number;
   generatedAt: string;
   quality?: GraphQualityTelemetry;
+  telemetry?: GraphExtractionTelemetry;
   files: GraphFileNode[];
   entities: string[];
   relations: GraphRelation[];
@@ -23,6 +24,7 @@ export interface StoredGraphMeta {
   schemaVersion: number;
   generatedAt: string;
   quality?: GraphQualityTelemetry;
+  telemetry?: GraphExtractionTelemetry;
 }
 
 function withReadableGraphDb<T>(db: Database | undefined, fn: (db: Database) => T): T {
@@ -39,6 +41,10 @@ function withReadableGraphDb<T>(db: Database | undefined, fn: (db: Database) => 
 
 function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeEntity(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /**
@@ -92,17 +98,35 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
        entity_count,
        relation_count,
        extraction_coverage,
-       density
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       density,
+       extractor_id,
+       extraction_run_id,
+       model,
+       prompt_version,
+       batch_size,
+       cache_hits,
+       cache_misses,
+       truncation_count,
+       failure_count
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(stash_root) DO UPDATE SET
-       schema_version = excluded.schema_version,
-       generated_at = excluded.generated_at,
-       considered_files = excluded.considered_files,
-       extracted_files = excluded.extracted_files,
-       entity_count = excluded.entity_count,
-       relation_count = excluded.relation_count,
-       extraction_coverage = excluded.extraction_coverage,
-       density = excluded.density`,
+        schema_version = excluded.schema_version,
+        generated_at = excluded.generated_at,
+        considered_files = excluded.considered_files,
+        extracted_files = excluded.extracted_files,
+        entity_count = excluded.entity_count,
+        relation_count = excluded.relation_count,
+        extraction_coverage = excluded.extraction_coverage,
+        density = excluded.density,
+        extractor_id = excluded.extractor_id,
+        extraction_run_id = excluded.extraction_run_id,
+        model = excluded.model,
+        prompt_version = excluded.prompt_version,
+        batch_size = excluded.batch_size,
+        cache_hits = excluded.cache_hits,
+        cache_misses = excluded.cache_misses,
+        truncation_count = excluded.truncation_count,
+        failure_count = excluded.failure_count`,
   );
 
   const selectExisting = db.prepare("SELECT entry_id, file_path, body_hash FROM graph_files WHERE stash_root = ?");
@@ -111,25 +135,26 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
   const deleteRelations = db.prepare("DELETE FROM graph_file_relations WHERE entry_id = ?");
   const insertFile = db.prepare(
     `INSERT INTO graph_files (
-       entry_id, stash_root, file_path, file_order, file_type, body_hash, confidence
-     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       entry_id, stash_root, file_path, file_order, file_type, body_hash, confidence, status, reason, extraction_run_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const updateFileMeta = db.prepare(
     `UPDATE graph_files
-       SET file_order = ?, file_type = ?, confidence = ?
-       WHERE entry_id = ?`,
+       SET file_order = ?, file_type = ?, confidence = ?, status = ?, reason = ?, extraction_run_id = ?
+        WHERE entry_id = ?`,
   );
   const insertEntity = db.prepare(
-    `INSERT INTO graph_file_entities (entry_id, entity_order, stash_root, entity)
-     VALUES (?, ?, ?, ?)`,
+    `INSERT INTO graph_file_entities (entry_id, entity_order, stash_root, entity_norm, entity)
+     VALUES (?, ?, ?, ?, ?)`,
   );
   const insertRelation = db.prepare(
     `INSERT INTO graph_file_relations (
-       entry_id, relation_order, from_entity, to_entity, relation_type, confidence
-     ) VALUES (?, ?, ?, ?, ?, ?)`,
+       entry_id, relation_order, from_entity_norm, from_entity, to_entity_norm, to_entity, relation_type, confidence
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const quality = graph.quality;
+  const telemetry = graph.telemetry;
 
   db.transaction(() => {
     upsertMeta.run(
@@ -142,6 +167,15 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
       quality?.relationCount ?? graph.relations?.length ?? 0,
       quality?.extractionCoverage ?? 0,
       quality?.density ?? 0,
+      telemetry?.extractorId ?? null,
+      telemetry?.extractionRunId ?? null,
+      telemetry?.model ?? null,
+      telemetry?.promptVersion ?? null,
+      telemetry?.batchSize ?? null,
+      telemetry?.cacheHits ?? 0,
+      telemetry?.cacheMisses ?? 0,
+      telemetry?.truncationCount ?? 0,
+      telemetry?.failureCount ?? 0,
     );
 
     // Build a snapshot of existing rows for incremental compare.
@@ -169,7 +203,15 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
       const existing = existingByPath.get(node.path);
       if (existing && existing.entry_id === entryId && existing.body_hash === bodyHash) {
         // Body unchanged — only fix up file_order/confidence in case they drifted.
-        updateFileMeta.run(fileOrder, node.type, node.confidence ?? null, entryId);
+        updateFileMeta.run(
+          fileOrder,
+          node.type,
+          node.confidence ?? null,
+          node.status ?? (node.entities.length > 0 ? "extracted" : "empty"),
+          node.reason ?? (node.entities.length > 0 ? "none" : "no_graph_content"),
+          node.extractionRunId ?? telemetry?.extractionRunId ?? null,
+          entryId,
+        );
         continue;
       }
 
@@ -180,23 +222,30 @@ export function replaceStoredGraph(db: Database, graph: GraphFile): void {
         deleteEntities.run(existing.entry_id);
         deleteRelations.run(existing.entry_id);
         deleteFile.run(existing.entry_id);
-      } else if (entryId !== existing) {
-        // Defensive: if another row with the same entry_id but a different
-        // file_path lingers, drop it before inserting the new one.
-        deleteEntities.run(entryId);
-        deleteRelations.run(entryId);
-        deleteFile.run(entryId);
       }
 
-      insertFile.run(entryId, graph.stashRoot, node.path, fileOrder, node.type, bodyHash, node.confidence ?? null);
+      insertFile.run(
+        entryId,
+        graph.stashRoot,
+        node.path,
+        fileOrder,
+        node.type,
+        bodyHash,
+        node.confidence ?? null,
+        node.status ?? (node.entities.length > 0 ? "extracted" : "empty"),
+        node.reason ?? (node.entities.length > 0 ? "none" : "no_graph_content"),
+        node.extractionRunId ?? telemetry?.extractionRunId ?? null,
+      );
       for (const [entityOrder, entity] of node.entities.entries()) {
-        insertEntity.run(entryId, entityOrder, graph.stashRoot, entity);
+        insertEntity.run(entryId, entityOrder, graph.stashRoot, normalizeEntity(entity), entity);
       }
       for (const [relationOrder, relation] of node.relations.entries()) {
         insertRelation.run(
           entryId,
           relationOrder,
+          normalizeEntity(relation.from),
           relation.from,
+          normalizeEntity(relation.to),
           relation.to,
           relation.type ?? null,
           relation.confidence ?? null,
@@ -245,16 +294,24 @@ export function loadGraphMetaOnly(stashPath: string, db?: Database): StoredGraph
 export function loadGraphFilesOnly(
   stashPath: string,
   db?: Database,
-): Array<{ entryId: number; path: string; type: string; bodyHash: string; confidence?: number }> {
+): Array<{
+  entryId: number;
+  path: string;
+  type: string;
+  bodyHash: string;
+  confidence?: number;
+  status?: GraphFileNode["status"];
+  reason?: GraphFileNode["reason"];
+}> {
   try {
     return withReadableGraphDb(db, (readDb) => {
       try {
         const rows = readDb
           .prepare(
-            `SELECT entry_id, file_path, file_type, body_hash, confidence
-               FROM graph_files
-               WHERE stash_root = ?
-               ORDER BY file_order`,
+            `SELECT entry_id, file_path, file_type, body_hash, confidence, status, reason
+                FROM graph_files
+                WHERE stash_root = ?
+                ORDER BY file_order`,
           )
           .all(stashPath) as Array<{
           entry_id: number;
@@ -262,6 +319,8 @@ export function loadGraphFilesOnly(
           file_type: string;
           body_hash: string;
           confidence: number | null;
+          status: string | null;
+          reason: string | null;
         }>;
         return rows.map((row) => ({
           entryId: row.entry_id,
@@ -269,6 +328,8 @@ export function loadGraphFilesOnly(
           type: row.file_type,
           bodyHash: row.body_hash,
           ...(typeof row.confidence === "number" ? { confidence: row.confidence } : {}),
+          ...(row.status ? { status: row.status as GraphFileNode["status"] } : {}),
+          ...(row.reason ? { reason: row.reason as GraphFileNode["reason"] } : {}),
         }));
       } catch {
         return [];
@@ -308,9 +369,18 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
                entity_count,
                relation_count,
                extraction_coverage,
-               density
-             FROM graph_meta
-             WHERE stash_root = ?`,
+               density,
+               extractor_id,
+               extraction_run_id,
+               model,
+               prompt_version,
+               batch_size,
+               cache_hits,
+               cache_misses,
+               truncation_count,
+               failure_count
+              FROM graph_meta
+              WHERE stash_root = ?`,
           )
           .get(stashPath) as
           | {
@@ -323,6 +393,15 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
               relation_count: number;
               extraction_coverage: number;
               density: number;
+              extractor_id: string | null;
+              extraction_run_id: string | null;
+              model: string | null;
+              prompt_version: string | null;
+              batch_size: number | null;
+              cache_hits: number;
+              cache_misses: number;
+              truncation_count: number;
+              failure_count: number;
             }
           | undefined;
         if (!row) return null;
@@ -338,6 +417,17 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
             relationCount: row.relation_count,
             extractionCoverage: row.extraction_coverage,
             density: row.density,
+          },
+          telemetry: {
+            ...(row.extractor_id ? { extractorId: row.extractor_id } : {}),
+            ...(row.extraction_run_id ? { extractionRunId: row.extraction_run_id } : {}),
+            ...(row.model ? { model: row.model } : {}),
+            ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
+            ...(typeof row.batch_size === "number" ? { batchSize: row.batch_size } : {}),
+            cacheHits: row.cache_hits,
+            cacheMisses: row.cache_misses,
+            truncationCount: row.truncation_count,
+            failureCount: row.failure_count,
           },
         };
       } catch {
@@ -358,10 +448,10 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
       try {
         const fileRows = readDb
           .prepare(
-            `SELECT entry_id, file_path, file_type, body_hash, confidence
-             FROM graph_files
-             WHERE stash_root = ?
-             ORDER BY file_order`,
+            `SELECT entry_id, file_path, file_type, body_hash, confidence, status, reason, extraction_run_id
+              FROM graph_files
+              WHERE stash_root = ?
+              ORDER BY file_order`,
           )
           .all(stashPath) as Array<{
           entry_id: number;
@@ -369,6 +459,9 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
           file_type: string;
           body_hash: string | null;
           confidence: number | null;
+          status: string | null;
+          reason: string | null;
+          extraction_run_id: string | null;
         }>;
         const entityRows = readDb
           .prepare(
@@ -428,6 +521,9 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
           entities: entitiesByPath.get(row.file_path) ?? [],
           relations: relationsByPath.get(row.file_path) ?? [],
           ...(typeof row.confidence === "number" ? { confidence: row.confidence } : {}),
+          ...(row.status ? { status: row.status as GraphFileNode["status"] } : {}),
+          ...(row.reason ? { reason: row.reason as GraphFileNode["reason"] } : {}),
+          ...(row.extraction_run_id ? { extractionRunId: row.extraction_run_id } : {}),
         }));
 
         return {
@@ -436,6 +532,7 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
           schemaVersion: meta.schemaVersion,
           generatedAt: meta.generatedAt,
           ...(meta.quality ? { quality: meta.quality } : {}),
+          ...(meta.telemetry ? { telemetry: meta.telemetry } : {}),
           files,
           entities: uniqueSorted(files.flatMap((file) => file.entities)),
           relations: files.flatMap((file) => file.relations),

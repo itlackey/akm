@@ -98,6 +98,16 @@ afterEach(() => {
     testCacheHome = "";
   }
 
+  if (testDataHome) {
+    cleanup(testDataHome);
+    testDataHome = "";
+  }
+
+  if (testStateHome) {
+    cleanup(testStateHome);
+    testStateHome = "";
+  }
+
   process.chdir(originalCwd);
   resetConfigCache();
 });

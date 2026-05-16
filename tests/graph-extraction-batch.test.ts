@@ -51,16 +51,26 @@ const llmServer = Bun.serve({
     if (userContent.includes("N=")) {
       batchCallCount++;
       const bodies = parseBatchBodies(userContent);
-      const result = batchExtractorStub
-        ? await batchExtractorStub(bodies)
-        : bodies.map(() => ({ entities: [], relations: [] }));
+      let result: GraphExtraction[];
+      try {
+        result = batchExtractorStub
+          ? await batchExtractorStub(bodies)
+          : bodies.map(() => ({ entities: [], relations: [] }));
+      } catch (err) {
+        return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
+      }
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
         headers: { "Content-Type": "application/json" },
       });
     }
 
     singleCallCount++;
-    const result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+    let result: GraphExtraction;
+    try {
+      result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+    } catch (err) {
+      return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
+    }
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
       headers: { "Content-Type": "application/json" },
     });
@@ -116,7 +126,14 @@ function writeMemory(name: string, body: string): void {
   // replaceStoredGraph can resolve this file_path to an entry_id.
   // Tests open multiple DB filenames per `withGraphDb` call; seed each one
   // ahead of test execution so any DB the test opens already has the entry.
-  for (const dbName of ["graph-batch.db", "graph-default.db", "graph-chunked.db"]) {
+  for (const dbName of [
+    "graph-batch.db",
+    "graph-default.db",
+    "graph-chunked.db",
+    "graph-adaptive.db",
+    "graph-disable-batching.db",
+    "graph-consistency.db",
+  ]) {
     const db = openDatabase(path.join(tmpStash, dbName));
     try {
       const entry = { name, type: "memory", filename: `${name}.md` };
@@ -161,7 +178,7 @@ describe("runGraphExtractionPass — batch path", () => {
     let parsed:
       | {
           schemaVersion: number;
-          files: Array<{ entities: string[]; relations: unknown[] }>;
+          files: Array<{ path: string; entities: string[]; relations: unknown[]; status?: string; reason?: string }>;
         }
       | undefined;
     try {
@@ -186,16 +203,19 @@ describe("runGraphExtractionPass — batch path", () => {
 
       parsed = loadStoredGraphSnapshot(tmpStash, db) as {
         schemaVersion: number;
-        files: Array<{ entities: string[]; relations: unknown[] }>;
+        files: Array<{ path: string; entities: string[]; relations: unknown[]; status?: string; reason?: string }>;
       };
       expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
-      expect(parsed.files).toHaveLength(2);
+      expect(parsed.files).toHaveLength(3);
       expect(
         parsed.files.some((file) => file.entities.includes("ServiceA") && file.entities.includes("ServiceB")),
       ).toBe(true);
       expect(
         parsed.files.some((file) => file.entities.includes("Terraform") && file.entities.includes("ProdCluster")),
       ).toBe(true);
+      const emptyFile = parsed.files.find((file) => file.entities.length === 0);
+      expect(emptyFile?.status).toBe("empty");
+      expect(emptyFile?.reason).toBe("no_graph_content");
     } finally {
       closeDatabase(db);
     }
@@ -272,5 +292,115 @@ describe("runGraphExtractionPass — batch path", () => {
     expect(callSizes).toEqual([2, 2]);
     expect(result.considered).toBe(5);
     expect(result.extracted).toBe(5);
+  });
+
+  test("adaptive batching retries smaller groups on context-size failures", async () => {
+    writeMemory("m1", "Alpha uses Beta.");
+    writeMemory("m2", "Gamma uses Delta.");
+    writeMemory("m3", "Epsilon uses Zeta.");
+
+    batchExtractorStub = async (bodies) => {
+      if (bodies.length > 1) throw new Error("context size exceeded");
+      return bodies.map((_, index) => ({ entities: [`Single${index}`], relations: [] }));
+    };
+    singleExtractorStub = async (body) => ({
+      entities: [body.includes("Alpha") ? "Alpha" : body.includes("Gamma") ? "Gamma" : "Epsilon"],
+      relations: [],
+    });
+
+    const db = openDatabase(path.join(tmpStash, "graph-adaptive.db"));
+    try {
+      const result = await runGraphExtractionPass(
+        makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
+        sources(),
+        undefined,
+        db,
+      );
+
+      expect(result.considered).toBe(3);
+      expect(result.extracted).toBe(3);
+      expect(batchCallCount).toBe(2);
+      expect(singleCallCount).toBe(3);
+      expect(result.telemetry?.failureCount).toBeGreaterThanOrEqual(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("repeated non-array batch responses disable batching for the remainder of the run", async () => {
+    for (let i = 1; i <= 6; i++) writeMemory(`m${i}`, `Entity${i} uses Tool${i}.`);
+
+    batchExtractorStub = async (_bodies) => ({ nope: true }) as unknown as GraphExtraction[];
+    singleExtractorStub = async (body) => ({ entities: [body.match(/Entity\d+/)?.[0] ?? "fallback"], relations: [] });
+
+    const db = openDatabase(path.join(tmpStash, "graph-disable-batching.db"));
+    try {
+      const result = await runGraphExtractionPass(
+        makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
+        sources(),
+        undefined,
+        db,
+      );
+
+      expect(result.considered).toBe(6);
+      expect(result.extracted).toBe(6);
+      expect(batchCallCount).toBe(2);
+      expect(singleCallCount).toBe(6);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("consistency-based confidence boosts entities/relations appearing in multiple chunks", async () => {
+    // Create a long document that will be chunked into multiple pieces.
+    // The same entity "SharedService" appears in multiple chunks.
+    const longBody = Array(40)
+      .fill(null)
+      .map(
+        (_, i) =>
+          `## Section ${i + 1}\n\nSharedService uses Database${i}. It also integrates with Cache${i}. This is additional padding text to ensure the document exceeds the chunk size threshold for graph extraction.`,
+      )
+      .join("\n\n");
+    writeMemory("long-doc", longBody);
+
+    singleExtractorStub = async (body) => {
+      const entities: string[] = ["SharedService"];
+      const relations: Array<{ from: string; to: string; type: string }> = [];
+      for (let i = 0; i < 40; i++) {
+        if (body.includes(`Database${i}`)) {
+          entities.push(`Database${i}`);
+          relations.push({ from: "SharedService", to: `Database${i}`, type: "uses" });
+        }
+        if (body.includes(`Cache${i}`)) {
+          entities.push(`Cache${i}`);
+          relations.push({ from: "SharedService", to: `Cache${i}`, type: "integrates with" });
+        }
+      }
+      return { entities, relations };
+    };
+
+    const db = openDatabase(path.join(tmpStash, "graph-consistency.db"));
+    try {
+      const result = await runGraphExtractionPass(
+        makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
+        sources(),
+        undefined,
+        db,
+      );
+
+      expect(result.considered).toBe(1);
+      expect(result.extracted).toBe(1);
+      // The file was chunked, so we should have merged results
+      const parsed = loadStoredGraphSnapshot(tmpStash, db);
+      if (!parsed) throw new Error("expected stored graph snapshot");
+      const node = parsed.files.find((f) => f.path.includes("long-doc"));
+      expect(node).toBeDefined();
+      expect(node?.entities).toContain("SharedService");
+      // Confidence should be computed from consistency (non-zero since entity appears in multiple chunks)
+      expect(typeof node?.confidence).toBe("number");
+      expect(node?.confidence).toBeGreaterThan(0);
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

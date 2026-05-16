@@ -347,13 +347,13 @@ export function shapeHistoryEntry(entry: Record<string, unknown>, detail: Detail
   if (detail === "brief") {
     // signal is load-bearing for feedback rows (positive/negative) so we
     // project it even at brief — without it the entry is ambiguous.
-    return pickFields(entry, ["eventType", "ref", "signal", "createdAt"]);
+    return pickFields(entry, ["eventType", "ref", "signal", "source", "createdAt"]);
   }
   if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["eventType", "ref", "signal", "query", "createdAt"]);
+    return pickFields(entry, ["eventType", "ref", "signal", "query", "source", "createdAt"]);
   }
   // full / agent: return everything the reader emits.
-  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "metadata", "createdAt"]);
+  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "source", "metadata", "createdAt"]);
 }
 
 export function shapeSearchOutput(

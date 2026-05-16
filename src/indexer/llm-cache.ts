@@ -34,11 +34,12 @@ export async function withLlmCache<T>(
   llmFn: () => Promise<T | undefined>,
   validate: (raw: unknown) => T | undefined,
   precomputedHash?: string,
+  cacheVariant = "",
 ): Promise<T | undefined> {
   const bodyHash = precomputedHash ?? computeBodyHash(body);
   if (!reEnrich) {
     try {
-      const cached = getLlmCacheEntry(db, cacheKey, bodyHash);
+      const cached = getLlmCacheEntry(db, cacheKey, bodyHash, cacheVariant);
       if (cached) {
         const result = validate(JSON.parse(cached.resultJson));
         if (result !== undefined) return result;
@@ -50,7 +51,7 @@ export async function withLlmCache<T>(
   const result = await llmFn();
   if (result !== undefined) {
     try {
-      upsertLlmCacheEntry(db, cacheKey, bodyHash, JSON.stringify(result));
+      upsertLlmCacheEntry(db, cacheKey, bodyHash, JSON.stringify(result), cacheVariant);
     } catch {
       // Cache write failure is non-fatal
     }

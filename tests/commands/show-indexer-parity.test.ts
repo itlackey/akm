@@ -19,6 +19,7 @@ import path from "node:path";
 import { akmShowUnified } from "../../src/commands/show";
 import { parseAssetRef } from "../../src/core/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
+import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
 import "../../src/sources/providers/index";
@@ -167,7 +168,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
       await lookup(parseAssetRef("skill:embed-skill"));
       await akmShowUnified({ ref: "skill:embed-skill" });
 
-      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(getDbPath(), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");

@@ -81,6 +81,12 @@ export interface AkmReflectOptions {
    * lookup is skipped and the flag value wins.
    */
   agentProcess?: string;
+  /**
+   * Event source for usage logging. Set to `"improve"` when called from
+   * `akm improve` so agent subprocess events are tagged and can be
+   * filtered out of user-facing history.
+   */
+  eventSource?: "user" | "improve";
 }
 
 export interface AkmReflectFailure {
@@ -317,6 +323,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // 5. Spawn the agent.
   // Fall back to raw runAgent when a custom spawn function is injected (test seam).
   // Production path dispatches directly to runAgentSdk or runAgent.
+  const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
   let result: AgentRunResult;
   if (options.runAgentOptions?.spawn) {
     // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
@@ -324,6 +331,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       stdio: "captured",
       parseOutput: "text",
       ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+      ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
       ...(options.runAgentOptions ?? {}),
     };
     result = await runAgent(profile, prompt, runOptions);
@@ -333,6 +341,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       stdio: "captured",
       parseOutput: "text",
       ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+      ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
     };
     result = profile.sdkMode
       ? await runAgentSdk(profile, prompt ?? "", runOptions)

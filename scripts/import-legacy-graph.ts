@@ -66,21 +66,31 @@ if (!isGraphFile(parsed)) {
 const db = openDatabase(dbPath ? path.resolve(dbPath) : undefined);
 try {
   replaceStoredGraph(db, parsed);
+
+  // Query the actual row count imported (may be less than input if some files
+  // are orphans with no matching entries row).
+  const importedCount = (
+    db.prepare("SELECT COUNT(*) AS cnt FROM graph_files WHERE stash_root = ?").get(parsed.stashRoot) as {
+      cnt: number;
+    }
+  ).cnt;
+
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        importedFrom: resolvedGraphPath,
+        stashRoot: parsed.stashRoot,
+        filesInSource: parsed.files.length,
+        filesImported: importedCount,
+        filesSkipped: parsed.files.length - importedCount,
+        entityCount: parsed.entities?.length ?? null,
+        relationCount: parsed.relations?.length ?? null,
+      },
+      null,
+      2,
+    ),
+  );
 } finally {
   closeDatabase(db);
 }
-
-console.log(
-  JSON.stringify(
-    {
-      ok: true,
-      importedFrom: resolvedGraphPath,
-      stashRoot: parsed.stashRoot,
-      files: parsed.files.length,
-      entityCount: parsed.entities?.length ?? null,
-      relationCount: parsed.relations?.length ?? null,
-    },
-    null,
-    2,
-  ),
-);

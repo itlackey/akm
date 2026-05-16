@@ -144,6 +144,17 @@ function writeGraphArtifact(): string {
         extractionCoverage: 1,
         density: 0.6667,
       },
+      telemetry: {
+        extractorId: "graph-extraction:v2:test",
+        extractionRunId: "run-123",
+        model: "test-model",
+        promptVersion: "v2",
+        batchSize: 4,
+        cacheHits: 1,
+        cacheMisses: 1,
+        truncationCount: 0,
+        failureCount: 0,
+      },
     });
   } finally {
     closeDatabase(db);
@@ -195,6 +206,7 @@ describe("akm graph", () => {
     expect(result.entityCount).toBe(3);
     expect(result.relationCount).toBe(2);
     expect(result.quality?.density).toBe(0.6667);
+    expect(result.telemetry?.model).toBe("test-model");
   });
 
   test("entities returns ranked entity list with limits", () => {
@@ -697,8 +709,8 @@ describe("replaceStoredGraph incremental upsert", () => {
         .all(stashDir) as Array<{ entry_id: number; file_path: string; body_hash: string }>;
       for (const row of beforeRows) {
         db.prepare(
-          "INSERT INTO graph_file_entities (entry_id, entity_order, stash_root, entity) VALUES (?, ?, ?, ?)",
-        ).run(row.entry_id, 99, stashDir, "__sentinel__");
+          "INSERT INTO graph_file_entities (entry_id, entity_order, stash_root, entity_norm, entity) VALUES (?, ?, ?, ?, ?)",
+        ).run(row.entry_id, 99, stashDir, "__sentinel__", "__sentinel__");
       }
 
       replaceStoredGraph(db, {

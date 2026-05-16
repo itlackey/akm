@@ -61,6 +61,18 @@ export async function akmSearch(input: {
    * - `historical` keeps contradicted/superseded/archived memory beliefs
    */
   belief?: BeliefFilterMode;
+  /**
+   * When true, skip logging usage events. Used by internal callers
+   * (curate, improve context gathering) to avoid polluting user
+   * search history with programmatic lookups.
+   */
+  skipLogging?: boolean;
+  /**
+   * Event source for usage logging. Defaults to `"user"`. Set to
+   * `"improve"` when called from improve's reflect/distill agents
+   * so events can be filtered out of user-facing history.
+   */
+  eventSource?: "user" | "improve";
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -81,7 +93,7 @@ export async function akmSearch(input: {
       warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
-    logSearchEvent(query, response);
+    if (!input.skipLogging) logSearchEvent(query, response, undefined, undefined, input.eventSource);
     return response;
   }
   // Primary stash directory — used for DB path lookups and as the default
@@ -121,7 +133,8 @@ export async function akmSearch(input: {
       warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
-    logSearchEvent(query, response, undefined, localResult?.mode ?? "keyword");
+    if (!input.skipLogging)
+      logSearchEvent(query, response, undefined, localResult?.mode ?? "keyword", input.eventSource);
     return response;
   }
 
@@ -158,7 +171,7 @@ export async function akmSearch(input: {
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
-    logSearchEvent(query, response);
+    if (!input.skipLogging) logSearchEvent(query, response, undefined, undefined, input.eventSource);
     return response;
   }
 
@@ -177,7 +190,7 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
-  logSearchEvent(query, response, undefined, localResult?.mode ?? "keyword");
+  if (!input.skipLogging) logSearchEvent(query, response, undefined, undefined, input.eventSource);
   return response;
 }
 
@@ -221,6 +234,7 @@ function logSearchEvent(
   response: SearchResponse,
   existingDb?: import("bun:sqlite").Database,
   mode: "semantic" | "keyword" = "keyword",
+  eventSource: "user" | "improve" = "user",
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
@@ -243,6 +257,7 @@ function logSearchEvent(
           query,
           entry_id: entryId,
           entry_ref: ref,
+          source: eventSource,
         });
       }
       // Bump utility scores for all resolved entries (MemRL retrieval signal).
@@ -265,6 +280,7 @@ function logSearchEvent(
           resolvedCount: resolved.length,
           mode,
         }),
+        source: eventSource,
       });
     } finally {
       if (!existingDb) closeDatabase(db);

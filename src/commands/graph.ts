@@ -6,7 +6,7 @@ import { NotFoundError, UsageError } from "../core/errors";
 import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import { listRelatedPathsForFile } from "../indexer/graph-boost";
 import { loadStoredGraphSnapshot } from "../indexer/graph-db";
-import type { GraphFile, GraphFileNode } from "../indexer/graph-extraction";
+import type { GraphExtractionTelemetry, GraphFile, GraphFileNode } from "../indexer/graph-extraction";
 import { lookup } from "../indexer/indexer";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search-source";
@@ -21,6 +21,7 @@ export interface GraphSummaryResult {
   entityCount: number;
   relationCount: number;
   quality?: GraphFile["quality"];
+  telemetry?: GraphExtractionTelemetry;
 }
 
 export interface GraphEntitiesResult {
@@ -85,7 +86,13 @@ export interface GraphOrphansResult {
   generatedAt: string;
   totalConsidered: number;
   total: number;
-  orphans: Array<{ ref?: string; path: string; type: string }>;
+  orphans: Array<{
+    ref?: string;
+    path: string;
+    type: string;
+    status?: GraphFileNode["status"];
+    reason?: GraphFileNode["reason"];
+  }>;
 }
 
 interface LoadedGraph {
@@ -136,6 +143,7 @@ function loadGraph(source?: string): LoadedGraph {
         entities: snapshot.entities,
         relations: snapshot.relations,
         ...(snapshot.quality ? { quality: snapshot.quality } : {}),
+        ...(snapshot.telemetry ? { telemetry: snapshot.telemetry } : {}),
       },
       stashPath,
       graphPath: snapshot.graphPath,
@@ -195,6 +203,7 @@ export function akmGraphSummary(options?: { source?: string }): GraphSummaryResu
       ? graph.relations.length
       : graph.files.reduce((sum, node) => sum + node.relations.length, 0),
     ...(graph.quality ? { quality: graph.quality } : {}),
+    ...(graph.telemetry ? { telemetry: graph.telemetry } : {}),
   };
 }
 
@@ -445,14 +454,22 @@ export function akmGraphOrphans(options?: { source?: string; limit?: number }): 
     if (db) closeDatabase(db);
   }
 
-  const orphans: Array<{ ref?: string; path: string; type: string }> = [];
+  const orphans: Array<{
+    ref?: string;
+    path: string;
+    type: string;
+    status?: GraphFileNode["status"];
+    reason?: GraphFileNode["reason"];
+  }> = [];
   for (const node of graph.files) {
-    if (node.entities.length > 0) continue;
+    if ((node.status ?? (node.entities.length > 0 ? "extracted" : "empty")) === "extracted") continue;
     const lookup = refByPath.get(node.path);
     orphans.push({
       ...(lookup?.ref ? { ref: lookup.ref } : {}),
       path: node.path,
       type: node.type,
+      ...(node.status ? { status: node.status } : {}),
+      ...(node.reason ? { reason: node.reason } : {}),
     });
   }
 

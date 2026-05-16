@@ -31,6 +31,7 @@ export interface HistoryEntry {
   entryId: number | null;
   query: string | null;
   signal: string | null;
+  source: string | null;
   metadata: unknown;
   createdAt: string;
 }
@@ -52,6 +53,11 @@ export interface HistoryResponse {
 export interface HistoryOptions {
   ref?: string;
   since?: string;
+  /**
+   * Filter by event source: "user" for direct CLI invocations, "improve" for
+   * operations triggered by `akm improve`.
+   */
+  source?: "user" | "improve";
   /**
    * When true, proposal lifecycle events (`promoted`, `rejected`) from the
    * `events.jsonl` stream are merged into the history output alongside usage
@@ -89,6 +95,7 @@ function toEntry(row: UsageEventRow): HistoryEntry {
     entryId: row.entry_id,
     query: row.query,
     signal: row.signal,
+    source: row.source,
     metadata: parseMetadata(row.metadata),
     createdAt: row.created_at,
   };
@@ -146,8 +153,12 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
       conditions.push("created_at >= ?");
       params.push(sinceNormalized);
     }
+    if (options.source !== undefined) {
+      conditions.push("source = ?");
+      params.push(options.source);
+    }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, created_at
+    const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
                  FROM usage_events ${where}
                  ORDER BY id ASC`;
 
@@ -189,6 +200,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
           entryId: null,
           query: null,
           signal: null,
+          source: null,
           metadata: event.metadata ?? null,
           createdAt,
         });

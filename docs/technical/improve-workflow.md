@@ -351,7 +351,7 @@ Agent path vs. HTTP path in consolidate is determined at runtime: `isAgentPath =
 | `validationFailures` | `Array<{ ref, reason }>?` | Refs skipped due to pre-run validation failures (missing file, missing description). |
 | `consolidation` | `ConsolidateResult?` | Result from `akmConsolidate`; omitted when `processed === 0` and no warnings. |
 | `memoryInference` | `MemoryInferenceResult?` | Improve-owned post-consolidation memory inference telemetry. |
-| `graphExtraction` | `GraphExtractionResult?` | Improve-owned post-consolidation graph refresh telemetry. |
+| `graphExtraction` | `GraphExtractionResult?` | Improve-owned post-consolidation graph refresh telemetry: considered/extracted counts, entity/relation totals, quality summary, latest-run graph telemetry (`extractorId`, `extractionRunId`, model, prompt version, batch size, cache hits/misses, truncation count, failure count), and any low-quality warnings. |
 
 ## Reviewed
 

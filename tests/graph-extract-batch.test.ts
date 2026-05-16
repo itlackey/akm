@@ -263,4 +263,21 @@ describe("extractGraphFromBodies — unit", () => {
     expect(result?.relations[0]).toMatchObject({ from: "ServiceA", to: "serviceb", type: "uses", confidence: 1 });
     expect(result?.confidence).toBe(0);
   });
+
+  test("long bodies are chunked and merged instead of truncating to a fixed prefix", async () => {
+    const longBody = `# One\n\n${"Alpha detail ".repeat(120)}\n\n# Two\n\n${"Gamma detail ".repeat(120)}`;
+    singleRawQueue.push(
+      JSON.stringify({ entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta", type: "uses" }] }),
+    );
+    singleRawQueue.push(
+      JSON.stringify({ entities: ["Gamma", "Delta"], relations: [{ from: "Gamma", to: "Delta", type: "depends on" }] }),
+    );
+
+    const result = await extractGraphFromBody(SAMPLE_LLM, longBody, undefined, AKM_CFG_WITH_GATE);
+
+    expect(chatCallCount).toBe(2);
+    expect(result.chunkCount).toBe(2);
+    expect(result.entities).toEqual(["Alpha", "Beta", "Gamma", "Delta"]);
+    expect(result.relations).toHaveLength(2);
+  });
 });

@@ -489,3 +489,121 @@ describe("akmHistory --include-proposals", () => {
     expect(text.stdout).toContain("state.db");
   });
 });
+
+describe("akmHistory --source filter", () => {
+  test("returns all events when source filter is not provided", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "deploy", source: "user" });
+      insertUsageEvent(db, { event_type: "search", query: "deploy", source: "improve" });
+
+      const result = await akmHistory({ db });
+      expect(result.totalCount).toBe(2);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("filters to only user events when source=user", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "user query", source: "user" });
+      insertUsageEvent(db, { event_type: "search", query: "improve query", source: "improve" });
+
+      const result = await akmHistory({ db, source: "user" });
+      expect(result.totalCount).toBe(1);
+      expect(result.entries[0]?.query).toBe("user query");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("filters to only improve events when source=improve", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "user query", source: "user" });
+      insertUsageEvent(db, { event_type: "search", query: "improve query", source: "improve" });
+
+      const result = await akmHistory({ db, source: "improve" });
+      expect(result.totalCount).toBe(1);
+      expect(result.entries[0]?.query).toBe("improve query");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("source field is present in history entries", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1, source: "improve" });
+
+      const result = await akmHistory({ db });
+      expect(result.entries[0]?.source).toBe("improve");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("source defaults to user when not specified in insert", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1 });
+
+      const result = await akmHistory({ db });
+      expect(result.entries[0]?.source).toBe("user");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+describe("akm history --source CLI flag", () => {
+  test("filters by source via CLI", async () => {
+    const stashDir = makeTempDir("akm-history-source-stash-");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+
+    writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
+    await akmIndex({ stashDir, full: true });
+
+    // Generate a user feedback event.
+    const feedback = runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    expect(feedback.status).toBe(0);
+
+    // Insert an improve event directly.
+    const db = openDatabase(getDbPath());
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });
+    } finally {
+      closeDatabase(db);
+    }
+
+    // Filter to user events only.
+    const userOnly = runCli(["history", "--source", "user", "--format=json"]);
+    expect(userOnly.status).toBe(0);
+    const userJson = parseJsonOutput(userOnly);
+    const userEntries = userJson.entries as Array<Record<string, unknown>>;
+    expect(userEntries.every((e) => e.source === "user")).toBe(true);
+
+    // Filter to improve events only.
+    const improveOnly = runCli(["history", "--source", "improve", "--format=json"]);
+    expect(improveOnly.status).toBe(0);
+    const improveJson = parseJsonOutput(improveOnly);
+    const improveEntries = improveJson.entries as Array<Record<string, unknown>>;
+    expect(improveEntries.every((e) => e.source === "improve")).toBe(true);
+  });
+
+  test("rejects invalid source value", () => {
+    const result = runCli(["history", "--source", "invalid", "--format=json"]);
+    expect(result.status).not.toBe(0);
+    const parsed = parseJsonOutput(result);
+    expect(parsed.ok).toBe(false);
+    expect(typeof parsed.error).toBe("string");
+  });
+});

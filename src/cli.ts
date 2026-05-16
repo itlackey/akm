@@ -28,6 +28,19 @@ import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stash
 import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
+
+/**
+ * Resolve the event source from the environment. When `AKM_EVENT_SOURCE` is
+ * set (e.g. by `akm improve` for agent subprocesses), events are tagged so
+ * they can be filtered out of user-facing history.
+ */
+function resolveEventSource(): "user" | "improve" | undefined {
+  const raw = process.env.AKM_EVENT_SOURCE;
+  if (raw === "improve") return "improve";
+  if (raw === "user") return "user";
+  return undefined;
+}
+
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -580,7 +593,16 @@ const searchCommand = defineCommand({
       const filters = parseScopeFilterFlags(filterTokens, "--filter");
       const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
       const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
-      const result = await akmSearch({ query, type, limit, source, filters, includeProposed, belief });
+      const result = await akmSearch({
+        query,
+        type,
+        limit,
+        source,
+        filters,
+        includeProposed,
+        belief,
+        eventSource: resolveEventSource(),
+      });
       output("search", result);
     });
   },
@@ -1091,7 +1113,13 @@ const showCommand = defineCommand({
       // every occurrence directly from argv (same pattern as `--filter`).
       const scopeTokens = parseAllFlagValues("--scope");
       const scope = parseScopeFilterFlags(scopeTokens, "--scope");
-      const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail, scope });
+      const result = await akmShowUnified({
+        ref: args.ref,
+        view,
+        detail: showDetail,
+        scope,
+        eventSource: resolveEventSource(),
+      });
       output("show", result);
     });
   },
@@ -1636,6 +1664,10 @@ const historyCommand = defineCommand({
   args: {
     ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    source: {
+      type: "string",
+      description: 'Filter by event source: "user" (default) or "improve" (akm improve operations).',
+    },
     "include-proposals": {
       type: "boolean",
       description:
@@ -1647,9 +1679,17 @@ const historyCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      const sourceFlag = args.source as "user" | "improve" | undefined;
+      if (sourceFlag !== undefined && sourceFlag !== "user" && sourceFlag !== "improve") {
+        throw new UsageError(
+          `Invalid --source value: "${args.source}". Must be "user" or "improve".`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
+        source: sourceFlag,
         includeProposals: args["include-proposals"],
       });
       output("history", result);
