@@ -944,3 +944,132 @@ describe("R-6: tightened fallback parser rejects malformed content (#375)", () =
     expect(result.reason).toBe("parse_error");
   });
 });
+
+// ── R-1 / #372 — maxRefineIters Self-Refine ───────────────────────────────────
+
+describe("R-1: maxRefineIters Self-Refine loop (#372)", () => {
+  test("maxRefineIters=1 (default) calls agent exactly once", async () => {
+    const stash = makeStashDir();
+    let spawnCount = 0;
+    const countingSpawn: SpawnFn = (cmd) => {
+      spawnCount++;
+      return fakeSpawn(VALID_SKILL_PAYLOAD, "", 0)(cmd, {});
+    };
+
+    const result = await akmReflect({
+      ref: "skill:hello",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      maxRefineIters: 1,
+      runAgentOptions: { spawn: countingSpawn },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(spawnCount).toBe(1);
+  });
+
+  test("maxRefineIters=2 calls agent twice when responses differ", async () => {
+    const stash = makeStashDir();
+    let spawnCount = 0;
+    const DRAFT_1 = JSON.stringify({
+      ref: "skill:hello",
+      content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nDraft 1 content.\n",
+    });
+    const DRAFT_2 = JSON.stringify({
+      ref: "skill:hello",
+      content:
+        "---\ndescription: Say hi improved\nwhen_to_use: When greeting users\n---\n\nImproved Draft 2 content.\n",
+    });
+    const responses = [DRAFT_1, DRAFT_2];
+    const multiSpawn: SpawnFn = (cmd) => {
+      const payload = responses[spawnCount] ?? DRAFT_2;
+      spawnCount++;
+      return fakeSpawn(payload, "", 0)(cmd, {});
+    };
+
+    const result = await akmReflect({
+      ref: "skill:hello",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      maxRefineIters: 2,
+      runAgentOptions: { spawn: multiSpawn },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(spawnCount).toBe(2);
+    // Final proposal should use the second (refined) draft
+    if (result.ok) {
+      expect(result.proposal.payload.content).toContain("Improved Draft 2");
+    }
+  });
+
+  test("maxRefineIters=3 stops early when agent returns identical content", async () => {
+    const stash = makeStashDir();
+    let spawnCount = 0;
+    // All iterations return the same payload — loop should exit after 2nd (identical)
+    const SAME_PAYLOAD = JSON.stringify({
+      ref: "skill:hello",
+      content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSame content every time.\n",
+    });
+    const stableSpawn: SpawnFn = (cmd) => {
+      spawnCount++;
+      return fakeSpawn(SAME_PAYLOAD, "", 0)(cmd, {});
+    };
+
+    const result = await akmReflect({
+      ref: "skill:hello",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      maxRefineIters: 3,
+      runAgentOptions: { spawn: stableSpawn },
+    });
+
+    expect(result.ok).toBe(true);
+    // Should stop after 2 calls: first produces draft, second returns same → early exit
+    expect(spawnCount).toBe(2);
+  });
+
+  test("maxRefineIters is capped at 3 even when a higher value is passed", async () => {
+    const stash = makeStashDir();
+    let spawnCount = 0;
+    // Return different content each call so early-exit doesn't trigger
+    const dynamicSpawn: SpawnFn = (cmd) => {
+      const count = spawnCount;
+      spawnCount++;
+      return fakeSpawn(
+        JSON.stringify({
+          ref: "skill:hello",
+          content: `---\ndescription: Iter ${count}\nwhen_to_use: When greeting\n---\n\nContent ${count}.\n`,
+        }),
+        "",
+        0,
+      )(cmd, {});
+    };
+
+    const result = await akmReflect({
+      ref: "skill:hello",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      maxRefineIters: 99, // should be capped to 3
+      runAgentOptions: { spawn: dynamicSpawn },
+    });
+
+    expect(result.ok).toBe(true);
+    // MAX_REFINE_ITERS cap = 3
+    expect(spawnCount).toBeLessThanOrEqual(3);
+  });
+
+  test("priorDraft is injected into the prompt on refinement iterations", () => {
+    const PRIOR_DRAFT = "My previous draft content here.";
+    const prompt = buildReflectPrompt({
+      ref: "skill:hello",
+      type: "skill",
+      name: "hello",
+      priorDraft: PRIOR_DRAFT,
+    });
+
+    // R-1: prompt must include the prior draft in the Self-Refine section
+    expect(prompt).toContain("Self-Refine: Critique and Improve");
+    expect(prompt).toContain(PRIOR_DRAFT);
+  });
+});
