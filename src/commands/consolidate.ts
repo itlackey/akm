@@ -8,6 +8,7 @@ import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
 import { parseFrontmatter } from "../core/frontmatter";
+import { writeContradictEdge } from "../core/memory-belief";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
 import { warn } from "../core/warn";
@@ -39,7 +40,26 @@ export interface ConsolidatePromoteOp {
   reason: string;
 }
 
-export type ConsolidateOperation = ConsolidateMergeOp | ConsolidateDeleteOp | ConsolidatePromoteOp;
+/**
+ * Contradict op (C-3 / #382): two memories make mutually exclusive factual
+ * claims. The consolidate engine writes `contradictedBy` frontmatter edges
+ * so `resolveFamilyContradictions` in `memory-improve.ts` can resolve them
+ * via its SCC algorithm. Zep arXiv:2501.13956 §3.
+ */
+export interface ConsolidateContradictOp {
+  op: "contradict";
+  /** The memory that should be marked as contradicted. */
+  ref: string;
+  /** The memory that contradicts it. */
+  contradictedByRef: string;
+  reason: string;
+}
+
+export type ConsolidateOperation =
+  | ConsolidateMergeOp
+  | ConsolidateDeleteOp
+  | ConsolidatePromoteOp
+  | ConsolidateContradictOp;
 
 export interface ConsolidateResult {
   schemaVersion: 1;
@@ -52,6 +72,8 @@ export interface ConsolidateResult {
   merged: number;
   deleted: number;
   promoted: string[];
+  /** Number of contradiction edges written (C-3 / #382). */
+  contradicted: number;
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
@@ -78,14 +100,16 @@ Rules:
 1. MERGE: Two or more memories are substantially duplicated or closely related → propose merging. Return the primary ref to keep and secondary refs to delete. Do NOT include mergedContent — the merge will be executed in a separate step.
 2. DELETE: Memory is clearly outdated, contradicted, or redundant → propose deletion.
 3. PROMOTE: Memory expresses a stable, reusable fact suitable as a \`knowledge:\` asset → propose promotion. Do NOT delete the source memory.
-4. KEEP: Memory is unique and current → omit from output.
+4. CONTRADICT: Two memories make mutually exclusive factual claims about the same subject (e.g. "always use VPN" vs "VPN is optional") → mark the older or less authoritative one as contradicted. This writes a contradictedBy edge so the belief-resolution SCC algorithm can resolve the conflict. Do NOT delete contradicted memories — let the belief resolver decide.
+5. KEEP: Memory is unique and current → omit from output.
 
 Return ONLY JSON (no prose, no code fences):
 {
   "operations": [
     { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize" },
     { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>" },
-    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>" }
+    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>" },
+    { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>" }
   ],
   "warnings": ["<optional concerns>"]
 }`;
@@ -216,6 +240,9 @@ function isValidOp(op: unknown): op is ConsolidateOperation {
   if (o.op === "promote") {
     return typeof o.ref === "string" && typeof o.knowledgeRef === "string";
   }
+  if (o.op === "contradict") {
+    return typeof o.ref === "string" && typeof o.contradictedByRef === "string";
+  }
   return false;
 }
 
@@ -223,6 +250,8 @@ function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperati
   const mergeOps = new Map<string, ConsolidateMergeOp>();
   const deleteOps = new Map<string, ConsolidateDeleteOp>();
   const promoteOps = new Map<string, ConsolidatePromoteOp>();
+  // C-3 / #382: contradict ops keyed by `ref|contradictedByRef` to deduplicate.
+  const contradictOps = new Map<string, ConsolidateContradictOp>();
   const warnings: string[] = [];
 
   for (const chunk of chunks) {
@@ -247,11 +276,22 @@ function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperati
         } else {
           promoteOps.set(op.ref, op);
         }
+      } else if (op.op === "contradict") {
+        // Deduplicate by ref+contradictedByRef pair.
+        const key = `${op.ref}|${op.contradictedByRef}`;
+        if (!contradictOps.has(key)) {
+          contradictOps.set(key, op);
+        }
       }
     }
   }
 
-  const ops: ConsolidateOperation[] = [...mergeOps.values(), ...deleteOps.values(), ...promoteOps.values()];
+  const ops: ConsolidateOperation[] = [
+    ...mergeOps.values(),
+    ...deleteOps.values(),
+    ...promoteOps.values(),
+    ...contradictOps.values(),
+  ];
   return { ops, warnings };
 }
 
@@ -465,6 +505,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       merged: 0,
       deleted: 0,
       promoted: [],
+      contradicted: 0,
       warnings: [],
       durationMs: Date.now() - startMs,
     };
@@ -487,6 +528,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       merged: 0,
       deleted: 0,
       promoted: [],
+      contradicted: 0,
       warnings,
       durationMs: Date.now() - startMs,
     };
@@ -613,6 +655,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       merged: 0,
       deleted: 0,
       promoted: [],
+      contradicted: 0,
       planned: allOps,
       warnings,
       durationMs: Date.now() - startMs,
@@ -639,6 +682,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           merged: 0,
           deleted: 0,
           promoted: [],
+          contradicted: 0,
           planned: allOps,
           warnings: [...warnings, "Aborted by user."],
           durationMs: Date.now() - startMs,
@@ -658,6 +702,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   let merged = 0;
   let deleted = 0;
   const promoted: string[] = [];
+  let contradicted = 0; // C-3 / #382: count of contradiction edges written
 
   // Build a lookup map: ref → MemoryEntry
   const memoryByRef = new Map<string, MemoryEntry>();
@@ -667,7 +712,9 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   for (let opIndex = 0; opIndex < allOps.length; opIndex++) {
     const op = allOps[opIndex];
-    warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${op.op === "merge" ? op.primary : op.ref}`);
+    const opDisplayRef =
+      op.op === "merge" ? op.primary : op.op === "contradict" ? `${op.ref} ↔ ${op.contradictedByRef}` : op.ref;
+    warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${opDisplayRef}`);
     if (op.op === "merge") {
       const primaryEntry = memoryByRef.get(op.primary);
       if (!primaryEntry) {
@@ -830,6 +877,30 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       } catch (e) {
         warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);
       }
+    } else if (op.op === "contradict") {
+      // C-3 / #382: Write contradictedBy edges so resolveFamilyContradictions
+      // (the SCC resolver in memory-improve.ts) has edges to work on.
+      // Zep arXiv:2501.13956 §3 — unified belief-revision with contradiction edges.
+      const entry = memoryByRef.get(op.ref);
+      const contradictorEntry = memoryByRef.get(op.contradictedByRef);
+
+      if (!entry) {
+        warnings.push(`Contradict: ${op.ref} not found in loaded memories — skipping.`);
+        continue;
+      }
+      if (!contradictorEntry) {
+        warnings.push(`Contradict: ${op.contradictedByRef} not found — skipping.`);
+        continue;
+      }
+
+      try {
+        // Write the contradiction edge: op.ref is contradicted by op.contradictedByRef
+        writeContradictEdge(entry.filePath, op.contradictedByRef);
+        contradicted++;
+        markJournalCompleted(stashDir, op.ref);
+      } catch (e) {
+        warnings.push(`Contradict: failed to write edge for ${op.ref}: ${String(e)}`);
+      }
     }
   }
 
@@ -861,6 +932,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     merged,
     deleted,
     promoted,
+    contradicted,
     warnings,
     durationMs: Date.now() - startMs,
   };
