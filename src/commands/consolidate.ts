@@ -340,12 +340,14 @@ function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperati
           deleteOps.set(op.ref, op);
         }
       } else if (op.op === "promote") {
-        const existingMerge = mergeOps.get(op.ref);
-        if (existingMerge) {
-          warnings.push(`Conflict: promote and merge both target ${op.ref}; preferring merge.`);
-        } else {
-          promoteOps.set(op.ref, op);
-        }
+        // C-2 / #381: when both a promote and a merge target the same ref,
+        // queue the promote FIRST rather than discarding it. The promote op
+        // routes through createProposal (the human-gated proposal queue), so
+        // it is non-destructive. The merge follows after the proposal is
+        // created. This preserves the human reviewer's ability to inspect the
+        // promotion before the source memory is merged/deleted.
+        // AGM K*8 — retain the maximally informative consistent subset.
+        promoteOps.set(op.ref, op);
       } else if (op.op === "contradict") {
         // Deduplicate by ref+contradictedByRef pair.
         const key = `${op.ref}|${op.contradictedByRef}`;
@@ -356,10 +358,13 @@ function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperati
     }
   }
 
+  // C-2 / #381: promote ops are ordered BEFORE merge ops so that the
+  // human-gated proposal queue entry is created before any destructive merge.
+  // Phase B processes ops in array order, so promote executes first.
   const ops: ConsolidateOperation[] = [
+    ...promoteOps.values(),
     ...mergeOps.values(),
     ...deleteOps.values(),
-    ...promoteOps.values(),
     ...contradictOps.values(),
   ];
   return { ops, warnings };
