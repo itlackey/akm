@@ -73,6 +73,16 @@ export interface SchemaRepairOptions {
 /** Minimum gap between schema-repair attempts on the same asset. */
 const SCHEMA_REPAIR_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+/**
+ * Per-ref attempt cap (O-6 / #379): maximum number of schema-repair attempts
+ * allowed within SCHEMA_REPAIR_WINDOW_MS. Prevents indefinite nightly re-repair
+ * of assets whose source content is genuinely ambiguous or inconsistently
+ * structured. After cap, the asset is skipped until the window rolls over.
+ * Self-Refine arXiv:2303.17651 — iteration must be bounded.
+ */
+const SCHEMA_REPAIR_MAX_ATTEMPTS = 3;
+const SCHEMA_REPAIR_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -107,6 +117,23 @@ export async function runSchemaRepairPass(
       .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
     if (lastRepair?.ts && Date.now() - new Date(lastRepair.ts).getTime() < SCHEMA_REPAIR_COOLDOWN_MS) {
       repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+      continue;
+    }
+
+    // O-6 / #379: Cap total attempts at SCHEMA_REPAIR_MAX_ATTEMPTS per SCHEMA_REPAIR_WINDOW_MS.
+    // Prevents indefinite nightly re-repair of assets whose source is genuinely ambiguous.
+    // After the cap is reached, the asset is skipped until the window rolls over.
+    const windowStart = Date.now() - SCHEMA_REPAIR_WINDOW_MS;
+    const attemptsInWindow = recentRepairs.events.filter(
+      (e) => e.ts !== undefined && new Date(e.ts).getTime() >= windowStart,
+    ).length;
+    if (attemptsInWindow >= SCHEMA_REPAIR_MAX_ATTEMPTS) {
+      repairs.push({
+        ref: failure.ref,
+        reason: failure.reason,
+        outcome: "skipped",
+        error: `schema-repair attempt cap reached (${attemptsInWindow}/${SCHEMA_REPAIR_MAX_ATTEMPTS} in 30d window)`,
+      });
       continue;
     }
 
