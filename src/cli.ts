@@ -3325,14 +3325,70 @@ const acceptCommand = defineCommand({
   args: {
     id: {
       type: "positional",
-      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
-      required: true,
+      description:
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+      required: false,
     },
     target: { type: "string", description: "Override the write target by source name" },
+    // F-6 / #393: Batch accept by source, diff size, or age.
+    source: {
+      type: "string",
+      description:
+        "F-6: Bulk-accept all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description:
+        "F-6: When bulk-accepting, only accept proposals whose content is <= this many lines. Skips larger proposals.",
+    },
+    "older-than": {
+      type: "string",
+      description:
+        "F-6: When bulk-accepting, only accept proposals created more than this many days ago (e.g. '7' for 7 days).",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "F-6: List proposals that would be bulk-accepted without accepting them.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmProposalAccept({ id: args.id, target: args.target });
+      // F-6 / #393: Bulk-accept when --source is provided without a positional id.
+      if (args.source && !args.id) {
+        const { listProposals } = await import("./core/proposals");
+        const stashDir = resolveStashDir();
+        const maxDiffLines = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        const olderThanDays = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        const olderThanMs = olderThanDays !== undefined ? olderThanDays * 86_400_000 : undefined;
+        const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+          if (p.source !== args.source) return false;
+          if (maxDiffLines !== undefined) {
+            const lines = (p.payload.content ?? "").split("\n").length;
+            if (lines > maxDiffLines) return false;
+          }
+          if (olderThanMs !== undefined) {
+            const age = Date.now() - new Date(p.createdAt).getTime();
+            if (age < olderThanMs) return false;
+          }
+          return true;
+        });
+        const results = [];
+        for (const proposal of pending) {
+          if (args["dry-run"]) {
+            results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+          } else {
+            const result = await akmProposalAccept({ id: proposal.id, target: args.target as string | undefined });
+            results.push(result);
+          }
+        }
+        output("proposal-accept-batch", { accepted: results.length, results, dryRun: args["dry-run"] as boolean });
+        return;
+      }
+      if (!args.id) {
+        throw new UsageError("Usage: akm accept <id>  OR  akm accept --source <source>", "MISSING_REQUIRED_ARGUMENT");
+      }
+      const result = await akmProposalAccept({ id: args.id as string, target: args.target as string | undefined });
       output("proposal-accept", result);
     });
   },
@@ -3343,17 +3399,79 @@ const rejectCommand = defineCommand({
   args: {
     id: {
       type: "positional",
-      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
-      required: true,
+      description:
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+      required: false,
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
+    // F-6 / #393: Batch reject by source, diff size, or age.
+    source: {
+      type: "string",
+      description:
+        "F-6: Bulk-reject all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description:
+        "F-6: When bulk-rejecting, only reject proposals whose content is <= this many lines. Skips larger proposals.",
+    },
+    "older-than": {
+      type: "string",
+      description:
+        "F-6: When bulk-rejecting, only reject proposals created more than this many days ago (e.g. '7' for 7 days).",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "F-6: List proposals that would be bulk-rejected without rejecting them.",
+      default: false,
+    },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       if (!args.reason || !String(args.reason).trim()) {
-        throw new UsageError("Usage: akm reject <id> --reason '<reason>'", "MISSING_REQUIRED_ARGUMENT");
+        throw new UsageError(
+          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
       }
-      const result = akmProposalReject({ id: args.id, reason: args.reason });
+      // F-6 / #393: Bulk-reject when --source is provided without a positional id.
+      if (args.source && !args.id) {
+        const { listProposals } = await import("./core/proposals");
+        const stashDir = resolveStashDir();
+        const maxDiffLines = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        const olderThanDays = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        const olderThanMs = olderThanDays !== undefined ? olderThanDays * 86_400_000 : undefined;
+        const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+          if (p.source !== args.source) return false;
+          if (maxDiffLines !== undefined) {
+            const lines = (p.payload.content ?? "").split("\n").length;
+            if (lines > maxDiffLines) return false;
+          }
+          if (olderThanMs !== undefined) {
+            const age = Date.now() - new Date(p.createdAt).getTime();
+            if (age < olderThanMs) return false;
+          }
+          return true;
+        });
+        const results = [];
+        for (const proposal of pending) {
+          if (args["dry-run"]) {
+            results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+          } else {
+            const result = akmProposalReject({ id: proposal.id, reason: String(args.reason) });
+            results.push(result);
+          }
+        }
+        output("proposal-reject-batch", { rejected: results.length, results, dryRun: args["dry-run"] as boolean });
+        return;
+      }
+      if (!args.id) {
+        throw new UsageError(
+          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      const result = akmProposalReject({ id: args.id as string, reason: String(args.reason) });
       output("proposal-reject", result);
     });
   },
