@@ -43,7 +43,65 @@ import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { runProposalValidators } from "./proposal-validators";
+import { warn } from "./warn";
 import { resolveWriteTarget, type WriteTargetSource, writeAssetToSource } from "./write-source";
+
+// ── Source allow-list (F-4 / #385) ──────────────────────────────────────────
+
+/**
+ * Curated allow-list of valid `source` values for proposals (F-4 / #385).
+ *
+ * Rationale (W3C PROV-DM 2013): Provenance records require typed, validated
+ * sources for meaningful aggregation. Accept-rate-per-source is the core
+ * self-measurement metric for recursive self-improvement: if reflect proposals
+ * are accepted at 20% and distill proposals at 60%, that guides resource
+ * allocation. Free-text typos (`"reflct"`) produce unaggregatable events.
+ *
+ * Automated sources (those in {@link AUTOMATED_PROPOSAL_SOURCES}) require a
+ * `sourceRun` field for full PROV-DM traceability.
+ */
+export const PROPOSAL_SOURCES = [
+  // Automated sources — require sourceRun for traceability.
+  "reflect",
+  "distill",
+  "consolidate",
+  "improve",
+  // Semi-automated / tool-driven.
+  "feedback",
+  // Human-initiated / CLI-driven.
+  "propose",
+  "remember",
+  "import",
+  // Internal / system.
+  "distill_quality_rejected",
+] as const;
+
+/** Automated sources that SHOULD include a `sourceRun` for PROV-DM traceability. */
+export const AUTOMATED_PROPOSAL_SOURCES = [
+  "reflect",
+  "distill",
+  "consolidate",
+  "improve",
+] as const satisfies ReadonlyArray<(typeof PROPOSAL_SOURCES)[number]>;
+
+/** Union of all valid proposal source values. */
+export type ProposalSource = (typeof PROPOSAL_SOURCES)[number];
+
+/**
+ * Check whether a string is a valid {@link ProposalSource}.
+ * Unknown source values are accepted with a runtime warning rather than a hard
+ * error, to allow extensions without breaking existing callers.
+ */
+export function isValidProposalSource(source: string): source is ProposalSource {
+  return (PROPOSAL_SOURCES as readonly string[]).includes(source);
+}
+
+/**
+ * Check whether a source value is an automated source requiring `sourceRun`.
+ */
+export function isAutomatedProposalSource(source: string): source is (typeof AUTOMATED_PROPOSAL_SOURCES)[number] {
+  return (AUTOMATED_PROPOSAL_SOURCES as readonly string[]).includes(source);
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,9 +126,22 @@ export interface Proposal {
   /** Asset ref the proposal would create or update (`[origin//]type:name`). */
   ref: string;
   status: ProposalStatus;
-  /** Human-readable origin tag (e.g. "reflect", "distill", "remember"). */
-  source: string;
-  /** Optional run id (e.g. workflow run, reflect job) for traceability. */
+  /**
+   * Origin tag identifying the source subsystem (F-4 / #385).
+   *
+   * Should be one of {@link PROPOSAL_SOURCES}. Automated sources (reflect,
+   * distill, consolidate, improve) additionally require `sourceRun` for
+   * PROV-DM traceability and accept-rate-per-source aggregation.
+   * Unknown values are accepted (warn at creation) to allow extensions.
+   */
+  source: ProposalSource | string;
+  /**
+   * Stable run identifier for the automated job that created this proposal.
+   *
+   * Required for automated sources ({@link AUTOMATED_PROPOSAL_SOURCES}) so
+   * that accept-rate-per-source queries can be scoped to individual runs.
+   * Optional for human-initiated sources (`propose`, `remember`, `import`).
+   */
   sourceRun?: string;
   createdAt: string;
   updatedAt: string;
@@ -89,7 +160,20 @@ export interface ProposalsContext {
 
 export interface CreateProposalInput {
   ref: string;
-  source: string;
+  /**
+   * Origin tag identifying the source subsystem (F-4 / #385).
+   *
+   * Should be one of {@link PROPOSAL_SOURCES}. Unknown values trigger a
+   * runtime warning but are not rejected (backward compatibility).
+   * Automated sources ({@link AUTOMATED_PROPOSAL_SOURCES}) should include
+   * `sourceRun` for PROV-DM traceability.
+   */
+  source: ProposalSource | string;
+  /**
+   * Run identifier for the automated job creating this proposal.
+   * Required (advisory) when `source` is an automated source. Logged as a
+   * warning when omitted for automated sources so the gap is visible.
+   */
   sourceRun?: string;
   payload: ProposalPayload;
   /**
@@ -252,6 +336,24 @@ export function createProposal(
   input: CreateProposalInput,
   ctx?: ProposalsContext,
 ): CreateProposalResult {
+  // F-4 / #385: Validate source against the allow-list. Unknown values are
+  // warned (not rejected) for backward compatibility — extension callers
+  // that pass custom source strings must not break.
+  if (!isValidProposalSource(input.source)) {
+    warn(
+      `[proposal] Unknown source "${input.source}". ` +
+        `Expected one of: ${PROPOSAL_SOURCES.join(", ")}. ` +
+        "Typos in source values produce unaggregatable accept-rate-per-source metrics.",
+    );
+  } else if (isAutomatedProposalSource(input.source) && !input.sourceRun) {
+    // Advisory warning: automated sources should include sourceRun for PROV-DM
+    // traceability. This is not a hard error to avoid breaking existing callers.
+    warn(
+      `[proposal] Automated source "${input.source}" created a proposal without sourceRun. ` +
+        "Add sourceRun to enable accept-rate-per-run aggregation (W3C PROV-DM).",
+    );
+  }
+
   // Validate the ref up front so callers get a clear error instead of a
   // surprise during `accept`. This also normalises the ref string.
   const parsedRef = parseAssetRef(input.ref);
