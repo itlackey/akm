@@ -273,7 +273,15 @@ interface BuildPromptInput {
   rejectedProposals?: Array<{ reason: string; contentPreview?: string }>;
 }
 
-/** Pure: build the user-prompt body. Exported for tests. */
+/**
+ * Pure: build the user-prompt body. Exported for tests.
+ *
+ * D-3 (#371): restructures the feedback section from raw JSON event lines into
+ * a Reflexion-style verbal contrast (`## What worked` / `## What failed`).
+ * The verbal format allows LLMs to use feedback as gradient signal rather than
+ * just metadata — capturing the +8% AlfWorld lift from arXiv:2303.11366 and
+ * the contrast-based rule-learning gain from ExpeL arXiv:2308.10144.
+ */
 export function buildDistillPrompt(input: BuildPromptInput): string {
   const lines: string[] = [];
   lines.push(`Asset ref: ${input.inputRef}`);
@@ -288,13 +296,55 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
     lines.push("(asset is not currently indexed; distil from feedback signal alone)");
   }
   lines.push("");
-  lines.push("Recent feedback events (most recent last):");
+
   if (input.feedback.length === 0) {
-    lines.push("(no feedback events recorded — distil from the asset itself)");
+    lines.push("Recent feedback: (no feedback events recorded — distil from the asset itself)");
   } else {
+    // D-3 (#371): verbal contrast format for Reflexion verbal-gradient lift.
+    // Partition events into positive ("what worked") and negative ("what failed").
+    const positive: string[] = [];
+    const negative: string[] = [];
+    const neutral: string[] = [];
+
     for (const event of input.feedback) {
-      const meta = event.metadata ? ` ${JSON.stringify(event.metadata)}` : "";
-      lines.push(`- ${event.ts} ${event.eventType}${meta}`);
+      const meta = (event.metadata ?? {}) as Record<string, unknown>;
+      const signal = typeof meta.signal === "string" ? meta.signal : undefined;
+      const reason = typeof meta.reason === "string" ? meta.reason : "";
+      const note = typeof meta.note === "string" ? meta.note : "";
+      const detail = reason || note;
+      const line = detail ? `- ${event.ts}: ${detail}` : `- ${event.ts}: feedback received`;
+
+      if (signal === "positive") positive.push(line);
+      else if (signal === "negative") negative.push(line);
+      else
+        neutral.push(`- ${event.ts} ${event.eventType}${event.metadata ? ` ${JSON.stringify(event.metadata)}` : ""}`);
+    }
+
+    if (positive.length > 0 || negative.length > 0) {
+      if (positive.length > 0) {
+        lines.push("## What worked");
+        for (const l of positive) lines.push(l);
+        lines.push("");
+      }
+      if (negative.length > 0) {
+        lines.push("## What failed");
+        for (const l of negative) lines.push(l);
+        lines.push("");
+      }
+      if (neutral.length > 0) {
+        lines.push("## Other signals");
+        for (const l of neutral) lines.push(l);
+        lines.push("");
+      }
+    } else {
+      // No positive/negative signals — fall back to the pre-D3 flat format for
+      // non-feedback event types (e.g. reflect_invoked, distill_invoked).
+      lines.push("Recent feedback events (most recent last):");
+      for (const event of input.feedback) {
+        const meta = event.metadata ? ` ${JSON.stringify(event.metadata)}` : "";
+        lines.push(`- ${event.ts} ${event.eventType}${meta}`);
+      }
+      lines.push("");
     }
   }
   if (input.rejectedProposals && input.rejectedProposals.length > 0) {
@@ -311,7 +361,6 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
       }
     }
   }
-  lines.push("");
   lines.push(`Produce the ${input.proposalKind === "knowledge" ? "knowledge" : "lesson"} markdown file now.`);
   return lines.join("\n");
 }
