@@ -648,17 +648,27 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   warn(`[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}`);
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
-  let consecutiveFailures = 0;
+  // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
+  // Consecutive-count policies are brittle against transient LM Studio reloads:
+  // two transient failures abort the run even though the next chunk would succeed.
+  // Rate-based abort (≥50% failure over ≥4 chunks) is more robust.
+  // Tanenbaum, Distributed Systems §8 — rate-based policies with minimum sample sizes.
+  let totalChunksProcessed = 0;
+  let totalChunksFailed = 0;
+  const ABORT_MIN_CHUNKS = 4;
+  const ABORT_FAILURE_RATE = 0.5;
 
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
-    // Abort early if the first chunk failed — the LLM/agent is likely unavailable
-    // and continuing would waste minutes processing chunks that will all fail the same way.
-    if (chunkIdx > 0 && consecutiveFailures >= 2) {
-      const skipped = chunks.length - chunkIdx;
-      warnings.push(
-        `Consolidation aborted after ${consecutiveFailures} consecutive chunk failures — LLM may be unavailable. ${skipped} chunk(s) skipped.`,
-      );
-      break;
+    // Abort if failure rate >= 50% over at least 4 processed chunks.
+    if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
+      const failureRate = totalChunksFailed / totalChunksProcessed;
+      if (failureRate >= ABORT_FAILURE_RATE) {
+        const skipped = chunks.length - chunkIdx;
+        warnings.push(
+          `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`,
+        );
+        break;
+      }
     }
 
     const chunk = chunks[chunkIdx];
@@ -685,7 +695,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
     if (!raw.ok) {
       warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
-      consecutiveFailures++;
+      totalChunksProcessed++;
+      totalChunksFailed++;
       continue;
     }
 
@@ -701,11 +712,12 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           ? " (empty response — if using a thinking model, disable thinking mode)"
           : "";
       warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
-      consecutiveFailures++;
+      totalChunksProcessed++;
+      totalChunksFailed++;
       continue;
     }
 
-    consecutiveFailures = 0; // reset on success
+    totalChunksProcessed++; // success
 
     const ops: ConsolidateOperation[] = [];
     for (const op of parsed.operations) {
