@@ -80,7 +80,14 @@ import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
 import { isHttpUrl, isWithin, resolveStashDir } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
-import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, saveConfig } from "./core/config";
+import {
+  DEFAULT_CONFIG,
+  FEEDBACK_FAILURE_MODES,
+  loadConfig,
+  loadUserConfig,
+  resolveConfiguredSources,
+  saveConfig,
+} from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
@@ -1542,9 +1549,16 @@ const feedbackCommand = defineCommand({
     },
     reason: {
       type: "string",
-      description: "Reason for the feedback (recommended for negative feedback, used by distillation)",
+      description: "Reason for the feedback (required for negative feedback by default; used by distillation)",
     },
     note: { type: "string", description: "Alias for --reason (backward-compatible, prefer --reason)" },
+    "failure-mode": {
+      type: "string",
+      description:
+        `Structured failure-mode taxonomy for negative feedback (F-3 / #384). ` +
+        `Accepted values: ${FEEDBACK_FAILURE_MODES.join(", ")}. ` +
+        "Stored alongside --reason in event metadata for aggregation by the distill pipeline.",
+    },
     tag: {
       type: "string",
       description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
@@ -1569,12 +1583,40 @@ const feedbackCommand = defineCommand({
       }
       const signal = args.positive ? "positive" : "negative";
       const reason = (args.reason as string | undefined) ?? (args.note as string | undefined);
-      if (args.negative === true && !reason?.trim()) {
-        const cfg = loadConfig();
-        if (cfg.feedback?.requireReason === true) {
+
+      // F-3 / #384: Validate --failure-mode against the curated enum.
+      const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
+      if (failureMode) {
+        if (args.positive) {
           throw new UsageError(
-            "Negative feedback requires --reason (feedback.requireReason is enabled).",
+            "--failure-mode is only valid for negative feedback.",
+            "INVALID_FLAG_VALUE",
+            "Remove --failure-mode or switch to --negative.",
+          );
+        }
+        const cfg = loadConfig();
+        const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
+        if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
+          throw new UsageError(
+            `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
+            "INVALID_FLAG_VALUE",
+            `Use one of: ${allowedModes.join(", ")}`,
+          );
+        }
+      }
+
+      if (args.negative === true && !reason?.trim()) {
+        // F-3 / #384: Default requireReason is now true. Load config to allow
+        // operators to opt out via feedback.requireReason: false in akm.json.
+        const cfg = loadConfig();
+        const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
+        if (requireReason) {
+          throw new UsageError(
+            "Negative feedback requires --reason (structured failure signals are needed for distillation). " +
+              "Use --failure-mode for a curated taxonomy or --reason for free text. " +
+              "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
             "MISSING_REQUIRED_ARGUMENT",
+            `Hint: akm feedback ${ref} --negative --reason "..." [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
           );
         } else {
           warn("Warning: negative feedback without --reason provides less distillation signal.");
@@ -1585,6 +1627,7 @@ const feedbackCommand = defineCommand({
       const metadataObj = {
         signal,
         ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        ...(failureMode ? { failureMode } : {}),
         ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
       };
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
@@ -1696,7 +1739,14 @@ const feedbackCommand = defineCommand({
         }
       }
 
-      output("feedback", { ok: true, ref, signal, reason: reason?.trim() ?? null, tags: validatedTags });
+      output("feedback", {
+        ok: true,
+        ref,
+        signal,
+        reason: reason?.trim() ?? null,
+        failureMode: failureMode ?? null,
+        tags: validatedTags,
+      });
     });
   },
 });
