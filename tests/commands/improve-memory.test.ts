@@ -1594,3 +1594,96 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     expect(distilledRefs).toContain("memory:auth-tips");
   });
 });
+
+// ── M-1 / #367 — contradiction-detection unit tests ──────────────────────────
+
+describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)", () => {
+  test("detectAndWriteContradictions is a no-op when no LLM is configured", async () => {
+    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const stashDir = makeTempDir("akm-m1-no-llm-");
+    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
+    writeMemory(stashDir, "auth-tips.derived2", { inferred: true, source: "memory:auth-tips" }, "VPN is optional.");
+
+    const result = await detectAndWriteContradictions(stashDir, {
+      stashDir,
+      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      defaultWriteTarget: "stash",
+      // No llm config — should be a no-op.
+    } as Parameters<typeof detectAndWriteContradictions>[1]);
+
+    // No LLM → no pairs checked → no edges written.
+    expect(result.pairsChecked).toBe(0);
+    expect(result.edgesWritten).toBe(0);
+  });
+
+  test("detectAndWriteContradictions writes contradictedBy edges when LLM judges true", async () => {
+    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const stashDir = makeTempDir("akm-m1-detect-");
+    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
+    writeMemory(
+      stashDir,
+      "auth-tips.derived2",
+      { inferred: true, source: "memory:auth-tips" },
+      "VPN is never required.",
+    );
+
+    const result = await detectAndWriteContradictions(
+      stashDir,
+      {
+        stashDir,
+        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: {
+          endpoint: "http://localhost/v1/chat",
+          model: "test",
+          features: { memory_contradiction_detection: true },
+        },
+      } as Parameters<typeof detectAndWriteContradictions>[1],
+      // Inject a fake chat that always returns "contradicts: true".
+      async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict about VPN requirement." }),
+    );
+
+    expect(result.pairsChecked).toBe(1);
+    expect(result.edgesWritten).toBe(2); // Both sides get a contradictedBy edge.
+
+    // Verify frontmatter was updated.
+    const file1 = path.join(stashDir, "memories", "auth-tips.derived.md");
+    const file2 = path.join(stashDir, "memories", "auth-tips.derived2.md");
+    const raw1 = fs.readFileSync(file1, "utf8");
+    const raw2 = fs.readFileSync(file2, "utf8");
+    expect(raw1).toContain("contradictedBy");
+    expect(raw2).toContain("contradictedBy");
+    expect(raw1).toContain("auth-tips.derived2");
+    expect(raw2).toContain("auth-tips.derived");
+  });
+
+  test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {
+    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const stashDir = makeTempDir("akm-m1-no-contradiction-");
+    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Use VPN for prod.");
+    writeMemory(
+      stashDir,
+      "auth-tips.derived2",
+      { inferred: true, source: "memory:auth-tips" },
+      "Enable 2FA before deploys.",
+    );
+
+    const result = await detectAndWriteContradictions(
+      stashDir,
+      {
+        stashDir,
+        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: {
+          endpoint: "http://localhost/v1/chat",
+          model: "test",
+          features: { memory_contradiction_detection: true },
+        },
+      } as Parameters<typeof detectAndWriteContradictions>[1],
+      async () => JSON.stringify({ contradicts: false, reason: "These are complementary security measures." }),
+    );
+
+    expect(result.pairsChecked).toBe(1);
+    expect(result.edgesWritten).toBe(0);
+  });
+});

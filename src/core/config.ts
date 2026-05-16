@@ -147,6 +147,14 @@ export interface LlmFeatureFlags {
    * returning an empty enrichment object (no description/searchHints/tags update).
    */
   metadata_enhance?: boolean;
+  /**
+   * Gates the M-1 contradiction-detection pass in `akm improve` (#367).
+   * Default: false. When enabled, derived memories within the same parent family
+   * are checked pairwise for contradictions using an LLM judge, and
+   * `contradictedBy` edges are written to their frontmatter so the SCC resolver
+   * in `resolveFamilyContradictions` has edges to work on.
+   */
+  memory_contradiction_detection?: boolean;
 }
 
 export interface RegistryConfigEntry {
