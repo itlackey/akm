@@ -20,7 +20,7 @@ import path from "node:path";
 import { akmPropose } from "../src/commands/propose";
 import { akmReflect } from "../src/commands/reflect";
 import { appendEvent, readEvents } from "../src/core/events";
-import { archiveProposal, createProposal, listProposals } from "../src/core/proposals";
+import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../src/core/proposals";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import { buildReflectPrompt } from "../src/integrations/agent/prompts";
 import type { SpawnedSubprocess, SpawnFn } from "../src/integrations/agent/spawn";
@@ -632,13 +632,18 @@ describe("buildReflectPrompt — rejected proposals (Reflexion verbal-RL)", () =
 
   test("akmReflect passes rejected proposals from archive into prompt (end-to-end stub)", async () => {
     const stash = makeStashDir();
-    // Pre-seed an archived rejected proposal for the target ref.
-    const proposal = createProposal(stash, {
+    // Pre-seed an archived rejected proposal seeded via a DIFFERENT source so
+    // the dedup cooldown guard does not block the reflect call we are testing.
+    // The readRejectedProposals helper reads all rejected proposals for the ref
+    // regardless of source — so the injection still fires.
+    const seedResult = createProposal(stash, {
       ref: "skill:deploy",
-      source: "reflect",
+      source: "distill",
+      force: true,
       payload: { content: "---\ndescription: rejected content\n---\nOld body." },
     });
-    archiveProposal(stash, proposal.id, "rejected", "Too vague");
+    if (isProposalSkipped(seedResult)) throw new Error("unexpected skip");
+    archiveProposal(stash, seedResult.id, "rejected", "Too vague");
 
     const result = await akmReflect({
       ref: "skill:deploy",
@@ -653,7 +658,7 @@ describe("buildReflectPrompt — rejected proposals (Reflexion verbal-RL)", () =
       },
     });
 
-    // The reflect run should succeed regardless — we just verify it returns ok.
+    // The reflect run should succeed — we just verify it returns ok.
     // The prompt injection is verified at the unit level above.
     expect(result.ok).toBe(true);
   });

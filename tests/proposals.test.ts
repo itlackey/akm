@@ -11,7 +11,15 @@ import {
 } from "../src/commands/proposal";
 import type { AkmConfig } from "../src/core/config";
 import { readEvents } from "../src/core/events";
-import { createProposal, diffProposal, getProposal, listProposals, validateProposal } from "../src/core/proposals";
+import {
+  archiveProposal,
+  createProposal,
+  diffProposal,
+  getProposal,
+  isProposalSkipped,
+  listProposals,
+  validateProposal,
+} from "../src/core/proposals";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
 
@@ -75,12 +83,15 @@ describe("createProposal / listProposals / getProposal", () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
 
-    const created = createProposal(stash, {
+    const createdResult = createProposal(stash, {
       ref: "lesson:rg-over-grep",
       source: "distill",
       sourceRun: "run-123",
+      force: true,
       payload: { content: VALID_LESSON },
     });
+    if (isProposalSkipped(createdResult)) throw new Error("unexpected skip");
+    const created = createdResult;
 
     expect(created.id).toBeDefined();
     expect(created.status).toBe("pending");
@@ -116,11 +127,14 @@ describe("createProposal / listProposals / getProposal", () => {
 
   test("reject path: archive contains entry, status rejected, rejected event emitted", () => {
     const stash = makeStashDir();
-    const created = createProposal(stash, {
+    const createdResult2 = createProposal(stash, {
       ref: "lesson:bad-idea",
       source: "reflect",
+      force: true,
       payload: { content: VALID_LESSON },
     });
+    if (isProposalSkipped(createdResult2)) throw new Error("unexpected skip");
+    const created = createdResult2;
 
     const result = akmProposalReject({ stashDir: stash, id: created.id, reason: "duplicate of existing lesson" });
     expect(result.ok).toBe(true);
@@ -144,9 +158,24 @@ describe("createProposal / listProposals / getProposal", () => {
   });
 
   test("multiple proposals for same ref: distinct ids, no path collision", () => {
+    // Both use force:true to bypass dedup guard — we are testing filesystem
+    // isolation, not the dedup policy.
     const stash = makeStashDir();
-    const a = createProposal(stash, { ref: "lesson:dup", source: "reflect", payload: { content: VALID_LESSON } });
-    const b = createProposal(stash, { ref: "lesson:dup", source: "distill", payload: { content: VALID_LESSON } });
+    const aResult = createProposal(stash, {
+      ref: "lesson:dup",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    const bResult = createProposal(stash, {
+      ref: "lesson:dup",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(aResult) || isProposalSkipped(bResult)) throw new Error("unexpected skip");
+    const a = aResult;
+    const b = bResult;
     expect(a.id).not.toBe(b.id);
 
     const list = listProposals(stash);
@@ -160,11 +189,14 @@ describe("diff path", () => {
   test("new asset: shows new-asset diff with /dev/null marker", () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
-    const proposal = createProposal(stash, {
+    const proposalResult = createProposal(stash, {
       ref: "lesson:fresh",
       source: "reflect",
+      force: true,
       payload: { content: VALID_LESSON },
     });
+    if (isProposalSkipped(proposalResult)) throw new Error("unexpected skip");
+    const proposal = proposalResult;
     const diff = diffProposal(stash, config, proposal.id);
     expect(diff.isNew).toBe(true);
     expect(diff.unified).toContain("/dev/null");
@@ -181,11 +213,14 @@ describe("diff path", () => {
       `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching repos\n---\n\nOriginal body.\n`,
       "utf8",
     );
-    const proposal = createProposal(stash, {
+    const proposalResult2 = createProposal(stash, {
       ref: "lesson:rg-over-grep",
       source: "reflect",
+      force: true,
       payload: { content: VALID_LESSON },
     });
+    if (isProposalSkipped(proposalResult2)) throw new Error("unexpected skip");
+    const proposal = proposalResult2;
 
     const diffResult = akmProposalDiff({ stashDir: stash, id: proposal.id, config });
     expect(diffResult.isNew).toBe(false);
@@ -199,11 +234,14 @@ describe("validation failure", () => {
   test("invalid lesson frontmatter → accept fails non-zero with clear error", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
-    const proposal = createProposal(stash, {
+    const proposalResult3 = createProposal(stash, {
       ref: "lesson:no-fields",
       source: "distill",
+      force: true,
       payload: { content: `---\ndescription: ""\nwhen_to_use: ""\n---\n\nbody\n` },
     });
+    if (isProposalSkipped(proposalResult3)) throw new Error("unexpected skip");
+    const proposal = proposalResult3;
 
     const report = validateProposal(proposal);
     expect(report.ok).toBe(false);
@@ -226,11 +264,14 @@ describe("validation failure", () => {
 
   test("empty content → validation fails", () => {
     const stash = makeStashDir();
-    const proposal = createProposal(stash, {
+    const proposalResult4 = createProposal(stash, {
       ref: "lesson:empty",
       source: "distill",
+      force: true,
       payload: { content: "" },
     });
+    if (isProposalSkipped(proposalResult4)) throw new Error("unexpected skip");
+    const proposal = proposalResult4;
     const report = validateProposal(proposal);
     expect(report.ok).toBe(false);
     expect(report.findings.some((f) => f.kind === "empty-content")).toBe(true);
@@ -242,11 +283,14 @@ describe("validation failure", () => {
 describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
   test("rejecting an already-archived proposal → UsageError with .code INVALID_FLAG_VALUE", async () => {
     const stash = makeStashDir();
-    const created = createProposal(stash, {
+    const createdResult3 = createProposal(stash, {
       ref: "lesson:once",
       source: "reflect",
+      force: true,
       payload: { content: VALID_LESSON },
     });
+    if (isProposalSkipped(createdResult3)) throw new Error("unexpected skip");
+    const created = createdResult3;
     // First reject moves it to the archive.
     akmProposalReject({ stashDir: stash, id: created.id });
     // Second reject must fail with a typed UsageError (.code load-bearing).
@@ -300,11 +344,14 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
     // Empty content — fails the lesson lint.
-    const proposal = createProposal(stash, {
+    const proposalResult5 = createProposal(stash, {
       ref: "lesson:invalid",
       source: "distill",
+      force: true,
       payload: { content: "" },
     });
+    if (isProposalSkipped(proposalResult5)) throw new Error("unexpected skip");
+    const proposal = proposalResult5;
 
     let threw = false;
     try {
@@ -321,5 +368,104 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
     // And the proposal stays pending.
     const stillPending = getProposal(stash, proposal.id);
     expect(stillPending.status).toBe("pending");
+  });
+});
+
+// ── F-2 / #363 — dedup / cooldown guard ─────────────────────────────────────
+
+describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
+  test("duplicate_pending: second proposal for same ref+source is skipped without force", () => {
+    const stash = makeStashDir();
+    const first = createProposal(stash, {
+      ref: "lesson:dup-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(first)).toBe(false);
+
+    const second = createProposal(stash, {
+      ref: "lesson:dup-test",
+      source: "reflect",
+      payload: { content: "Different content, but same ref+source." },
+    });
+    expect(isProposalSkipped(second)).toBe(true);
+    if (!isProposalSkipped(second)) throw new Error("type guard");
+    expect(second.reason).toBe("duplicate_pending");
+  });
+
+  test("content_hash_match: identical content for same ref+source is silently skipped", () => {
+    const stash = makeStashDir();
+    const first = createProposal(stash, {
+      ref: "lesson:hash-test",
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(first)).toBe(false);
+
+    const second = createProposal(stash, {
+      ref: "lesson:hash-test",
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(second)).toBe(true);
+    if (!isProposalSkipped(second)) throw new Error("type guard");
+    expect(second.reason).toBe("content_hash_match");
+  });
+
+  test("cooldown: a proposal is skipped for ref+source within the cooldown window after rejection", () => {
+    const stash = makeStashDir();
+    const first = createProposal(stash, {
+      ref: "lesson:cooldown-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(first)) throw new Error("unexpected skip");
+    archiveProposal(stash, first.id, "rejected", "Test rejection for cooldown");
+
+    const second = createProposal(stash, {
+      ref: "lesson:cooldown-test",
+      source: "reflect",
+      payload: { content: "Completely different content that is not the same hash." },
+    });
+    expect(isProposalSkipped(second)).toBe(true);
+    if (!isProposalSkipped(second)) throw new Error("type guard");
+    expect(second.reason).toBe("cooldown");
+    expect(second.message).toContain("14d window");
+  });
+
+  test("force:true bypasses all guards", () => {
+    const stash = makeStashDir();
+    const first = createProposal(stash, {
+      ref: "lesson:force-test",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(first)).toBe(false);
+
+    const second = createProposal(stash, {
+      ref: "lesson:force-test",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(second)).toBe(false);
+  });
+
+  test("different sources for same ref are independent — no cross-source dedup", () => {
+    const stash = makeStashDir();
+    const reflectResult = createProposal(stash, {
+      ref: "lesson:cross-source",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    const distillResult = createProposal(stash, {
+      ref: "lesson:cross-source",
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    expect(isProposalSkipped(reflectResult)).toBe(false);
+    expect(isProposalSkipped(distillResult)).toBe(false);
+    const queue = listProposals(stash);
+    expect(queue.length).toBe(2);
   });
 });

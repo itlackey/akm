@@ -20,6 +20,7 @@ import {
   createProposal,
   diffProposal,
   getProposal,
+  isProposalSkipped,
   listProposals,
   type Proposal,
   type ProposalsContext,
@@ -237,15 +238,22 @@ export interface ProposalCreateResult {
 
 export function akmProposalCreate(options: ProposalCreateOptions): ProposalCreateResult {
   const stash = resolveStash(options.stashDir);
-  const proposal = createProposal(
+  // Manual proposal creation (via `akm proposal create`) always bypasses
+  // dedup/cooldown guards — the operator is explicitly requesting a proposal.
+  const result = createProposal(
     stash,
     {
       ref: options.ref,
       source: options.source,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: options.payload,
+      force: true,
     },
     options.ctx,
   );
-  return { schemaVersion: 1, ok: true, proposal };
+  if (isProposalSkipped(result)) {
+    // Should never happen with force:true — defensive only.
+    throw new Error(`Unexpected proposal skip: ${result.message}`);
+  }
+  return { schemaVersion: 1, ok: true, proposal: result };
 }

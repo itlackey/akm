@@ -31,6 +31,7 @@ import { stripMarkdownFences } from "../core/markdown";
 import {
   type CreateProposalInput,
   createProposal,
+  isProposalSkipped,
   listProposals,
   type Proposal,
   type ProposalsContext,
@@ -428,7 +429,22 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
     },
   };
-  const proposal = createProposal(stash, createInput, options.ctx);
+  const proposalResult = createProposal(stash, createInput, options.ctx);
+
+  if (isProposalSkipped(proposalResult)) {
+    // Dedup/cooldown guard fired — surface as a structured failure so the
+    // improve orchestrator can log it and move on without crashing.
+    return {
+      schemaVersion: 1,
+      ok: false,
+      reason: "parse_error" as const,
+      error: `Proposal skipped (${proposalResult.reason}): ${proposalResult.message}`,
+      ...(options.ref ? { ref: options.ref } : {}),
+      exitCode: null,
+    };
+  }
+
+  const proposal: Proposal = proposalResult;
 
   appendEvent({
     eventType: "reflect_completed",
