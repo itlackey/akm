@@ -83,7 +83,14 @@ import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./d
  *   - `validation_failed`— LLM returned content but it failed lesson lint.
  *                          No proposal. Exit non-zero (UsageError).
  */
-export type DistillOutcome = "queued" | "skipped" | "validation_failed" | "quality_rejected";
+/**
+ * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
+ * for the uncertainty band (score 2.5–3.5). MT-Bench arXiv:2306.05685 reports
+ * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
+ * The review-needed band converts uncertain cases into explicit human review
+ * requests rather than opaque auto-decisions.
+ */
+export type DistillOutcome = "queued" | "skipped" | "validation_failed" | "quality_rejected" | "review_needed";
 
 export interface AkmDistillOptions {
   /** Asset ref to distil from (`[origin//]type:name`). */
@@ -404,7 +411,7 @@ export async function runLessonQualityJudge(
   lessonContent: string,
   sourceContent: string,
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
-): Promise<{ pass: boolean; score: number; reason: string }> {
+): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
   if (!config.llm) {
     return { pass: true, score: -1, reason: "no LLM configured — passing through" };
   }
@@ -422,7 +429,20 @@ export async function runLessonQualityJudge(
     if (!parsed || typeof parsed.score !== "number") {
       return { pass: true, score: -1, reason: "judge parse failed — passing through" };
     }
-    return { pass: parsed.score >= 3, score: parsed.score, reason: parsed.reason ?? "" };
+    // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
+    //   >= 3.5: auto-queue as pending (pass: true)
+    //   2.5–3.5: review-needed band — uncertain, escalate to human (reviewNeeded: true)
+    //   < 2.5: auto-reject (pass: false)
+    const score = parsed.score;
+    const reason = parsed.reason ?? "";
+    if (score >= 3.5) {
+      return { pass: true, score, reason };
+    }
+    if (score >= 2.5) {
+      // Uncertainty band: treat as failed for auto-queuing but flag for review.
+      return { pass: false, score, reason, reviewNeeded: true };
+    }
+    return { pass: false, score, reason };
   } catch {
     return { pass: true, score: -1, reason: "judge failed — passing through" };
   }
@@ -451,19 +471,21 @@ function writeQualityRejection(
   reason: string,
   extraMeta: Record<string, unknown> = {},
 ): AkmDistillResult {
+  // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
+  const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
   const rejectDir = path.join(stash, ".akm", "distill-rejected");
   fs.mkdirSync(rejectDir, { recursive: true });
   const ts = timestampForFilename();
   fs.writeFileSync(
     path.join(rejectDir, `${ts}-${lessonRef}.md`),
-    `---\nscore: ${score}\nreason: ${reason}\n---\n\n${content}`,
+    `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n---\n\n${content}`,
     "utf8",
   );
   appendEvent({
     eventType: "distill_invoked",
     ref: inputRef,
     metadata: {
-      outcome: "quality_rejected",
+      outcome,
       lessonRef,
       score,
       reason,
@@ -473,7 +495,7 @@ function writeQualityRejection(
   return {
     schemaVersion: 1,
     ok: true,
-    outcome: "quality_rejected",
+    outcome,
     inputRef,
     lessonRef,
     score,
@@ -647,9 +669,23 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     }
 
     // Apply quality gate to fast-path knowledge promotion (Risk 4 fix).
+    // D-5 / #388: Three-band system — review_needed band queues to proposal
+    // queue with review_needed outcome rather than auto-rejecting.
     if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
       const judgeResult = await runLessonQualityJudge(config, resolvedPromotionContent, assetContent ?? "", chat);
       if (!judgeResult.pass) {
+        if (judgeResult.reviewNeeded) {
+          // Uncertainty band (2.5–3.5): queue as review_needed instead of rejecting.
+          return writeQualityRejection(
+            stash,
+            inputRef,
+            promotion.knowledgeRef,
+            resolvedPromotionContent,
+            judgeResult.score,
+            judgeResult.reason,
+            { reviewNeeded: true },
+          );
+        }
         return writeQualityRejection(
           stash,
           inputRef,
@@ -838,9 +874,25 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   // LLM-as-judge quality gate (P2-B). Only active when the feature flag is
   // explicitly enabled. Fail-open: judge failures always pass through.
+  // D-5 / #388: Three-band system — review_needed band queues a proposal
+  // with review_needed outcome rather than auto-rejecting.
   if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
     const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat);
     if (!judgeResult.pass) {
+      if (judgeResult.reviewNeeded) {
+        return writeQualityRejection(
+          stash,
+          inputRef,
+          effectiveLessonRef,
+          content,
+          judgeResult.score,
+          judgeResult.reason,
+          {
+            reviewNeeded: true,
+            ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+          },
+        );
+      }
       return writeQualityRejection(
         stash,
         inputRef,
