@@ -764,3 +764,50 @@ describe("R-3: validate payload.ref === options.ref post-parse (#366)", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ── R-4 / #373 — provenance stamp + filter reflect-derived lessons ────────────
+
+describe("R-4: reflect stamps derived_from_reflect on lesson proposals (#373)", () => {
+  test("lesson proposals from reflect get derived_from_reflect: true in frontmatter", async () => {
+    const stash = makeStashDir();
+    // Use lesson:rg-over-grep to match VALID_LESSON_PAYLOAD (R-3 enforces type match)
+    const lessonFile = path.join(stash, "lessons", "rg-over-grep.md");
+    fs.mkdirSync(path.dirname(lessonFile), { recursive: true });
+    fs.writeFileSync(lessonFile, "---\ndescription: Use ripgrep\n---\nUse rg.\n", "utf8");
+
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
+    });
+
+    expect(result.ok).toBe(true);
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    const proposal = proposals[0];
+    // R-4: lesson proposal should carry the derived_from_reflect provenance stamp
+    expect(proposal?.payload.frontmatter?.["derived_from_reflect"]).toBe(true);
+  });
+
+  test("skill proposals from reflect do NOT get derived_from_reflect stamp", async () => {
+    const stash = makeStashDir();
+    const skillFile = path.join(stash, "skills", "deploy.md");
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "---\ndescription: Deploy safely\n---\nDeploy steps.\n", "utf8");
+
+    const result = await akmReflect({
+      ref: "skill:deploy",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(VALID_DEPLOY_SKILL_PAYLOAD, "", 0) },
+    });
+
+    expect(result.ok).toBe(true);
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    const proposal = proposals[0];
+    // R-4: non-lesson proposals should NOT carry the stamp
+    expect(proposal?.payload.frontmatter?.["derived_from_reflect"]).toBeUndefined();
+  });
+});
