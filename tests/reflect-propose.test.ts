@@ -811,3 +811,70 @@ describe("R-4: reflect stamps derived_from_reflect on lesson proposals (#373)", 
     expect(proposal?.payload.frontmatter?.["derived_from_reflect"]).toBeUndefined();
   });
 });
+
+// ── R-5 / #374 — quality gate on reflect proposals ───────────────────────────
+
+describe("R-5: proposal quality gate applied to reflect proposals (#374)", () => {
+  test("quality gate blocks reflect proposal when judge score < 3", async () => {
+    const stash = makeStashDir();
+    const lessonFile = path.join(stash, "lessons", "rg-over-grep.md");
+    fs.mkdirSync(path.dirname(lessonFile), { recursive: true });
+    fs.writeFileSync(lessonFile, "---\ndescription: Use rg\n---\nUse rg.\n", "utf8");
+
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
+      config: {
+        stashDir: stash,
+        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: {
+          endpoint: "http://localhost/v1/chat",
+          model: "test",
+          features: { proposal_quality_gate: true },
+        },
+      } as import("../src/core/config").AkmConfig,
+      // Judge returns score=1 (below 3 threshold) — proposal should be rejected
+      chat: async () => JSON.stringify({ score: 1, reason: "Too generic, no actionable content." }),
+    });
+
+    // R-5: quality gate rejected the proposal
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("quality gate rejected");
+    // No proposal should be in the queue
+    expect(listProposals(stash).length).toBe(0);
+  });
+
+  test("quality gate passes reflect proposal when judge score >= 3", async () => {
+    const stash = makeStashDir();
+    const lessonFile = path.join(stash, "lessons", "rg-over-grep.md");
+    fs.mkdirSync(path.dirname(lessonFile), { recursive: true });
+    fs.writeFileSync(lessonFile, "---\ndescription: Use rg\n---\nUse rg.\n", "utf8");
+
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
+      config: {
+        stashDir: stash,
+        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: {
+          endpoint: "http://localhost/v1/chat",
+          model: "test",
+          features: { proposal_quality_gate: true },
+        },
+      } as import("../src/core/config").AkmConfig,
+      // Judge returns score=4 (above threshold) — proposal should pass
+      chat: async () => JSON.stringify({ score: 4, reason: "Clear and actionable." }),
+    });
+
+    // R-5: quality gate passed — proposal created
+    expect(result.ok).toBe(true);
+    expect(listProposals(stash).length).toBe(1);
+  });
+});

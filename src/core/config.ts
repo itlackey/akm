@@ -165,6 +165,18 @@ export interface LlmFeatureFlags {
    */
   lesson_quality_gate?: boolean;
   /**
+   * Gates the LLM-as-judge quality gate on reflect proposals (R-5 / #374).
+   *
+   * When true, each proposal from `akm reflect` is scored by the judge before
+   * entering the proposal queue. Fail-open: judge failures always pass. Uses the
+   * same `runLessonQualityJudge` infrastructure as `lesson_quality_gate`.
+   *
+   * Also extends `lesson_quality_gate` semantics — both flags are checked by
+   * the reflect quality gate. Set either to enable it on reflect proposals.
+   * Default: false.
+   */
+  proposal_quality_gate?: boolean;
+  /**
    * Gates the `akm index` metadata-enhancement pass. Default: false.
    * When false (or absent), metadata enhancement is skipped and falls back to
    * returning an empty enrichment object (no description/searchHints/tags update).
@@ -1206,7 +1218,9 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "graph_extraction",
   "memory_consolidation",
   "lesson_quality_gate",
+  "proposal_quality_gate",
   "metadata_enhance",
+  "memory_contradiction_detection",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {

@@ -390,7 +390,16 @@ function buildJudgePrompt(lessonContent: string, sourceContent: string): string 
   ].join("\n");
 }
 
-async function runLessonQualityJudge(
+/**
+ * Run the LLM-as-judge quality gate on a proposal's content.
+ *
+ * Exported so reflect.ts can apply the same gate to reflect proposals (R-5 / #374).
+ * Gated behind `lesson_quality_gate` (or its alias `proposal_quality_gate`) at
+ * the call site via {@link isLlmFeatureEnabled}.
+ *
+ * Fail-open: returns `pass: true` on timeout, parse failure, or missing LLM.
+ */
+export async function runLessonQualityJudge(
   config: AkmConfig,
   lessonContent: string,
   sourceContent: string,
