@@ -114,6 +114,23 @@ export interface AkmImproveOptions {
    * reflect calls through a different profile.
    */
   agentProcess?: string;
+  /**
+   * Maximum number of refs to process in a cold-start exploration run (O-4 / #377).
+   *
+   * When the stash has fully-zero explicit feedback (no positive or negative
+   * feedback events), the improve loop falls back to all processable refs to
+   * avoid a no-op run. Without a cap, this causes cold-start oscillation:
+   *   - First run: all N assets processed → all enter 7-day reflect cooldown
+   *   - Next day: same N assets fire again → another big burst → silence
+   *
+   * Setting this cap to a small value (default: 10) spreads cold-start
+   * processing across multiple days, avoiding the burst-then-silence pattern.
+   * Set to 0 to disable the cap (allow all refs on cold-start, pre-O-4 behavior).
+   *
+   * Refs: Zoph & Le NAS controllers arXiv:1611.01578 — exploration budgets
+   * prevent oscillation. MemRL — utility-based sampling prevents pure coverage.
+   */
+  explorationBudget?: number;
 }
 
 export interface ImproveEligibleRef {
@@ -1242,21 +1259,51 @@ async function runImprovePreparationStage(args: {
     if (dbForRetrieval) closeDatabase(dbForRetrieval);
   }
 
+  // O-4 / #377: Detect a fully-zero-feedback stash (no positive or negative
+  // explicit feedback events across all candidates). This is the cold-start
+  // condition that causes oscillation: all N assets processed on day 1 → all
+  // enter reflect cooldown → burst on day 8 → silence again.
+  //
+  // On a fully-zero-feedback stash, cap the cold-start fallback to
+  // `explorationBudget` refs (default: 10). This spreads cold-start processing
+  // across multiple runs instead of flooding all N refs at once.
+  //
+  // The cap applies only when:
+  //   1. The stash has ZERO explicit feedback (no positive or negative events).
+  //   2. The fallback to all processableRefs would be triggered (no signals, no high-retrieval).
+  //   3. The scope is NOT "ref" (explicit ref scope always acts on the target).
+  //
+  // Once any explicit feedback exists, normal feedback-based eligibility takes over.
+  // Refs: Zoph & Le arXiv:1611.01578 — exploration budgets; MemRL — utility sampling.
+  const DEFAULT_EXPLORATION_BUDGET = 10;
+  const explorationBudget = options.explorationBudget ?? DEFAULT_EXPLORATION_BUDGET;
+  const isFullyZeroFeedback =
+    signalFiltered.length === 0 &&
+    processableRefs.every((r) => {
+      const s = feedbackSummary.get(r.ref);
+      return (s?.positive ?? 0) === 0 && (s?.negative ?? 0) === 0;
+    });
+
   // If the user explicitly scoped to a single ref, always act on it —
   // skip the signal/retrieval filter entirely. The filter exists to avoid
   // noisy "improve everything" runs; it should not gate an intentional
   // per-ref invocation where the user's explicit choice is the signal.
   //
   // For type/all scope with no signals yet (fresh environment), fall back
-  // to all processableRefs so that the first improve run is not a no-op.
+  // to all processableRefs (capped by explorationBudget on cold-start) so
+  // that the first improve run is not a no-op.
   const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
+  const coldStartRefs: ImproveEligibleRef[] =
+    isFullyZeroFeedback && explorationBudget > 0 && scope.mode !== "ref"
+      ? processableRefs.slice(0, explorationBudget)
+      : processableRefs;
   const mergedRefs =
     scope.mode === "ref"
       ? processableRefs
       : options.requireFeedbackSignal
         ? signalFiltered
         : signalAndRetrievalRefs.length === 0
-          ? processableRefs
+          ? coldStartRefs
           : signalAndRetrievalRefs;
 
   const utilityMap = buildUtilityMap(mergedRefs);
