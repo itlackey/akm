@@ -23,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
+import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -52,6 +53,8 @@ import {
   type RejectedProposalContext,
 } from "../integrations/agent/prompts";
 import { runAgentSdk } from "../integrations/agent/sdk-runner";
+import { chatCompletion } from "../llm/client";
+import { isLlmFeatureEnabled } from "../llm/feature-gate";
 import {
   baseFailureFields,
   enoentHintMessage,
@@ -59,7 +62,7 @@ import {
   loadAgentConfigFromDisk,
   resolveAgentProfile,
 } from "./agent-support";
-import { deriveLessonRef } from "./distill";
+import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
@@ -86,6 +89,20 @@ export interface AkmReflectOptions {
    * mistakes across assets.
    */
   avoidPatterns?: string[];
+  /**
+   * Optional chat seam for the proposal quality gate (R-5 / #374).
+   * Defaults to {@link chatCompletion}. Injected in tests to avoid real LLM calls.
+   */
+  chat?: (
+    config: import("../core/config").LlmConnectionConfig,
+    messages: import("../llm/client").ChatMessage[],
+  ) => Promise<string>;
+  /**
+   * Override the loaded AkmConfig (test seam + for the quality gate).
+   * Needed by R-5 to access llm.features.proposal_quality_gate without
+   * a real config file in tests.
+   */
+  config?: import("../core/config").AkmConfig;
   /**
    * Named process to use for per-process agent config lookup. Defaults to
    * `"reflect"`. When an explicit `--profile` flag is given, the process
@@ -481,7 +498,70 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     }
   }
 
-  // 7. Create the proposal. The proposal queue is the ONLY thing reflect
+  // 7. R-5 / #374: Apply the proposal quality gate when enabled.
+  // Mirrors the `lesson_quality_gate` on distill proposals. The gate uses
+  // `runLessonQualityJudge` from distill.ts and is gated behind either
+  // `llm.features.proposal_quality_gate` or `llm.features.lesson_quality_gate`
+  // (legacy alias). Fail-open: any judge error passes through.
+  // G-Eval (arXiv:2303.16634) — quality judgment before admission.
+  const runtimeConfig =
+    options.config ??
+    (() => {
+      try {
+        return loadConfig();
+      } catch {
+        return undefined;
+      }
+    })();
+  const chatFn = options.chat ?? chatCompletion;
+  const qualityGateEnabled =
+    isLlmFeatureEnabled(runtimeConfig, "proposal_quality_gate") ||
+    isLlmFeatureEnabled(runtimeConfig, "lesson_quality_gate");
+
+  if (qualityGateEnabled && runtimeConfig) {
+    const assetContent: string | null = (() => {
+      if (!options.ref) return null;
+      try {
+        const refParsed = parseAssetRef(options.ref);
+        const candidates = [
+          path.join(stash, `${refParsed.type}s`, `${refParsed.name}.md`),
+          path.join(stash, `${refParsed.type}s`, refParsed.name, "index.md"),
+        ];
+        for (const p of candidates) {
+          if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    })();
+
+    const judgeResult = await runLessonQualityJudge(runtimeConfig, payload.content, assetContent ?? "", chatFn);
+    if (!judgeResult.pass) {
+      // Quality gate rejected the proposal — surface as parse_error so the
+      // improve orchestrator can log it and move on without crashing.
+      appendEvent({
+        eventType: "reflect_completed",
+        ref: payload.ref,
+        metadata: {
+          source: "reflect",
+          qualityRejected: true,
+          qualityScore: judgeResult.score,
+          qualityReason: judgeResult.reason,
+        },
+      });
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error" as const,
+        error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
+        ...(options.ref ? { ref: options.ref } : {}),
+        exitCode: result.exitCode,
+      };
+    }
+  }
+
+  // 8. Create the proposal. The proposal queue is the ONLY thing reflect
   // writes — promotion to a real asset is gated by `akm proposal accept`.
   //
   // R-4 / #373: Stamp `derived_from_reflect: true` in the frontmatter of any
