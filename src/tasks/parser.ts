@@ -80,9 +80,9 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
   const when_to_use = readString(data.when_to_use, "when_to_use", filePath);
   const tags = readStringArray(data.tags);
 
-  const hasWorkflow = "workflow" in data && data.workflow !== "";
-  const hasPrompt = "prompt" in data && data.prompt !== "";
-  const hasCommand = "command" in data && data.command !== "" && data.command !== null && data.command !== undefined;
+  const hasWorkflow = "workflow" in data && data.workflow !== "" && data.workflow != null;
+  const hasPrompt = "prompt" in data && data.prompt !== "" && data.prompt != null;
+  const hasCommand = "command" in data && data.command !== "" && data.command != null;
   const targetCount = [hasWorkflow, hasPrompt, hasCommand].filter(Boolean).length;
   if (targetCount > 1) {
     throw new UsageError(

@@ -164,6 +164,7 @@ async function runCommandTask(input: {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
+      cwd: process.env.HOME ?? "/tmp",
     });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
