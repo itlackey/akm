@@ -1675,7 +1675,7 @@ async function runImproveLoopStage(args: {
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
         // O-5 / #378: only inject reflect-originator errors into the reflect call.
         // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
-        const reflectErrors = recentErrors["reflect"] ?? [];
+        const reflectErrors = recentErrors.reflect ?? [];
         if (reflectErrors.length > 0) reflectsWithErrorContext++;
         // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
         // bounded by the wall-clock deadline rather than the default per-profile timeout.

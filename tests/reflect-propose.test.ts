@@ -787,7 +787,7 @@ describe("R-4: reflect stamps derived_from_reflect on lesson proposals (#373)", 
     expect(proposals.length).toBe(1);
     const proposal = proposals[0];
     // R-4: lesson proposal should carry the derived_from_reflect provenance stamp
-    expect(proposal?.payload.frontmatter?.["derived_from_reflect"]).toBe(true);
+    expect(proposal?.payload.frontmatter?.derived_from_reflect).toBe(true);
   });
 
   test("skill proposals from reflect do NOT get derived_from_reflect stamp", async () => {
@@ -808,7 +808,7 @@ describe("R-4: reflect stamps derived_from_reflect on lesson proposals (#373)", 
     expect(proposals.length).toBe(1);
     const proposal = proposals[0];
     // R-4: non-lesson proposals should NOT carry the stamp
-    expect(proposal?.payload.frontmatter?.["derived_from_reflect"]).toBeUndefined();
+    expect(proposal?.payload.frontmatter?.derived_from_reflect).toBeUndefined();
   });
 });
 
