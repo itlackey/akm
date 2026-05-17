@@ -30,6 +30,7 @@ export interface TasksAddInput {
   schedule: string;
   workflow?: string;
   prompt?: string;
+  command?: string | string[];
   profile?: string;
   params?: string;
   name?: string;
@@ -53,9 +54,12 @@ export interface TasksAddResult {
 
 export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult> {
   const id = normaliseTaskId(input.id);
-  if ((input.workflow && input.prompt) || (!input.workflow && !input.prompt)) {
+  const targetCount = [input.workflow, input.prompt, input.command].filter(
+    (v) => v !== undefined && v !== null && v !== "",
+  ).length;
+  if (targetCount !== 1) {
     throw new UsageError(
-      "Pass exactly one of --workflow <ref> or --prompt <asset-ref|./file.md|text>.",
+      "Pass exactly one of --workflow <ref>, --prompt <asset-ref|./file.md|text>, or --command <cmd>.",
       "INVALID_FLAG_VALUE",
     );
   }
@@ -84,6 +88,7 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
+    command: input.command,
     profile: input.profile,
     params: input.params,
     name: input.name,
@@ -392,6 +397,7 @@ interface RenderInput {
   schedule: string;
   workflow?: string;
   prompt?: string;
+  command?: string | string[];
   profile?: string;
   params?: string;
   name?: string;
@@ -411,6 +417,8 @@ function renderTaskYaml(input: RenderInput): string {
   } else if (input.prompt) {
     obj.prompt = input.prompt;
     if (input.profile) obj.profile = input.profile;
+  } else if (input.command) {
+    obj.command = input.command;
   }
   obj.enabled = input.enabled;
   if (input.name) obj.name = input.name;
@@ -437,10 +445,20 @@ function parseJsonObjectArg(raw: string): Record<string, unknown> {
  * Toggle the `enabled:` value in a task YAML file in-place without a full
  * parse/render round-trip (which would reformat the file). Appends the key
  * if absent.
+ *
+ * Preserves inline comments (e.g. `enabled: true # important`) and uses
+ * case-sensitive matching (YAML keys are case-sensitive).
  */
 export function setEnabledInYaml(yaml: string, enabled: boolean): string {
-  if (/^enabled:\s*[^\r\n]*/im.test(yaml)) {
-    return yaml.replace(/^(enabled:\s*)[^\r\n]*/im, `$1${enabled}`);
+  // Match: key prefix (group 1), value (group 2), optional trailing comment (group 3)
+  const pattern = /^(enabled:\s*)([^\s#\r\n][^\r\n]*?)(\s*(?:#[^\r\n]*))?$/m;
+  if (pattern.test(yaml)) {
+    return yaml.replace(pattern, `$1${enabled}$3`);
+  }
+  // Handle the case where enabled: has no value yet (bare key)
+  const simplePattern = /^(enabled:)\s*$/m;
+  if (simplePattern.test(yaml)) {
+    return yaml.replace(simplePattern, `$1 ${enabled}`);
   }
   return `${yaml.trimEnd()}\nenabled: ${enabled}\n`;
 }
