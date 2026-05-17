@@ -132,6 +132,8 @@ Build or refresh the search index.
 akm index            # Incremental (only changed directories)
 akm index --full     # Full rebuild
 akm index --verbose  # Print phase progress to stderr
+akm index --clean    # Normal index + remove stale entries from the DB
+akm index --clean --dry-run # Report stale entries without deleting
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -140,6 +142,14 @@ breakdown in milliseconds. Use `--verbose` to print the indexing mode,
 semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
+
+**`--clean` flag:** After indexing completes, verifies every indexed entry's source
+file still exists on disk. Removes any entries whose file is missing (for local
+stash sources only; remote entries are skipped). Returns a `clean` block in the
+JSON result with `checked`, `removed`, `removedRefs` arrays, and `dryRun` flag.
+Use `--clean` to resolve the edge case where a deleted file in an unchanged
+directory lingers in the index across incremental runs. With `--dry-run`, reports
+which entries would be removed without modifying the database.
 
 `akm index` always rebuilds the search index and keeps metadata in the index.
 When `akm.llm` is configured and the per-pass gate allows it, metadata
@@ -225,6 +235,10 @@ akm graph related knowledge:react-router
 akm graph orphans --limit 20
 akm graph export --out ./graph.json
 akm graph export --out ./graph.jsonl --format jsonl
+akm graph update                        # Re-extract all eligible files
+akm graph update memory:foo             # Re-extract only this ref
+akm graph update memory:foo skill:bar   # Re-extract multiple refs
+akm graph update --source my-stash      # Target a specific stash source
 ```
 
 Subcommands:
@@ -238,6 +252,7 @@ Subcommands:
 | `related <ref>` | Show assets related to `<ref>` via shared graph entities (asset neighbors) |
 | `orphans` | List assets with zero extracted graph entities — useful for quality triage |
 | `export` | Write the graph to disk as `json` or `jsonl` |
+| `update [refs...]` | Re-run graph extraction outside the improve loop, optionally scoped to specific refs. Unknown refs emit a warning and are skipped. |
 
 `akm graph related <ref>` returns the closest graph neighbors of an asset:
 each hit lists the asset's `type`, label, the `shared` entities, and the
@@ -251,6 +266,14 @@ extraction confidence — useful when you have an entity name from
 `akm graph orphans` lists assets that produced zero entities during the
 extraction pass. These are good candidates for re-extraction, content
 improvement, or pruning.
+
+**`akm graph update` [refs...]:** Re-extract graph entities from eligible files.
+When refs are provided, only those assets are re-extracted (incremental scoped
+pass). When no refs are given, performs a full re-extraction over all eligible
+files. Unknown refs (not currently in the index) emit a warning and are skipped
+without error. Returns a `graph-update` shaped result with `filesExtracted`,
+`entitiesUpserted`, `relationsUpserted`, `durationMs`, and `scoped` (true if
+specific refs were targeted).
 
 Common flags:
 
