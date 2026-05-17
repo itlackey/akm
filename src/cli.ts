@@ -3886,6 +3886,11 @@ const tasksAddCommand = defineCommand({
       type: "string",
       description: "Prompt for the configured agent harness — inline text, an asset ref like agent:foo, or ./path.md",
     },
+    command: {
+      type: "string",
+      description:
+        'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
+    },
     profile: { type: "string", description: "Agent profile to use for prompt targets (default: config.agent.default)" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     description: { type: "string", description: "Human-readable description" },
@@ -3900,6 +3905,7 @@ const tasksAddCommand = defineCommand({
         schedule: args.schedule,
         workflow: args.workflow,
         prompt: args.prompt,
+        command: args.command,
         profile: args.profile,
         params: args.params,
         description: args.description,

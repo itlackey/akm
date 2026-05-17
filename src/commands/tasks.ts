@@ -30,6 +30,12 @@ export interface TasksAddInput {
   schedule: string;
   workflow?: string;
   prompt?: string;
+  /**
+   * Shell command to run on the schedule. Accepts either a pre-split argv
+   * array (`["echo", "hi"]`) or a single string that the parser splits on
+   * whitespace (`"echo hi"`). Mutually exclusive with `workflow` and `prompt`.
+   */
+  command?: string | string[];
   profile?: string;
   params?: string;
   name?: string;
@@ -53,9 +59,15 @@ export interface TasksAddResult {
 
 export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult> {
   const id = normaliseTaskId(input.id);
-  if ((input.workflow && input.prompt) || (!input.workflow && !input.prompt)) {
+  const hasCommand =
+    input.command !== undefined &&
+    input.command !== null &&
+    !(typeof input.command === "string" && input.command.trim() === "") &&
+    !(Array.isArray(input.command) && input.command.length === 0);
+  const targetCount = [Boolean(input.workflow), Boolean(input.prompt), hasCommand].filter(Boolean).length;
+  if (targetCount !== 1) {
     throw new UsageError(
-      "Pass exactly one of --workflow <ref> or --prompt <asset-ref|./file.md|text>.",
+      "Pass exactly one of --workflow <ref>, --prompt <asset-ref|./file.md|text>, or --command <shell-command>.",
       "INVALID_FLAG_VALUE",
     );
   }
@@ -84,6 +96,7 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
+    command: input.command,
     profile: input.profile,
     params: input.params,
     name: input.name,
@@ -392,6 +405,7 @@ interface RenderInput {
   schedule: string;
   workflow?: string;
   prompt?: string;
+  command?: string | string[];
   profile?: string;
   params?: string;
   name?: string;
@@ -411,6 +425,11 @@ function renderTaskYaml(input: RenderInput): string {
   } else if (input.prompt) {
     obj.prompt = input.prompt;
     if (input.profile) obj.profile = input.profile;
+  } else if (input.command !== undefined) {
+    // Emit a string when given a string, an array when given an array. The
+    // parser accepts both forms; preserving the caller's shape keeps the YAML
+    // ergonomic for humans editing the file later.
+    obj.command = input.command;
   }
   obj.enabled = input.enabled;
   if (input.name) obj.name = input.name;
