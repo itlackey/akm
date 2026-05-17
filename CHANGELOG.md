@@ -41,6 +41,8 @@ All notable changes to this project will be documented in this file.
 
 - **Memory inference and graph extraction moved out of `index`**: The slow memory-maintenance passes now run from `akm improve` after consolidation, not from `akm index`. Automation that previously treated `index` as the owner of all LLM enrichment work must switch to the improve-owned maintenance flow.
 
+- **Task files migrated from `.md`+YAML frontmatter to pure `.yml` format**: Tasks are now stored as plain YAML at `<stash>/tasks/<id>.yml`. Multi-line inline prompts use YAML block scalars (`prompt: |`), replacing the prior `prompt: inline` + markdown-body convention. Existing `.md` task files are no longer discovered by `akm tasks list` — they must be renamed and rewritten as YAML. The lint pass for `tasks/` now parses YAML directly (it was silently a no-op for pure YAML files when routed through the frontmatter parser). The lint issue code `invalid-task-frontmatter` has been renamed to `invalid-task-yaml`. See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for migration steps.
+
 ### New Features
 
 - **`vault set` reads from stdin by default**: Values are never passed via argv. `printf '%s' "$SECRET" | akm vault set vault:prod KEY` is the default pattern. Use `--from-env <VAR>` to read from a named environment variable instead.
@@ -66,6 +68,24 @@ All notable changes to this project will be documented in this file.
 - **Proposal resolution by ref or UUID prefix**: `akm accept`, `akm reject`, and `akm diff` now accept a short UUID prefix (e.g. `akm accept abc123`) or an asset ref (e.g. `akm accept memory:my-note`) in addition to full UUIDs.
 
 - **`bun scripts/migrate-storage.ts`**: One-shot migration script to move existing data to the new XDG layout. Supports `--dry-run` to preview changes without applying them and `--yes` to apply.
+
+- **Task YAML adds `name` and `when_to_use` fields**: Task definitions can now set an optional `name` (display name shown by `akm tasks list`) and `when_to_use` (manual-trigger guidance describing when an operator should invoke the task). Both fields are optional and surface in `akm tasks show`/`list` output.
+
+- **`command:` is now a recognised task target**: `akm lint` recognises `command:` alongside `workflow:` and `prompt:` as valid task targets, so command-driven tasks no longer trip a `missing-target` finding.
+
+- **Proposal creation validates at write time**: `createProposal()` now rejects four classes of malformed input deterministically before writing, with a typed `INVALID_PROPOSAL` usage error and a typed `ProposalRejectionReason`:
+  - `invalid_ref` — `parseAssetRef` threw
+  - `unknown_type` — type is not in `TYPE_DIRS`
+  - `empty_content` — payload body is empty after trim
+  - `missing_description` — consolidate-style frontmatter present but `description` is absent or empty
+
+  Each rejection emits a `proposal_creation_rejected` event with the typed reason so upstream pipelines (especially `consolidate`) can be tuned based on which check fires most.
+
+- **`akm improve` orphan-purge maintenance pass**: After graph extraction (and after any reindex following consolidation or memory inference), `akm improve` now rejects pending `reflect` proposals whose target asset no longer exists on disk. This prevents stale proposals from polluting the queue when assets are removed or consolidated mid-run. Lesson proposals (which target new assets by definition) and non-reflect proposals (which legitimately target not-yet-created assets) are always kept. Emits a `proposal_orphan_purge` event with `checked`, `rejected`, `durationMs`, `byType`, and `orphans` for observability.
+
+- **Per-reflect outcome event `improve_reflect_outcome`**: Emitted once per reflect call during `akm improve` with `{ok, durationMs, agentProfile, reason}`, enabling per-asset latency tracking and per-run failure-shape analysis.
+
+- **Enriched `improve_completed` event**: Now includes `durationMs` (total wall-clock), `warningCount`, `orphansPurged`, `reflectCooldownActions`, `graphCoverage`, `graphDensity`, and `graphEntities` for richer self-tuning telemetry without requiring a separate stats query.
 
 ### Performance
 
@@ -117,6 +137,14 @@ All notable changes to this project will be documented in this file.
 - **`help migrate --format json` positional parsing**: Global output flags no longer get consumed as the migration version positional, so missing-version invocations fail with the correct structured usage envelope.
 
 - **Docker Bun install matrix**: Fixed the Bun-based Docker build path by declaring `@opencode-ai/sdk` as a package dependency and copying `scripts/` into the Bun image build context, bringing the release-check Docker matrix back to green.
+
+- **`FOREIGN KEY constraint failed` crash in embedding batch**: When an entry was deleted between when its id was queued for embedding and when the INSERT ran (e.g. a concurrent improve cycle consolidating away the entry), the INSERT would throw inside the batch transaction, rolling back every embedding for that run — not just the stale one. `upsertEmbedding` now does a cheap pre-flight `SELECT 1 FROM entries WHERE id = ?` and returns `false` (skipped) instead of throwing. The indexer tracks `storedCount`/`skippedCount` separately and surfaces a single concise warning when entries were skipped.
+
+- **`vault set` stdin prompt no longer hangs**: When `stdin` is attached to a TTY, `akm vault set` now prints `Enter value for "<KEY>" (Ctrl-D when done):` to stderr before reading. Previously an interactive invocation hung silently with no indication that input was awaited. Piped-stdin invocations are unchanged.
+
+- **Reflect cooldown signals classified correctly**: When a reflect call returns `{ok: false, reason: "cooldown"}`, the improve loop now classifies the action as `reflect-cooldown` rather than `reflect-failed`, and skips the `pushRecentError` call. This prevents cooldown skips from contaminating the `recentErrors`/`avoidPatterns` context injected into the next reflect call, and they are now counted separately in `improve_completed.reflectCooldownActions`.
+
+- **`propose` static import**: `node:fs` in `src/commands/propose.ts` is now a static top-level import instead of a dynamic `await import` inside the function body. Consistent with the rest of the file and removes an unnecessary microtask boundary on every propose invocation.
 
 - **`akm agent <profile> [<agent-ref>]`**: Agent command now accepts an optional agent asset ref as a second positional. The agent asset's content becomes the system prompt, its `model:` frontmatter sets the model, and its `tools:` frontmatter sets the tool policy — all translated to platform-specific CLI flags automatically. Use `--model <alias-or-id>` to override the asset's model for this invocation.
 
