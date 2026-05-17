@@ -414,8 +414,8 @@ export function createProposal(
   // malformed frontmatter, polluting the queue with hundreds of unusable
   // entries. Reflect / distill / propose proposals have varied legitimate
   // shapes and should not be rejected here for missing description.
-  if (input.source === "consolidate" && input.payload.frontmatter !== undefined && input.payload.frontmatter !== null) {
-    const desc = input.payload.frontmatter.description;
+  if (input.source === "consolidate") {
+    const desc = input.payload.frontmatter?.description;
     if (typeof desc !== "string" || desc.trim() === "") {
       return rejectProposal(
         "missing_description",
@@ -547,7 +547,7 @@ export function listProposals(
         out.push({
           id: entry.name,
           ref: "unknown:unknown",
-          status: "pending",
+          status: "rejected",
           source: "invalid",
           createdAt: "",
           updatedAt: "",
@@ -705,9 +705,9 @@ export function purgeOrphanProposals(
   const orphans: Array<{ id: string; ref: string; reason: string }> = [];
   const byType: Record<string, number> = {};
   const pending = listProposals(stashDir, { status: "pending" });
+  const reflectPending = pending.filter((p) => p.source === "reflect");
 
-  for (const p of pending) {
-    if (p.source !== "reflect") continue;
+  for (const p of reflectPending) {
     let parsed: ReturnType<typeof parseAssetRef>;
     try {
       parsed = parseAssetRef(p.ref);
@@ -740,7 +740,7 @@ export function purgeOrphanProposals(
   }
 
   return {
-    checked: pending.length,
+    checked: reflectPending.length,
     rejected: orphans.length,
     durationMs: Date.now() - t0,
     byType,

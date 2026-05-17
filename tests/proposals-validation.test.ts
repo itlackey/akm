@@ -7,7 +7,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createProposal, isProposalSkipped, listProposals, purgeOrphanProposals } from "../src/core/proposals";
+import {
+  archiveProposal,
+  createProposal,
+  isProposalSkipped,
+  listProposals,
+  purgeOrphanProposals,
+} from "../src/core/proposals";
 
 const tempDirs: string[] = [];
 const savedEnv: Record<string, string | undefined> = {
@@ -209,5 +215,44 @@ describe("purgeOrphanProposals", () => {
     const result = purgeOrphanProposals(primary, [primary, secondary]);
     expect(result.rejected).toBe(0);
     expect(result.checked).toBe(1);
+  });
+
+  test("skips proposals whose status is already accepted (checked stays 0)", () => {
+    const stash = makeStashDir();
+    // Create then immediately accept a reflect proposal — it moves to the
+    // archive with status "accepted" and must never be counted by the purge.
+    const created = createProposal(stash, {
+      ref: "memory:already-accepted",
+      source: "reflect",
+      force: true,
+      payload: { content: "x", frontmatter: { description: "ok" } },
+    });
+    if (!isProposalSkipped(created)) {
+      // Archive it as accepted so it disappears from the pending queue.
+      archiveProposal(stash, created.id, "accepted", undefined);
+    }
+    const result = purgeOrphanProposals(stash, [stash]);
+    // No pending reflect proposals → nothing checked, nothing rejected.
+    expect(result.checked).toBe(0);
+    expect(result.rejected).toBe(0);
+  });
+
+  test("durationMs is a non-negative integer", () => {
+    const stash = makeStashDir();
+    const result = purgeOrphanProposals(stash, [stash]);
+    expect(Number.isInteger(result.durationMs)).toBe(true);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("reflect proposal for script:never-existed is treated as an orphan and rejected", () => {
+    const stash = makeStashDir();
+    createProposal(stash, {
+      ref: "script:never-existed",
+      source: "reflect",
+      force: true,
+      payload: { content: "console.log('hi')", frontmatter: { description: "ok" } },
+    });
+    const result = purgeOrphanProposals(stash, [stash]);
+    expect(result.rejected).toBeGreaterThanOrEqual(1);
   });
 });

@@ -861,14 +861,18 @@ export function upsertEmbedding(db: Database, entryId: number, embedding: Embedd
   // Always write to BLOB table (works without sqlite-vec)
   db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(entryId, buf);
 
-  // Also write to sqlite-vec table when available (fast path)
+  // Also write to sqlite-vec table when available (fast path).
+  // Wrapped in a transaction so a crash between DELETE and INSERT does not
+  // leave the entry missing from the vec table.
   if (isVecAvailable(db)) {
     try {
-      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId);
+      db.transaction(() => {
+        db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId);
+        db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf);
+      })();
     } catch {
-      /* ignore */
+      /* ignore — vec table unavailable or constraint failure */
     }
-    db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf);
   }
   return true;
 }
@@ -1583,9 +1587,9 @@ export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
  * Returns null when no matching row is found.
  */
 export function getEntryByRef(db: Database, type: string, name: string): { id: number } | null {
-  return db
-    .prepare("SELECT id FROM entries WHERE entry_type = ? AND entry_key LIKE ?")
-    .get(type, `%${type}:${name}`) as { id: number } | null;
+  return db.prepare("SELECT id FROM entries WHERE entry_type = ? AND entry_key = ?").get(type, `${type}:${name}`) as {
+    id: number;
+  } | null;
 }
 
 /**
