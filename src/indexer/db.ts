@@ -747,6 +747,26 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
 }
 
 /**
+ * Delete entries by their primary key IDs, along with all related rows
+ * (embeddings, entries_vec, entries_fts, utility_scores, usage_events).
+ *
+ * Used by the `--clean` post-pass to remove stale entries whose source files
+ * no longer exist on disk.
+ */
+export function deleteEntriesByIds(db: Database, ids: number[]): void {
+  if (ids.length === 0) return;
+  db.transaction(() => {
+    const idObjs = ids.map((id) => ({ id }));
+    deleteRelatedRows(db, idObjs);
+    for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      db.prepare(`DELETE FROM entries WHERE id IN (${placeholders})`).run(...chunk);
+    }
+  })();
+}
+
+/**
  * Rebuild the FTS5 search index.
  *
  * `incremental` (default `false`): when true, only rebuild rows that

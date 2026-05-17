@@ -43,6 +43,7 @@ import {
   closeDatabase,
   type DbIndexedEntry,
   deleteEntriesByDir,
+  deleteEntriesByIds,
   deleteEntriesByStashDir,
   deleteIndexDirStatesByStashDir,
   getAllEntriesForEmbedding,
@@ -91,6 +92,17 @@ import { walkStashFlat } from "./walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export interface IndexCleanResult {
+  /** Number of entries checked for disk presence. */
+  checked: number;
+  /** Number of entries deleted (0 when dryRun is true). */
+  removed: number;
+  /** Refs of entries whose source file was missing (also populated in dry-run). */
+  removedRefs: string[];
+  /** Whether the run was a dry-run (no deletions performed). */
+  dryRun: boolean;
+}
+
 export interface IndexResponse {
   stashDir: string;
   totalEntries: number;
@@ -111,6 +123,8 @@ export interface IndexResponse {
   };
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
+  /** Present when --clean was passed: stale-entry purge results. */
+  clean?: IndexCleanResult;
 }
 
 export interface IndexVerification {
@@ -141,6 +155,16 @@ interface IndexOptions {
    * `"enriched"` entries). Default: false — already-enriched entries are skipped.
    */
   reEnrich?: boolean;
+  /**
+   * When true, run a post-pass after indexing that removes entries whose source
+   * file no longer exists on disk. Remote entries (empty file_path) are skipped.
+   */
+  clean?: boolean;
+  /**
+   * When true (and `clean` is also true), report which entries would be removed
+   * without actually deleting them.
+   */
+  dryRun?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
 }
@@ -364,6 +388,42 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   void sources;
 }
 
+// ── Clean pass ───────────────────────────────────────────────────────────────
+
+/**
+ * Post-index clean pass: scan the `entries` table for rows whose source file
+ * no longer exists on disk and remove them (unless `dryRun` is true).
+ *
+ * Only rows with a non-empty `file_path` are checked — remote/virtual entries
+ * that have no local path are always skipped.
+ */
+function runCleanPass(db: Database, dryRun: boolean): IndexCleanResult {
+  const allEntries = db.prepare("SELECT id, entry_key AS ref, file_path AS path FROM entries").all() as {
+    id: number;
+    ref: string;
+    path: string;
+  }[];
+
+  // Only check entries that have a non-empty local path (skip remote/virtual).
+  const localEntries = allEntries.filter((e) => typeof e.path === "string" && e.path.trim() !== "");
+
+  const missing = localEntries.filter((e) => !fs.existsSync(e.path));
+
+  if (!dryRun && missing.length > 0) {
+    deleteEntriesByIds(
+      db,
+      missing.map((e) => e.id),
+    );
+  }
+
+  return {
+    checked: localEntries.length,
+    removed: dryRun ? 0 : missing.length,
+    removedRefs: missing.map((e) => e.ref),
+    dryRun,
+  };
+}
+
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
 export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
@@ -372,6 +432,8 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const signal = options?.signal;
   const reEnrich = options?.reEnrich === true;
   const full = options?.full === true;
+  const clean = options?.clean === true;
+  const dryRun = options?.dryRun === true;
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("../core/config.js");
@@ -454,6 +516,15 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     };
     const { timing } = ctx;
 
+    // ── Clean pass ───────────────────────────────────────────────────────────
+    // After the normal index completes, remove entries whose source files no
+    // longer exist on disk. Remote entries (empty file_path) are skipped.
+    let cleanResult: IndexCleanResult | undefined;
+    if (clean) {
+      cleanResult = runCleanPass(db, dryRun);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     return {
       stashDir,
       totalEntries,
@@ -471,6 +542,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         embedMs: timing.tEmbedEnd - timing.tFtsEnd,
         ftsMs: timing.tFtsEnd - timing.tLlmEnd,
       },
+      ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
     };
   } finally {
     closeDatabase(db);

@@ -335,6 +335,16 @@ const indexCommand = defineCommand({
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
     verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
+    clean: {
+      type: "boolean",
+      description: "After indexing, remove any entries whose source file no longer exists on disk.",
+      default: false,
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "When combined with --clean, report stale entries without deleting them.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -368,6 +378,8 @@ const indexCommand = defineCommand({
       try {
         const result = await akmIndex({
           full: args.full,
+          clean: args.clean,
+          dryRun: args["dry-run"],
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
