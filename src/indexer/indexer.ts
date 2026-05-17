@@ -1347,14 +1347,25 @@ async function generateEmbeddingsForDb(
     throwIfAborted(signal);
     // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.
+    let storedCount = 0;
+    let skippedCount = 0;
     db.transaction(() => {
       for (let i = 0; i < allEntries.length; i++) {
-        upsertEmbedding(db, allEntries[i].id, embeddings[i]);
+        if (upsertEmbedding(db, allEntries[i].id, embeddings[i])) {
+          storedCount++;
+        } else {
+          skippedCount++;
+        }
       }
     })();
+    if (skippedCount > 0) {
+      warn(
+        `[embed] ${skippedCount} embedding${skippedCount === 1 ? "" : "s"} skipped (entry deleted between queue and write)`,
+      );
+    }
     onProgress({
       phase: "embeddings",
-      message: `Stored ${embeddings.length} embedding${embeddings.length === 1 ? "" : "s"}.`,
+      message: `Stored ${storedCount} embedding${storedCount === 1 ? "" : "s"}.`,
     });
     setMeta(db, "embeddingFingerprint", currentFingerprint);
     return { success: true };

@@ -847,7 +847,15 @@ export function rebuildFts(db: Database, options?: { incremental?: boolean }): v
 
 // ── Vector operations ───────────────────────────────────────────────────────
 
-export function upsertEmbedding(db: Database, entryId: number, embedding: EmbeddingVector): void {
+export function upsertEmbedding(db: Database, entryId: number, embedding: EmbeddingVector): boolean {
+  // Pre-flight FK guard: when an entry is deleted between when its id is queued
+  // for embedding and when this INSERT runs (e.g. consolidation deletes during
+  // a concurrent improve cycle), the INSERT throws "FOREIGN KEY constraint failed"
+  // and rolls back the entire batch transaction in the caller, losing every
+  // embedding for that run. A cheap SELECT here turns the race into a clean skip.
+  const exists = db.prepare("SELECT 1 FROM entries WHERE id = ?").get(entryId);
+  if (!exists) return false;
+
   const buf = float32Buffer(embedding);
 
   // Always write to BLOB table (works without sqlite-vec)
@@ -862,6 +870,7 @@ export function upsertEmbedding(db: Database, entryId: number, embedding: Embedd
     }
     db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf);
   }
+  return true;
 }
 
 export function searchVec(db: Database, queryEmbedding: EmbeddingVector, k: number): DbVecResult[] {
