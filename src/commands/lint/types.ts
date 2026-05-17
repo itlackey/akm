@@ -6,7 +6,7 @@ export type LintIssueType =
   | "missing-name-or-type"
   | "stale-path"
   | "missing-skill-md"
-  | "invalid-task-frontmatter"
+  | "invalid-task-yaml"
   | "missing-ref"
   | "dangerous-vault-key";
 

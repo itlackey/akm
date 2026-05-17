@@ -6,9 +6,8 @@
  *                          agent harness (e.g. `opencode run`)
  *   • a command target   — invoked directly via `Bun.spawn()`, no AI agent
  *
- * Tasks are stored as markdown files at `<stash>/tasks/<id>.md`. The
- * frontmatter holds the schedule and target; for inline-prompt tasks the
- * markdown body is the prompt text.
+ * Tasks are stored as pure YAML files at `<stash>/tasks/<id>.yml`. Multi-line
+ * inline prompts use a YAML block scalar (`prompt: |`).
  */
 
 export const TASK_SCHEMA_VERSION = 1;
@@ -44,13 +43,17 @@ export type TaskTarget = TaskWorkflowTarget | TaskPromptTarget | TaskCommandTarg
 
 export interface TaskDocument {
   schemaVersion: typeof TASK_SCHEMA_VERSION;
-  /** Filesystem-derived id (basename without `.md`). */
+  /** Filesystem-derived id (basename without `.yml`). */
   id: string;
   /** Cron-style expression, possibly an `@`-alias. */
   schedule: string;
   enabled: boolean;
   target: TaskTarget;
+  /** Human-readable display name shown in `akm tasks list`. */
+  name?: string;
   description?: string;
+  /** Guidance on when this task should be used or triggered manually. */
+  when_to_use?: string;
   tags?: string[];
   source: { path: string };
   /**

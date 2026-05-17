@@ -394,12 +394,12 @@ describe("TaskLinter", () => {
     writeFile(
       stashDir,
       "tasks",
-      "full-task.md",
-      '---\nschedule: "0 9 * * *"\nenabled: true\nprompt: Do something useful\nupdated: 2025-01-01\n---\n\nTask body.\n',
+      "full-task.yml",
+      'schedule: "0 9 * * *"\nenabled: true\nprompt: Do something useful\n',
     );
 
     const result = akmLint({ dir: stashDir });
-    expect(result.flagged.filter((i) => i.issue === "invalid-task-frontmatter")).toHaveLength(0);
+    expect(result.flagged.filter((i) => i.issue === "invalid-task-yaml")).toHaveLength(0);
   });
 
   test("passes when all required fields are present (workflow variant)", () => {
@@ -407,59 +407,44 @@ describe("TaskLinter", () => {
     writeFile(
       stashDir,
       "tasks",
-      "workflow-task.md",
-      '---\nschedule: "@daily"\nenabled: false\nworkflow: "workflow:daily-backup"\nupdated: 2025-01-01\n---\n\nTask body.\n',
+      "workflow-task.yml",
+      'schedule: "@daily"\nenabled: false\nworkflow: "workflow:daily-backup"\n',
     );
 
     const result = akmLint({ dir: stashDir });
-    expect(result.flagged.filter((i) => i.issue === "invalid-task-frontmatter")).toHaveLength(0);
+    expect(result.flagged.filter((i) => i.issue === "invalid-task-yaml")).toHaveLength(0);
   });
 
-  test("invalid-task-frontmatter: flags task missing schedule field", () => {
+  test("invalid-task-yaml: flags task missing schedule field", () => {
     const stashDir = makeTempStash();
-    writeFile(
-      stashDir,
-      "tasks",
-      "no-schedule.md",
-      "---\nenabled: true\nprompt: Do something\nupdated: 2025-01-01\n---\n\nTask body.\n",
-    );
+    writeFile(stashDir, "tasks", "no-schedule.yml", "enabled: true\nprompt: Do something\n");
 
     const result = akmLint({ dir: stashDir });
-    const issue = result.flagged.find((i) => i.issue === "invalid-task-frontmatter");
+    const issue = result.flagged.find((i) => i.issue === "invalid-task-yaml");
     expect(issue).toBeDefined();
     expect(issue?.detail).toContain("schedule");
     expect(issue?.fixed).toBe(false);
   });
 
-  test("invalid-task-frontmatter: flags task missing enabled field", () => {
+  test("invalid-task-yaml: flags task missing enabled field", () => {
     const stashDir = makeTempStash();
-    writeFile(
-      stashDir,
-      "tasks",
-      "no-enabled.md",
-      '---\nschedule: "0 * * * *"\nprompt: Do something\nupdated: 2025-01-01\n---\n\nTask body.\n',
-    );
+    writeFile(stashDir, "tasks", "no-enabled.yml", 'schedule: "0 * * * *"\nprompt: Do something\n');
 
     const result = akmLint({ dir: stashDir });
-    const issue = result.flagged.find((i) => i.issue === "invalid-task-frontmatter");
+    const issue = result.flagged.find((i) => i.issue === "invalid-task-yaml");
     expect(issue).toBeDefined();
     expect(issue?.detail).toContain("enabled");
     expect(issue?.fixed).toBe(false);
   });
 
-  test("invalid-task-frontmatter: flags task with neither prompt nor workflow", () => {
+  test("invalid-task-yaml: flags task with neither prompt nor workflow nor command", () => {
     const stashDir = makeTempStash();
-    writeFile(
-      stashDir,
-      "tasks",
-      "no-target.md",
-      '---\nschedule: "0 * * * *"\nenabled: true\nupdated: 2025-01-01\n---\n\nTask body.\n',
-    );
+    writeFile(stashDir, "tasks", "no-target.yml", 'schedule: "0 * * * *"\nenabled: true\n');
 
     const result = akmLint({ dir: stashDir });
-    const issue = result.flagged.find((i) => i.issue === "invalid-task-frontmatter");
+    const issue = result.flagged.find((i) => i.issue === "invalid-task-yaml");
     expect(issue).toBeDefined();
-    expect(issue?.detail).toContain("prompt or workflow");
+    expect(issue?.detail).toContain("prompt, workflow, or command");
     expect(issue?.fixed).toBe(false);
   });
 });

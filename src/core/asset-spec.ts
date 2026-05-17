@@ -128,12 +128,21 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     actionBuilder: (ref) => `akm show ${ref} -> read the lesson and apply when_to_use`,
   },
   // Scheduled tasks. A task file pairs a cron-style schedule with a target
-  // (workflow ref or prompt) that `akm tasks` registers with the OS-native
-  // scheduler (cron / launchd / schtasks). Stored under <stash>/tasks/<id>.md.
+  // (workflow ref, prompt, or command) that `akm tasks` registers with the
+  // OS-native scheduler (cron / launchd / schtasks). Stored as pure YAML
+  // under <stash>/tasks/<id>.yml.
   task: {
     stashDir: "tasks",
-    ...markdownSpec,
-    rendererName: "task-md",
+    isRelevantFile: (fileName: string) => path.extname(fileName).toLowerCase() === ".yml",
+    toCanonicalName: (typeRoot: string, filePath: string) => {
+      const rel = toPosix(path.relative(typeRoot, filePath));
+      return rel.endsWith(".yml") ? rel.slice(0, -4) : rel;
+    },
+    toAssetPath: (typeRoot: string, name: string) => {
+      const withExt = name.endsWith(".yml") ? name : `${name}.yml`;
+      return path.join(typeRoot, withExt);
+    },
+    rendererName: "task-yaml",
     actionBuilder: buildTaskAction,
   },
 };

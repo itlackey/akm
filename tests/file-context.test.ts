@@ -571,7 +571,7 @@ describe("Renderer", () => {
       "memory-md",
       "script-source",
       "skill-md",
-      "task-md",
+      "task-yaml",
       "vault-env",
       "wiki-md",
       "workflow-md",

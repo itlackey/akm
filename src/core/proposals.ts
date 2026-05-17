@@ -409,12 +409,17 @@ export function createProposal(
   if (!input.payload.content.trim()) {
     return rejectProposal("empty_content", `Proposal for "${input.ref}" has empty content.`);
   }
-  if (input.payload.frontmatter !== undefined && input.payload.frontmatter !== null) {
+  // Description check is only enforced for `consolidate` source — that's the
+  // automated pipeline that historically produced proposals with missing or
+  // malformed frontmatter, polluting the queue with hundreds of unusable
+  // entries. Reflect / distill / propose proposals have varied legitimate
+  // shapes and should not be rejected here for missing description.
+  if (input.source === "consolidate" && input.payload.frontmatter !== undefined && input.payload.frontmatter !== null) {
     const desc = input.payload.frontmatter.description;
     if (typeof desc !== "string" || desc.trim() === "") {
       return rejectProposal(
         "missing_description",
-        `Proposal for "${input.ref}" has empty or missing frontmatter description.`,
+        `Proposal for "${input.ref}" (source=consolidate) has empty or missing frontmatter description.`,
       );
     }
   }

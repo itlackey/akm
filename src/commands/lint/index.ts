@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config";
 import { loadConfig } from "../../core/config";
@@ -40,6 +41,20 @@ const STASH_SUBDIRS = [
 ] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function collectYamlFiles(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const results: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectYamlFiles(full));
+    } else if (entry.isFile() && entry.name.endsWith(".yml")) {
+      results.push(full);
+    }
+  }
+  return results;
+}
 
 function collectMarkdownFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -93,7 +108,8 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
 
   for (const subdir of STASH_SUBDIRS) {
     const dirPath = path.join(stashRoot, subdir);
-    const files = collectMarkdownFiles(dirPath);
+    // Tasks are .yml files; everything else is .md
+    const files = subdir === "tasks" ? collectYamlFiles(dirPath) : collectMarkdownFiles(dirPath);
     const linter = getLinterForType(subdir);
 
     // If the linter supports directory-level checks, run them for each direct
@@ -122,7 +138,24 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
         continue;
       }
 
-      const { data, content: body, frontmatter } = parseFrontmatter(raw);
+      let data: Record<string, unknown>;
+      let body: string;
+      let frontmatter: string | null;
+
+      if (subdir === "tasks") {
+        // Task files are pure YAML — parseFrontmatter returns empty data for them.
+        try {
+          const parsed = parseYaml(raw);
+          data =
+            parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+        } catch {
+          data = {};
+        }
+        body = raw;
+        frontmatter = null;
+      } else {
+        ({ data, content: body, frontmatter } = parseFrontmatter(raw));
+      }
 
       const issues = linter.lint({ filePath, relPath, raw, data, body, frontmatter, fix, stashRoot, extraStashRoots });
 

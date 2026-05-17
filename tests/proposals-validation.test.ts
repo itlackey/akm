@@ -87,7 +87,7 @@ describe("createProposal validation", () => {
     expect(caught?.code).toBe("INVALID_PROPOSAL");
   });
 
-  test("rejects frontmatter with missing description", () => {
+  test("rejects consolidate proposal with missing description in frontmatter", () => {
     const stash = makeStashDir();
     let caught: { code?: string; message?: string } | undefined;
     try {
@@ -102,6 +102,19 @@ describe("createProposal validation", () => {
     }
     expect(caught?.code).toBe("INVALID_PROPOSAL");
     expect(caught?.message).toMatch(/description/i);
+  });
+
+  test("accepts reflect proposal with frontmatter but no description (description-only enforced for consolidate)", () => {
+    const stash = makeStashDir();
+    // Reflect proposals legitimately have varied content shapes — don't reject
+    // for missing description, only consolidate does that.
+    const result = createProposal(stash, {
+      ref: "memory:bar",
+      source: "reflect",
+      force: true,
+      payload: { content: "x", frontmatter: { tags: ["a"] } },
+    });
+    expect(isProposalSkipped(result)).toBe(false);
   });
 
   test("accepts valid proposal", () => {

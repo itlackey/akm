@@ -8,7 +8,7 @@ const TASK: TaskDocument = {
   schedule: "*/15 * * * *",
   enabled: true,
   target: { kind: "workflow", ref: "workflow:noop", params: {} },
-  source: { path: "/stash/tasks/ping.md" },
+  source: { path: "/stash/tasks/ping.yml" },
 };
 
 describe("cron backend helpers", () => {

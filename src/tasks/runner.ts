@@ -77,8 +77,8 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   const logDir = options.logDir ?? getTaskLogDir();
 
   const filePath = await resolveAssetPath(stashDir, "task", id);
-  const markdown = fs.readFileSync(filePath, "utf8");
-  const task = parseTaskDocument({ markdown, filePath, id });
+  const yaml = fs.readFileSync(filePath, "utf8");
+  const task = parseTaskDocument({ yaml, filePath, id });
 
   const startedAt = now();
   const startedIso = startedAt.toISOString();

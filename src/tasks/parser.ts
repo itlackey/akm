@@ -1,28 +1,29 @@
 /**
- * Parse a task markdown file (frontmatter + body) into a {@link TaskDocument}.
+ * Parse a task YAML file into a {@link TaskDocument}.
  *
- * The on-disk shape is:
+ * The on-disk shape is a pure YAML file at `<stash>/tasks/<id>.yml`:
  *
- * ```markdown
- * ---
+ * ```yaml
  * schedule: "0 9 * * *"
  * # one of:
  * workflow: workflow:daily-backup
  * params:
  *   region: us-east-1
  * # ...or:
- * prompt: inline                    # body is the prompt
- * profile: opencode                 # optional
- * # ...or:
  * prompt: agent:my-agent            # asset ref
  * # ...or:
  * prompt: ./prompts/my-prompt.md    # relative file path
+ * # ...or:
+ * prompt: |                         # inline multi-line prompt (block scalar)
+ *   Do the thing.
+ *   And the other thing.
+ * # ...or:
+ * command: akm improve --auto-accept safe --limit 25
  * enabled: true                     # default true
+ * name: Daily backup
  * description: …
+ * when_to_use: …
  * tags: [scheduled, backup]
- * ---
- *
- * # Task: Daily backup           (optional notes; for prompt:inline this is the prompt)
  * ```
  *
  * Validation lives in {@link validateTaskDocument}. The parser only enforces
@@ -31,34 +32,52 @@
  */
 
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import { UsageError } from "../core/errors";
-import { parseFrontmatter } from "../core/frontmatter";
 import { TASK_SCHEMA_VERSION, type TaskDocument, type TaskTarget } from "./schema";
 
 export interface ParseTaskInput {
-  /** The full markdown contents of the task file. */
-  markdown: string;
+  /** The full YAML contents of the task file. */
+  yaml: string;
   /** Absolute or relative path used in error messages and `source.path`. */
   filePath: string;
-  /** Filename-derived id; usually `path.basename(filePath, ".md")`. */
+  /** Filename-derived id; usually `path.basename(filePath, ".yml")`. */
   id: string;
 }
 
 export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
-  const { markdown, filePath, id } = input;
-  const fm = parseFrontmatter(markdown);
-  const data = fm.data;
+  const { yaml, filePath, id } = input;
+
+  let data: Record<string, unknown>;
+  try {
+    const parsed = parseYaml(yaml);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new UsageError(
+        `Task "${id}" YAML must be a mapping (key: value pairs). File: ${filePath}`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    data = parsed as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof UsageError) throw err;
+    throw new UsageError(
+      `Task "${id}" has invalid YAML: ${err instanceof Error ? err.message : String(err)}. File: ${filePath}`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
 
   const schedule = readString(data.schedule, "schedule", filePath);
   if (!schedule) {
     throw new UsageError(
-      `Task "${id}" is missing a schedule (frontmatter key "schedule"). File: ${filePath}`,
+      `Task "${id}" is missing a schedule (YAML key "schedule"). File: ${filePath}`,
       "MISSING_REQUIRED_ARGUMENT",
     );
   }
 
   const enabled = data.enabled === undefined ? true : data.enabled === true;
+  const name = readString(data.name, "name", filePath);
   const description = readString(data.description, "description", filePath);
+  const when_to_use = readString(data.when_to_use, "when_to_use", filePath);
   const tags = readStringArray(data.tags);
 
   const hasWorkflow = "workflow" in data && data.workflow !== "";
@@ -73,7 +92,7 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
   }
   if (targetCount === 0) {
     throw new UsageError(
-      `Task "${id}" must set one of \`workflow\`, \`prompt\`, or \`command\` in frontmatter. File: ${filePath}`,
+      `Task "${id}" must set one of \`workflow\`, \`prompt\`, or \`command\`. File: ${filePath}`,
       "MISSING_REQUIRED_ARGUMENT",
     );
   }
@@ -100,7 +119,7 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     const profile = readString(data.profile, "profile", filePath);
     target = {
       kind: "prompt",
-      source: resolvePromptSource(promptRaw, fm.content, filePath, id),
+      source: resolvePromptSource(promptRaw, filePath, id),
       profile: profile && profile.length > 0 ? profile : undefined,
     };
   }
@@ -124,7 +143,9 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     schedule,
     enabled,
     target,
+    name: name && name.length > 0 ? name : undefined,
     description: description && description.length > 0 ? description : undefined,
+    when_to_use: when_to_use && when_to_use.length > 0 ? when_to_use : undefined,
     tags: tags && tags.length > 0 ? tags : undefined,
     source: { path: filePath },
     timeoutMs,
@@ -132,31 +153,15 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
 }
 
 /**
- * Split `prompt:` frontmatter into one of {@link TaskPromptSource} variants.
+ * Resolve a `prompt:` value into a {@link TaskPromptSource} variant.
  *
- *   • "inline"                          → body is the prompt
- *   • "<type>:<name>" (asset ref)       → asset
- *   • "./foo.md", "../foo.md", "/abs"   → file
- *   • anything else                     → treated as inline prompt text
- *     (the value itself is the prompt)
+ *   • "<type>:<name>" (asset ref)              → asset
+ *   • "./foo.md", "../foo.md", "/abs"          → file
+ *   • "C:\\abs" (Windows absolute)             → file
+ *   • anything else (incl. block scalars)      → inline text
  */
-function resolvePromptSource(
-  raw: string,
-  body: string,
-  filePath: string,
-  id: string,
-): import("./schema").TaskPromptSource {
+function resolvePromptSource(raw: string, filePath: string, id: string): import("./schema").TaskPromptSource {
   const trimmed = raw.trim();
-  if (trimmed === "inline") {
-    const text = body.trim();
-    if (!text) {
-      throw new UsageError(
-        `Task "${id}" sets \`prompt: inline\` but the markdown body is empty. File: ${filePath}`,
-        "MISSING_REQUIRED_ARGUMENT",
-      );
-    }
-    return { kind: "inline", text };
-  }
 
   if (trimmed.startsWith("./") || trimmed.startsWith("../") || path.isAbsolute(trimmed)) {
     return { kind: "file", path: trimmed };
@@ -170,7 +175,9 @@ function resolvePromptSource(
     return { kind: "asset", ref: trimmed };
   }
 
-  // Fallback: treat the literal value as the prompt text.
+  if (!trimmed) {
+    throw new UsageError(`Task "${id}" has empty \`prompt\`. File: ${filePath}`, "MISSING_REQUIRED_ARGUMENT");
+  }
   return { kind: "inline", text: trimmed };
 }
 
@@ -178,7 +185,7 @@ function readString(value: unknown, key: string, filePath: string): string | und
   if (value === undefined || value === null) return undefined;
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  throw new UsageError(`Frontmatter key "${key}" must be a string. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  throw new UsageError(`Key "${key}" must be a string. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }
 
 function readStringArray(value: unknown): string[] | undefined {
@@ -210,10 +217,7 @@ function readCommand(value: unknown, filePath: string, id: string): string[] {
     }
     return parts;
   }
-  throw new UsageError(
-    `Frontmatter key "command" must be a string or array of strings. File: ${filePath}`,
-    "INVALID_FLAG_VALUE",
-  );
+  throw new UsageError(`Key "command" must be a string or array of strings. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }
 
 function readParams(value: unknown, filePath: string): Record<string, unknown> {
@@ -231,8 +235,5 @@ function readParams(value: unknown, filePath: string): Record<string, unknown> {
       // fall through
     }
   }
-  throw new UsageError(
-    `Frontmatter key "params" must be a mapping or a JSON object. File: ${filePath}`,
-    "INVALID_FLAG_VALUE",
-  );
+  throw new UsageError(`Key "params" must be a mapping or a JSON object. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }

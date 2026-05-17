@@ -4,16 +4,16 @@ import type { LintContext, LintIssue } from "./types";
 /**
  * Linter for `tasks/` assets.
  *
- * Tasks are `.md` files with YAML frontmatter. In addition to the base checks
- * this linter validates the required task fields:
+ * Tasks are pure YAML files at `<stash>/tasks/<id>.yml`. In addition to the
+ * base checks this linter validates the required task fields:
  *
  *   - `schedule`  (string, non-empty) — cron expression or `@`-alias
  *   - `enabled`   (boolean)
- *   - At least one of: `prompt` or `workflow` field present
+ *   - At least one of: `prompt`, `workflow`, or `command` field present
  *
- * All issues are reported as `invalid-task-frontmatter` and are **not**
- * auto-fixable. Cron expression syntax validation is intentionally out of
- * scope (that belongs to `parseSchedule()`).
+ * All issues are reported as `invalid-task-yaml` and are **not** auto-fixable.
+ * Cron expression syntax validation is intentionally out of scope (that
+ * belongs to `parseSchedule()`).
  */
 export class TaskLinter extends BaseLinter {
   readonly types = ["tasks"] as const;
@@ -21,8 +21,8 @@ export class TaskLinter extends BaseLinter {
   lint(ctx: LintContext): LintIssue[] {
     const issues = this.runBaseChecks(ctx);
 
-    // Only validate frontmatter fields when frontmatter is present.
-    if (ctx.frontmatter === null) return issues;
+    // Skip files that failed to parse — `data` will be empty.
+    if (ctx.data === null || Object.keys(ctx.data).length === 0) return issues;
 
     const missing: string[] = [];
 
@@ -36,16 +36,16 @@ export class TaskLinter extends BaseLinter {
       missing.push("enabled");
     }
 
-    // At least one of: prompt or workflow
-    const hasTarget = "prompt" in ctx.data || "workflow" in ctx.data;
+    // At least one of: prompt, workflow, or command
+    const hasTarget = "prompt" in ctx.data || "workflow" in ctx.data || "command" in ctx.data;
     if (!hasTarget) {
-      missing.push("prompt or workflow");
+      missing.push("prompt, workflow, or command");
     }
 
     if (missing.length > 0) {
       issues.push({
         file: ctx.relPath,
-        issue: "invalid-task-frontmatter",
+        issue: "invalid-task-yaml",
         detail: `missing required fields: ${missing.join(", ")}`,
         fixed: false,
       });

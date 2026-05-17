@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isWithin, resolveStashDir } from "../core/common";
@@ -31,7 +32,9 @@ export interface TasksAddInput {
   prompt?: string;
   profile?: string;
   params?: string;
+  name?: string;
   description?: string;
+  when_to_use?: string;
   tags?: string[];
   disabled?: boolean;
   force?: boolean;
@@ -52,7 +55,7 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
   const id = normaliseTaskId(input.id);
   if ((input.workflow && input.prompt) || (!input.workflow && !input.prompt)) {
     throw new UsageError(
-      "Pass exactly one of --workflow <ref> or --prompt <inline|asset-ref|./file.md>.",
+      "Pass exactly one of --workflow <ref> or --prompt <asset-ref|./file.md|text>.",
       "INVALID_FLAG_VALUE",
     );
   }
@@ -76,22 +79,24 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
     );
   }
 
-  const markdown = renderTaskMarkdown({
+  const yaml = renderTaskYaml({
     id,
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
     profile: input.profile,
     params: input.params,
+    name: input.name,
     description: input.description,
+    when_to_use: input.when_to_use,
     tags: input.tags,
     enabled: input.disabled !== true,
   });
 
-  const task = parseTaskDocument({ markdown, filePath: assetPath, id });
+  const task = parseTaskDocument({ yaml, filePath: assetPath, id });
   await validateTaskDocument(task, { backend, stashDir });
 
-  fs.writeFileSync(assetPath, markdown.endsWith("\n") ? markdown : `${markdown}\n`, "utf8");
+  fs.writeFileSync(assetPath, yaml.endsWith("\n") ? yaml : `${yaml}\n`, "utf8");
 
   // Install in the OS scheduler. If install fails after the file was written,
   // delete the file so the on-disk state never claims a task is registered
@@ -128,7 +133,9 @@ export interface TasksListResult {
     schedule: string;
     enabled: boolean;
     target: TaskDocument["target"];
+    name?: string;
     description?: string;
+    when_to_use?: string;
     tags?: string[];
   }>;
 }
@@ -137,14 +144,14 @@ export async function akmTasksList(): Promise<TasksListResult> {
   const stashDir = resolveStashDir();
   const typeRoot = path.join(stashDir, "tasks");
   if (!fs.existsSync(typeRoot)) return { tasks: [] };
-  const files = fs.readdirSync(typeRoot).filter((f) => f.endsWith(".md"));
+  const files = fs.readdirSync(typeRoot).filter((f) => f.endsWith(".yml"));
   const tasks: TasksListResult["tasks"] = [];
   for (const file of files) {
-    const id = file.slice(0, -3);
+    const id = file.slice(0, -4);
     const filePath = path.join(typeRoot, file);
     let task: TaskDocument;
     try {
-      task = parseTaskDocument({ markdown: fs.readFileSync(filePath, "utf8"), filePath, id });
+      task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
     } catch {
       continue; // skip malformed files; `akm tasks show <id>` will surface the error
     }
@@ -155,7 +162,9 @@ export async function akmTasksList(): Promise<TasksListResult> {
       schedule: task.schedule,
       enabled: task.enabled,
       target: task.target,
+      name: task.name,
       description: task.description,
+      when_to_use: task.when_to_use,
       tags: task.tags,
     });
   }
@@ -170,14 +179,16 @@ export async function akmTasksShow(id: string): Promise<{
   cron: string;
   enabled: boolean;
   target: TaskDocument["target"];
+  name?: string;
   description?: string;
+  when_to_use?: string;
   tags?: string[];
 }> {
   const normalised = normaliseTaskId(id);
   const stashDir = resolveStashDir();
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const task = parseTaskDocument({
-    markdown: fs.readFileSync(filePath, "utf8"),
+    yaml: fs.readFileSync(filePath, "utf8"),
     filePath,
     id: normalised,
   });
@@ -190,7 +201,9 @@ export async function akmTasksShow(id: string): Promise<{
     cron: translateToCron(spec),
     enabled: task.enabled,
     target: task.target,
+    name: task.name,
     description: task.description,
+    when_to_use: task.when_to_use,
     tags: task.tags,
   };
 }
@@ -215,16 +228,16 @@ export async function akmTasksSetEnabled(
   const normalised = normaliseTaskId(id);
   const stashDir = resolveStashDir();
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
-  const markdown = fs.readFileSync(filePath, "utf8");
-  const updated = setEnabledInMarkdown(markdown, enabled);
+  const yaml = fs.readFileSync(filePath, "utf8");
+  const updated = setEnabledInYaml(yaml, enabled);
   fs.writeFileSync(filePath, updated, "utf8");
   const sched = selectBackend();
   try {
     await sched.setEnabled(normalised, enabled);
   } catch (err) {
-    // Roll the file back so the markdown source-of-truth and the OS
+    // Roll the file back so the YAML source-of-truth and the OS
     // scheduler don't diverge silently when the backend call fails.
-    fs.writeFileSync(filePath, markdown, "utf8");
+    fs.writeFileSync(filePath, yaml, "utf8");
     throw err;
   }
   return { id: normalised, enabled, backend: sched.name };
@@ -276,8 +289,8 @@ export async function akmTasksSync(): Promise<TasksSyncResult> {
   const fileIds = fs.existsSync(typeRoot)
     ? fs
         .readdirSync(typeRoot)
-        .filter((f) => f.endsWith(".md"))
-        .map((f) => f.slice(0, -3))
+        .filter((f) => f.endsWith(".yml"))
+        .map((f) => f.slice(0, -4))
     : [];
   const sched = selectBackend();
   const backend = backendNameForPlatform();
@@ -287,10 +300,10 @@ export async function akmTasksSync(): Promise<TasksSyncResult> {
   const skipped: { id: string; reason: string }[] = [];
 
   for (const id of fileIds) {
-    const filePath = path.join(typeRoot, `${id}.md`);
+    const filePath = path.join(typeRoot, `${id}.yml`);
     let task: TaskDocument;
     try {
-      task = parseTaskDocument({ markdown: fs.readFileSync(filePath, "utf8"), filePath, id });
+      task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
     } catch (err) {
       skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
       continue;
@@ -359,7 +372,9 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
 const VALID_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function normaliseTaskId(raw: string): string {
-  const id = raw.trim().replace(/\.md$/, "");
+  // Accept both .yml and .md suffixes from users so muscle memory from the
+  // pre-0.8.0 markdown task format doesn't produce a confusing "task not found".
+  const id = raw.trim().replace(/\.(yml|md)$/, "");
   if (!id) {
     throw new UsageError("Task id must be non-empty.", "MISSING_REQUIRED_ARGUMENT");
   }
@@ -379,61 +394,30 @@ interface RenderInput {
   prompt?: string;
   profile?: string;
   params?: string;
+  name?: string;
   description?: string;
+  when_to_use?: string;
   tags?: string[];
   enabled: boolean;
 }
 
-function renderTaskMarkdown(input: RenderInput): string {
-  const lines: string[] = ["---"];
-  lines.push(`schedule: ${yamlQuote(input.schedule)}`);
+function renderTaskYaml(input: RenderInput): string {
+  const obj: Record<string, unknown> = { schedule: input.schedule };
   if (input.workflow) {
-    lines.push(`workflow: ${yamlQuote(input.workflow)}`);
+    obj.workflow = input.workflow;
     if (input.params) {
-      const parsed = parseJsonObjectArg(input.params);
-      lines.push("params:");
-      for (const [k, v] of Object.entries(parsed)) {
-        lines.push(`  ${k}: ${yamlScalarValue(v)}`);
-      }
+      obj.params = parseJsonObjectArg(input.params);
     }
   } else if (input.prompt) {
-    if (looksLikeAssetRef(input.prompt) || isFilePath(input.prompt) || input.prompt === "inline") {
-      lines.push(`prompt: ${yamlQuote(input.prompt)}`);
-    } else {
-      lines.push(`prompt: inline`);
-    }
-    if (input.profile) lines.push(`profile: ${yamlQuote(input.profile)}`);
+    obj.prompt = input.prompt;
+    if (input.profile) obj.profile = input.profile;
   }
-  lines.push(`enabled: ${input.enabled}`);
-  if (input.description) lines.push(`description: ${yamlQuote(input.description)}`);
-  if (input.tags && input.tags.length > 0) {
-    lines.push(`tags: [${input.tags.map((t) => yamlQuote(t)).join(", ")}]`);
-  }
-  lines.push("---", "");
-
-  if (input.workflow) {
-    lines.push(`# Task: ${humanise(input.id)}`, "");
-  } else if (input.prompt) {
-    if (looksLikeAssetRef(input.prompt) || isFilePath(input.prompt) || input.prompt === "inline") {
-      lines.push(`# Task: ${humanise(input.id)}`, "");
-    } else {
-      // Raw inline prompt — use the body itself.
-      lines.push(input.prompt.trim(), "");
-    }
-  }
-  return lines.join("\n");
-}
-
-function yamlQuote(value: string): string {
-  if (/^[A-Za-z_][A-Za-z0-9_.\-/:]*$/.test(value)) return value;
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-function yamlScalarValue(v: unknown): string {
-  if (typeof v === "string") return yamlQuote(v);
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (v === null) return "null";
-  return JSON.stringify(v);
+  obj.enabled = input.enabled;
+  if (input.name) obj.name = input.name;
+  if (input.description) obj.description = input.description;
+  if (input.when_to_use) obj.when_to_use = input.when_to_use;
+  if (input.tags && input.tags.length > 0) obj.tags = input.tags;
+  return yamlStringify(obj);
 }
 
 function parseJsonObjectArg(raw: string): Record<string, unknown> {
@@ -449,34 +433,16 @@ function parseJsonObjectArg(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function looksLikeAssetRef(s: string): boolean {
-  return /^[a-z][a-z0-9_-]*:[^\s]/i.test(s) && !s.startsWith("./") && !s.startsWith("/");
-}
-
-function isFilePath(s: string): boolean {
-  return s.startsWith("./") || s.startsWith("../") || path.isAbsolute(s);
-}
-
-function humanise(id: string): string {
-  return id.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 /**
- * Toggle the `enabled:` value in a task markdown's frontmatter without doing
- * a round-trip through the parser+renderer (which would lose comments and
- * formatting choices). Inserts the key right before the closing `---` if
- * absent.
+ * Toggle the `enabled:` value in a task YAML file in-place without a full
+ * parse/render round-trip (which would reformat the file). Appends the key
+ * if absent.
  */
-export function setEnabledInMarkdown(markdown: string, enabled: boolean): string {
-  const m = markdown.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r\n|\r|\n|$))([\s\S]*)$/);
-  if (!m) {
-    throw new UsageError("Task markdown is missing frontmatter; cannot toggle enabled.", "INVALID_FLAG_VALUE");
+export function setEnabledInYaml(yaml: string, enabled: boolean): string {
+  if (/^enabled:\s*[^\r\n]*/im.test(yaml)) {
+    return yaml.replace(/^(enabled:\s*)[^\r\n]*/im, `$1${enabled}`);
   }
-  const [, openFence, fmBody, closeFence, body] = m;
-  const replaced = fmBody.match(/(^|\r?\n)enabled:\s*[^\r\n]*/i)
-    ? fmBody.replace(/(^|\r?\n)enabled:\s*[^\r\n]*/i, `$1enabled: ${enabled}`)
-    : `${fmBody}\nenabled: ${enabled}`;
-  return `${openFence}${replaced}${closeFence}${body}`;
+  return `${yaml.trimEnd()}\nenabled: ${enabled}\n`;
 }
 
 // Re-exported so tests can verify the validator path directly.

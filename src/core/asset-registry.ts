@@ -25,7 +25,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   workflow: "workflow-md",
   vault: "vault-env",
   wiki: "wiki-md",
-  task: "task-md",
+  task: "task-yaml",
 };
 
 /** Map asset types to action builder functions for search results. */

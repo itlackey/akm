@@ -469,7 +469,7 @@ const TASK_PAGE_ACTION =
   "Scheduled task — `akm tasks show <id>` for parsed details, `akm tasks run <id>` to invoke now.";
 
 const taskMdRenderer: AssetRenderer = {
-  name: "task-md",
+  name: "task-yaml",
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
@@ -624,8 +624,8 @@ registerMetadataContributor({
 });
 
 registerMetadataContributor({
-  name: "task-frontmatter-metadata",
-  appliesTo: ({ rendererName }) => rendererName === "task-md",
+  name: "task-yaml-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "task-yaml",
   contribute: (entry, ctx) => applyTaskMetadata(entry, ctx.renderContext),
 });
 

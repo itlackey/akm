@@ -65,12 +65,12 @@ afterAll(() => {
 });
 
 function writeTask(id: string, body: string): void {
-  fs.writeFileSync(path.join(tasksDir, `${id}.md`), body, "utf8");
+  fs.writeFileSync(path.join(tasksDir, `${id}.yml`), body, "utf8");
 }
 
 describe("runTask — workflow target", () => {
   test("dispatches to startWorkflowRun and writes log + history to state.db", async () => {
-    writeTask("wf", ["---", 'schedule: "@daily"', "workflow: workflow:noop", "---", "", "# Task: noop", ""].join("\n"));
+    writeTask("wf", ['schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
     const calls: Array<{ ref: string; params: Record<string, unknown> }> = [];
     const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => {
       calls.push({ ref, params });
@@ -114,10 +114,7 @@ describe("runTask — workflow target", () => {
 
 describe("runTask — prompt target", () => {
   test("dispatches to runAgent (mocked) and writes captured stdout to the log", async () => {
-    writeTask(
-      "prompt",
-      ["---", 'schedule: "@daily"', "prompt: inline", "profile: opencode", "---", "", "say hello", ""].join("\n"),
-    );
+    writeTask("prompt", ['schedule: "@daily"', "prompt: say hello", "profile: opencode", ""].join("\n"));
 
     const fakeRunAgent: FakeRunAgent = async (...args) => {
       const prompt = args[1] as string;
@@ -152,10 +149,7 @@ describe("runTask — prompt target", () => {
   });
 
   test("agent failure surfaces as failed status with reason", async () => {
-    writeTask(
-      "fail",
-      ["---", 'schedule: "@daily"', "prompt: inline", "profile: opencode", "---", "", "boom", ""].join("\n"),
-    );
+    writeTask("fail", ['schedule: "@daily"', "prompt: boom", "profile: opencode", ""].join("\n"));
 
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
@@ -187,10 +181,7 @@ describe("runTask — prompt target", () => {
 
 describe("runTask — disabled tasks no-op", () => {
   test("disabled task is recorded but not dispatched", async () => {
-    writeTask(
-      "off",
-      ["---", 'schedule: "@daily"', "workflow: workflow:noop", "enabled: false", "---", "", "body", ""].join("\n"),
-    );
+    writeTask("off", ['schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
     let called = false;
     const fakeWf = async () => {
       called = true;

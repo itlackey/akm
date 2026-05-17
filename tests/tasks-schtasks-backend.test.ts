@@ -9,7 +9,7 @@ function makeTask(schedule: string): TaskDocument {
     schedule,
     enabled: true,
     target: { kind: "workflow", ref: "workflow:noop", params: {} },
-    source: { path: "/stash/tasks/ping.md" },
+    source: { path: "/stash/tasks/ping.yml" },
   };
 }
 
