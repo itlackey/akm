@@ -10,6 +10,7 @@
  * `akm reflect`. `propose_invoked` is emitted at command entry.
  */
 
+import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { resolveStashDir } from "../core/common";
@@ -214,7 +215,6 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 5. Resolve the proposal content.
   // Path A: opencode wrote the draft file — read it directly (no stdout parse).
   // Path B: fallback to stdout JSON parse for non-file-writing agents.
-  const fs = await import("node:fs");
   let payload: ReturnType<typeof parseAgentProposalPayload>;
 
   if (fs.existsSync(resolvedDraftPath)) {

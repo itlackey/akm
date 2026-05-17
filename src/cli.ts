@@ -2754,6 +2754,12 @@ const vaultSetCommand = defineCommand({
         }
         realValue = envVal;
       } else {
+        // Print a prompt when stdin is attached to a terminal so an
+        // interactive invocation doesn't silently hang with no indication
+        // that input is being awaited.
+        if (process.stdin.isTTY) {
+          process.stderr.write(`Enter value for "${args.key}" (Ctrl-D when done):\n`);
+        }
         const MAX_VAULT_VALUE_BYTES = 1024 * 1024; // 1 MB
         let totalBytes = 0;
         const chunks: Uint8Array[] = [];
