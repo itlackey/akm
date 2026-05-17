@@ -42,6 +42,7 @@ import { makeAssetRef, parseAssetRef } from "./asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
+import { appendEvent } from "./events";
 import { runProposalValidators } from "./proposal-validators";
 import { warn } from "./warn";
 import { resolveWriteTarget, type WriteTargetSource, writeAssetToSource } from "./write-source";
@@ -103,6 +104,27 @@ export function isValidProposalSource(source: string): source is ProposalSource 
  */
 export function isAutomatedProposalSource(source: string): source is (typeof AUTOMATED_PROPOSAL_SOURCES)[number] {
   return (AUTOMATED_PROPOSAL_SOURCES as readonly string[]).includes(source);
+}
+
+/**
+ * Typed reasons {@link createProposal} can reject input. Emitted in the
+ * `proposal_creation_rejected` event so we can quantify *which* check fires
+ * most across runs and tune upstream pipelines.
+ */
+export type ProposalRejectionReason = "invalid_ref" | "unknown_type" | "empty_content" | "missing_description";
+
+/** Result of {@link purgeOrphanProposals}. */
+export interface OrphanPurgeResult {
+  /** Total pending proposals scanned. */
+  checked: number;
+  /** Number of proposals rejected as orphans. */
+  rejected: number;
+  /** Wall-clock duration of the purge in ms. */
+  durationMs: number;
+  /** Count of rejections by asset type prefix. */
+  byType: Record<string, number>;
+  /** Per-orphan details for the event metadata. */
+  orphans: Array<{ id: string; ref: string; reason: string }>;
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -356,9 +378,47 @@ export function createProposal(
     );
   }
 
-  // Validate the ref up front so callers get a clear error instead of a
-  // surprise during `accept`. This also normalises the ref string.
-  const parsedRef = parseAssetRef(input.ref);
+  // Deterministic input validation. Reject obviously-invalid proposals at
+  // the source rather than letting them enter the queue and waste reviewer
+  // time. Each rejection emits `proposal_creation_rejected` with a typed
+  // reason so we can see *which* check is firing in the event stream.
+  const rejectProposal = (reason: ProposalRejectionReason, message: string): never => {
+    appendEvent({
+      eventType: "proposal_creation_rejected",
+      ref: input.ref,
+      metadata: { source: input.source, reason },
+    });
+    throw new UsageError(message, "INVALID_PROPOSAL");
+  };
+
+  let parsedRef: ReturnType<typeof parseAssetRef>;
+  try {
+    parsedRef = parseAssetRef(input.ref);
+  } catch (err) {
+    return rejectProposal(
+      "invalid_ref",
+      `Invalid proposal ref "${input.ref}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!TYPE_DIRS[parsedRef.type]) {
+    return rejectProposal(
+      "unknown_type",
+      `Unknown asset type "${parsedRef.type}" in proposal ref "${input.ref}". Known types: ${Object.keys(TYPE_DIRS).sort().join(", ")}.`,
+    );
+  }
+  if (!input.payload.content.trim()) {
+    return rejectProposal("empty_content", `Proposal for "${input.ref}" has empty content.`);
+  }
+  if (input.payload.frontmatter !== undefined && input.payload.frontmatter !== null) {
+    const desc = input.payload.frontmatter.description;
+    if (typeof desc !== "string" || desc.trim() === "") {
+      return rejectProposal(
+        "missing_description",
+        `Proposal for "${input.ref}" has empty or missing frontmatter description.`,
+      );
+    }
+  }
+
   const normalizedRef = makeAssetRef(parsedRef.type, parsedRef.name, parsedRef.origin);
 
   if (!input.force) {
@@ -619,6 +679,68 @@ export function archiveProposal(
   };
   writeProposalFile(proposalFile(stashDir, id, true), updated);
   return updated;
+}
+
+/**
+ * Scan all pending proposals and reject those whose target asset no longer
+ * exists on disk across any of `sourceDirs`. Intended to run as a periodic
+ * maintenance pass (see `runImproveMaintenancePasses`) — it keeps the queue
+ * from accumulating stale reviewer work after large refactors or deletes.
+ *
+ * Scope rule: only `source=reflect` proposals are subject to orphan rejection.
+ * Lessons, propose, distill, and consolidate proposals legitimately target
+ * assets that don't exist yet and must never be purged.
+ */
+export function purgeOrphanProposals(
+  stashDir: string,
+  sourceDirs: string[],
+  ctx?: ProposalsContext,
+): OrphanPurgeResult {
+  const t0 = Date.now();
+  const orphans: Array<{ id: string; ref: string; reason: string }> = [];
+  const byType: Record<string, number> = {};
+  const pending = listProposals(stashDir, { status: "pending" });
+
+  for (const p of pending) {
+    if (p.source !== "reflect") continue;
+    let parsed: ReturnType<typeof parseAssetRef>;
+    try {
+      parsed = parseAssetRef(p.ref);
+    } catch {
+      continue;
+    }
+    // Lessons are new-asset proposals by definition — they cannot be orphaned.
+    if (parsed.type === "lesson") continue;
+    const spec = TYPE_DIRS[parsed.type];
+    if (!spec) continue;
+
+    const exists = sourceDirs.some((root) => {
+      const typeRoot = path.join(root, spec);
+      const candidate = resolveAssetPathFromName(parsed.type, typeRoot, parsed.name);
+      return fs.existsSync(candidate);
+    });
+
+    if (!exists) {
+      try {
+        archiveProposal(stashDir, p.id, "rejected", "Asset no longer exists on disk", ctx);
+        orphans.push({ id: p.id, ref: p.ref, reason: "asset_missing" });
+        byType[parsed.type] = (byType[parsed.type] ?? 0) + 1;
+      } catch (err) {
+        // Best-effort — the purge is non-fatal. Log and continue.
+        warn(
+          `[proposals] purgeOrphanProposals: failed to reject ${p.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  return {
+    checked: pending.length,
+    rejected: orphans.length,
+    durationMs: Date.now() - t0,
+    byType,
+    orphans,
+  };
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────

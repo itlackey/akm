@@ -266,19 +266,25 @@ describe("validation failure", () => {
     expect(fs.existsSync(path.join(stash, "lessons", "no-fields.md"))).toBe(false);
   });
 
-  test("empty content → validation fails", () => {
+  test("empty content → createProposal rejects with INVALID_PROPOSAL", () => {
     const stash = makeStashDir();
-    const proposalResult4 = createProposal(stash, {
-      ref: "lesson:empty",
-      source: "distill",
-      force: true,
-      payload: { content: "" },
-    });
-    if (isProposalSkipped(proposalResult4)) throw new Error("unexpected skip");
-    const proposal = proposalResult4;
-    const report = validateProposal(proposal);
-    expect(report.ok).toBe(false);
-    expect(report.findings.some((f) => f.kind === "empty-content")).toBe(true);
+    let threw = false;
+    let code: string | undefined;
+    try {
+      createProposal(stash, {
+        ref: "lesson:empty",
+        source: "distill",
+        force: true,
+        payload: { content: "" },
+      });
+    } catch (err) {
+      threw = true;
+      if (err && typeof err === "object" && "code" in err) {
+        code = String((err as { code: unknown }).code);
+      }
+    }
+    expect(threw).toBe(true);
+    expect(code).toBe("INVALID_PROPOSAL");
   });
 });
 
@@ -347,12 +353,15 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
   test("validation failure → no `promoted` event emitted; proposal stays pending", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
-    // Empty content — fails the lesson lint.
+    // Lesson body that passes createProposal's structural check (non-empty,
+    // valid ref, has frontmatter.description) but fails the deeper lesson
+    // lint at accept-time because the required ## When to use section is
+    // missing. This exercises the validation-failure → no-promote path.
     const proposalResult5 = createProposal(stash, {
       ref: "lesson:invalid",
       source: "distill",
       force: true,
-      payload: { content: "" },
+      payload: { content: "x", frontmatter: { description: "stub" } },
     });
     if (isProposalSkipped(proposalResult5)) throw new Error("unexpected skip");
     const proposal = proposalResult5;
