@@ -3723,7 +3723,8 @@ const improveCommand = defineCommand({
     },
     "min-retrieval-count": {
       type: "string",
-      description: "Minimum retrieval count for zero-feedback fallback eligibility (default: 5)",
+      description:
+        "Minimum retrieval count for zero-feedback fallback eligibility (default: 1, set 0 to include all assets regardless of retrieval history)",
     },
   },
   async run({ args }) {
