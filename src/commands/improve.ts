@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import { daysToMs, isProcessAlive } from "../core/common";
-import type { AkmConfig, ImproveConfig } from "../core/config";
+import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
