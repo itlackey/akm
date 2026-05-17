@@ -166,7 +166,7 @@ test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs p
   const db = openDatabase();
   try {
     const remaining = getAllEntries(db);
-    expect(remaining).toHaveLength(result.totalEntries - result.clean?.removed);
+    expect(remaining).toHaveLength(result.totalEntries - (result.clean?.removed ?? 0));
     expect(remaining.every((e) => !e.filePath.includes("deploy"))).toBe(true);
   } finally {
     closeDatabase(db);

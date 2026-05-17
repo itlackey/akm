@@ -133,7 +133,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
   // agent config (agent.processes["propose"]) is picked up automatically.
   let profile: AgentProfile;
-  let resolvedTimeoutMs: number | undefined = options.timeoutMs;
+  let resolvedTimeoutMs: number | null | undefined = options.timeoutMs;
   try {
     if (options.agentProfile) {
       // Test seam: injected profile bypasses all config.

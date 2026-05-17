@@ -339,7 +339,7 @@ async function runPromptTask(input: {
   // use it directly. Otherwise fall back to the per-process config for "task"
   // (agent.processes["task"]), which itself falls back to agent.default.
   let profile: ReturnType<typeof requireAgentProfile>;
-  let processTimeoutMs: number | undefined;
+  let processTimeoutMs: number | null | undefined;
   if (task.target.profile) {
     // Task doc explicitly names a profile — honour it directly.
     profile = requireAgentProfile(agentCfg, task.target.profile);
