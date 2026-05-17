@@ -280,9 +280,10 @@ export function parseProcessesMap(value: unknown): Record<string, ProcessEntry> 
  * 3. `timeoutMs` falls back: `process.timeoutMs` (null = unlimited) →
  *    profile.timeoutMs → agent.timeoutMs → DEFAULT_AGENT_TIMEOUT_MS.
  *
- * Returns `{ profile, timeoutMs }` where `timeoutMs` is `undefined` when the
- * resolved timeout is `null` (unlimited) or when no timeout is set at any
- * layer (callers treat `undefined` as the DEFAULT_AGENT_TIMEOUT_MS default).
+ * Returns `{ profile, timeoutMs }` where `timeoutMs` is:
+ *   - `null`      — the user set `timeoutMs: null` (unlimited); callers must skip the kill timer.
+ *   - `undefined` — no timeout configured at any layer; callers apply DEFAULT_AGENT_TIMEOUT_MS.
+ *   - `number`    — resolved millisecond budget.
  *
  * Throws {@link ConfigError} (via {@link requireAgentProfile}) when the agent
  * block is missing or the resolved profile cannot be used.
@@ -290,7 +291,7 @@ export function parseProcessesMap(value: unknown): Record<string, ProcessEntry> 
 export function resolveProcessAgentProfile(
   processName: string,
   agentConfig: AgentConfig | undefined,
-): { profile: AgentProfile; timeoutMs: number | undefined } {
+): { profile: AgentProfile; timeoutMs: number | null | undefined } {
   let profileName: string | undefined;
   let processTimeoutMs: number | null | undefined; // null = unlimited from config
 
@@ -308,10 +309,10 @@ export function resolveProcessAgentProfile(
   const resolvedProfile = requireAgentProfile(agentConfig, profileName);
 
   // Timeout resolution: process entry → profile → agent-level → undefined (caller applies DEFAULT).
-  let resolvedTimeoutMs: number | undefined;
+  let resolvedTimeoutMs: number | null | undefined;
   if (processTimeoutMs === null) {
-    // null = explicit "unlimited" — surface as undefined so callers omit the timer.
-    resolvedTimeoutMs = undefined;
+    // null = explicit "unlimited" — preserve as null so callers skip the kill timer entirely.
+    resolvedTimeoutMs = null;
   } else if (processTimeoutMs !== undefined) {
     resolvedTimeoutMs = processTimeoutMs;
   } else if (resolvedProfile.timeoutMs !== undefined) {

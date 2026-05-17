@@ -324,6 +324,34 @@ async function readRelatedLessons(
 }
 
 /**
+ * Returns true only when `stdout` is a recognised AKM proposal-skip signal.
+ *
+ * Two accepted forms:
+ *  1. Structured JSON: `{ skipped: true }` or `{ reason: "<known-skip-reason>" }`
+ *  2. Legacy text: any line matching `/proposal skipped/i`
+ *
+ * The previous regex `/cooldown/i` was intentionally broadened to avoid
+ * false-positives on real agent error messages that incidentally contain the
+ * word "cooldown" (e.g. "rate limit cooldown exceeded"). Only the tightly
+ * scoped forms above are treated as legitimate skip signals.
+ */
+function isStructuredCooldownSignal(stdout: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout.trim());
+    if (parsed?.skipped === true) return true;
+    if (
+      typeof parsed?.reason === "string" &&
+      ["duplicate_pending", "content_hash_match", "cooldown", "below_threshold"].includes(parsed.reason)
+    )
+      return true;
+  } catch {
+    // Non-JSON stdout is never a structured cooldown signal.
+  }
+  // Legacy text signal emitted by older proposal output lines.
+  return /proposal skipped/i.test(stdout);
+}
+
+/**
  * Fallback payload parser for reflect agent stdout (R-6 / #375).
  *
  * When the agent does not emit valid JSON (old-style agents, SDK mode without
@@ -435,7 +463,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
   // agent config (agent.processes["reflect"]) is picked up automatically.
   let profile: AgentProfile;
-  let resolvedTimeoutMs: number | undefined = options.timeoutMs;
+  let resolvedTimeoutMs: number | null | undefined = options.timeoutMs;
   try {
     if (options.agentProfile) {
       // Test seam: injected profile bypasses all config.
@@ -568,7 +596,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // valid proposal JSON. These are legitimate skip signals, not parse failures,
       // and should not pollute reflectFailedActions or recentErrors injection.
       const stdoutText = result.stdout ?? "";
-      const isCooldownSignal = /cooldown/i.test(stdoutText) || /proposal skipped/i.test(stdoutText);
+      const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
       return {
         schemaVersion: 1,
         ok: false,
