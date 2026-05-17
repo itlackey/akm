@@ -167,13 +167,13 @@ describe("resolveModel — case-insensitivity", () => {
 // ── builders.ts — opencodeBuilder ────────────────────────────────────────────
 
 describe("opencodeBuilder — basic dispatch", () => {
-  test("no agent options: argv = [opencode, run, <prompt>]", async () => {
+  test("no agent options: argv = [opencode, run, --, <prompt>]", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work" };
     const cmd = builder.build(profile, req);
-    expect(cmd.argv).toEqual(["opencode", "run", "do work"]);
+    expect(cmd.argv).toEqual(["opencode", "run", "--", "do work"]);
   });
 
   test("with systemPrompt: --system-prompt flag present before prompt", async () => {
@@ -535,5 +535,100 @@ describe("builder + profile.modelAliases integration", () => {
     const idx = argv.indexOf("--model");
     expect(idx).toBeGreaterThan(-1);
     expect(argv[idx + 1]).toBe("claude-haiku-4-5-20251001");
+  });
+});
+
+// ── builders.ts — argument injection guards (M5) ──────────────────────────────
+
+describe("builders — argument injection guards", () => {
+  test("opencodeBuilder: prompt preceded by '--' end-of-options separator", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("opencode");
+    const profile = makeOpencodeProfile();
+    const cmd = builder.build(profile, { prompt: "do work" });
+    const argv = cmd.argv as string[];
+    const sepIdx = argv.indexOf("--");
+    expect(sepIdx).toBeGreaterThan(-1);
+    expect(argv[sepIdx + 1]).toBe("do work");
+  });
+
+  test("claudeBuilder: prompt preceded by '--' end-of-options separator", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("claude");
+    const profile = makeClaudeProfile();
+    const cmd = builder.build(profile, { prompt: "do work" });
+    const argv = cmd.argv as string[];
+    const sepIdx = argv.indexOf("--");
+    expect(sepIdx).toBeGreaterThan(-1);
+    expect(argv[sepIdx + 1]).toBe("do work");
+  });
+
+  test("defaultBuilder: prompt preceded by '--' end-of-options separator", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("unknown-platform");
+    const profile = makeFakeProfile();
+    const cmd = builder.build(profile, { prompt: "do work" });
+    const argv = cmd.argv as string[];
+    const sepIdx = argv.indexOf("--");
+    expect(sepIdx).toBeGreaterThan(-1);
+    expect(argv[sepIdx + 1]).toBe("do work");
+  });
+
+  test("opencodeBuilder: throws UsageError when model starts with '--'", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("opencode");
+    const profile = makeOpencodeProfile();
+    expect(() => builder.build(profile, { prompt: "task", model: "--evil-flag" })).toThrow(
+      /model must not start with "--"/,
+    );
+  });
+
+  test("claudeBuilder: throws UsageError when model starts with '--'", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("claude");
+    const profile = makeClaudeProfile();
+    expect(() => builder.build(profile, { prompt: "task", model: "--evil" })).toThrow(
+      /model must not start with "--"/,
+    );
+  });
+
+  test("opencodeBuilder: throws UsageError when systemPrompt starts with '--'", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("opencode");
+    const profile = makeOpencodeProfile();
+    expect(() =>
+      builder.build(profile, { prompt: "task", systemPrompt: "--injected-flag value" }),
+    ).toThrow(/systemPrompt must not start with "--"/);
+  });
+
+  test("claudeBuilder: throws UsageError when systemPrompt starts with '--'", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("claude");
+    const profile = makeClaudeProfile();
+    expect(() =>
+      builder.build(profile, { prompt: "task", systemPrompt: "--injected" }),
+    ).toThrow(/systemPrompt must not start with "--"/);
+  });
+
+  test("defaultBuilder: throws UsageError when model starts with '--'", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("unknown-platform");
+    const profile = makeFakeProfile();
+    expect(() => builder.build(profile, { prompt: "task", model: "--bad" })).toThrow(
+      /model must not start with "--"/,
+    );
+  });
+
+  test("valid model and systemPrompt values do not throw", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("opencode");
+    const profile = makeOpencodeProfile();
+    expect(() =>
+      builder.build(profile, {
+        prompt: "task",
+        model: "opencode/claude-sonnet-4-6",
+        systemPrompt: "You are a helpful assistant.",
+      }),
+    ).not.toThrow();
   });
 });

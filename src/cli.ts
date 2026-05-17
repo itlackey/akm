@@ -862,8 +862,10 @@ const addCommand = defineCommand({
                     `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-insecure was set.`,
                   );
                 }
-              } else if (process.stdout.isTTY) {
+              } else if (process.stdin.isTTY) {
                 // Interactive path: show findings and ask the user to confirm.
+                // Guard on stdin (not stdout) because p.confirm() reads from stdin;
+                // stdout may be a TTY while stdin is piped, which would cause a hang.
                 const stashLabel = ref;
                 const groupedByVault = new Map<string, string[]>();
                 for (const f of allFindings) {
