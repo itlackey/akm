@@ -18,7 +18,7 @@ import path from "node:path";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/search";
 import { akmShowUnified } from "../../src/commands/show";
-import { saveConfig } from "../../src/core/config";
+import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -60,6 +60,7 @@ let testCacheDir = "";
 let testConfigDir = "";
 
 beforeEach(() => {
+  resetConfigCache();
   testCacheDir = createTmpDir("akm-scope-cache-");
   testConfigDir = createTmpDir("akm-scope-config-");
   process.env.XDG_CACHE_HOME = testCacheDir;
@@ -73,6 +74,7 @@ afterEach(() => {
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  resetConfigCache();
 });
 
 // ── Pure-function tests (no spawn) ────────────────────────────────────────
