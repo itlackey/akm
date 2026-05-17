@@ -459,6 +459,34 @@ export interface AkmConfig {
    * Set to 0 to disable TTL cleanup entirely (archives accumulate indefinitely).
    */
   archiveRetentionDays?: number;
+  /**
+   * `akm improve` pipeline tuning. All fields are optional; missing fields fall
+   * back to built-in defaults. Persisted settings apply to every unattended run
+   * (cron / launchd / schtasks). Use CLI flags for one-off overrides.
+   */
+  improve?: ImproveConfig;
+}
+
+/**
+ * Per-type reflect cooldown configuration for `akm improve`.
+ * Each key is an asset type (`memory`, `knowledge`, `skill`, etc.) and the
+ * value is the cooldown window in days. Set a type to 0 to disable cooldown
+ * for that type. Unknown type keys are accepted and used as-is.
+ */
+export interface ImproveConfig {
+  /**
+   * Per-asset-type reflect cooldown in days. Overrides the built-in defaults
+   * for any type listed. Types not listed continue to use their built-in default.
+   *
+   * Built-in defaults:
+   *   memory: 2, lesson: 7, workflow/skill/agent/command/knowledge/script/wiki: 30, task: 60
+   *
+   * Example:
+   * ```json
+   * { "improve": { "reflectCooldownByType": { "memory": 1, "knowledge": 60 } } }
+   * ```
+   */
+  reflectCooldownByType?: Record<string, number>;
 }
 
 export interface OutputConfig {
@@ -917,6 +945,23 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
     raw.archiveRetentionDays >= 0
   ) {
     config.archiveRetentionDays = raw.archiveRetentionDays;
+  }
+
+  if (raw.improve !== null && typeof raw.improve === "object") {
+    const improveRaw = raw.improve as Record<string, unknown>;
+    const improveConfig: ImproveConfig = {};
+    if (improveRaw.reflectCooldownByType !== null && typeof improveRaw.reflectCooldownByType === "object") {
+      const byType: Record<string, number> = {};
+      for (const [type, days] of Object.entries(improveRaw.reflectCooldownByType as Record<string, unknown>)) {
+        if (typeof days === "number" && Number.isFinite(days) && days >= 0) {
+          byType[type] = days;
+        } else {
+          warn(`[akm] Ignoring improve.reflectCooldownByType["${type}"]: expected a non-negative number.`);
+        }
+      }
+      if (Object.keys(byType).length > 0) improveConfig.reflectCooldownByType = byType;
+    }
+    if (Object.keys(improveConfig).length > 0) config.improve = improveConfig;
   }
 
   return config;

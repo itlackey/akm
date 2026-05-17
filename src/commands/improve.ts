@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import { daysToMs, isProcessAlive } from "../core/common";
-import type { AkmConfig } from "../core/config";
+import type { AkmConfig, ImproveConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
@@ -1134,26 +1134,35 @@ async function runImprovePreparationStage(args: {
   // SM-2 tier for reflect uses promoted/rejected events (recorded by
   // `akm proposal accept/reject`) rather than the per-ref listProposals()
   // filesystem scan, giving identical tier logic without touching the disk.
-  // Per-type reflect cooldown defaults. Higher-churn types get shorter windows;
-  // stable reference material gets longer ones. Applies when no global
-  // --reflect-cooldown-days override is given. Pass --reflect-cooldown-days N
-  // (or --ignore-cooldown) to override all types uniformly.
-  const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
-    memory: 7, // fast-changing context — re-reflect weekly
-    workflow: 14, // living docs but slower churn than memories
-    skill: 21,
-    agent: 21,
-    command: 21,
-    knowledge: 30, // reference docs — mostly stable
+  // Built-in per-type reflect cooldown defaults. Higher-churn types get shorter
+  // windows; stable reference material gets longer ones.
+  // Overridable via config.improve.reflectCooldownByType (user config wins) and
+  // at run-time via --reflect-cooldown-days (CLI flag wins over all).
+  const REFLECT_COOLDOWN_BUILTIN: Readonly<Record<string, number>> = {
+    memory: 2, // re-reflect every 48 h — context changes rapidly
+    lesson: 7, // re-reflect weekly — distilled but needs freshness checks
+    workflow: 30, // living docs, monthly cadence
+    skill: 30,
+    agent: 30,
+    command: 30,
+    knowledge: 30, // reference docs — stable
     script: 30,
     wiki: 30, // external snapshots
     task: 60,
-    lesson: 90, // distilled output — intentionally stable
   };
-  const REFLECT_COOLDOWN_FALLBACK = 14; // unknown/future types
+  const REFLECT_COOLDOWN_FALLBACK = 30; // unknown/future types
 
-  // Returns the effective reflect cooldown for a given ref, respecting the
-  // global override if supplied, otherwise looking up per-type defaults.
+  // Merge: built-in < config.improve.reflectCooldownByType (user wins per-type).
+  const configByType: Record<string, number> = loadConfig().improve?.reflectCooldownByType ?? {};
+  const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
+    ...REFLECT_COOLDOWN_BUILTIN,
+    ...configByType,
+  };
+
+  // Returns the effective reflect cooldown for a given ref, respecting:
+  //   1. --reflect-cooldown-days (CLI, per-run global override — highest priority)
+  //   2. config.improve.reflectCooldownByType (persisted per-type overrides)
+  //   3. Built-in type defaults above
   const reflectCooldownForRef = (ref: string): number => {
     if (options.reflectCooldownDays !== undefined) return options.reflectCooldownDays;
     const type = ref.split(":")[0] ?? "";
