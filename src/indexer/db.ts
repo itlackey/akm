@@ -1013,7 +1013,7 @@ function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: 
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?
         AND e.entry_type = ?
-      ORDER BY bm25Score
+      ORDER BY bm25Score, e.id ASC
       LIMIT ?
     `;
     params = [ftsQuery, entryType, limit];
@@ -1024,7 +1024,7 @@ function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: 
       FROM entries_fts f
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?
-      ORDER BY bm25Score
+      ORDER BY bm25Score, e.id ASC
       LIMIT ?
     `;
     params = [ftsQuery, limit];
