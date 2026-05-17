@@ -11,6 +11,7 @@
  */
 
 import type { ShowResponse } from "../../sources/types";
+import { UsageError } from "../../core/errors";
 import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
 
@@ -61,6 +62,24 @@ export interface AgentCommandBuilder {
   build(profile: AgentProfile, request: AgentDispatchRequest): BuiltCommand;
 }
 
+// ── Validation helpers ────────────────────────────────────────────────────────
+
+/**
+ * Guard against values that start with `--`, which would be mis-interpreted as
+ * CLI flags by the spawned process when used as flag values (model, systemPrompt).
+ * Bun.spawn uses array argv so there is no shell injection, but a `--`-prefixed
+ * value passed as the argument to `--model` or `--system-prompt` can still
+ * confuse the CLI parser of the target process.
+ */
+function assertNotFlag(value: string | undefined, field: string): void {
+  if (value && value.trimStart().startsWith("--")) {
+    throw new UsageError(
+      `${field} must not start with "--": ${JSON.stringify(value.slice(0, 60))}`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+}
+
 // ── Tool normalization ────────────────────────────────────────────────────────
 
 /**
@@ -85,6 +104,8 @@ function normalizeTools(tools: ShowResponse["toolPolicy"]): string {
 const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
   build(profile, req) {
+    assertNotFlag(req.systemPrompt, "systemPrompt");
+    assertNotFlag(req.model, "model");
     const args: string[] = [...profile.args]; // starts with ["run"]
     if (req.systemPrompt) {
       args.push("--system-prompt", req.systemPrompt);
@@ -93,6 +114,7 @@ const opencodeBuilder: AgentCommandBuilder = {
       const resolved = resolveModel(req.model, "opencode", profile.modelAliases);
       args.push("--model", resolved);
     }
+    args.push("--");
     args.push(req.prompt);
     return { argv: [profile.bin, ...args] };
   },
@@ -107,6 +129,8 @@ const opencodeBuilder: AgentCommandBuilder = {
 const claudeBuilder: AgentCommandBuilder = {
   platform: "claude",
   build(profile, req) {
+    assertNotFlag(req.systemPrompt, "systemPrompt");
+    assertNotFlag(req.model, "model");
     const args: string[] = [...profile.args];
     if (req.systemPrompt) {
       args.push("--system-prompt", req.systemPrompt);
@@ -120,6 +144,7 @@ const claudeBuilder: AgentCommandBuilder = {
     }
     // --print = non-interactive, outputs to stdout — required for captured mode
     args.push("--print");
+    args.push("--");
     args.push(req.prompt);
     return { argv: [profile.bin, ...args] };
   },
@@ -134,6 +159,8 @@ const claudeBuilder: AgentCommandBuilder = {
 const defaultBuilder: AgentCommandBuilder = {
   platform: "default",
   build(profile, req) {
+    assertNotFlag(req.systemPrompt, "systemPrompt");
+    assertNotFlag(req.model, "model");
     const args: string[] = [...profile.args];
     if (req.systemPrompt) {
       args.push("--system-prompt", req.systemPrompt);
@@ -142,6 +169,7 @@ const defaultBuilder: AgentCommandBuilder = {
       const resolved = resolveModel(req.model, profile.name, profile.modelAliases);
       args.push("--model", resolved);
     }
+    args.push("--");
     args.push(req.prompt);
     return { argv: [profile.bin, ...args] };
   },
