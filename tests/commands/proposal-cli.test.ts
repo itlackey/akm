@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createProposal } from "../../src/core/proposals";
+import { createProposal, isProposalSkipped } from "../../src/core/proposals";
 
 const tempDirs: string[] = [];
 
@@ -61,11 +61,14 @@ function runCli(
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n`;
 
 function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
-  return createProposal(stash, {
+  const result = createProposal(stash, {
     ref,
     source: "reflect",
+    force: true,
     payload: { content: VALID_LESSON },
   });
+  if (isProposalSkipped(result)) throw new Error("unexpected skip in seedProposal");
+  return result;
 }
 
 describe("akm proposals (CLI)", () => {

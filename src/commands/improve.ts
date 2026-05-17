@@ -8,6 +8,7 @@ import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
+import { detectAndWriteContradictions } from "../core/memory-contradiction-detect";
 import {
   type ArchivedMemoryCleanupRecord,
   analyzeMemoryCleanup,
@@ -20,7 +21,7 @@ import {
   type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { getDbPath } from "../core/paths";
-import { listProposals } from "../core/proposals";
+import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
 import { openStateDatabase } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
@@ -113,6 +114,38 @@ export interface AkmImproveOptions {
    * reflect calls through a different profile.
    */
   agentProcess?: string;
+  /**
+   * Maximum number of refs to process in a cold-start exploration run (O-4 / #377).
+   *
+   * When the stash has fully-zero explicit feedback (no positive or negative
+   * feedback events), the improve loop falls back to all processable refs to
+   * avoid a no-op run. Without a cap, this causes cold-start oscillation:
+   *   - First run: all N assets processed → all enter 7-day reflect cooldown
+   *   - Next day: same N assets fire again → another big burst → silence
+   *
+   * Setting this cap to a small value (default: 10) spreads cold-start
+   * processing across multiple days, avoiding the burst-then-silence pattern.
+   * Set to 0 to disable the cap (allow all refs on cold-start, pre-O-4 behavior).
+   *
+   * Refs: Zoph & Le NAS controllers arXiv:1611.01578 — exploration budgets
+   * prevent oscillation. MemRL — utility-based sampling prevents pure coverage.
+   */
+  explorationBudget?: number;
+  /**
+   * Self-consistency multi-sample voting for high-utility refs (R-2 / #389).
+   * When a ref's utility score is at or above this threshold, the improve loop
+   * runs N reflect samples and picks the majority-vote winner by Jaccard token
+   * overlap. Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot
+   * quality on reasoning tasks.
+   *
+   * Default: 0.7. Set to 1.0 to disable (no refs qualify).
+   */
+  selfConsistencyThreshold?: number;
+  /**
+   * Number of reflect samples to generate for high-utility refs (R-2 / #389).
+   * Must be >= 2 for voting to make sense. Default: 3. Capped at 5.
+   */
+  selfConsistencyN?: number;
 }
 
 export interface ImproveEligibleRef {
@@ -174,7 +207,8 @@ export interface AkmImproveResult {
   schemaRepairs?: Array<{
     ref: string;
     reason: string;
-    outcome: "written" | "skipped" | "error";
+    outcome: "queued" | "written" | "skipped" | "error";
+    proposalId?: string;
     error?: string;
   }>;
   consolidation?: ConsolidateResult;
@@ -213,7 +247,8 @@ interface ImprovePreparationResult {
   schemaRepairs: Array<{
     ref: string;
     reason: string;
-    outcome: "written" | "skipped" | "error";
+    outcome: "queued" | "written" | "skipped" | "error";
+    proposalId?: string;
     error?: string;
   }>;
   lintSummary?: { fixed: number; flagged: number };
@@ -222,7 +257,17 @@ interface ImprovePreparationResult {
   /** Refs on reflect cooldown but eligible for distill-only processing (Bug D2). */
   distillOnlyRefs: ImproveEligibleRef[];
   coverageGaps: string[];
-  recentErrors: string[];
+  /** Per-ref utility scores (R-2 / #389): used for self-consistency threshold check. */
+  utilityMap: Map<string, number>;
+  /**
+   * Per-originator rolling error windows (O-5 / #378).
+   *
+   * Errors from one sub-pass must NOT be injected into unrelated sub-passes as
+   * avoidPatterns — that is the cross-task contamination failure mode Reflexion
+   * (arXiv:2303.11366) warns against. Each originator key ("schema-repair",
+   * "reflect", "distill") maps to its own rolling window of last-N errors.
+   */
+  recentErrors: Record<string, string[]>;
 }
 
 interface ImproveLoopResult {
@@ -440,6 +485,20 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     primaryStashDir = undefined;
   }
   const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
+
+  // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
+  // the SCC resolver in resolveFamilyContradictions has edges to work on.
+  // Best-effort: failures are warnings, never fatal.
+  if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
+    try {
+      const config = options.config ?? loadConfig();
+      await detectAndWriteContradictions(primaryStashDir, config);
+    } catch (err) {
+      // Non-fatal: contradiction detection is a best-effort pass.
+      warn(`[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
     ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
     : undefined;
@@ -504,6 +563,22 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
       if (!pidIsAlive || lockAgeMs > MAX_LOCK_AGE_MS) {
         // Stale lock — remove and retry once with O_EXCL
+        // O-7 / #394: Emit improve_lock_recovered event before recovery so the
+        // audit trail records the abnormal prior-run exit (Temporal/Airflow pattern).
+        try {
+          appendEvent({
+            eventType: "improve_lock_recovered",
+            metadata: {
+              stalePid: lock?.pid ?? null,
+              lockedAt: lock?.startedAt ?? null,
+              recoveredAt: new Date().toISOString(),
+              lockAgeMs,
+              reason: !pidIsAlive ? "pid_not_alive" : "lock_age_exceeded",
+            },
+          });
+        } catch {
+          /* event emission is best-effort; never block lock recovery */
+        }
         try {
           fs.unlinkSync(resolvedLockPath);
         } catch {
@@ -543,6 +618,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   const startMs = Date.now();
+
+  // O-1 (#364): Create a shared AbortController derived from startMs + budgetMs.
+  // Every async seam receives this signal so a hung sub-call cannot extend the
+  // run past the declared budget.
+  // References: Anthropic *Building Effective Agents* (2024); CoALA §5 (arXiv:2309.02427).
+  const budgetAbortController = new AbortController();
+  const budgetTimer = setTimeout(() => budgetAbortController.abort("improve budget exhausted"), budgetMs);
+  // Clear the timer when the run ends to avoid keeping the event loop alive.
+  const clearBudgetTimer = () => clearTimeout(budgetTimer);
 
   // I1: open a single state.db connection for the entire improve run so all
   // appendEvent calls reuse one handle instead of open/migrate/close per call.
@@ -596,6 +680,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       distillOnlyRefs: preparation.distillOnlyRefs,
       recentErrors: preparation.recentErrors,
       rejectedProposalsByRef,
+      utilityMap: preparation.utilityMap,
       startMs,
       budgetMs,
       eventsCtx,
@@ -621,6 +706,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memoryRefsForInference,
       reindexFn,
       eventsCtx,
+      // O-1 (#364): propagate wall-clock budget signal to post-loop maintenance.
+      budgetSignal: budgetAbortController.signal,
     });
 
     const finalActions =
@@ -691,6 +778,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     );
     throw err;
   } finally {
+    // O-1 (#364): Clear the budget abort timer so it does not keep the event
+    // loop alive after the run completes.
+    clearBudgetTimer();
     try {
       fs.unlinkSync(resolvedLockPath);
     } catch {
@@ -965,15 +1055,26 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  const recentErrors: string[] = []; // rolling window, last 3 failures
+  // O-5 / #378: Per-originator rolling error windows.
+  // Reflexion (arXiv:2303.11366) warns that cross-task verbal critique
+  // contamination degrades below single-shot baseline. Each originator key
+  // ("schema-repair", "reflect") maintains its own rolling window so that
+  // schema-repair failures are not injected as avoidPatterns into reflect calls.
+  const recentErrors: Record<string, string[]> = {};
   const RECENT_ERRORS_CAP = 3;
 
-  // Seed the rolling window from any schema repair errors that occurred before the main loop.
+  // Helper: push an error onto an originator's rolling window.
+  function pushRecentError(originator: string, msg: string): void {
+    if (!recentErrors[originator]) recentErrors[originator] = [];
+    recentErrors[originator].push(msg);
+    if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
+  }
+
+  // Seed schema-repair originator window from any schema-repair errors.
   for (const repair of schemaRepairs) {
     if (repair.outcome === "error") {
       const errMsg = repair.error ?? `schema repair error: ${repair.reason}`;
-      recentErrors.push(errMsg);
-      if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+      pushRecentError("schema-repair", errMsg);
     }
   }
 
@@ -1085,8 +1186,20 @@ async function runImprovePreparationStage(args: {
   let fullySkippedCount = 0;
   const preCooldownCount = postCleanupRefs.length;
 
+  // O-2 (#365): When the user explicitly targets a single ref via `--scope`,
+  // their intent is unambiguous — they want a fresh evaluation now. Cooldown
+  // policies are designed for unattended nightly runs; silently blocking an
+  // explicit retry violates the principle of least surprise (Sagas, 1987).
+  const scopeRefBypass = scope.mode === "ref";
+
   for (const r of postCleanupRefs) {
     if (validationFailureRefs.has(r.ref)) continue;
+
+    // When --scope <ref> is active, bypass all cooldown checks for this ref.
+    if (scopeRefBypass) {
+      eligibleRefs.push(r);
+      continue;
+    }
 
     const onReflectCooldown = reflectCooledRefs.has(r.ref);
     const onDistillCooldown = DISTILL_COOLDOWN_DAYS_PREFILT > 0 && distillCooledRefs.has(r.ref);
@@ -1199,21 +1312,51 @@ async function runImprovePreparationStage(args: {
     if (dbForRetrieval) closeDatabase(dbForRetrieval);
   }
 
+  // O-4 / #377: Detect a fully-zero-feedback stash (no positive or negative
+  // explicit feedback events across all candidates). This is the cold-start
+  // condition that causes oscillation: all N assets processed on day 1 → all
+  // enter reflect cooldown → burst on day 8 → silence again.
+  //
+  // On a fully-zero-feedback stash, cap the cold-start fallback to
+  // `explorationBudget` refs (default: 10). This spreads cold-start processing
+  // across multiple runs instead of flooding all N refs at once.
+  //
+  // The cap applies only when:
+  //   1. The stash has ZERO explicit feedback (no positive or negative events).
+  //   2. The fallback to all processableRefs would be triggered (no signals, no high-retrieval).
+  //   3. The scope is NOT "ref" (explicit ref scope always acts on the target).
+  //
+  // Once any explicit feedback exists, normal feedback-based eligibility takes over.
+  // Refs: Zoph & Le arXiv:1611.01578 — exploration budgets; MemRL — utility sampling.
+  const DEFAULT_EXPLORATION_BUDGET = 10;
+  const explorationBudget = options.explorationBudget ?? DEFAULT_EXPLORATION_BUDGET;
+  const isFullyZeroFeedback =
+    signalFiltered.length === 0 &&
+    processableRefs.every((r) => {
+      const s = feedbackSummary.get(r.ref);
+      return (s?.positive ?? 0) === 0 && (s?.negative ?? 0) === 0;
+    });
+
   // If the user explicitly scoped to a single ref, always act on it —
   // skip the signal/retrieval filter entirely. The filter exists to avoid
   // noisy "improve everything" runs; it should not gate an intentional
   // per-ref invocation where the user's explicit choice is the signal.
   //
   // For type/all scope with no signals yet (fresh environment), fall back
-  // to all processableRefs so that the first improve run is not a no-op.
+  // to all processableRefs (capped by explorationBudget on cold-start) so
+  // that the first improve run is not a no-op.
   const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
+  const coldStartRefs: ImproveEligibleRef[] =
+    isFullyZeroFeedback && explorationBudget > 0 && scope.mode !== "ref"
+      ? processableRefs.slice(0, explorationBudget)
+      : processableRefs;
   const mergedRefs =
     scope.mode === "ref"
       ? processableRefs
       : options.requireFeedbackSignal
         ? signalFiltered
         : signalAndRetrievalRefs.length === 0
-          ? processableRefs
+          ? coldStartRefs
           : signalAndRetrievalRefs;
 
   const utilityMap = buildUtilityMap(mergedRefs);
@@ -1316,6 +1459,7 @@ async function runImprovePreparationStage(args: {
     distillOnlyRefs: distillOnlyRefsResult,
     coverageGaps,
     recentErrors,
+    utilityMap,
   };
 }
 
@@ -1332,9 +1476,12 @@ async function runImproveLoopStage(args: {
   distillCooledRefs: Set<string>;
   /** Refs that should only run the distill path (reflect-cooled but distill expired, Bug D2). */
   distillOnlyRefs: ImproveEligibleRef[];
-  recentErrors: string[];
+  /** Per-originator rolling error windows (O-5 / #378). */
+  recentErrors: Record<string, string[]>;
   /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
   rejectedProposalsByRef: Map<string, EventEnvelope>;
+  /** R-2 / #389: per-ref utility scores for self-consistency threshold check. */
+  utilityMap: Map<string, number>;
   startMs: number;
   budgetMs: number;
   eventsCtx?: EventsContext;
@@ -1352,12 +1499,83 @@ async function runImproveLoopStage(args: {
     distillOnlyRefs,
     recentErrors,
     rejectedProposalsByRef,
+    utilityMap,
     startMs,
     budgetMs,
     eventsCtx,
   } = args;
 
+  // O-1 (#364): compute remaining budget at call time so each sub-call
+  // receives only its fair share of the wall-clock budget.
+  const remainingBudgetMs = () => Math.max(0, budgetMs - (Date.now() - startMs));
+
   const RECENT_ERRORS_CAP = 3;
+
+  // R-2 / #389: Self-Consistency multi-sample voting helpers.
+  // Wang et al. arXiv:2203.11171 — N=3 samples beat single-shot on reasoning tasks.
+  const SC_THRESHOLD = options.selfConsistencyThreshold ?? 0.7;
+  const SC_N = Math.min(Math.max(2, options.selfConsistencyN ?? 3), 5);
+
+  /**
+   * Compute Jaccard token overlap between two strings.
+   * Tokenizes by whitespace; returns 0 when both are empty.
+   */
+  function jaccardSimilarity(a: string, b: string): number {
+    const tokensA = new Set(a.split(/\s+/).filter(Boolean));
+    const tokensB = new Set(b.split(/\s+/).filter(Boolean));
+    if (tokensA.size === 0 && tokensB.size === 0) return 1;
+    let intersection = 0;
+    for (const t of tokensA) {
+      if (tokensB.has(t)) intersection++;
+    }
+    const union = tokensA.size + tokensB.size - intersection;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  /**
+   * Given N reflect results, return the one with the highest average Jaccard
+   * similarity to all other successful results (majority-vote winner).
+   * Falls back to the first successful result when N < 2.
+   */
+  function pickMajorityVote(results: AkmReflectResult[]): AkmReflectResult {
+    const successful = results.filter((r): r is Extract<AkmReflectResult, { ok: true }> => r.ok);
+    if (successful.length === 0)
+      return (
+        results[0] ?? {
+          schemaVersion: 1,
+          ok: false,
+          reason: "non_zero_exit",
+          error: "all samples failed",
+          exitCode: null,
+        }
+      );
+    if (successful.length === 1) return successful[0];
+    let bestIdx = 0;
+    let bestScore = -1;
+    for (let i = 0; i < successful.length; i++) {
+      let totalSim = 0;
+      for (let j = 0; j < successful.length; j++) {
+        if (i === j) continue;
+        totalSim += jaccardSimilarity(
+          successful[i].proposal.payload.content ?? "",
+          successful[j].proposal.payload.content ?? "",
+        );
+      }
+      const avgSim = totalSim / (successful.length - 1);
+      if (avgSim > bestScore) {
+        bestScore = avgSim;
+        bestIdx = i;
+      }
+    }
+    return successful[bestIdx] ?? successful[0];
+  }
+
+  // O-5 / #378: helper to push per-originator errors into the rolling window.
+  function pushRecentError(originator: string, msg: string): void {
+    if (!recentErrors[originator]) recentErrors[originator] = [];
+    recentErrors[originator].push(msg);
+    if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
+  }
   // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
   const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
   let completedCount = 0;
@@ -1419,15 +1637,61 @@ async function runImproveLoopStage(args: {
       // path is also a no-op for them — we just avoid unnecessary agent spawns.
       // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-        if (recentErrors.length > 0) reflectsWithErrorContext++;
-        const reflectResult = await reflectFn({
+        // O-5 / #378: only inject reflect-originator errors into the reflect call.
+        // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
+        const reflectErrors = recentErrors["reflect"] ?? [];
+        if (reflectErrors.length > 0) reflectsWithErrorContext++;
+        // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
+        // bounded by the wall-clock deadline rather than the default per-profile timeout.
+        const reflectBudgetMs = remainingBudgetMs();
+        const reflectCallArgs = {
           ref: planned.ref,
           task: options.task,
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-          ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
+          ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
           agentProcess: options.agentProcess ?? "reflect",
-          eventSource: "improve",
-        });
+          eventSource: "improve" as const,
+          ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
+        };
+        // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
+        // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
+        const refUtility = utilityMap.get(planned.ref) ?? 0;
+        const useConsistency = refUtility >= SC_THRESHOLD && SC_N >= 2;
+        let reflectResult: AkmReflectResult;
+        if (useConsistency) {
+          const samples: AkmReflectResult[] = [];
+          for (let s = 0; s < SC_N; s++) {
+            if (remainingBudgetMs() <= 0) break;
+            // draftMode: skip DB write so each sample doesn't create a proposal.
+            samples.push(await reflectFn({ ...reflectCallArgs, draftMode: true }));
+          }
+          const winner = pickMajorityVote(
+            samples.length > 0 ? samples : [await reflectFn({ ...reflectCallArgs, draftMode: true })],
+          );
+          // Persist only the majority-vote winner as a single real proposal.
+          if (winner.ok && primaryStashDir) {
+            const persistResult = createProposal(primaryStashDir, {
+              ref: winner.proposal.ref,
+              source: "reflect",
+              sourceRun: `reflect-sc-${Date.now()}`,
+              payload: winner.proposal.payload,
+            });
+            reflectResult = isProposalSkipped(persistResult)
+              ? {
+                  schemaVersion: 1,
+                  ok: false,
+                  reason: "parse_error" as const,
+                  error: `SC proposal skipped: ${persistResult.message}`,
+                  ref: winner.ref,
+                  exitCode: null,
+                }
+              : { ...winner, proposal: persistResult };
+          } else {
+            reflectResult = winner;
+          }
+        } else {
+          reflectResult = await reflectFn(reflectCallArgs);
+        }
         actions.push({
           ref: planned.ref,
           mode: reflectResult.ok ? "reflect" : "reflect-failed",
@@ -1435,8 +1699,7 @@ async function runImproveLoopStage(args: {
         });
         if (!reflectResult.ok) {
           const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-          recentErrors.push(errMsg);
-          if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+          pushRecentError("reflect", errMsg);
         }
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
         // B6: .derived refs skip reflect; record synthetic skip action.
@@ -1464,7 +1727,13 @@ async function runImproveLoopStage(args: {
 
       // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
       // refs; non-candidate refs in the set are blocked here.
-      if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal && !distillCooledRefs.has(planned.ref)) {
+      // O-2 (#365): bypass the distill cooldown when the user explicitly targeted
+      // this ref via --scope — their intent overrides unattended-run policies.
+      if (
+        shouldAttemptDistill &&
+        !skipMemoryDistillForWeakSignal &&
+        (!distillCooledRefs.has(planned.ref) || explicitRefScope)
+      ) {
         // TODO(refactor): single call site needs both lesson+knowledge refs for proposal dedup. If a third target ref type is added, extract deriveAllTargetRefs(inputRef): string[].
         const lessonRef = deriveLessonRef(planned.ref);
         const knowledgeRef = deriveKnowledgeRef(planned.ref);
@@ -1490,6 +1759,42 @@ async function runImproveLoopStage(args: {
             completedCount++;
             info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
             continue;
+          }
+
+          // D-2 (#370): reject-aware cooldown for distill. When the reviewer
+          // recently rejected a distilled lesson or knowledge proposal for this
+          // asset, skip re-distillation for DISTILL_REJECT_COOLDOWN_DAYS.
+          // Prevents the same rejected proposal from returning the next day.
+          // References: ExpeL arXiv:2308.10144, STaR arXiv:2203.14465.
+          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(options.distillCooldownDays ?? 30);
+          const recentlyRejectedLesson =
+            DISTILL_REJECT_COOLDOWN_MS > 0 &&
+            !explicitRefScope && // O-2: bypass when --scope <ref> is explicit
+            (rejectedProposalsByRef.has(lessonRef) || rejectedProposalsByRef.has(knowledgeRef));
+          if (recentlyRejectedLesson) {
+            const rejectedEntry = rejectedProposalsByRef.get(lessonRef) ?? rejectedProposalsByRef.get(knowledgeRef);
+            const rejectedAgeMs = rejectedEntry ? Date.now() - new Date(rejectedEntry.ts).getTime() : 0;
+            if (rejectedAgeMs < DISTILL_REJECT_COOLDOWN_MS) {
+              actions.push({
+                ref: planned.ref,
+                mode: "distill-skipped",
+                result: { ok: true, reason: "distill reject cooldown" },
+              });
+              appendEvent(
+                {
+                  eventType: "improve_skipped",
+                  ref: planned.ref,
+                  metadata: {
+                    reason: "distill_reject_cooldown",
+                    cooldownDays: options.distillCooldownDays ?? 30,
+                  },
+                },
+                eventsCtx,
+              );
+              completedCount++;
+              info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+              continue;
+            }
           }
         }
 
@@ -1584,6 +1889,8 @@ async function runImprovePostLoopStage(args: {
   memoryRefsForInference: Set<string>;
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   eventsCtx?: EventsContext;
+  /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
+  budgetSignal?: AbortSignal;
 }): Promise<ImprovePostLoopResult> {
   const {
     scope,
@@ -1596,6 +1903,7 @@ async function runImprovePostLoopStage(args: {
     memoryRefsForInference,
     reindexFn,
     eventsCtx,
+    budgetSignal,
   } = args;
   const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
 
@@ -1643,6 +1951,7 @@ async function runImprovePostLoopStage(args: {
     merged: 0,
     deleted: 0,
     promoted: [],
+    contradicted: 0,
     warnings: [],
     durationMs: 0,
   };
@@ -1693,6 +2002,8 @@ async function runImprovePostLoopStage(args: {
     allWarnings,
     reindexFn,
     consolidationRan,
+    // O-1 (#364): forward the budget signal to memory inference + graph extraction.
+    budgetSignal,
   });
 
   let deadUrls: DeadUrl[] | undefined;
@@ -1742,8 +2053,11 @@ async function runImproveMaintenancePasses(args: {
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   /** D9: true when consolidation ran and wrote at least one record this improve run. */
   consolidationRan?: boolean;
+  /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
+  budgetSignal?: AbortSignal;
 }): Promise<ImproveMaintenanceResult> {
-  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, consolidationRan } = args;
+  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, consolidationRan, budgetSignal } =
+    args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
   const config = options.config ?? loadConfig();
@@ -1769,10 +2083,11 @@ async function runImproveMaintenancePasses(args: {
       info(`[improve] memory inference starting (${memoryRefsForInference.size} candidate refs)`);
       const inferenceStart = Date.now();
       try {
+        // O-1 (#364): pass budget signal so a hung inference call is cancelled.
         memoryInference = await memoryInferenceFn(
           config,
           sources,
-          undefined,
+          budgetSignal,
           db,
           false,
           (event) => {
@@ -1859,9 +2174,10 @@ async function runImproveMaintenancePasses(args: {
             `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
           );
         };
+        // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
         graphExtraction = candidatePaths
-          ? await graphExtractionFn(config, sources, undefined, db, false, progressHandler, { candidatePaths })
-          : await graphExtractionFn(config, sources, undefined, db, false, progressHandler);
+          ? await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler, { candidatePaths })
+          : await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler);
         graphExtractionDurationMs = Date.now() - extractionStart;
         actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
         info(

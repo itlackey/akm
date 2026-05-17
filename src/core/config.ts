@@ -10,6 +10,29 @@ import { warn } from "./warn";
 
 export type { AgentConfig } from "../integrations/agent/config";
 
+// ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
+
+/**
+ * Curated taxonomy of failure modes for negative feedback (F-3 / #384).
+ *
+ * Structured failure modes enable aggregation across feedback events so the
+ * distill pipeline can detect that "5 assets failed for the same reason" and
+ * act on it — free-text strings about the same issue are not aggregatable.
+ *
+ * Based on CAI principle-driven feedback (arXiv:2212.08073) and PRM/ORM
+ * process-level reward modelling (arXiv:2305.20050).
+ */
+export const FEEDBACK_FAILURE_MODES = [
+  "incorrect", // Factually wrong or logically flawed content
+  "outdated", // Correct at some point but now stale
+  "dangerous", // Could cause harm if followed (security, safety)
+  "incomplete", // Missing key steps, context, or caveats
+  "redundant", // Duplicates another asset without adding value
+] as const;
+
+/** Union of the curated failure-mode values. */
+export type FeedbackFailureMode = (typeof FEEDBACK_FAILURE_MODES)[number];
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /**
@@ -142,11 +165,31 @@ export interface LlmFeatureFlags {
    */
   lesson_quality_gate?: boolean;
   /**
+   * Gates the LLM-as-judge quality gate on reflect proposals (R-5 / #374).
+   *
+   * When true, each proposal from `akm reflect` is scored by the judge before
+   * entering the proposal queue. Fail-open: judge failures always pass. Uses the
+   * same `runLessonQualityJudge` infrastructure as `lesson_quality_gate`.
+   *
+   * Also extends `lesson_quality_gate` semantics — both flags are checked by
+   * the reflect quality gate. Set either to enable it on reflect proposals.
+   * Default: false.
+   */
+  proposal_quality_gate?: boolean;
+  /**
    * Gates the `akm index` metadata-enhancement pass. Default: false.
    * When false (or absent), metadata enhancement is skipped and falls back to
    * returning an empty enrichment object (no description/searchHints/tags update).
    */
   metadata_enhance?: boolean;
+  /**
+   * Gates the M-1 contradiction-detection pass in `akm improve` (#367).
+   * Default: false. When enabled, derived memories within the same parent family
+   * are checked pairwise for contradictions using an LLM judge, and
+   * `contradictedBy` edges are written to their frontmatter so the SCC resolver
+   * in `resolveFamilyContradictions` has edges to work on.
+   */
+  memory_contradiction_detection?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -396,10 +439,19 @@ export interface AkmConfig {
   feedback?: {
     /**
      * When true, negative feedback without --reason throws a hard error
-     * (exit 2). When false or absent, a non-blocking warning is emitted
-     * instead. Default: false.
+     * (exit 2). When false, a non-blocking warning is emitted instead.
+     *
+     * Default: true (F-3 / #384). Structured failure signals are required
+     * for the distill verbal-gradient pipeline to aggregate failure patterns
+     * across feedback events (PRM/ORM, arXiv:2305.20050; CAI, arXiv:2212.08073).
      */
     requireReason?: boolean;
+    /**
+     * When set, only these failure-mode values are accepted by `--failure-mode`.
+     * Defaults to the built-in curated enum {@link FEEDBACK_FAILURE_MODES}.
+     * Set to an empty array to allow any string.
+     */
+    allowedFailureModes?: string[];
   };
   /**
    * Number of days to retain soft-invalidated (superseded) memory assets in
@@ -850,6 +902,12 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
     if (typeof feedbackRaw.requireReason === "boolean") {
       feedbackConfig.requireReason = feedbackRaw.requireReason;
     }
+    // F-3 / #384: parse allowedFailureModes override list.
+    if (Array.isArray(feedbackRaw.allowedFailureModes)) {
+      feedbackConfig.allowedFailureModes = feedbackRaw.allowedFailureModes.filter(
+        (v): v is string => typeof v === "string" && v.trim().length > 0,
+      );
+    }
     if (Object.keys(feedbackConfig).length > 0) config.feedback = feedbackConfig;
   }
 
@@ -1160,7 +1218,9 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "graph_extraction",
   "memory_consolidation",
   "lesson_quality_gate",
+  "proposal_quality_gate",
   "metadata_enhance",
+  "memory_contradiction_detection",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {

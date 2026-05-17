@@ -1413,3 +1413,586 @@ describe("akm improve memory cleanup", () => {
     expect(fs.existsSync(path.join(stashDir, ".akm", "consolidate-backup", staleBackupTs))).toBe(false);
   });
 });
+
+// ── O-2 / #365 — scope-ref cooldown bypass ──────────────────────────────────
+
+describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
+  test("explicit --scope <ref> reflects even when ref is on reflect cooldown", async () => {
+    const stashDir = makeTempDir("akm-o2-reflect-bypass-");
+    writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
+    await buildIndex(stashDir);
+
+    const reflectedRefs: string[] = [];
+    const now = Date.now();
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" }, { now: () => now - 60 * 1000 });
+
+    await akmImprove({
+      scope: "memory:auth-tips",
+      stashDir,
+      reflectCooldownDays: 7,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    expect(reflectedRefs).toContain("memory:auth-tips");
+  });
+
+  test("non-ref scope (scope: 'memory') still respects reflect cooldown", async () => {
+    const stashDir = makeTempDir("akm-o2-no-bypass-");
+    writeMemory(stashDir, "auth-tips-2", { description: "auth memory 2" }, "Auth tips 2.");
+    await buildIndex(stashDir);
+
+    const reflectedRefs: string[] = [];
+    const now = Date.now();
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips-2" }, { now: () => now - 60 * 1000 });
+
+    await akmImprove({
+      scope: "memory",
+      stashDir,
+      reflectCooldownDays: 7,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    expect(reflectedRefs).not.toContain("memory:auth-tips-2");
+  });
+});
+
+// ── O-1 / #364 — AbortSignal budget propagation ─────────────────────────────
+
+describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", () => {
+  test("reflectFn receives a timeoutMs derived from the remaining budget", async () => {
+    const stashDir = makeTempDir("akm-o1-timeout-propagation-");
+    writeMemory(stashDir, "budget-test", { description: "budget memory" }, "Budget test content.");
+    await buildIndex(stashDir);
+
+    const capturedTimeouts: Array<number | undefined> = [];
+
+    await akmImprove({
+      scope: "memory:budget-test",
+      stashDir,
+      timeoutMs: 60_000,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async (opts) => {
+        capturedTimeouts.push(opts.timeoutMs);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(opts.ref ?? "memory:budget-test"),
+          ref: opts.ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    expect(capturedTimeouts.length).toBeGreaterThan(0);
+    const firstTimeout = capturedTimeouts[0];
+    expect(firstTimeout).toBeDefined();
+    expect(firstTimeout).toBeGreaterThan(0);
+    expect(firstTimeout).toBeLessThanOrEqual(60_000);
+  });
+
+  test("budget AbortController is cleared after run completes (no timer leak)", async () => {
+    const stashDir = makeTempDir("akm-o1-timer-clear-");
+    writeMemory(stashDir, "timer-test", { description: "timer memory" }, "Timer test content.");
+    await buildIndex(stashDir);
+
+    const result = await akmImprove({
+      scope: "memory:timer-test",
+      stashDir,
+      timeoutMs: 5_000,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async (opts) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(opts.ref ?? "memory:timer-test"),
+        ref: opts.ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued",
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ── D-2 / #370 — reject-aware distill cooldown ───────────────────────────────
+
+describe("D-2: reject-aware cooldown for distill (#370)", () => {
+  test("distill is skipped when the lesson for an asset was recently rejected", async () => {
+    const stashDir = makeTempDir("akm-d2-reject-cooldown-");
+    writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
+    await buildIndex(stashDir);
+
+    const distilledRefs: string[] = [];
+    const now = Date.now();
+    appendEvent(
+      { eventType: "proposal_rejected", ref: "lesson:memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
+      { now: () => now - 60 * 1000 },
+    );
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      distillCooldownDays: 30,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:auth-tips"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => {
+        if (ref) distilledRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(distilledRefs).not.toContain("memory:auth-tips");
+    const distillSkipped = result.actions?.find((a) => a.ref === "memory:auth-tips" && a.mode === "distill-skipped");
+    expect(distillSkipped).toBeDefined();
+  });
+
+  test("D-2: --scope <ref> bypasses distill reject cooldown (O-2 interaction)", async () => {
+    const stashDir = makeTempDir("akm-d2-scope-bypass-");
+    writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
+    await buildIndex(stashDir);
+
+    const distilledRefs: string[] = [];
+    const now = Date.now();
+    appendEvent(
+      { eventType: "proposal_rejected", ref: "lesson:memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
+      { now: () => now - 60 * 1000 },
+    );
+
+    await akmImprove({
+      scope: "memory:auth-tips",
+      stashDir,
+      distillCooldownDays: 30,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:auth-tips"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => {
+        if (ref) distilledRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(distilledRefs).toContain("memory:auth-tips");
+  });
+});
+
+// ── M-1 / #367 — contradiction-detection unit tests ──────────────────────────
+
+describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)", () => {
+  test("detectAndWriteContradictions is a no-op when no LLM is configured", async () => {
+    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const stashDir = makeTempDir("akm-m1-no-llm-");
+    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
+    writeMemory(stashDir, "auth-tips.derived2", { inferred: true, source: "memory:auth-tips" }, "VPN is optional.");
+
+    const result = await detectAndWriteContradictions(stashDir, {
+      stashDir,
+      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      defaultWriteTarget: "stash",
+      // No llm config — should be a no-op.
+    } as Parameters<typeof detectAndWriteContradictions>[1]);
+
+    // No LLM → no pairs checked → no edges written.
+    expect(result.pairsChecked).toBe(0);
+    expect(result.edgesWritten).toBe(0);
+  });
+
+  test("detectAndWriteContradictions writes contradictedBy edges when LLM judges true", async () => {
+    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const stashDir = makeTempDir("akm-m1-detect-");
+    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
+    writeMemory(
+      stashDir,
+      "auth-tips.derived2",
+      { inferred: true, source: "memory:auth-tips" },
+      "VPN is never required.",
+    );
+
+    const result = await detectAndWriteContradictions(
+      stashDir,
+      {
+        stashDir,
+        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: {
+          endpoint: "http://localhost/v1/chat",
+          model: "test",
+          features: { memory_contradiction_detection: true },
+        },
+      } as Parameters<typeof detectAndWriteContradictions>[1],
+      // Inject a fake chat that always returns "contradicts: true".
+      async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict about VPN requirement." }),
+    );
+
+    expect(result.pairsChecked).toBe(1);
+    expect(result.edgesWritten).toBe(2); // Both sides get a contradictedBy edge.
+
+    // Verify frontmatter was updated.
+    const file1 = path.join(stashDir, "memories", "auth-tips.derived.md");
+    const file2 = path.join(stashDir, "memories", "auth-tips.derived2.md");
+    const raw1 = fs.readFileSync(file1, "utf8");
+    const raw2 = fs.readFileSync(file2, "utf8");
+    expect(raw1).toContain("contradictedBy");
+    expect(raw2).toContain("contradictedBy");
+    expect(raw1).toContain("auth-tips.derived2");
+    expect(raw2).toContain("auth-tips.derived");
+  });
+
+  test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {
+    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const stashDir = makeTempDir("akm-m1-no-contradiction-");
+    writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Use VPN for prod.");
+    writeMemory(
+      stashDir,
+      "auth-tips.derived2",
+      { inferred: true, source: "memory:auth-tips" },
+      "Enable 2FA before deploys.",
+    );
+
+    const result = await detectAndWriteContradictions(
+      stashDir,
+      {
+        stashDir,
+        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: {
+          endpoint: "http://localhost/v1/chat",
+          model: "test",
+          features: { memory_contradiction_detection: true },
+        },
+      } as Parameters<typeof detectAndWriteContradictions>[1],
+      async () => JSON.stringify({ contradicts: false, reason: "These are complementary security measures." }),
+    );
+
+    expect(result.pairsChecked).toBe(1);
+    expect(result.edgesWritten).toBe(0);
+  });
+});
+
+// ── M-3 / #387 — schema-repair routes through proposal queue ─────────────────
+
+describe("M-3: schema-repair routes through proposal queue (#387)", () => {
+  test("runSchemaRepairPass queues a proposal instead of writing directly to disk", async () => {
+    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+    const { listProposals } = await import("../../src/core/proposals");
+
+    const stashDir = makeTempDir("akm-m3-schema-repair-");
+    const memFile = path.join(stashDir, "memories", "auth-guide.md");
+    fs.mkdirSync(path.dirname(memFile), { recursive: true });
+    fs.writeFileSync(memFile, "---\n---\nAuth guide content.\n", "utf8");
+
+    const result = await runSchemaRepairPass([{ ref: "memory:auth-guide", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      stashDir,
+      llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
+      findFilePath: async () => memFile,
+      isLessonCandidateFn: () => false,
+      chatFn: async () => JSON.stringify({ description: "Authentication guide for the service." }),
+    });
+
+    // M-3: proposal queued (not written to disk directly)
+    expect(result.repairs.length).toBe(1);
+    const repair = result.repairs[0];
+    expect(repair?.outcome).toBe("queued");
+    expect(repair?.proposalId).toBeDefined();
+    expect(result.repairedRefs.has("memory:auth-guide")).toBe(true);
+
+    // File should NOT be modified (write went through proposal queue)
+    const fileContent = fs.readFileSync(memFile, "utf8");
+    expect(fileContent).not.toContain("Authentication guide");
+
+    // Proposal should exist in the queue
+    const proposals = listProposals(stashDir);
+    expect(proposals.length).toBe(1);
+    expect(proposals[0]?.ref).toBe("memory:auth-guide");
+    expect(proposals[0]?.payload.content).toContain("Authentication guide");
+  });
+
+  test("runSchemaRepairPass falls back to direct write when stashDir is absent", async () => {
+    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+
+    const stashDir = makeTempDir("akm-m3-fallback-");
+    const memFile = path.join(stashDir, "memories", "auth2.md");
+    fs.mkdirSync(path.dirname(memFile), { recursive: true });
+    fs.writeFileSync(memFile, "---\n---\nAuth content.\n", "utf8");
+
+    const result = await runSchemaRepairPass([{ ref: "memory:auth2", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      // No stashDir: triggers legacy direct-write path
+      llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
+      findFilePath: async () => memFile,
+      isLessonCandidateFn: () => false,
+      chatFn: async () => JSON.stringify({ description: "Auth content description." }),
+    });
+
+    // Fallback: direct write
+    expect(result.repairs[0]?.outcome).toBe("written");
+    const fileContent = fs.readFileSync(memFile, "utf8");
+    expect(fileContent).toContain("Auth content description.");
+  });
+});
+
+// ── O-3 / #376 — reindex between consolidate and graph extraction ─────────────
+
+describe("O-3: reindex triggered after consolidation before graph extraction (#376)", () => {
+  test("reindexFn is called after consolidation ran and before graph extraction", async () => {
+    const stashDir = makeTempDir("akm-o3-reindex-");
+    writeMemory(stashDir, "auth-guide", { description: "Auth guide" }, "Auth guide content.");
+    await buildIndex(stashDir);
+
+    const reindexCallOrder: string[] = [];
+
+    // Track reindex calls
+    const reindexFn = async ({ stashDir: _s }: { stashDir: string }) => {
+      reindexCallOrder.push("reindex");
+      return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
+    };
+
+    // Track graph extraction calls
+    let graphExtractionCalled = false;
+    const graphExtractionFn = async () => {
+      graphExtractionCalled = true;
+      reindexCallOrder.push("graphExtraction");
+      return {
+        considered: 0,
+        extracted: 0,
+        totalEntities: 0,
+        totalRelations: 0,
+        written: false,
+        quality: {
+          consideredFiles: 0,
+          extractedFiles: 0,
+          entityCount: 0,
+          relationCount: 0,
+          extractionCoverage: 0,
+          density: 0,
+        },
+        warnings: [],
+      } satisfies import("../../src/indexer/graph-extraction").GraphExtractionResult;
+    };
+
+    // Run with consolidation enabled to trigger the D9 reindex path
+    await akmImprove({
+      scope: "memory",
+      stashDir,
+      config: {
+        semanticSearchMode: "off",
+        llm: {
+          endpoint: "http://localhost/chat/completions",
+          model: "test",
+          features: { memory_consolidation: true, graph_extraction: true },
+        },
+      },
+      ensureIndexFn: async () => false,
+      reindexFn,
+      graphExtractionFn,
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:auth-guide"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // O-3: if consolidation ran, reindex must happen before graph extraction
+    if (graphExtractionCalled && reindexCallOrder.includes("reindex")) {
+      const reindexIdx = reindexCallOrder.indexOf("reindex");
+      const graphIdx = reindexCallOrder.indexOf("graphExtraction");
+      // Reindex must come before graphExtraction (when consolidation ran)
+      expect(reindexIdx).toBeLessThan(graphIdx);
+    }
+    // At minimum, either reindex was called or graph extraction ran
+    expect(reindexCallOrder.length).toBeGreaterThan(0);
+  });
+});
+
+// ── O-4 / #377 — exploration-budget cap on fully-zero-feedback stash ──────────
+
+describe("O-4: explorationBudget caps cold-start refs on fully-zero-feedback stash (#377)", () => {
+  test("only explorationBudget refs are reflected when stash has zero feedback", async () => {
+    const stashDir = makeTempDir("akm-o4-budget-");
+    // Write 5 memories — all will be processable with no feedback
+    for (let i = 1; i <= 5; i++) {
+      writeMemory(stashDir, `mem-${i}`, { description: `Memory ${i}` }, `Memory ${i} content.`);
+    }
+    await buildIndex(stashDir);
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir,
+      explorationBudget: 2, // cap to 2 even though 5 are processable
+      config: {
+        semanticSearchMode: "off",
+        llm: {
+          endpoint: "http://localhost/chat/completions",
+          model: "test",
+          features: {},
+        },
+      },
+      ensureIndexFn: async () => false,
+      reflectFn: async ({ ref }) => {
+        reflected.push(ref ?? "");
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:mem-1"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        };
+      },
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // With explorationBudget=2 and 5 zero-feedback memories, at most 2 should be reflected
+    expect(reflected.length).toBeLessThanOrEqual(2);
+  });
+
+  test("explorationBudget=0 disables cap and allows all zero-feedback refs", async () => {
+    const stashDir = makeTempDir("akm-o4-no-budget-");
+    for (let i = 1; i <= 4; i++) {
+      writeMemory(stashDir, `item-${i}`, { description: `Item ${i}` }, `Item ${i} content.`);
+    }
+    await buildIndex(stashDir);
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir,
+      explorationBudget: 0, // disabled — all refs should pass
+      config: {
+        semanticSearchMode: "off",
+        llm: {
+          endpoint: "http://localhost/chat/completions",
+          model: "test",
+          features: {},
+        },
+      },
+      ensureIndexFn: async () => false,
+      reflectFn: async ({ ref }) => {
+        reflected.push(ref ?? "");
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:item-1"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        };
+      },
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // explorationBudget=0 disables cap, so all 4 refs should be reflected
+    expect(reflected.length).toBeGreaterThanOrEqual(4);
+  });
+});

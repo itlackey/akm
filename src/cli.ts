@@ -80,7 +80,14 @@ import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
 import { isHttpUrl, isWithin, resolveStashDir } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
-import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, saveConfig } from "./core/config";
+import {
+  DEFAULT_CONFIG,
+  FEEDBACK_FAILURE_MODES,
+  loadConfig,
+  loadUserConfig,
+  resolveConfiguredSources,
+  saveConfig,
+} from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
@@ -1541,9 +1548,16 @@ const feedbackCommand = defineCommand({
     },
     reason: {
       type: "string",
-      description: "Reason for the feedback (recommended for negative feedback, used by distillation)",
+      description: "Reason for the feedback (required for negative feedback by default; used by distillation)",
     },
     note: { type: "string", description: "Alias for --reason (backward-compatible, prefer --reason)" },
+    "failure-mode": {
+      type: "string",
+      description:
+        `Structured failure-mode taxonomy for negative feedback (F-3 / #384). ` +
+        `Accepted values: ${FEEDBACK_FAILURE_MODES.join(", ")}. ` +
+        "Stored alongside --reason in event metadata for aggregation by the distill pipeline.",
+    },
     tag: {
       type: "string",
       description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
@@ -1568,12 +1582,40 @@ const feedbackCommand = defineCommand({
       }
       const signal = args.positive ? "positive" : "negative";
       const reason = (args.reason as string | undefined) ?? (args.note as string | undefined);
-      if (args.negative === true && !reason?.trim()) {
-        const cfg = loadConfig();
-        if (cfg.feedback?.requireReason === true) {
+
+      // F-3 / #384: Validate --failure-mode against the curated enum.
+      const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
+      if (failureMode) {
+        if (args.positive) {
           throw new UsageError(
-            "Negative feedback requires --reason (feedback.requireReason is enabled).",
+            "--failure-mode is only valid for negative feedback.",
+            "INVALID_FLAG_VALUE",
+            "Remove --failure-mode or switch to --negative.",
+          );
+        }
+        const cfg = loadConfig();
+        const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
+        if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
+          throw new UsageError(
+            `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
+            "INVALID_FLAG_VALUE",
+            `Use one of: ${allowedModes.join(", ")}`,
+          );
+        }
+      }
+
+      if (args.negative === true && !reason?.trim()) {
+        // F-3 / #384: Default requireReason is now true. Load config to allow
+        // operators to opt out via feedback.requireReason: false in akm.json.
+        const cfg = loadConfig();
+        const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
+        if (requireReason) {
+          throw new UsageError(
+            "Negative feedback requires --reason (structured failure signals are needed for distillation). " +
+              "Use --failure-mode for a curated taxonomy or --reason for free text. " +
+              "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
             "MISSING_REQUIRED_ARGUMENT",
+            `Hint: akm feedback ${ref} --negative --reason "..." [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
           );
         } else {
           warn("Warning: negative feedback without --reason provides less distillation signal.");
@@ -1584,6 +1626,7 @@ const feedbackCommand = defineCommand({
       const metadataObj = {
         signal,
         ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        ...(failureMode ? { failureMode } : {}),
         ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
       };
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
@@ -1594,6 +1637,7 @@ const feedbackCommand = defineCommand({
         await ensureIndex(sources[0].path);
       }
 
+      let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
       const db = openExistingDatabase();
       try {
         const entryId = findEntryIdByRef(db, ref);
@@ -1620,6 +1664,7 @@ const feedbackCommand = defineCommand({
         // positive/negative signals influence search ranking without requiring
         // a full reindex. We query the total accumulated feedback counts from
         // usage_events so the delta reflects the entire signal history.
+        // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
         try {
           const counts = db
             .prepare(
@@ -1632,7 +1677,7 @@ const feedbackCommand = defineCommand({
             .get(entryId) as { pos: number | null; neg: number | null } | undefined;
           const pos = counts?.pos ?? 0;
           const neg = counts?.neg ?? 0;
-          applyFeedbackToUtilityScore(db, entryId, pos, neg);
+          utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
         } catch {
           // best-effort — feedback recording succeeds even if utility update fails
         }
@@ -1645,7 +1690,42 @@ const feedbackCommand = defineCommand({
         ref,
         metadata: metadataObj,
       });
-      output("feedback", { ok: true, ref, signal, reason: reason?.trim() ?? null, tags: validatedTags });
+
+      // F-5 / #386: When a high-utility asset crosses below the review threshold,
+      // auto-create a review-needed escalation proposal so a human can confirm
+      // whether the negative feedback is valid before the asset falls out of
+      // the improve loop. Best-effort — failure is logged but does not fail the
+      // feedback command.
+      // Emit a structured event rather than a proposal so the review-needed
+      // signal is queryable via `akm events list --type improve_review_needed`
+      // without risking accidental asset overwrite if the proposal is accepted.
+      if (utilityResult?.crossedReviewThreshold) {
+        try {
+          appendEvent({
+            eventType: "improve_review_needed",
+            ref,
+            metadata: {
+              previousUtility: utilityResult.previousUtility,
+              nextUtility: utilityResult.nextUtility,
+              reason: reason?.trim() ?? null,
+              failureMode: failureMode ?? null,
+            },
+          });
+        } catch (escalationErr) {
+          warn(
+            `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
+          );
+        }
+      }
+
+      output("feedback", {
+        ok: true,
+        ref,
+        signal,
+        reason: reason?.trim() ?? null,
+        failureMode: failureMode ?? null,
+        tags: validatedTags,
+      });
     });
   },
 });
@@ -1675,6 +1755,13 @@ const historyCommand = defineCommand({
         "Default: false (usage_events only).",
       default: false,
     },
+    "accept-rate-by-source": {
+      type: "boolean",
+      description:
+        "Compute accept-rate-per-source metrics from the proposal store and include them in the output (F-4 / #385). " +
+        "Useful for measuring which generators (reflect, distill, …) produce the most accepted proposals.",
+      default: false,
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
   },
   run({ args }) {
@@ -1686,11 +1773,15 @@ const historyCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
+      const sources = resolveSourceEntries();
+      const stashDir = sources[0]?.path;
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
         source: sourceFlag,
         includeProposals: args["include-proposals"],
+        acceptRateBySource: args["accept-rate-by-source"] as boolean | undefined,
+        stashDir,
       });
       output("history", result);
     });
@@ -3213,14 +3304,77 @@ const acceptCommand = defineCommand({
   args: {
     id: {
       type: "positional",
-      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
-      required: true,
+      description:
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+      required: false,
     },
     target: { type: "string", description: "Override the write target by source name" },
+    // F-6 / #393: Batch accept by source, diff size, or age.
+    source: {
+      type: "string",
+      description:
+        "F-6: Bulk-accept all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description:
+        "F-6: When bulk-accepting, only accept proposals whose content is <= this many lines. Skips larger proposals.",
+    },
+    "older-than": {
+      type: "string",
+      description:
+        "F-6: When bulk-accepting, only accept proposals created more than this many days ago (e.g. '7' for 7 days).",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "F-6: List proposals that would be bulk-accepted without accepting them.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmProposalAccept({ id: args.id, target: args.target });
+      // F-6 / #393: Bulk-accept when --source is provided without a positional id.
+      if (args.source && !args.id) {
+        const { listProposals } = await import("./core/proposals");
+        const stashDir = resolveStashDir();
+        const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+          throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+        }
+        const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+          throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+        }
+        const maxDiffLines = rawMaxDiff;
+        const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
+        const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+          if (p.source !== args.source) return false;
+          if (maxDiffLines !== undefined) {
+            const lines = (p.payload.content ?? "").split("\n").length;
+            if (lines > maxDiffLines) return false;
+          }
+          if (olderThanMs !== undefined) {
+            const age = Date.now() - new Date(p.createdAt).getTime();
+            if (age < olderThanMs) return false;
+          }
+          return true;
+        });
+        const results = [];
+        for (const proposal of pending) {
+          if (args["dry-run"]) {
+            results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+          } else {
+            const result = await akmProposalAccept({ id: proposal.id, target: args.target as string | undefined });
+            results.push(result);
+          }
+        }
+        output("proposal-accept-batch", { accepted: results.length, results, dryRun: args["dry-run"] as boolean });
+        return;
+      }
+      if (!args.id) {
+        throw new UsageError("Usage: akm accept <id>  OR  akm accept --source <source>", "MISSING_REQUIRED_ARGUMENT");
+      }
+      const result = await akmProposalAccept({ id: args.id as string, target: args.target as string | undefined });
       output("proposal-accept", result);
     });
   },
@@ -3231,17 +3385,86 @@ const rejectCommand = defineCommand({
   args: {
     id: {
       type: "positional",
-      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
-      required: true,
+      description:
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+      required: false,
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
+    // F-6 / #393: Batch reject by source, diff size, or age.
+    source: {
+      type: "string",
+      description:
+        "F-6: Bulk-reject all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description:
+        "F-6: When bulk-rejecting, only reject proposals whose content is <= this many lines. Skips larger proposals.",
+    },
+    "older-than": {
+      type: "string",
+      description:
+        "F-6: When bulk-rejecting, only reject proposals created more than this many days ago (e.g. '7' for 7 days).",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "F-6: List proposals that would be bulk-rejected without rejecting them.",
+      default: false,
+    },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       if (!args.reason || !String(args.reason).trim()) {
-        throw new UsageError("Usage: akm reject <id> --reason '<reason>'", "MISSING_REQUIRED_ARGUMENT");
+        throw new UsageError(
+          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
       }
-      const result = akmProposalReject({ id: args.id, reason: args.reason });
+      // F-6 / #393: Bulk-reject when --source is provided without a positional id.
+      if (args.source && !args.id) {
+        const { listProposals } = await import("./core/proposals");
+        const stashDir = resolveStashDir();
+        const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+          throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+        }
+        const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+          throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+        }
+        const maxDiffLines = rawMaxDiff;
+        const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
+        const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+          if (p.source !== args.source) return false;
+          if (maxDiffLines !== undefined) {
+            const lines = (p.payload.content ?? "").split("\n").length;
+            if (lines > maxDiffLines) return false;
+          }
+          if (olderThanMs !== undefined) {
+            const age = Date.now() - new Date(p.createdAt).getTime();
+            if (age < olderThanMs) return false;
+          }
+          return true;
+        });
+        const results = [];
+        for (const proposal of pending) {
+          if (args["dry-run"]) {
+            results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+          } else {
+            const result = akmProposalReject({ id: proposal.id, reason: String(args.reason) });
+            results.push(result);
+          }
+        }
+        output("proposal-reject-batch", { rejected: results.length, results, dryRun: args["dry-run"] as boolean });
+        return;
+      }
+      if (!args.id) {
+        throw new UsageError(
+          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      const result = akmProposalReject({ id: args.id as string, reason: String(args.reason) });
       output("proposal-reject", result);
     });
   },

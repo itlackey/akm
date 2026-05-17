@@ -7,14 +7,17 @@ import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
+import { appendEvent } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
+import { writeContradictEdge } from "../core/memory-belief";
 import { parseEmbeddedJsonResponse } from "../core/parse";
-import { createProposal, listProposals } from "../core/proposals";
+import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
 import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
 import { chatCompletion } from "../llm/client";
+import { cosineSimilarity, embedBatch } from "../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -39,7 +42,26 @@ export interface ConsolidatePromoteOp {
   reason: string;
 }
 
-export type ConsolidateOperation = ConsolidateMergeOp | ConsolidateDeleteOp | ConsolidatePromoteOp;
+/**
+ * Contradict op (C-3 / #382): two memories make mutually exclusive factual
+ * claims. The consolidate engine writes `contradictedBy` frontmatter edges
+ * so `resolveFamilyContradictions` in `memory-improve.ts` can resolve them
+ * via its SCC algorithm. Zep arXiv:2501.13956 §3.
+ */
+export interface ConsolidateContradictOp {
+  op: "contradict";
+  /** The memory that should be marked as contradicted. */
+  ref: string;
+  /** The memory that contradicts it. */
+  contradictedByRef: string;
+  reason: string;
+}
+
+export type ConsolidateOperation =
+  | ConsolidateMergeOp
+  | ConsolidateDeleteOp
+  | ConsolidatePromoteOp
+  | ConsolidateContradictOp;
 
 export interface ConsolidateResult {
   schemaVersion: 1;
@@ -52,6 +74,8 @@ export interface ConsolidateResult {
   merged: number;
   deleted: number;
   promoted: string[];
+  /** Number of contradiction edges written (C-3 / #382). */
+  contradicted: number;
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
@@ -78,14 +102,16 @@ Rules:
 1. MERGE: Two or more memories are substantially duplicated or closely related → propose merging. Return the primary ref to keep and secondary refs to delete. Do NOT include mergedContent — the merge will be executed in a separate step.
 2. DELETE: Memory is clearly outdated, contradicted, or redundant → propose deletion.
 3. PROMOTE: Memory expresses a stable, reusable fact suitable as a \`knowledge:\` asset → propose promotion. Do NOT delete the source memory.
-4. KEEP: Memory is unique and current → omit from output.
+4. CONTRADICT: Two memories make mutually exclusive factual claims about the same subject (e.g. "always use VPN" vs "VPN is optional") → mark the older or less authoritative one as contradicted. This writes a contradictedBy edge so the belief-resolution SCC algorithm can resolve the conflict. Do NOT delete contradicted memories — let the belief resolver decide.
+5. KEEP: Memory is unique and current → omit from output.
 
 Return ONLY JSON (no prose, no code fences):
 {
   "operations": [
     { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize" },
     { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>" },
-    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>" }
+    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>" },
+    { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>" }
   ],
   "warnings": ["<optional concerns>"]
 }`;
@@ -163,6 +189,75 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
   return Math.max(1, Math.min(50, raw));
 }
 
+// ── Similarity clustering (C-1 / #380) ──────────────────────────────────────
+
+/**
+ * Re-order memories so that similar ones are placed adjacent to each other
+ * before the memories are sliced into chunks. This ensures high-similarity
+ * memories land in the same LLM context window, allowing the consolidate
+ * model to detect and merge duplicates that would otherwise be split across
+ * chunks and survive indefinitely.
+ *
+ * Algorithm: greedy nearest-neighbour chain starting from the first memory.
+ * Each step selects the unused memory with the highest cosine similarity to
+ * the last-placed memory. O(n²) — acceptable for the expected N < 200.
+ *
+ * mem0 arXiv:2504.19413 — every candidate compared against whole store.
+ * A-MEM arXiv:2502.12110 — atomic notes linked by similarity.
+ *
+ * Returns the original order unchanged when:
+ *   - The embedding config is not present.
+ *   - Embedding requests fail (fail-open).
+ *   - There are fewer than 3 memories (no benefit to reordering).
+ */
+async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmConfig): Promise<MemoryEntry[]> {
+  if (memories.length < 3 || !config.embedding) return memories;
+
+  const texts = memories.map((m) => {
+    const parts: string[] = [];
+    if (m.description) parts.push(m.description);
+    if (m.tags.length > 0) parts.push(m.tags.join(" "));
+    return parts.join(". ") || m.name;
+  });
+
+  let embeddings: number[][] | null = null;
+  try {
+    embeddings = await embedBatch(texts, config.embedding);
+  } catch {
+    // Fail open: embedding failures degrade gracefully to original order.
+    return memories;
+  }
+  if (!embeddings || embeddings.length !== memories.length) return memories;
+
+  // Greedy nearest-neighbour chain.
+  const used = new Array<boolean>(memories.length).fill(false);
+  const ordered: MemoryEntry[] = [];
+  let current = 0; // start from the first memory
+
+  ordered.push(memories[current] as MemoryEntry);
+  used[current] = true;
+
+  for (let step = 1; step < memories.length; step++) {
+    const currentEmb = embeddings[current] as number[];
+    let bestIdx = -1;
+    let bestSim = -Infinity;
+    for (let j = 0; j < memories.length; j++) {
+      if (used[j]) continue;
+      const sim = cosineSimilarity(currentEmb, embeddings[j] as number[]);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestIdx = j;
+      }
+    }
+    if (bestIdx === -1) break;
+    ordered.push(memories[bestIdx] as MemoryEntry);
+    used[bestIdx] = true;
+    current = bestIdx;
+  }
+
+  return ordered;
+}
+
 // ── Chunk helpers ────────────────────────────────────────────────────────────
 
 export function buildChunkPrompt(
@@ -216,6 +311,9 @@ function isValidOp(op: unknown): op is ConsolidateOperation {
   if (o.op === "promote") {
     return typeof o.ref === "string" && typeof o.knowledgeRef === "string";
   }
+  if (o.op === "contradict") {
+    return typeof o.ref === "string" && typeof o.contradictedByRef === "string";
+  }
   return false;
 }
 
@@ -223,6 +321,8 @@ function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperati
   const mergeOps = new Map<string, ConsolidateMergeOp>();
   const deleteOps = new Map<string, ConsolidateDeleteOp>();
   const promoteOps = new Map<string, ConsolidatePromoteOp>();
+  // C-3 / #382: contradict ops keyed by `ref|contradictedByRef` to deduplicate.
+  const contradictOps = new Map<string, ConsolidateContradictOp>();
   const warnings: string[] = [];
 
   for (const chunk of chunks) {
@@ -241,17 +341,33 @@ function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperati
           deleteOps.set(op.ref, op);
         }
       } else if (op.op === "promote") {
-        const existingMerge = mergeOps.get(op.ref);
-        if (existingMerge) {
-          warnings.push(`Conflict: promote and merge both target ${op.ref}; preferring merge.`);
-        } else {
-          promoteOps.set(op.ref, op);
+        // C-2 / #381: when both a promote and a merge target the same ref,
+        // queue the promote FIRST rather than discarding it. The promote op
+        // routes through createProposal (the human-gated proposal queue), so
+        // it is non-destructive. The merge follows after the proposal is
+        // created. This preserves the human reviewer's ability to inspect the
+        // promotion before the source memory is merged/deleted.
+        // AGM K*8 — retain the maximally informative consistent subset.
+        promoteOps.set(op.ref, op);
+      } else if (op.op === "contradict") {
+        // Deduplicate by ref+contradictedByRef pair.
+        const key = `${op.ref}|${op.contradictedByRef}`;
+        if (!contradictOps.has(key)) {
+          contradictOps.set(key, op);
         }
       }
     }
   }
 
-  const ops: ConsolidateOperation[] = [...mergeOps.values(), ...deleteOps.values(), ...promoteOps.values()];
+  // C-2 / #381: promote ops are ordered BEFORE merge ops so that the
+  // human-gated proposal queue entry is created before any destructive merge.
+  // Phase B processes ops in array order, so promote executes first.
+  const ops: ConsolidateOperation[] = [
+    ...promoteOps.values(),
+    ...mergeOps.values(),
+    ...deleteOps.values(),
+    ...contradictOps.values(),
+  ];
   return { ops, warnings };
 }
 
@@ -465,6 +581,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       merged: 0,
       deleted: 0,
       promoted: [],
+      contradicted: 0,
       warnings: [],
       durationMs: Date.now() - startMs,
     };
@@ -487,6 +604,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       merged: 0,
       deleted: 0,
       promoted: [],
+      contradicted: 0,
       warnings,
       durationMs: Date.now() - startMs,
     };
@@ -513,25 +631,44 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.target ?? stashDir;
+
+  // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
+  // This ensures that semantically similar memories land in the same LLM
+  // context window, allowing the model to detect and merge duplicates that
+  // would otherwise be split across chunks and survive indefinitely.
+  // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
+  // Fails open: if embeddings are unavailable or fail, original order is used.
+  const clusteredMemories = await clusterMemoriesBySimilarity(memories, config);
+
   const chunks: MemoryEntry[][] = [];
-  for (let i = 0; i < memories.length; i += chunkSize) {
-    chunks.push(memories.slice(i, i + chunkSize));
+  for (let i = 0; i < clusteredMemories.length; i += chunkSize) {
+    chunks.push(clusteredMemories.slice(i, i + chunkSize));
   }
 
   warn(`[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}`);
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
-  let consecutiveFailures = 0;
+  // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
+  // Consecutive-count policies are brittle against transient LM Studio reloads:
+  // two transient failures abort the run even though the next chunk would succeed.
+  // Rate-based abort (≥50% failure over ≥4 chunks) is more robust.
+  // Tanenbaum, Distributed Systems §8 — rate-based policies with minimum sample sizes.
+  let totalChunksProcessed = 0;
+  let totalChunksFailed = 0;
+  const ABORT_MIN_CHUNKS = 4;
+  const ABORT_FAILURE_RATE = 0.5;
 
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
-    // Abort early if the first chunk failed — the LLM/agent is likely unavailable
-    // and continuing would waste minutes processing chunks that will all fail the same way.
-    if (chunkIdx > 0 && consecutiveFailures >= 2) {
-      const skipped = chunks.length - chunkIdx;
-      warnings.push(
-        `Consolidation aborted after ${consecutiveFailures} consecutive chunk failures — LLM may be unavailable. ${skipped} chunk(s) skipped.`,
-      );
-      break;
+    // Abort if failure rate >= 50% over at least 4 processed chunks.
+    if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
+      const failureRate = totalChunksFailed / totalChunksProcessed;
+      if (failureRate >= ABORT_FAILURE_RATE) {
+        const skipped = chunks.length - chunkIdx;
+        warnings.push(
+          `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`,
+        );
+        break;
+      }
     }
 
     const chunk = chunks[chunkIdx];
@@ -558,7 +695,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
     if (!raw.ok) {
       warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
-      consecutiveFailures++;
+      totalChunksProcessed++;
+      totalChunksFailed++;
       continue;
     }
 
@@ -574,11 +712,12 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           ? " (empty response — if using a thinking model, disable thinking mode)"
           : "";
       warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
-      consecutiveFailures++;
+      totalChunksProcessed++;
+      totalChunksFailed++;
       continue;
     }
 
-    consecutiveFailures = 0; // reset on success
+    totalChunksProcessed++; // success
 
     const ops: ConsolidateOperation[] = [];
     for (const op of parsed.operations) {
@@ -613,6 +752,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       merged: 0,
       deleted: 0,
       promoted: [],
+      contradicted: 0,
       planned: allOps,
       warnings,
       durationMs: Date.now() - startMs,
@@ -639,6 +779,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           merged: 0,
           deleted: 0,
           promoted: [],
+          contradicted: 0,
           planned: allOps,
           warnings: [...warnings, "Aborted by user."],
           durationMs: Date.now() - startMs,
@@ -658,6 +799,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   let merged = 0;
   let deleted = 0;
   const promoted: string[] = [];
+  let contradicted = 0; // C-3 / #382: count of contradiction edges written
 
   // Build a lookup map: ref → MemoryEntry
   const memoryByRef = new Map<string, MemoryEntry>();
@@ -667,7 +809,9 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   for (let opIndex = 0; opIndex < allOps.length; opIndex++) {
     const op = allOps[opIndex];
-    warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${op.op === "merge" ? op.primary : op.ref}`);
+    const opDisplayRef =
+      op.op === "merge" ? op.primary : op.op === "contradict" ? `${op.ref} ↔ ${op.contradictedByRef}` : op.ref;
+    warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${opDisplayRef}`);
     if (op.op === "merge") {
       const primaryEntry = memoryByRef.get(op.primary);
       if (!primaryEntry) {
@@ -814,22 +958,55 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
 
       try {
-        const proposal = createProposal(stashDir, {
+        const proposalResult = createProposal(stashDir, {
           ref: knowledgeRef,
           source: "consolidate",
           payload: { content: memoryContent },
         });
-        promoted.push(proposal.id);
-        markJournalCompleted(stashDir, op.ref);
+        if (isProposalSkipped(proposalResult)) {
+          warnings.push(
+            `Promote: skipped proposal for ${op.ref} (${proposalResult.reason}): ${proposalResult.message}`,
+          );
+        } else {
+          promoted.push(proposalResult.id);
+          markJournalCompleted(stashDir, op.ref);
+        }
       } catch (e) {
         warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);
+      }
+    } else if (op.op === "contradict") {
+      // C-3 / #382: Write contradictedBy edges so resolveFamilyContradictions
+      // (the SCC resolver in memory-improve.ts) has edges to work on.
+      // Zep arXiv:2501.13956 §3 — unified belief-revision with contradiction edges.
+      const entry = memoryByRef.get(op.ref);
+      const contradictorEntry = memoryByRef.get(op.contradictedByRef);
+
+      if (!entry) {
+        warnings.push(`Contradict: ${op.ref} not found in loaded memories — skipping.`);
+        continue;
+      }
+      if (!contradictorEntry) {
+        warnings.push(`Contradict: ${op.contradictedByRef} not found — skipping.`);
+        continue;
+      }
+
+      try {
+        // Write the contradiction edge: op.ref is contradicted by op.contradictedByRef
+        writeContradictEdge(entry.filePath, op.contradictedByRef);
+        contradicted++;
+        markJournalCompleted(stashDir, op.ref);
+      } catch (e) {
+        warnings.push(`Contradict: failed to write edge for ${op.ref}: ${String(e)}`);
       }
     }
   }
 
   cleanupJournal(stashDir, timestamp);
 
-  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90)
+  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90).
+  // C-5 / #391: emit an `archive_cleanup` event before each deletion so the
+  // audit trail records what was lost. Outbox pattern (EIP, Hohpe-Woolf) —
+  // any event that is recorded must be queryable; silent deletes are an anti-pattern.
   const archiveDir = path.join(stashDir, ".akm", "archive");
   if (fs.existsSync(archiveDir)) {
     const retentionMs = (config.archiveRetentionDays ?? 90) * 86_400_000;
@@ -837,7 +1014,20 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     for (const fname of fs.readdirSync(archiveDir)) {
       const fp = path.join(archiveDir, fname);
       try {
-        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+        const stat = fs.statSync(fp);
+        if (stat.mtimeMs < cutoff) {
+          // Emit event before deletion so the record survives the purge.
+          appendEvent({
+            eventType: "archive_cleanup",
+            metadata: {
+              file: fname,
+              filePath: fp,
+              ageMs: Date.now() - stat.mtimeMs,
+              retentionMs,
+            },
+          });
+          fs.unlinkSync(fp);
+        }
       } catch {
         /* ignore race conditions */
       }
@@ -855,6 +1045,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     merged,
     deleted,
     promoted,
+    contradicted,
     warnings,
     durationMs: Date.now() - startMs,
   };
@@ -959,7 +1150,53 @@ async function generateMergedContent(
     return null;
   }
 
-  return result.content;
+  const mergedRaw = result.content;
+
+  // C-4 / #383: Content-preservation lint (mem0 §3.2, arXiv:2504.19413).
+  // Guards against LLM-generated merged content that silently drops information
+  // from the source assets. Two checks:
+  //   1. Body size: merged body must be >= 50% of the larger source body.
+  //   2. Frontmatter superset: merged frontmatter must contain all keys present
+  //      in both source frontmatters.
+  // Failures emit a warning and return null so the merge op is skipped rather
+  // than writing degraded content.
+  try {
+    const primaryFm = parseFrontmatter(primaryBody);
+    const secFm = parseFrontmatter(secBody);
+    const mergedFm = parseFrontmatter(mergedRaw);
+
+    // Check body size
+    const primaryBodyLen = (primaryFm.content ?? "").trim().length;
+    const secBodyLen = (secFm.content ?? "").trim().length;
+    const mergedBodyLen = (mergedFm.content ?? "").trim().length;
+    const largerBodyLen = Math.max(primaryBodyLen, secBodyLen);
+    if (largerBodyLen > 0 && mergedBodyLen < largerBodyLen * 0.5) {
+      warnings.push(
+        `Merge: content-preservation lint failed for ${primaryRef} — ` +
+          `merged body (${mergedBodyLen} chars) is less than 50% of larger source (${largerBodyLen} chars). ` +
+          `Skipping merge to prevent data loss.`,
+      );
+      return null;
+    }
+
+    // Check frontmatter superset
+    const primaryKeys = Object.keys(primaryFm.data ?? {});
+    const secKeys = Object.keys(secFm.data ?? {});
+    const mergedKeys = new Set(Object.keys(mergedFm.data ?? {}));
+    const missingKeys = [...primaryKeys, ...secKeys].filter((k) => !mergedKeys.has(k));
+    if (missingKeys.length > 0) {
+      warnings.push(
+        `Merge: content-preservation lint failed for ${primaryRef} — ` +
+          `merged frontmatter missing keys from sources: ${missingKeys.join(", ")}. ` +
+          `Skipping merge to prevent data loss.`,
+      );
+      return null;
+    }
+  } catch {
+    // parseFrontmatter failures are non-fatal — allow the merge to proceed.
+  }
+
+  return mergedRaw;
 }
 
 async function promptConfirm(message: string): Promise<boolean> {

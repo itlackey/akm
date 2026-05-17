@@ -34,7 +34,7 @@
  * CLAUDE.md ("Writes" section) for the contract.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AssetRef } from "./asset-ref";
@@ -43,7 +43,67 @@ import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { runProposalValidators } from "./proposal-validators";
+import { warn } from "./warn";
 import { resolveWriteTarget, type WriteTargetSource, writeAssetToSource } from "./write-source";
+
+// ── Source allow-list (F-4 / #385) ──────────────────────────────────────────
+
+/**
+ * Curated allow-list of valid `source` values for proposals (F-4 / #385).
+ *
+ * Rationale (W3C PROV-DM 2013): Provenance records require typed, validated
+ * sources for meaningful aggregation. Accept-rate-per-source is the core
+ * self-measurement metric for recursive self-improvement: if reflect proposals
+ * are accepted at 20% and distill proposals at 60%, that guides resource
+ * allocation. Free-text typos (`"reflct"`) produce unaggregatable events.
+ *
+ * Automated sources (those in {@link AUTOMATED_PROPOSAL_SOURCES}) require a
+ * `sourceRun` field for full PROV-DM traceability.
+ */
+export const PROPOSAL_SOURCES = [
+  // Automated sources — require sourceRun for traceability.
+  "reflect",
+  "distill",
+  "consolidate",
+  "improve",
+  // Semi-automated / tool-driven.
+  "feedback",
+  // Human-initiated / CLI-driven.
+  "propose",
+  "remember",
+  "import",
+  // Internal / system.
+  "distill_quality_rejected",
+  "schema-repair",
+] as const;
+
+/** Automated sources that SHOULD include a `sourceRun` for PROV-DM traceability. */
+export const AUTOMATED_PROPOSAL_SOURCES = [
+  "reflect",
+  "distill",
+  "consolidate",
+  "improve",
+  "schema-repair",
+] as const satisfies ReadonlyArray<(typeof PROPOSAL_SOURCES)[number]>;
+
+/** Union of all valid proposal source values. */
+export type ProposalSource = (typeof PROPOSAL_SOURCES)[number];
+
+/**
+ * Check whether a string is a valid {@link ProposalSource}.
+ * Unknown source values are accepted with a runtime warning rather than a hard
+ * error, to allow extensions without breaking existing callers.
+ */
+export function isValidProposalSource(source: string): source is ProposalSource {
+  return (PROPOSAL_SOURCES as readonly string[]).includes(source);
+}
+
+/**
+ * Check whether a source value is an automated source requiring `sourceRun`.
+ */
+export function isAutomatedProposalSource(source: string): source is (typeof AUTOMATED_PROPOSAL_SOURCES)[number] {
+  return (AUTOMATED_PROPOSAL_SOURCES as readonly string[]).includes(source);
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,9 +128,22 @@ export interface Proposal {
   /** Asset ref the proposal would create or update (`[origin//]type:name`). */
   ref: string;
   status: ProposalStatus;
-  /** Human-readable origin tag (e.g. "reflect", "distill", "remember"). */
-  source: string;
-  /** Optional run id (e.g. workflow run, reflect job) for traceability. */
+  /**
+   * Origin tag identifying the source subsystem (F-4 / #385).
+   *
+   * Should be one of {@link PROPOSAL_SOURCES}. Automated sources (reflect,
+   * distill, consolidate, improve) additionally require `sourceRun` for
+   * PROV-DM traceability and accept-rate-per-source aggregation.
+   * Unknown values are accepted (warn at creation) to allow extensions.
+   */
+  source: ProposalSource | string;
+  /**
+   * Stable run identifier for the automated job that created this proposal.
+   *
+   * Required for automated sources ({@link AUTOMATED_PROPOSAL_SOURCES}) so
+   * that accept-rate-per-source queries can be scoped to individual runs.
+   * Optional for human-initiated sources (`propose`, `remember`, `import`).
+   */
   sourceRun?: string;
   createdAt: string;
   updatedAt: string;
@@ -89,9 +162,92 @@ export interface ProposalsContext {
 
 export interface CreateProposalInput {
   ref: string;
-  source: string;
+  /**
+   * Origin tag identifying the source subsystem (F-4 / #385).
+   *
+   * Should be one of {@link PROPOSAL_SOURCES}. Unknown values trigger a
+   * runtime warning but are not rejected (backward compatibility).
+   * Automated sources ({@link AUTOMATED_PROPOSAL_SOURCES}) should include
+   * `sourceRun` for PROV-DM traceability.
+   */
+  source: ProposalSource | string;
+  /**
+   * Run identifier for the automated job creating this proposal.
+   * Required (advisory) when `source` is an automated source. Logged as a
+   * warning when omitted for automated sources so the gap is visible.
+   */
   sourceRun?: string;
   payload: ProposalPayload;
+  /**
+   * When true, bypass dedup and cooldown guards. Use for human-initiated or
+   * forced re-proposals that the operator has explicitly requested.
+   */
+  force?: boolean;
+}
+
+/**
+ * Reason a `createProposal` call was skipped by the dedup/cooldown guard.
+ *
+ *   - `duplicate_pending`  — A pending proposal already exists for this
+ *                            `ref+source` combination. Pass `force: true` to
+ *                            bypass.
+ *   - `content_hash_match` — An identical payload (same content hash) is
+ *                            already pending or was recently rejected. Bypass
+ *                            with `force: true`.
+ *   - `cooldown`           — A proposal for this `ref+source` was rejected
+ *                            within the source-specific cooldown window
+ *                            (reflect: 14 d, distill: 30 d, others: 7 d).
+ */
+export type ProposalSkipReason = "duplicate_pending" | "content_hash_match" | "cooldown";
+
+export interface CreateProposalSkipped {
+  skipped: true;
+  reason: ProposalSkipReason;
+  /** Human-readable explanation for logs / telemetry. */
+  message: string;
+  /** The existing proposal that triggered the guard (when applicable). */
+  existingProposalId?: string;
+}
+
+/** Result of {@link createProposal} — either a new `Proposal` or a skip record. */
+export type CreateProposalResult = Proposal | CreateProposalSkipped;
+
+/** Type guard: true when createProposal returned a skipped record. */
+export function isProposalSkipped(result: CreateProposalResult): result is CreateProposalSkipped {
+  return (result as CreateProposalSkipped).skipped === true;
+}
+
+// ── Dedup / cooldown constants ───────────────────────────────────────────────
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Post-rejection cooldown windows by source. After a proposal is rejected,
+ * `createProposal` silently skips new proposals for the same `ref+source`
+ * until the window expires (unless `force: true` is passed).
+ *
+ * Rationale (Settles 2009 active-learning survey; Argilla/Label Studio HITL):
+ * Reviewer fatigue is a blocker for the human-in-the-loop guarantee. Cooldowns
+ * prevent nightly improve runs from re-flooding the queue with near-identical
+ * proposals the reviewer just declined.
+ *
+ *   - reflect: 14 days (agent-based; slower feedback loops)
+ *   - distill: 30 days (LLM-based; even more prone to regeneration loops)
+ *   - default: 7 days  (conservative fallback for other sources)
+ */
+const COOLDOWN_MS: Record<string, number> = {
+  reflect: 14 * MS_PER_DAY,
+  distill: 30 * MS_PER_DAY,
+};
+const DEFAULT_COOLDOWN_MS = 7 * MS_PER_DAY;
+
+function cooldownMsForSource(source: string): number {
+  return COOLDOWN_MS[source] ?? DEFAULT_COOLDOWN_MS;
+}
+
+/** Compute a stable SHA-256 hex digest of a proposal's content string. */
+function contentHash(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
 // ── Path helpers ────────────────────────────────────────────────────────────
@@ -162,12 +318,112 @@ function writeProposalFile(filePath: string, proposal: Proposal): void {
 /**
  * Create a new pending proposal. The id is a stable random UUID, so two
  * proposals with the same `ref` never collide on disk.
+ *
+ * **Dedup / cooldown guard** (F-2 / #363):
+ *
+ * Before writing, this function checks:
+ *   1. `duplicate_pending` — a pending proposal already exists for the same
+ *      `ref+source`. Pass `input.force = true` to bypass.
+ *   2. `content_hash_match` — an identical content hash is already pending or
+ *      was recently rejected for this `ref+source`. Bypass with `force: true`.
+ *   3. `cooldown` — a proposal for this `ref+source` was rejected within the
+ *      source-specific cooldown window (reflect: 14 d, distill: 30 d,
+ *      others: 7 d). Bypass with `force: true`.
+ *
+ * When a guard fires the function returns a `CreateProposalSkipped` record
+ * instead of writing to disk. Use {@link isProposalSkipped} to detect it.
  */
-export function createProposal(stashDir: string, input: CreateProposalInput, ctx?: ProposalsContext): Proposal {
+export function createProposal(
+  stashDir: string,
+  input: CreateProposalInput,
+  ctx?: ProposalsContext,
+): CreateProposalResult {
+  // F-4 / #385: Validate source against the allow-list. Unknown values are
+  // warned (not rejected) for backward compatibility — extension callers
+  // that pass custom source strings must not break.
+  if (!isValidProposalSource(input.source)) {
+    warn(
+      `[proposal] Unknown source "${input.source}". ` +
+        `Expected one of: ${PROPOSAL_SOURCES.join(", ")}. ` +
+        "Typos in source values produce unaggregatable accept-rate-per-source metrics.",
+    );
+  } else if (isAutomatedProposalSource(input.source) && !input.sourceRun) {
+    // Advisory warning: automated sources should include sourceRun for PROV-DM
+    // traceability. This is not a hard error to avoid breaking existing callers.
+    warn(
+      `[proposal] Automated source "${input.source}" created a proposal without sourceRun. ` +
+        "Add sourceRun to enable accept-rate-per-run aggregation (W3C PROV-DM).",
+    );
+  }
+
   // Validate the ref up front so callers get a clear error instead of a
   // surprise during `accept`. This also normalises the ref string.
   const parsedRef = parseAssetRef(input.ref);
   const normalizedRef = makeAssetRef(parsedRef.type, parsedRef.name, parsedRef.origin);
+
+  if (!input.force) {
+    const newHash = contentHash(input.payload.content);
+    const nowMs = (ctx?.now ?? Date.now)();
+    const cooldownMs = cooldownMsForSource(input.source);
+
+    // Scan pending proposals for ref+source matches.
+    const pending = listProposals(stashDir, { ref: normalizedRef, status: "pending" }).filter(
+      (p) => p.source === input.source,
+    );
+
+    if (pending.length > 0) {
+      // Check for identical content hash first (silent skip).
+      const hashMatch = pending.find((p) => contentHash(p.payload.content) === newHash);
+      if (hashMatch) {
+        return {
+          skipped: true,
+          reason: "content_hash_match",
+          message: `Identical proposal for ${normalizedRef} already pending (id: ${hashMatch.id}).`,
+          existingProposalId: hashMatch.id,
+        };
+      }
+      // Duplicate pending for same ref+source (different content).
+      const firstPending = pending[0];
+      return {
+        skipped: true,
+        reason: "duplicate_pending",
+        message: `A pending proposal for ${normalizedRef} from source "${input.source}" already exists (id: ${firstPending?.id ?? "unknown"}). Pass force:true to enqueue alongside it.`,
+        existingProposalId: firstPending?.id,
+      };
+    }
+
+    // Check cooldown against recently archived rejected proposals.
+    const rejected = listProposals(stashDir, { ref: normalizedRef, status: "rejected", includeArchive: true })
+      .filter((p) => p.source === input.source)
+      .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
+
+    if (rejected.length > 0 && rejected[0] !== undefined) {
+      const mostRecent = rejected[0];
+      // Check content hash against recently rejected.
+      if (contentHash(mostRecent.payload.content) === newHash) {
+        return {
+          skipped: true,
+          reason: "content_hash_match",
+          message: `Identical proposal for ${normalizedRef} was already rejected (id: ${mostRecent.id}).`,
+          existingProposalId: mostRecent.id,
+        };
+      }
+      // Check cooldown window.
+      const rejectedAt = new Date(mostRecent.updatedAt ?? 0).getTime();
+      if (nowMs - rejectedAt < cooldownMs) {
+        const cooldownDays = cooldownMs / MS_PER_DAY;
+        const remainingDays = Math.ceil((cooldownMs - (nowMs - rejectedAt)) / MS_PER_DAY);
+        return {
+          skipped: true,
+          reason: "cooldown",
+          message:
+            `Proposal for ${normalizedRef} from source "${input.source}" is in cooldown ` +
+            `(${cooldownDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
+          existingProposalId: mostRecent.id,
+        };
+      }
+    }
+  }
 
   const id = newId(ctx);
   const created = nowIso(ctx);
