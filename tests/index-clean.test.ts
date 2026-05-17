@@ -126,11 +126,11 @@ test("akmIndex --clean with no missing files: removed is 0, checked matches entr
   const result = await akmIndex({ stashDir, clean: true });
 
   expect(result.clean).toBeDefined();
-  expect(result.clean!.dryRun).toBe(false);
-  expect(result.clean!.removed).toBe(0);
-  expect(result.clean!.removedRefs).toEqual([]);
+  expect(result.clean?.dryRun).toBe(false);
+  expect(result.clean?.removed).toBe(0);
+  expect(result.clean?.removedRefs).toEqual([]);
   // checked should equal the number of entries in the DB (both files still exist)
-  expect(result.clean!.checked).toBe(result.totalEntries);
+  expect(result.clean?.checked).toBe(result.totalEntries);
 });
 
 test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs populated", async () => {
@@ -154,11 +154,11 @@ test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs p
   const result = await akmIndex({ stashDir, clean: true });
 
   expect(result.clean).toBeDefined();
-  expect(result.clean!.dryRun).toBe(false);
-  expect(result.clean!.removed).toBe(1);
-  expect(result.clean!.removedRefs).toHaveLength(1);
+  expect(result.clean?.dryRun).toBe(false);
+  expect(result.clean?.removed).toBe(1);
+  expect(result.clean?.removedRefs).toHaveLength(1);
   // The ref must refer to the deploy entry (entry_key contains stashDir prefix)
-  expect(result.clean!.removedRefs[0]).toContain("deploy");
+  expect(result.clean?.removedRefs[0]).toContain("deploy");
 
   // Verify the entry is actually gone from the database.
   // totalEntries is computed before the clean pass runs, so the DB now has
@@ -166,7 +166,7 @@ test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs p
   const db = openDatabase();
   try {
     const remaining = getAllEntries(db);
-    expect(remaining).toHaveLength(result.totalEntries - result.clean!.removed);
+    expect(remaining).toHaveLength(result.totalEntries - result.clean?.removed);
     expect(remaining.every((e) => !e.filePath.includes("deploy"))).toBe(true);
   } finally {
     closeDatabase(db);
@@ -194,12 +194,12 @@ test("akmIndex --clean --dry-run with missing file: removed is 0, ref listed, en
   const result = await akmIndex({ stashDir, clean: true, dryRun: true });
 
   expect(result.clean).toBeDefined();
-  expect(result.clean!.dryRun).toBe(true);
+  expect(result.clean?.dryRun).toBe(true);
   // removed must be 0 in dry-run
-  expect(result.clean!.removed).toBe(0);
+  expect(result.clean?.removed).toBe(0);
   // But the ref IS reported
-  expect(result.clean!.removedRefs).toHaveLength(1);
-  expect(result.clean!.removedRefs[0]).toContain("deploy");
+  expect(result.clean?.removedRefs).toHaveLength(1);
+  expect(result.clean?.removedRefs[0]).toContain("deploy");
 
   // Crucially: the entry must still exist in the database
   const db = openDatabase();
