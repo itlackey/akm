@@ -223,6 +223,10 @@ export interface AkmImproveResult {
   reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
+  /** Number of pending proposals purged because their target ref no longer exists on disk. */
+  orphansPurged?: number;
+  /** Number of reflect actions that were skipped due to cooldown/dedup signals. */
+  reflectCooldownActions?: number;
 }
 
 type ImproveScope = ReturnType<typeof resolveImproveScope>;
@@ -763,6 +767,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(reflectsWithErrorContext > 0 ? { reflectsWithErrorContext } : {}),
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
+      ...(orphansPurged !== undefined ? { orphansPurged } : {}),
+      reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
     };
     if (!result.dryRun)
       emitImproveCompletedEvent(
@@ -1716,7 +1722,7 @@ async function runImproveLoopStage(args: {
               ? {
                   schemaVersion: 1,
                   ok: false,
-                  reason: "parse_error" as const,
+                  reason: "cooldown" as const,
                   error: `SC proposal skipped: ${persistResult.message}`,
                   ref: winner.ref,
                   exitCode: null,

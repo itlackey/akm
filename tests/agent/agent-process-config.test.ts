@@ -108,14 +108,16 @@ describe("resolveProcessAgentProfile", () => {
     expect(profile.name).toBe("codex");
   });
 
-  test("object with timeoutMs: null returns undefined timeout (unlimited)", async () => {
+  test("object with timeoutMs: null returns null timeout (unlimited — skip kill timer)", async () => {
     const { resolveProcessAgentProfile } = await import("../../src/integrations/agent/config");
     const agentConfig = {
       default: "claude",
       processes: { reflect: { timeoutMs: null } },
     };
     const { timeoutMs } = resolveProcessAgentProfile("reflect", agentConfig);
-    expect(timeoutMs).toBeUndefined();
+    // null means "unlimited": callers must pass it through to runAgent so the
+    // kill timer is skipped entirely, honouring the user's intent.
+    expect(timeoutMs).toBeNull();
   });
 
   test("object with timeoutMs: 5000 returns 5000", async () => {

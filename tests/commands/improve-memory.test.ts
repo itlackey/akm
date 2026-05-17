@@ -1996,3 +1996,112 @@ describe("O-4: explorationBudget caps cold-start refs on fully-zero-feedback sta
     expect(reflected.length).toBeGreaterThanOrEqual(4);
   });
 });
+
+// ── M8 — new 0.8.0 improve metrics ───────────────────────────────────────────
+
+describe("new 0.8.0 improve metrics", () => {
+  test("result shape includes orphansPurged and reflectCooldownActions fields", async () => {
+    const stashDir = makeTempDir("akm-m8-shape-");
+    writeMemory(stashDir, "alpha", { description: "Alpha memory" }, "Alpha content.");
+    await buildIndex(stashDir);
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:alpha"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // Both fields must be present and be non-negative integers.
+    expect(typeof result.orphansPurged).toBe("number");
+    expect(result.orphansPurged).toBeGreaterThanOrEqual(0);
+    expect(typeof result.reflectCooldownActions).toBe("number");
+    expect(result.reflectCooldownActions).toBeGreaterThanOrEqual(0);
+  });
+
+  test("reflectCooldownActions increments when reflectFn returns a cooldown signal", async () => {
+    const stashDir = makeTempDir("akm-m8-cooldown-");
+    writeMemory(stashDir, "beta", { description: "Beta memory" }, "Beta content.");
+    writeMemory(stashDir, "gamma", { description: "Gamma memory" }, "Gamma content.");
+    await buildIndex(stashDir);
+
+    // Return a cooldown result for every ref to drive reflectCooldownActions up.
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: false,
+        reason: "cooldown" as const,
+        error: "Dedup signal from test",
+        ref: ref ?? "",
+        exitCode: null,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // Both beta and gamma should contribute to reflectCooldownActions.
+    expect(result.reflectCooldownActions).toBeGreaterThanOrEqual(1);
+  });
+
+  test("orphansPurged increments for pending proposals targeting refs absent from disk", async () => {
+    const { createProposal } = await import("../../src/core/proposals");
+    const stashDir = makeTempDir("akm-m8-orphan-");
+    // Write one real memory so improve has something to process.
+    writeMemory(stashDir, "real-asset", { description: "Real memory" }, "Real content.");
+    await buildIndex(stashDir);
+
+    // Seed a pending reflect proposal for a ref that does NOT exist on disk.
+    createProposal(stashDir, {
+      ref: "memory:ghost-asset",
+      source: "reflect",
+      sourceRun: "test-seed",
+      payload: { content: "# Ghost\nThis ref is orphaned." },
+    });
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:real-asset"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // The ghost-asset proposal should have been purged.
+    expect(result.orphansPurged).toBeGreaterThanOrEqual(1);
+  });
+});
