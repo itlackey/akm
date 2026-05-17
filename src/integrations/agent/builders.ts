@@ -10,8 +10,8 @@
  * `BUILTIN_BUILDERS`. Nothing else changes.
  */
 
-import type { ShowResponse } from "../../sources/types";
 import { UsageError } from "../../core/errors";
+import type { ShowResponse } from "../../sources/types";
 import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
 
@@ -72,7 +72,7 @@ export interface AgentCommandBuilder {
  * confuse the CLI parser of the target process.
  */
 function assertNotFlag(value: string | undefined, field: string): void {
-  if (value && value.trimStart().startsWith("--")) {
+  if (value?.trimStart().startsWith("--")) {
     throw new UsageError(
       `${field} must not start with "--": ${JSON.stringify(value.slice(0, 60))}`,
       "INVALID_FLAG_VALUE",

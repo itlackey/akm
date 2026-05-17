@@ -587,36 +587,32 @@ describe("builders — argument injection guards", () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
-    expect(() => builder.build(profile, { prompt: "task", model: "--evil" })).toThrow(
-      /model must not start with "--"/,
-    );
+    expect(() => builder.build(profile, { prompt: "task", model: "--evil" })).toThrow(/model must not start with "--"/);
   });
 
   test("opencodeBuilder: throws UsageError when systemPrompt starts with '--'", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
-    expect(() =>
-      builder.build(profile, { prompt: "task", systemPrompt: "--injected-flag value" }),
-    ).toThrow(/systemPrompt must not start with "--"/);
+    expect(() => builder.build(profile, { prompt: "task", systemPrompt: "--injected-flag value" })).toThrow(
+      /systemPrompt must not start with "--"/,
+    );
   });
 
   test("claudeBuilder: throws UsageError when systemPrompt starts with '--'", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
-    expect(() =>
-      builder.build(profile, { prompt: "task", systemPrompt: "--injected" }),
-    ).toThrow(/systemPrompt must not start with "--"/);
+    expect(() => builder.build(profile, { prompt: "task", systemPrompt: "--injected" })).toThrow(
+      /systemPrompt must not start with "--"/,
+    );
   });
 
   test("defaultBuilder: throws UsageError when model starts with '--'", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("unknown-platform");
     const profile = makeFakeProfile();
-    expect(() => builder.build(profile, { prompt: "task", model: "--bad" })).toThrow(
-      /model must not start with "--"/,
-    );
+    expect(() => builder.build(profile, { prompt: "task", model: "--bad" })).toThrow(/model must not start with "--"/);
   });
 
   test("valid model and systemPrompt values do not throw", async () => {
