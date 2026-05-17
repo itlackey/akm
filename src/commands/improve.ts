@@ -91,7 +91,12 @@ export interface AkmImproveOptions {
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
   repairValidationFailures?: boolean;
-  /** Cooldown in days before re-reflecting an asset that was recently reflected. Defaults to 7. Set to 0 to disable. Only for this run; does not persist to config. */
+  /**
+   * Global reflect cooldown override in days. When set, applies uniformly to all asset types,
+   * overriding per-type defaults (memory=7, workflow=14, skill/agent/command=21,
+   * knowledge/script/wiki=30, task=60, lesson=90). Set to 0 to disable cooldowns entirely.
+   * Only for this run; does not persist to config.
+   */
   reflectCooldownDays?: number;
   /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. Only for this run; does not persist to config. */
   distillCooldownDays?: number;
@@ -1129,17 +1134,48 @@ async function runImprovePreparationStage(args: {
   // SM-2 tier for reflect uses promoted/rejected events (recorded by
   // `akm proposal accept/reject`) rather than the per-ref listProposals()
   // filesystem scan, giving identical tier logic without touching the disk.
-  const REFLECT_COOLDOWN_DAYS = options.reflectCooldownDays ?? 7;
+  // Per-type reflect cooldown defaults. Higher-churn types get shorter windows;
+  // stable reference material gets longer ones. Applies when no global
+  // --reflect-cooldown-days override is given. Pass --reflect-cooldown-days N
+  // (or --ignore-cooldown) to override all types uniformly.
+  const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
+    memory: 7, // fast-changing context — re-reflect weekly
+    workflow: 14, // living docs but slower churn than memories
+    skill: 21,
+    agent: 21,
+    command: 21,
+    knowledge: 30, // reference docs — mostly stable
+    script: 30,
+    wiki: 30, // external snapshots
+    task: 60,
+    lesson: 90, // distilled output — intentionally stable
+  };
+  const REFLECT_COOLDOWN_FALLBACK = 14; // unknown/future types
+
+  // Returns the effective reflect cooldown for a given ref, respecting the
+  // global override if supplied, otherwise looking up per-type defaults.
+  const reflectCooldownForRef = (ref: string): number => {
+    if (options.reflectCooldownDays !== undefined) return options.reflectCooldownDays;
+    const type = ref.split(":")[0] ?? "";
+    return REFLECT_COOLDOWN_BY_TYPE[type] ?? REFLECT_COOLDOWN_FALLBACK;
+  };
+
   const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
 
   const reflectCooledRefs = new Set<string>();
   const distillCooledRefs = new Set<string>();
 
-  const effectiveReflectCooldown = REFLECT_COOLDOWN_DAYS;
+  // Use the largest possible reflect window when querying bulk events so we
+  // don't miss cooldown records for long-window types (e.g. lesson = 90 days).
+  const maxReflectCooldownDays =
+    options.reflectCooldownDays !== undefined
+      ? options.reflectCooldownDays
+      : Math.max(...Object.values(REFLECT_COOLDOWN_BY_TYPE));
   const effectiveDistillCooldown = DISTILL_COOLDOWN_DAYS;
+  const reflectCooldownActive = options.reflectCooldownDays !== 0;
 
-  if (effectiveReflectCooldown > 0 || effectiveDistillCooldown > 0) {
-    const bulkWindowMs = daysToMs(Math.max(effectiveReflectCooldown, effectiveDistillCooldown));
+  if (reflectCooldownActive || effectiveDistillCooldown > 0) {
+    const bulkWindowMs = daysToMs(Math.max(maxReflectCooldownDays, effectiveDistillCooldown));
     const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
 
     // TODO(refactor): 4 separate readEvents calls with same time bound — could be one WHERE type IN (...) query if readEvents grew a `types?: string[]` option. Marginal win with WAL+long-lived connection, defer.
@@ -1157,7 +1193,7 @@ async function runImprovePreparationStage(args: {
       if (e.ref && (e.ts ?? "") > (rejectedTs.get(e.ref) ?? "")) rejectedTs.set(e.ref, e.ts ?? "");
     }
 
-    if (REFLECT_COOLDOWN_DAYS > 0) {
+    if (reflectCooldownActive) {
       const latestReflect = new Map<string, string>();
       for (const e of bulkReflects) {
         if (e.ref && (e.ts ?? "") > (latestReflect.get(e.ref) ?? "")) latestReflect.set(e.ref, e.ts ?? "");
@@ -1166,9 +1202,9 @@ async function runImprovePreparationStage(args: {
         if (!lastTs) continue;
         const hasAccepted = (promotedTs.get(ref) ?? "") > lastTs;
         const hasRejected = (rejectedTs.get(ref) ?? "") > lastTs;
-        let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
         if (hasAccepted) continue;
-        else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
+        const typeCooldown = reflectCooldownForRef(ref);
+        const effectiveCooldownDays = hasRejected ? Math.min(typeCooldown, 3) : typeCooldown;
         if (Date.now() - new Date(lastTs).getTime() < daysToMs(effectiveCooldownDays)) {
           reflectCooledRefs.add(ref);
         }

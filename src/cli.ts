@@ -3701,7 +3701,8 @@ const improveCommand = defineCommand({
     },
     "reflect-cooldown-days": {
       type: "string",
-      description: "Override reflect cooldown for this run only (default: 7, 0 to disable)",
+      description:
+        "Override reflect cooldown for this run only, applying uniformly to all asset types. Defaults vary by type: memory=7d, workflow=14d, skill/agent/command=21d, knowledge/script/wiki=30d, task=60d, lesson=90d. Set 0 to disable.",
     },
     "distill-cooldown-days": {
       type: "string",
