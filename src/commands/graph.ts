@@ -1,12 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
-import { loadConfig } from "../core/config";
+import { type AkmConfig, loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
-import { closeDatabase, openExistingDatabase } from "../indexer/db";
+import { getDbPath } from "../core/paths";
+import { warn } from "../core/warn";
+import { closeDatabase, findEntryIdByRef, getEntryById, openDatabase, openExistingDatabase } from "../indexer/db";
 import { listRelatedPathsForFile } from "../indexer/graph-boost";
 import { loadStoredGraphSnapshot } from "../indexer/graph-db";
-import type { GraphExtractionTelemetry, GraphFile, GraphFileNode } from "../indexer/graph-extraction";
+import type {
+  GraphExtractionPassOptions,
+  GraphExtractionTelemetry,
+  GraphFile,
+  GraphFileNode,
+} from "../indexer/graph-extraction";
+import { runGraphExtractionPass } from "../indexer/graph-extraction";
 import { lookup } from "../indexer/indexer";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search-source";
@@ -485,6 +493,131 @@ export function akmGraphOrphans(options?: { source?: string; limit?: number }): 
     total: orphans.length,
     orphans: sliced,
   };
+}
+
+export interface GraphUpdateResult {
+  shape: "graph-update";
+  ok: true;
+  filesExtracted: number;
+  entitiesUpserted: number;
+  relationsUpserted: number;
+  durationMs: number;
+  /** true when refs were provided to scope the extraction pass. */
+  scoped: boolean;
+}
+
+/**
+ * Re-run graph extraction, optionally scoped to specific asset refs.
+ *
+ * When `refs` is provided, only those files are re-extracted (incremental).
+ * When no refs are given, the full eligible set is re-extracted.
+ */
+export async function akmGraphUpdate(options: {
+  refs?: string[];
+  source?: string;
+  /** Test seam: override stash directory resolution. */
+  stashDir?: string;
+  /** Test seam: inject a pre-loaded AkmConfig. */
+  config?: AkmConfig;
+  /** Test seam: inject the graph extraction function. */
+  graphExtractionFn?: typeof runGraphExtractionPass;
+}): Promise<GraphUpdateResult> {
+  const config = options.config ?? loadConfig();
+  const sources = resolveSourceEntries(options.stashDir, config);
+  if (sources.length === 0) {
+    throw new NotFoundError("No stash sources are configured.", "STASH_NOT_FOUND");
+  }
+  if (options.source && options.source !== "primary") {
+    const matched = sources.find((s) => s.registryId === options.source || s.path === options.source);
+    if (!matched) {
+      throw new NotFoundError(
+        `Source not found: ${options.source}`,
+        "SOURCE_NOT_FOUND",
+        "Run `akm list` to see source names.",
+      );
+    }
+  }
+
+  const scoped = Array.isArray(options.refs) && options.refs.length > 0;
+
+  let candidatePaths: Set<string> | undefined;
+  if (scoped && options.refs) {
+    // Resolve each ref to an absolute file path via the index DB.
+    const dbPath = getDbPath();
+    let db: import("bun:sqlite").Database | undefined;
+    const resolvedPaths = new Set<string>();
+    try {
+      db = openDatabase(dbPath);
+      for (const ref of options.refs) {
+        const trimmed = ref.trim();
+        if (!trimmed) continue;
+        const entryId = findEntryIdByRef(db, trimmed);
+        if (entryId === undefined) {
+          warn(`[graph] ref not found in index, skipping: ${trimmed}`);
+          continue;
+        }
+        const row = getEntryById(db, entryId);
+        if (!row?.filePath) {
+          warn(`[graph] could not resolve path for ref, skipping: ${trimmed}`);
+          continue;
+        }
+        resolvedPaths.add(row.filePath);
+      }
+    } finally {
+      if (db) closeDatabase(db);
+    }
+
+    if (resolvedPaths.size === 0) {
+      warn("[graph] none of the provided refs resolved to indexed paths — no extraction performed.");
+      return {
+        shape: "graph-update",
+        ok: true,
+        filesExtracted: 0,
+        entitiesUpserted: 0,
+        relationsUpserted: 0,
+        durationMs: 0,
+        scoped: true,
+      };
+    }
+    candidatePaths = resolvedPaths;
+  }
+
+  const extractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
+  const passOptions: GraphExtractionPassOptions = candidatePaths ? { candidatePaths } : {};
+
+  let db: import("bun:sqlite").Database | undefined;
+  const startMs = Date.now();
+  try {
+    db = openDatabase(getDbPath());
+
+    const onProgress = (event: {
+      processed: number;
+      total: number;
+      extracted: number;
+      totalEntities: number;
+      totalRelations: number;
+      currentPath?: string;
+    }) => {
+      if (!event.currentPath) return;
+      const file = path.basename(event.currentPath);
+      warn(`[graph] extracting ${event.processed}/${event.total} ${file}`);
+    };
+
+    const result = await extractionFn(config, sources, undefined, db, false, onProgress, passOptions);
+    const durationMs = Date.now() - startMs;
+
+    return {
+      shape: "graph-update",
+      ok: true,
+      filesExtracted: result.quality.extractedFiles,
+      entitiesUpserted: result.quality.entityCount,
+      relationsUpserted: result.quality.relationCount,
+      durationMs,
+      scoped,
+    };
+  } finally {
+    if (db) closeDatabase(db);
+  }
 }
 
 async function resolveGraphTarget(ref: string, source?: string): Promise<ResolvedGraphTarget> {

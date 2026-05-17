@@ -18,6 +18,7 @@ import {
   akmGraphRelated,
   akmGraphRelations,
   akmGraphSummary,
+  akmGraphUpdate,
 } from "./commands/graph";
 import { akmHealth } from "./commands/health";
 import { akmHistory } from "./commands/history";
@@ -538,6 +539,30 @@ const graphCommand = defineCommand({
               out: args.out ?? "",
               format: args.format,
             }),
+          );
+        });
+      },
+    }),
+    update: defineCommand({
+      meta: { name: "update", description: "Re-run graph extraction, optionally scoped to specific asset refs" },
+      args: {
+        refs: {
+          type: "positional",
+          description: "Zero or more asset refs to scope extraction (omit for a full re-extract)",
+          required: false,
+          default: "",
+        },
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+      },
+      async run({ args }) {
+        return runWithJsonErrors(async () => {
+          // `refs` is a single positional; collect remaining argv tokens as well.
+          const rawRefs = [args.refs, ...(Array.isArray(args._) ? (args._ as string[]) : [])].filter(
+            (r): r is string => typeof r === "string" && r.trim().length > 0,
+          );
+          output(
+            "graph-update",
+            await akmGraphUpdate({ refs: rawRefs.length > 0 ? rawRefs : undefined, source: args.source }),
           );
         });
       },
@@ -3822,7 +3847,16 @@ const TASKS_SUBCOMMAND_SET = new Set([
   "sync",
   "doctor",
 ]);
-const GRAPH_SUBCOMMAND_SET = new Set(["summary", "entities", "entity", "relations", "related", "orphans", "export"]);
+const GRAPH_SUBCOMMAND_SET = new Set([
+  "summary",
+  "entities",
+  "entity",
+  "relations",
+  "related",
+  "orphans",
+  "export",
+  "update",
+]);
 
 const tasksAddCommand = defineCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
