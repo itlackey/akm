@@ -21,7 +21,7 @@ import {
   type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { getDbPath } from "../core/paths";
-import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
+import { createProposal, isProposalSkipped, listProposals, purgeOrphanProposals } from "../core/proposals";
 import { openStateDatabase } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
@@ -158,6 +158,7 @@ export interface ImproveActionResult {
   mode:
     | "reflect"
     | "reflect-failed"
+    | "reflect-cooldown"
     | "distill"
     | "distill-skipped"
     | "memory-prune"
@@ -284,6 +285,7 @@ interface ImprovePostLoopResult {
   maintenanceActions?: ImproveActionResult[];
   memoryInferenceDurationMs: number;
   graphExtractionDurationMs: number;
+  orphansPurged?: number;
 }
 
 interface ImproveMaintenanceResult {
@@ -292,6 +294,7 @@ interface ImproveMaintenanceResult {
   actions?: ImproveActionResult[];
   memoryInferenceDurationMs: number;
   graphExtractionDurationMs: number;
+  orphansPurged?: number;
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -695,6 +698,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       maintenanceActions,
       memoryInferenceDurationMs,
       graphExtractionDurationMs,
+      orphansPurged,
     } = await runImprovePostLoopStage({
       scope,
       options,
@@ -761,7 +765,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(graphExtraction ? { graphExtraction } : {}),
     };
     if (!result.dryRun)
-      emitImproveCompletedEvent(result, { memoryInferenceDurationMs, graphExtractionDurationMs }, eventsCtx);
+      emitImproveCompletedEvent(
+        result,
+        {
+          memoryInferenceDurationMs,
+          graphExtractionDurationMs,
+          totalDurationMs: Date.now() - startMs,
+          warningCount: allWarnings.length,
+          orphansPurged: orphansPurged ?? 0,
+        },
+        eventsCtx,
+      );
     return result;
   } catch (err) {
     // D3: emit improve_failed on unexpected crash so dashboards can detect failures.
@@ -797,12 +811,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
 function emitImproveCompletedEvent(
   result: AkmImproveResult,
-  durations: { memoryInferenceDurationMs: number; graphExtractionDurationMs: number },
+  durations: {
+    memoryInferenceDurationMs: number;
+    graphExtractionDurationMs: number;
+    totalDurationMs?: number;
+    warningCount?: number;
+    orphansPurged?: number;
+  },
   eventsCtx?: EventsContext,
 ): void {
   const actionCounts = {
     reflect: 0,
     reflectFailed: 0,
+    reflectCooldown: 0,
     distill: 0,
     distillSkipped: 0,
     memoryPrune: 0,
@@ -817,6 +838,9 @@ function emitImproveCompletedEvent(
         break;
       case "reflect-failed":
         actionCounts.reflectFailed += 1;
+        break;
+      case "reflect-cooldown":
+        actionCounts.reflectCooldown += 1;
         break;
       case "distill":
         actionCounts.distill += 1;
@@ -856,6 +880,7 @@ function emitImproveCompletedEvent(
         graphExtractionActions: actionCounts.graphExtraction,
         errorActions: actionCounts.error,
         reflectFailedActions: actionCounts.reflectFailed,
+        reflectCooldownActions: actionCounts.reflectCooldown,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,
         executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
@@ -875,6 +900,17 @@ function emitImproveCompletedEvent(
         memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
         graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
         graphExtractionDurationMs: durations.graphExtractionDurationMs,
+        // New metrics for tuning the improve loop.
+        ...(durations.totalDurationMs !== undefined ? { durationMs: durations.totalDurationMs } : {}),
+        ...(durations.warningCount !== undefined ? { warningCount: durations.warningCount } : {}),
+        ...(durations.orphansPurged !== undefined ? { orphansPurged: durations.orphansPurged } : {}),
+        ...(result.graphExtraction?.quality
+          ? {
+              graphCoverage: result.graphExtraction.quality.extractionCoverage,
+              graphDensity: result.graphExtraction.quality.density,
+              graphEntities: result.graphExtraction.quality.entityCount,
+            }
+          : {}),
       },
     },
     eventsCtx,
@@ -1692,15 +1728,32 @@ async function runImproveLoopStage(args: {
         } else {
           reflectResult = await reflectFn(reflectCallArgs);
         }
+        const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
         actions.push({
           ref: planned.ref,
-          mode: reflectResult.ok ? "reflect" : "reflect-failed",
+          mode: reflectResult.ok ? "reflect" : isCooldown ? "reflect-cooldown" : "reflect-failed",
           result: reflectResult,
         });
-        if (!reflectResult.ok) {
+        // Cooldown skips are not failures — do not pollute recentErrors with them
+        // (those get injected as `avoidPatterns` into the next reflect prompt).
+        if (!reflectResult.ok && !isCooldown) {
           const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
           pushRecentError("reflect", errMsg);
         }
+        // improve_reflect_outcome — per-asset metric for tuning the reflect path.
+        appendEvent(
+          {
+            eventType: "improve_reflect_outcome",
+            ref: planned.ref,
+            metadata: {
+              ok: reflectResult.ok,
+              durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
+              agentProfile: reflectResult.ok ? reflectResult.agentProfile : undefined,
+              reason: reflectResult.ok ? undefined : reflectResult.reason,
+            },
+          },
+          eventsCtx,
+        );
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
         // B6: .derived refs skip reflect; record synthetic skip action.
         actions.push({
@@ -2004,6 +2057,7 @@ async function runImprovePostLoopStage(args: {
     consolidationRan,
     // O-1 (#364): forward the budget signal to memory inference + graph extraction.
     budgetSignal,
+    eventsCtx,
   });
 
   let deadUrls: DeadUrl[] | undefined;
@@ -2040,6 +2094,7 @@ async function runImprovePostLoopStage(args: {
       : {}),
     memoryInferenceDurationMs: maintenanceResult.memoryInferenceDurationMs,
     graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
+    orphansPurged: maintenanceResult.orphansPurged,
   };
 }
 
@@ -2055,9 +2110,18 @@ async function runImproveMaintenancePasses(args: {
   consolidationRan?: boolean;
   /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
   budgetSignal?: AbortSignal;
+  eventsCtx?: EventsContext;
 }): Promise<ImproveMaintenanceResult> {
-  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, consolidationRan, budgetSignal } =
-    args;
+  const {
+    options,
+    primaryStashDir,
+    memoryRefsForInference,
+    allWarnings,
+    reindexFn,
+    consolidationRan,
+    budgetSignal,
+    eventsCtx,
+  } = args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
   const config = options.config ?? loadConfig();
@@ -2072,6 +2136,7 @@ async function runImproveMaintenancePasses(args: {
   const actions: ImproveActionResult[] = [];
   let memoryInferenceDurationMs = 0;
   let graphExtractionDurationMs = 0;
+  let orphansPurged = 0;
 
   try {
     db = openDatabase(
@@ -2188,6 +2253,40 @@ async function runImproveMaintenancePasses(args: {
         allWarnings.push(`graph extraction failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+
+    // Orphan proposal purge — reject pending reflect proposals whose target
+    // asset no longer exists on disk. Runs after graph extraction so newly
+    // promoted assets from accept flows during this run are already present.
+    if (primaryStashDir) {
+      try {
+        const purgeResult = purgeOrphanProposals(
+          primaryStashDir,
+          sources.map((s) => s.path),
+        );
+        orphansPurged = purgeResult.rejected;
+        if (purgeResult.rejected > 0) {
+          info(
+            `[improve] orphan purge: ${purgeResult.rejected}/${purgeResult.checked} orphaned proposals rejected (${purgeResult.durationMs}ms)`,
+          );
+        }
+        appendEvent(
+          {
+            eventType: "proposal_orphan_purge",
+            ref: "proposals:_orphan-purge",
+            metadata: {
+              checked: purgeResult.checked,
+              rejected: purgeResult.rejected,
+              durationMs: purgeResult.durationMs,
+              byType: purgeResult.byType,
+              orphans: purgeResult.orphans.map((o) => o.ref),
+            },
+          },
+          eventsCtx,
+        );
+      } catch (err) {
+        allWarnings.push(`orphan purge failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   } finally {
     if (db) closeDatabase(db);
   }
@@ -2198,6 +2297,7 @@ async function runImproveMaintenancePasses(args: {
     ...(actions.length > 0 ? { actions } : {}),
     memoryInferenceDurationMs,
     graphExtractionDurationMs,
+    orphansPurged,
   };
 }
 
