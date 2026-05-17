@@ -67,7 +67,7 @@
   },
   "optionalDependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "sqlite-vec": "0.1.7-alpha.2"
+    "sqlite-vec": "^0.1.9"
   },
   "engines": {
     "bun": ">=1.0.0"
