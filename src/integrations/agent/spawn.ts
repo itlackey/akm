@@ -19,7 +19,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
 /** Stable failure-reason vocabulary. Wider strings are not allowed. */
-export type AgentFailureReason = "timeout" | "spawn_failed" | "non_zero_exit" | "parse_error";
+export type AgentFailureReason = "timeout" | "spawn_failed" | "non_zero_exit" | "parse_error" | "cooldown";
 
 /** Minimum subprocess surface we need. Bun.spawn returns this shape. */
 export interface SpawnedSubprocess {
@@ -321,12 +321,12 @@ export async function runAgent(
   let timer: ReturnType<typeof setTimeoutImpl> | undefined;
   if (timeoutMs !== null) {
     timer = setTimeoutImpl(() => {
-      if (proc.exitCode !== null) return;
+      if (!proc || proc.exitCode !== null) return;
       timedOut = true;
       killGroup(proc, "SIGTERM");
       // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
       setTimeoutImpl(() => {
-        if (proc.exitCode !== null) return;
+        if (!proc || proc.exitCode !== null) return;
         killGroup(proc, "SIGKILL");
       }, 5000);
     }, timeoutMs);

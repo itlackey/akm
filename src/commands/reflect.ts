@@ -564,10 +564,15 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     if (fallback) {
       payload = fallback;
     } else {
+      // Reclassify cooldown/skip messages that arrive as stdout text instead of
+      // valid proposal JSON. These are legitimate skip signals, not parse failures,
+      // and should not pollute reflectFailedActions or recentErrors injection.
+      const stdoutText = result.stdout ?? "";
+      const isCooldownSignal = /cooldown/i.test(stdoutText) || /proposal skipped/i.test(stdoutText);
       return {
         schemaVersion: 1,
         ok: false,
-        reason: "parse_error",
+        reason: isCooldownSignal ? "cooldown" : "parse_error",
         error: err instanceof Error ? err.message : String(err),
         ...(options.ref ? { ref: options.ref } : {}),
         exitCode: result.exitCode,
@@ -731,12 +736,13 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const proposalResult = createProposal(stash, createInput, options.ctx);
 
   if (isProposalSkipped(proposalResult)) {
-    // Dedup/cooldown guard fired — surface as a structured failure so the
-    // improve orchestrator can log it and move on without crashing.
+    // Dedup/cooldown guard fired — surface as a "cooldown" reason (not "parse_error")
+    // so the improve orchestrator can distinguish legitimate skips from real failures
+    // and exclude them from recentErrors/avoidPatterns injection.
     return {
       schemaVersion: 1,
       ok: false,
-      reason: "parse_error" as const,
+      reason: "cooldown" as const,
       error: `Proposal skipped (${proposalResult.reason}): ${proposalResult.message}`,
       ...(options.ref ? { ref: options.ref } : {}),
       exitCode: null,
