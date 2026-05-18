@@ -52,8 +52,9 @@ import {
   parseAgentProposalPayload,
   type RejectedProposalContext,
 } from "../integrations/agent/prompts";
-import { runAgentSdk } from "../integrations/agent/sdk-runner";
-import { chatCompletion } from "../llm/client";
+import { type RunnerSpec, resolveProcessRunner } from "../integrations/agent/runner";
+import { runOpencodeSdk } from "../integrations/agent/sdk-runner";
+import { type ChatMessage, chatCompletion } from "../llm/client";
 import { isLlmFeatureEnabled } from "../llm/feature-gate";
 import {
   baseFailureFields,
@@ -132,6 +133,12 @@ export interface AkmReflectOptions {
    * the caller (R-2 / #389, arXiv:2203.11171).
    */
   draftMode?: boolean;
+  /**
+   * v2 test seam: pre-resolved RunnerSpec injected by tests to exercise the
+   * llm/sdk/agent dispatch paths without real config. When set, skips
+   * config-based runner resolution entirely.
+   */
+  runner?: RunnerSpec;
 }
 
 export interface AkmReflectFailure {
@@ -416,6 +423,57 @@ function looksLikeAssetContent(value: string, sdkMode = false, targetType?: stri
   return false;
 }
 
+const REFLECT_CRITIQUE_PROMPT =
+  "Your previous proposal is shown above. Please review it critically and provide an improved version that is more specific, actionable, and avoids any issues with the previous attempt. Return only the improved JSON proposal.";
+
+interface RunReflectViaLlmOptions {
+  prompt: string | undefined;
+  connection: import("../core/config").LlmConnectionConfig & { supportsJsonSchema?: boolean };
+  timeoutMs?: number;
+  priorDraft?: string;
+  iteration: number;
+  chat?: (config: import("../core/config").LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+}
+
+async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<AgentRunResult> {
+  const start = Date.now();
+  const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
+
+  if (opts.priorDraft !== undefined && opts.iteration > 0) {
+    messages.push({ role: "assistant", content: opts.priorDraft });
+    messages.push({ role: "user", content: REFLECT_CRITIQUE_PROMPT });
+  }
+
+  try {
+    const callFn = opts.chat ?? chatCompletion;
+    const stdout = await callFn(opts.connection, messages);
+    return {
+      ok: true,
+      stdout,
+      stderr: "",
+      durationMs: Date.now() - start,
+      exitCode: 0,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const { LlmCallError } = await import("../llm/client");
+    let reason: import("../integrations/agent/spawn").AgentFailureReason = "non_zero_exit";
+    if (err instanceof LlmCallError) {
+      if (err.code === "rate_limited") reason = "llm_rate_limit";
+      else if (err.code === "parse_error") reason = "llm_invalid_json";
+    }
+    return {
+      ok: false,
+      stdout: "",
+      stderr: msg,
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason,
+      error: msg,
+    };
+  }
+}
+
 function failureEnvelope(
   result: AgentRunResult,
   ref: string | undefined,
@@ -462,30 +520,64 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // When an explicit --profile flag is given, honour it directly (existing
   // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
   // agent config (agent.processes["reflect"]) is picked up automatically.
-  let profile: AgentProfile;
+  let profile: AgentProfile | undefined;
   let resolvedTimeoutMs: number | null | undefined = options.timeoutMs;
+  let runnerSpec: RunnerSpec | undefined;
   try {
     if (options.agentProfile) {
       // Test seam: injected profile bypasses all config.
       profile = options.agentProfile;
-    } else if (options.profile) {
-      // Explicit --profile flag wins over process config.
-      profile = resolveAgentProfile(options);
+    } else if (options.runner) {
+      // Caller-provided RunnerSpec (used in tests and --dry-run-resolve).
+      runnerSpec = options.runner;
     } else {
-      // Use per-process config resolution (falls back to agent.default).
-      const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-      const processName = options.agentProcess ?? "reflect";
-      const resolved = resolveProcessAgentProfile(processName, agent);
-      profile = resolved.profile;
-      // Only apply process-resolved timeoutMs when caller didn't supply one.
-      if (resolvedTimeoutMs === undefined) {
-        resolvedTimeoutMs = resolved.timeoutMs;
+      const cfg = options.config ?? loadConfig();
+      if (cfg.features?.improve?.reflect !== undefined) {
+        // v2: resolve through the unified features tree
+        try {
+          runnerSpec = resolveProcessRunner("improve", "reflect", cfg);
+          if (resolvedTimeoutMs === undefined && runnerSpec.timeoutMs !== undefined) {
+            resolvedTimeoutMs = runnerSpec.timeoutMs;
+          }
+        } catch {
+          // Fall through to v1 resolution
+        }
+      }
+      if (!runnerSpec) {
+        if (options.profile) {
+          // Explicit --profile flag wins over process config.
+          profile = resolveAgentProfile(options);
+        } else {
+          // Use per-process config resolution (falls back to agent.default).
+          const agent = options.agentConfig ?? loadAgentConfigFromDisk();
+          const processName = options.agentProcess ?? "reflect";
+          const resolved = resolveProcessAgentProfile(processName, agent);
+          profile = resolved.profile;
+          // Only apply process-resolved timeoutMs when caller didn't supply one.
+          if (resolvedTimeoutMs === undefined) {
+            resolvedTimeoutMs = resolved.timeoutMs;
+          }
+        }
       }
     }
   } catch (err) {
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
   }
+  // Ensure profile is set for agent/sdk runners that don't use runnerSpec
+  if (!runnerSpec && !profile) {
+    const agent = options.agentConfig ?? loadAgentConfigFromDisk();
+    profile = resolveAgentProfile({ ...options, agentConfig: agent });
+  }
+
+  // Derive a display name for logging — either from the resolved profile or the runnerSpec.
+  const resolvedProfileName: string =
+    profile?.name ??
+    (runnerSpec?.kind === "llm"
+      ? `llm:${runnerSpec.connection.model}`
+      : runnerSpec?.kind !== undefined
+        ? `${runnerSpec.kind}:${(runnerSpec as { profile?: { name?: string } }).profile?.name ?? "unknown"}`
+        : "unknown");
 
   // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
   // proposals. These are stable across refinement iterations; only the
@@ -542,18 +634,46 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
         ...(options.runAgentOptions ?? {}),
       };
-      iterResult = await runAgent(profile, prompt, runOptions);
+      iterResult = await runAgent(profile!, prompt, runOptions);
+    } else if (runnerSpec) {
+      // v2: dispatch through unified RunnerSpec
+      const runOptions: RunAgentOptions = {
+        stdio: "captured",
+        parseOutput: "text",
+        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+      };
+      switch (runnerSpec.kind) {
+        case "llm":
+          iterResult = await runReflectViaLlm({
+            prompt,
+            connection: runnerSpec.connection,
+            timeoutMs: runnerSpec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
+            priorDraft,
+            iteration: iter,
+            chat: options.chat,
+          });
+          break;
+        case "sdk":
+          iterResult = await runOpencodeSdk(runnerSpec.profile, prompt ?? "", runOptions);
+          break;
+        case "agent":
+          iterResult = await runAgent(runnerSpec.profile, prompt, {
+            ...runOptions,
+            ...(runnerSpec.timeoutMs !== undefined ? { timeoutMs: runnerSpec.timeoutMs } : {}),
+          });
+          break;
+      }
     } else {
-      // Production path: dispatch directly to the appropriate runner.
+      // Production path (v1): dispatch directly to the appropriate runner.
       const runOptions: RunAgentOptions = {
         stdio: "captured",
         parseOutput: "text",
         ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
         ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
       };
-      iterResult = profile.sdkMode
-        ? await runAgentSdk(profile, prompt ?? "", runOptions)
-        : await runAgent(profile, prompt, runOptions);
+      iterResult = profile!.sdkMode
+        ? await runOpencodeSdk(profile!, prompt ?? "", runOptions)
+        : await runAgent(profile!, prompt, runOptions);
     }
 
     result = iterResult;
@@ -575,7 +695,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   if (!finalResult.ok) {
     // B3: ENOENT / not-found gives an actionable hint.
     if (isEnoentFailure(finalResult)) {
-      return { ...failureEnvelope(finalResult, options.ref), error: enoentHintMessage(profile.bin) };
+      return {
+        ...failureEnvelope(finalResult, options.ref),
+        error: enoentHintMessage(profile?.bin ?? resolvedProfileName),
+      };
     }
     return failureEnvelope(finalResult, options.ref);
   }
@@ -588,7 +711,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   try {
     payload = parseAgentProposalPayload(result.stdout ?? "");
   } catch (err) {
-    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, profile.sdkMode ?? false);
+    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, profile?.sdkMode ?? false);
     if (fallback) {
       payload = fallback;
     } else {
@@ -745,7 +868,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       ok: true,
       proposal: draftProposal,
       ref: draftProposal.ref,
-      agentProfile: profile.name,
+      agentProfile: resolvedProfileName,
       durationMs: result.durationMs,
     };
   }
@@ -785,7 +908,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     metadata: {
       proposalId: proposal.id,
       source: "reflect",
-      agentProfile: profile.name,
+      agentProfile: resolvedProfileName,
     },
   });
 
@@ -794,7 +917,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ok: true,
     proposal,
     ref: proposal.ref,
-    agentProfile: profile.name,
+    agentProfile: resolvedProfileName,
     durationMs: result.durationMs,
   };
 }
