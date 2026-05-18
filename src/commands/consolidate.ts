@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -319,7 +320,7 @@ function isValidOp(op: unknown): op is ConsolidateOperation {
   return false;
 }
 
-function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperation[]; warnings: string[] } {
+export function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperation[]; warnings: string[] } {
   const mergeOps = new Map<string, ConsolidateMergeOp>();
   const deleteOps = new Map<string, ConsolidateDeleteOp>();
   const promoteOps = new Map<string, ConsolidatePromoteOp>();
@@ -803,6 +804,12 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const promoted: string[] = [];
   let contradicted = 0; // C-3 / #382: count of contradiction edges written
 
+  // Within-run dedup: track source refs for which a promote proposal was
+  // already created this run. The LLM can return multiple promote ops for
+  // different source memories that happen to have identical content (all are
+  // duplicate memories), so we also need a content-hash guard below.
+  const promotedSourceRefs = new Set<string>();
+
   // Build a lookup map: ref → MemoryEntry
   const memoryByRef = new Map<string, MemoryEntry>();
   for (const m of memories) {
@@ -924,6 +931,15 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
+      // Within-run source-ref dedup: skip if this source memory was already
+      // promoted earlier in this run (safety belt — mergePlans already
+      // deduplicates promote ops by source ref via Map, but this guard also
+      // catches any future code paths that bypass mergePlans).
+      if (promotedSourceRefs.has(op.ref)) {
+        warnings.push(`Skipping promote: ${op.ref} already promoted in this run`);
+        continue;
+      }
+
       let knowledgeRef = op.knowledgeRef;
       try {
         parseAssetRef(knowledgeRef);
@@ -936,7 +952,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(`Normalized invalid ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
       }
 
-      // Idempotency: check pending proposals
+      // Idempotency: check pending proposals by target ref
       const existingProposals = listProposals(stashDir, { ref: knowledgeRef });
       if (existingProposals.some((p) => p.status === "pending")) {
         warnings.push(`Skipping promote: pending proposal already exists for ${knowledgeRef}`);
@@ -956,6 +972,30 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         memoryContent = fs.readFileSync(entry.filePath, "utf8");
       } catch (e) {
         warnings.push(`Promote: could not read ${op.ref}: ${String(e)}`);
+        continue;
+      }
+
+      // Cross-run + within-run content dedup: if an identical payload already
+      // exists in ANY pending consolidate proposal (regardless of target ref),
+      // skip. This prevents duplicate proposals when:
+      //   (a) Multiple source memories have identical content (duplicate memories
+      //       that were not merged) and each gets a different knowledgeRef from
+      //       the LLM in the same run.
+      //   (b) A prior run created a proposal for the same content under a
+      //       different knowledgeRef slug.
+      // We use SHA-256 of the raw file content — same algorithm as createProposal's
+      // internal contentHash so the comparison is consistent.
+      const newContentHash = createHash("sha256").update(memoryContent, "utf8").digest("hex");
+      const allPendingConsolidateProposals = listProposals(stashDir, { status: "pending" }).filter(
+        (p) => p.source === "consolidate",
+      );
+      const contentDupProposal = allPendingConsolidateProposals.find(
+        (p) => createHash("sha256").update(p.payload.content, "utf8").digest("hex") === newContentHash,
+      );
+      if (contentDupProposal) {
+        warnings.push(
+          `Skipping promote: identical content already pending as proposal ${contentDupProposal.id} (ref: ${contentDupProposal.ref}); skipping duplicate for ${op.ref} → ${knowledgeRef}`,
+        );
         continue;
       }
 
@@ -980,6 +1020,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           );
         } else {
           promoted.push(proposalResult.id);
+          promotedSourceRefs.add(op.ref);
           markJournalCompleted(stashDir, op.ref);
         }
       } catch (e) {
