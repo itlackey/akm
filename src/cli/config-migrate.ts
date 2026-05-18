@@ -66,7 +66,10 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
   result: Record<string, unknown>;
 } {
   // Already migrated
-  if (typeof raw.configVersion === "number" && raw.configVersion >= 2) {
+  if (
+    (typeof raw.configVersion === "number" && raw.configVersion >= 2) ||
+    (typeof raw.configVersion === "string" && raw.configVersion.trim() !== "")
+  ) {
     return { changed: false, result: raw };
   }
 
@@ -224,7 +227,7 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
   }
 
   if (changed) {
-    result.configVersion = 2;
+    result.configVersion = "0.8.0";
   }
 
   return { changed, result };
@@ -310,12 +313,12 @@ export async function runConfigMigrate(opts: { dryRun?: boolean; noWait?: boolea
       const { changed, result } = await migrateConfigFile(configPath, { dryRun: opts.dryRun });
 
       if (!changed) {
-        console.log(`${configPath}: already at v2 — no changes needed.`);
+        console.log(`${configPath}: already at 0.8.0 — no changes needed.`);
       } else if (opts.dryRun) {
-        console.log(`${configPath}: would migrate to v2 (--dry-run, not written):`);
+        console.log(`${configPath}: would migrate to 0.8.0 (--dry-run, not written):`);
         console.log(JSON.stringify(result, null, 2));
       } else {
-        console.log(`${configPath}: migrated to v2.`);
+        console.log(`${configPath}: migrated to 0.8.0.`);
       }
     } finally {
       release();

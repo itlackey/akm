@@ -118,7 +118,7 @@ schema map keyed on `<section>.<process>` — unknown keys warn-and-ignore.
 ```jsonc
 {
   "$schema": "https://itlackey.github.io/akm/schemas/akm-config.v2.json",
-  "configVersion": 2,                  // NEW: used by load-time migration
+  "configVersion": "0.8.0",            // NEW: used by load-time migration
 
   "profiles": {
     "llm": {
@@ -238,7 +238,7 @@ Adopted approach: **auto-migrate with explicit version gate**.
 
 | | Behavior |
 |---|---|
-| Detection | `configVersion < 2` OR old keys present ⇒ migrate |
+| Detection | `configVersion` absent or integer `< 2` OR old keys present ⇒ migrate; integer `>= 2` or any non-empty string = already migrated |
 | Action | Migrate inline, write back, single one-time notice |
 | Backup | Timestamped backup (existing `backupExistingConfig`) |
 | CI safety | Cron jobs continue working through upgrade |
@@ -246,7 +246,7 @@ Adopted approach: **auto-migrate with explicit version gate**.
 
 Rationale: silently breaking every unattended cron is worse than rewriting
 the file. The project already writes timestamped backups on every save, and
-adding `configVersion: 2` makes the migration idempotent and detectable.
+adding `configVersion: "0.8.0"` makes the migration idempotent and detectable. The migrator also accepts legacy integer `2` as already-migrated for backward compatibility.
 
 **The migrator transforms the old `features` block AND the old
 `improve.*` keys into the unified `features` tree**:
@@ -269,7 +269,7 @@ lock (or fails with a clear message if `--no-wait`).
 `<project>/.akm/config.json` (walking up from cwd). The migrator:
 - Visits every layer it discovers
 - Rewrites each file in place, preserving which keys lived where
-- Writes `configVersion: 2` into each migrated file
+- Writes `configVersion: "0.8.0"` into each migrated file
 - If a layer is read-only → prints migrated content for manual apply
 
 **Env vars**: `AKM_LLM_API_KEY` continues to work — it injects into the
@@ -285,7 +285,7 @@ silently dereference `undefined` post-migration.
 #### Config core
 | Path | Change |
 |---|---|
-| `src/core/config.ts` | New `AkmConfig` shape; `parseLlmConfig` → `parseLlmProfilesMap`; remove top-level `llm`/`agent`; replace the v1 `features` block with the new `features.{improve,index,search}.<name>` tree (all leaves parsed by the same `parseProcessEntry` helper); remove top-level `improve` section (its keys move to `defaults.improve` or under specific process `options`); remove `improve.schedule` parsing; bump `configVersion: 2` |
+| `src/core/config.ts` | New `AkmConfig` shape; `parseLlmConfig` → `parseLlmProfilesMap`; remove top-level `llm`/`agent`; replace the v1 `features` block with the new `features.{improve,index,search}.<name>` tree (all leaves parsed by the same `parseProcessEntry` helper); remove top-level `improve` section (its keys move to `defaults.improve` or under specific process `options`); remove `improve.schedule` parsing; bump `configVersion: "0.8.0"` |
 | `src/core/config.ts:applyRuntimeEnvApiKeys` (lines 1832–1834) | `AKM_LLM_API_KEY` → inject into `profiles.llm[defaults.llm].apiKey`; add `AKM_PROFILE_<NAME>_API_KEY` loop |
 | `src/core/config.ts:sanitizeConfigForWrite` (lines 780–783) | Strip `apiKey` from every `profiles.llm.*` entry, not just `config.llm` |
 | `src/core/config.ts:resolveConfigSources` (lines 1845–1870) | Auto-migrate hook called between parse and validate |

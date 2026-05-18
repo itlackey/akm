@@ -31,10 +31,11 @@
 //     `akm improve` calls.
 {
   // configVersion drives load-time migration. Omitting it (or setting < 2) triggers
-  // auto-migrate. Setting 2 here tells the loader the file is already in the new shape.
-  "configVersion": 2,
+  // auto-migrate. Setting "0.8.0" here tells the loader the file is already in the new shape.
+  // Legacy integer 2 is also accepted for backward compatibility.
+  "configVersion": "0.8.0",
 
-  "$schema": "https://itlackey.github.io/akm/schemas/akm-config.v2.json",
+  "$schema": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
 
   // ── LLM + Agent Profiles ────────────────────────────────────────────────────
   // Declare every connection once here. Processes reference profiles by name.
@@ -286,7 +287,7 @@
   mode=llm + profile=defaults.llm, so features.improve can be empty (or omitted).
 
   {
-    "configVersion": 2,
+    "configVersion": "0.8.0",
     "profiles": {
       "llm": {
         "openai-mini": {
@@ -314,7 +315,7 @@
   agent path so opencode tool access still works.
 
   {
-    "configVersion": 2,
+    "configVersion": "0.8.0",
     "profiles": {
       "llm": {
         "lmstudio-local": {
@@ -349,7 +350,7 @@
   built-in defaults. The loader infers mode from defaults.llm being set.
 
   {
-    "configVersion": 2,
+    "configVersion": "0.8.0",
     "profiles": {
       "llm": {
         "openai-mini": {
@@ -367,7 +368,7 @@
   uses built-in defaults. Note how the tuning collocates with the process.
 
   {
-    "configVersion": 2,
+    "configVersion": "0.8.0",
     "profiles": {
       "llm": { "openai-mini": { "endpoint": "...", "model": "gpt-4o-mini",
                                  "apiKey": "${OPENAI_API_KEY}" } }

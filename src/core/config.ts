@@ -344,8 +344,8 @@ export interface SecurityConfig {
 }
 
 export interface AkmConfig {
-  /** v2: schema version marker. 2 = already migrated to v2 shape. */
-  configVersion?: number;
+  /** v2: schema version marker. "0.8.0" (or legacy integer 2) = already migrated to v2 shape. */
+  configVersion?: string | number;
   /** v2: named LLM and agent profiles. */
   profiles?: {
     llm?: Record<string, LlmProfileConfig>;
@@ -1022,6 +1022,8 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
   // v2 fields
   if (typeof raw.configVersion === "number" && Number.isFinite(raw.configVersion)) {
     config.configVersion = raw.configVersion;
+  } else if (typeof raw.configVersion === "string" && raw.configVersion.trim()) {
+    config.configVersion = raw.configVersion.trim();
   }
 
   const profiles = parseProfilesConfig(raw.profiles);

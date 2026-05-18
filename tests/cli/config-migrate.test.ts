@@ -18,7 +18,7 @@ describe("migrateConfigShape", () => {
     };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    expect(result.configVersion).toBe(2);
+    expect(result.configVersion).toBe("0.8.0");
     const features = result.features as Record<string, unknown>;
     const index = features.index as Record<string, unknown>;
     expect(index.memory_inference).toBe(true);
@@ -138,12 +138,12 @@ describe("migrateConfigShape", () => {
     expect(processes.reflect).toBeDefined();
   });
 
-  test("sets configVersion: 2 on migrated config", () => {
+  test('sets configVersion: "0.8.0" on migrated config', () => {
     const input = {
       llm: { endpoint: "http://x.com/v1/chat/completions", model: "m", features: { curate_rerank: true } },
     };
     const { result } = migrateConfigShape(input);
-    expect(result.configVersion).toBe(2);
+    expect(result.configVersion).toBe("0.8.0");
   });
 
   test("handles all 6 feature key migrations in one config", () => {

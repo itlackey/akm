@@ -1,14 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://itlackey.github.io/akm/schemas/akm-config.v2.json",
+  "$id": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
   "title": "AKM Configuration",
   "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). v2 shape adds profiles, defaults, and features trees.",
   "type": "object",
   "properties": {
     "configVersion": {
-      "type": "integer",
-      "description": "Schema version marker. 2 = v2 shape (profiles/defaults/features). Absent or <2 = v1 shape (auto-migrated at load time).",
-      "minimum": 1
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Schema version as app version string. \"0.8.0\" = v2 shape (profiles/defaults/features). Current format.",
+          "pattern": "^\\d+\\.\\d+\\.\\d+"
+        },
+        {
+          "type": "integer",
+          "description": "Legacy integer schema version. 2 = v2 shape. Accepted for backward compatibility.",
+          "minimum": 1
+        }
+      ],
+      "description": "Schema version marker. \"0.8.0\" (or legacy integer 2) = v2 shape (profiles/defaults/features). Absent or v1 shape = auto-migrated at load time."
     },
     "profiles": {
       "type": "object",
@@ -653,7 +663,7 @@
   },
   "examples": [
     {
-      "configVersion": 2,
+      "configVersion": "0.8.0",
       "profiles": {
         "llm": {
           "openai-mini": {
