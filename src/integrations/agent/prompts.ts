@@ -195,9 +195,21 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   }
 
   if (input.assetContent?.trim()) {
-    sections.push("Current asset content (verbatim):");
+    // Cap at 12 000 chars to stay well under OS ARG_MAX when the prompt is
+    // passed as a CLI argument to opencode/claude. Large assets (wiki snapshots,
+    // long runbooks) would otherwise trigger E2BIG on posix_spawn.
+    const REFLECT_CONTENT_CAP = 12_000;
+    const body = input.assetContent.trimEnd();
+    const truncated = body.length > REFLECT_CONTENT_CAP;
+    sections.push(
+      truncated
+        ? `Current asset content (first ${REFLECT_CONTENT_CAP} chars — full asset is ${body.length} chars):`
+        : "Current asset content (verbatim):",
+    );
     sections.push("```");
-    sections.push(input.assetContent.trimEnd());
+    sections.push(
+      truncated ? `${body.slice(0, REFLECT_CONTENT_CAP)}\n... [truncated — focus on the visible portion]` : body,
+    );
     sections.push("```");
   } else if (input.ref) {
     sections.push("(No existing content — propose a fresh asset that fits the ref.)");
