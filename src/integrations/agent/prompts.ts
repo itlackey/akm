@@ -288,6 +288,11 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   sections.push(
     "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the proposal's frontmatter is missing `when_to_use`, you MUST generate one — a one-line trigger sentence describing exactly when a user should reach for this asset.",
   );
+  if (!input.draftFilePath && input.ref) {
+    // Reinforce that the `ref` field is mandatory and must exactly match the target.
+    // Small models frequently omit `ref` from the response JSON, causing parse errors.
+    sections.push(`IMPORTANT: The JSON "ref" field is REQUIRED. It MUST be exactly: "${input.ref}"`);
+  }
   sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }

@@ -957,7 +957,43 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   // Strip any stray fence the LLM might have added around the markdown.
-  const content = stripMarkdownFences(raw);
+  let content = stripMarkdownFences(raw);
+
+  // Auto-repair missing frontmatter fields before hard-failing. Small models
+  // frequently produce a good lesson body but omit the YAML header entirely.
+  // Rather than discarding valid content, we extract description/when_to_use
+  // from the body and prepend the required frontmatter block.
+  if (effectiveProposalKind !== "knowledge") {
+    const parsed = parseFrontmatter(content);
+    const fm = (parsed.data ?? {}) as Record<string, unknown>;
+    const missingDesc = typeof fm.description !== "string" || !(fm.description as string).trim();
+    const missingWtu = typeof fm.when_to_use !== "string" || !(fm.when_to_use as string).trim();
+    if (missingDesc || missingWtu) {
+      const body = parsed.content.trim();
+      // Extract description: first non-empty non-heading line, or first heading
+      const descLine =
+        body
+          .split("\n")
+          .map((l) => l.replace(/^#+\s*/, "").trim())
+          .find((l) => l.length > 10 && l.length < 200) ?? `Lesson distilled from ${inputRef}`;
+      // Extract when_to_use: look for a line starting with "When" or "Use when"
+      const wtuLine =
+        body
+          .split("\n")
+          .map((l) => l.replace(/^[-*]\s*/, "").trim())
+          .find((l) => /^(when |use when|apply when)/i.test(l) && l.length < 200) ??
+        `When working with ${inputRef.split(":").pop() ?? "this asset"}.`;
+      const repairedFm = {
+        ...fm,
+        ...(missingDesc ? { description: descLine } : {}),
+        ...(missingWtu ? { when_to_use: wtuLine } : {}),
+      };
+      const fmLines = Object.entries(repairedFm)
+        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+        .join("\n");
+      content = `---\n${fmLines}\n---\n\n${body}`;
+    }
+  }
 
   // Parse + lint the lesson before creating the proposal. The lint is the
   // canonical gate for required frontmatter (v1 spec §13). On failure we

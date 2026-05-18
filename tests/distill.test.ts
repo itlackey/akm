@@ -398,27 +398,25 @@ describe("akmDistill — LLM error paths", () => {
 // ── Acceptance: validation failure ──────────────────────────────────────────
 
 describe("akmDistill — validation failure", () => {
-  test("LLM returns lesson missing `when_to_use` → throws, no proposal, event emitted", async () => {
+  test("LLM returns lesson missing `when_to_use` → auto-repaired, proposal queued", async () => {
+    // Previously this threw; now the auto-repair path injects a generated
+    // `when_to_use` from the body so valid content is never silently discarded.
     const stash = makeStashDir();
-    let threw: Error | undefined;
-    try {
-      await akmDistill({
-        ref: "skill:deploy",
-        config: configEnabled(stash),
-        stashDir: stash,
-        chat: async () => INVALID_LESSON_MISSING_WHEN,
-        lookupFn: noopLookup,
-        readEventsFn: emptyEvents,
-      });
-    } catch (err) {
-      threw = err as Error;
-    }
-    expect(threw).toBeInstanceOf(Error);
-    expect(threw?.message).toContain("when_to_use");
-    expect(listProposals(stash)).toEqual([]);
-
-    const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => INVALID_LESSON_MISSING_WHEN,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    // Auto-repair should have injected a non-empty when_to_use
+    const fm = proposals[0].payload.frontmatter ?? {};
+    expect(typeof fm.when_to_use).toBe("string");
+    expect((fm.when_to_use as string).trim().length).toBeGreaterThan(0);
   });
 });
 
