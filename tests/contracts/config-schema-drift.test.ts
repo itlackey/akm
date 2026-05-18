@@ -25,7 +25,9 @@ describe("config schema drift pins", () => {
       "graph_extraction",
       "memory_consolidation",
       "lesson_quality_gate",
+      "proposal_quality_gate",
       "metadata_enhance",
+      "memory_contradiction_detection",
     ]);
   });
 

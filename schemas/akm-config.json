@@ -1,10 +1,98 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://akm.dev/schemas/akm-config.schema.json",
+  "$id": "https://itlackey.github.io/akm/schemas/akm-config.v2.json",
   "title": "AKM Configuration",
-  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments).",
+  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). v2 shape adds profiles, defaults, and features trees.",
   "type": "object",
   "properties": {
+    "configVersion": {
+      "type": "integer",
+      "description": "Schema version marker. 2 = v2 shape (profiles/defaults/features). Absent or <2 = v1 shape (auto-migrated at load time).",
+      "minimum": 1
+    },
+    "profiles": {
+      "type": "object",
+      "description": "v2: Named connection profiles. profiles.llm holds OpenAI-compatible LLM connections; profiles.agent holds CLI and in-process agent profiles.",
+      "properties": {
+        "llm": {
+          "type": "object",
+          "description": "Named LLM connection profiles. Each key is a profile name; value is an LlmProfileConfig.",
+          "additionalProperties": {
+            "$ref": "#/$defs/LlmProfileConfig"
+          }
+        },
+        "agent": {
+          "type": "object",
+          "description": "Named agent profiles. Each key is a profile name; value is an AgentProfileConfigV2.",
+          "additionalProperties": {
+            "$ref": "#/$defs/AgentProfileConfigV2"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "defaults": {
+      "type": "object",
+      "description": "v2: Default profile names and improve pipeline defaults.",
+      "properties": {
+        "llm": {
+          "type": "string",
+          "description": "Name of the default LLM profile from profiles.llm.",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "description": "Name of the default agent profile from profiles.agent.",
+          "minLength": 1
+        },
+        "improve": {
+          "type": "object",
+          "description": "Default values for the improve pipeline.",
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "description": "Default --limit for akm improve.",
+              "exclusiveMinimum": 0
+            },
+            "preset": {
+              "type": "string",
+              "description": "Default execution preset for akm improve.",
+              "enum": ["fast", "thorough", "mixed", "custom"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "features": {
+      "type": "object",
+      "description": "v2: Unified features tree. Every named LLM/agent operation lives here, grouped by lifecycle section. Replaces the old top-level llm.features flags.",
+      "properties": {
+        "improve": {
+          "type": "object",
+          "description": "Process entries for akm improve operations.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ProcessEntryOrBoolean"
+          }
+        },
+        "index": {
+          "type": "object",
+          "description": "Process entries for akm index operations.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ProcessEntryOrBoolean"
+          }
+        },
+        "search": {
+          "type": "object",
+          "description": "Process entries for akm search / akm curate operations.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ProcessEntryOrBoolean"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "stashDir": {
       "type": "string",
       "description": "Path to the working stash directory.",
@@ -19,6 +107,7 @@
       "$ref": "#/$defs/EmbeddingConnectionConfig"
     },
     "llm": {
+      "description": "v1 compat: single LLM connection. Use profiles.llm in v2.",
       "$ref": "#/$defs/LlmConnectionConfig"
     },
     "output": {
@@ -59,7 +148,7 @@
     },
     "index": {
       "type": "object",
-      "description": "Per-pass indexer and improve-maintenance configuration. Keys are pass names; values configure each pass. Graph extraction and memory inference are improve-owned maintenance passes, not `akm index` side effects.",
+      "description": "Per-pass indexer and improve-maintenance configuration. Keys are pass names; values configure each pass.",
       "additionalProperties": true
     },
     "security": {
@@ -78,7 +167,7 @@
     },
     "agent": {
       "type": "object",
-      "description": "Optional agent CLI integration block. Configures external agent CLIs that akm can shell out to.",
+      "description": "v1 compat: agent CLI integration block. Use profiles.agent in v2.",
       "additionalProperties": true
     },
     "search": {
@@ -139,10 +228,133 @@
         }
       },
       "additionalProperties": false
+    },
+    "feedback": {
+      "type": "object",
+      "description": "Feedback-specific configuration.",
+      "properties": {
+        "requireReason": {
+          "type": "boolean",
+          "description": "When true, negative feedback without --reason throws a hard error."
+        },
+        "allowedFailureModes": {
+          "type": "array",
+          "description": "Allowed failure mode values for --failure-mode.",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "improve": {
+      "type": "object",
+      "description": "v1 compat: improve pipeline tuning. Use defaults.improve and features.improve in v2.",
+      "properties": {
+        "reflectCooldownByType": {
+          "type": "object",
+          "description": "Per-asset-type reflect cooldown in days. Migrated to features.improve.reflect.options.cooldown in v2.",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        }
+      },
+      "additionalProperties": true
+    },
+    "archiveRetentionDays": {
+      "type": "number",
+      "description": "Number of days to retain soft-invalidated memory assets in .akm/archive/ before TTL cleanup.",
+      "minimum": 0
     }
   },
   "additionalProperties": false,
   "$defs": {
+    "ProcessEntryOrBoolean": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "$ref": "#/$defs/ProcessEntry" }
+      ],
+      "description": "A process entry: true = enabled with defaults, false = disabled, object = full configuration."
+    },
+    "ProcessEntry": {
+      "type": "object",
+      "description": "Configuration for a named LLM/agent process. Used in features.improve/index/search entries.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this process is enabled. Default: true.",
+          "default": true
+        },
+        "mode": {
+          "type": "string",
+          "description": "Dispatch mode: llm = direct HTTP call, agent = CLI subprocess, sdk = in-process opencode.",
+          "enum": ["llm", "agent", "sdk"]
+        },
+        "profile": {
+          "type": "string",
+          "description": "Profile name from profiles.llm (mode=llm) or profiles.agent (mode=agent|sdk). Falls back to defaults.llm / defaults.agent.",
+          "minLength": 1
+        },
+        "timeoutMs": {
+          "oneOf": [
+            { "type": "integer", "exclusiveMinimum": 0 },
+            { "type": "null", "description": "null = unlimited timeout" }
+          ],
+          "description": "Per-process timeout in milliseconds. null = unlimited."
+        },
+        "options": {
+          "type": "object",
+          "description": "Process-specific tuning options. Schema varies by process name.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "LlmProfileConfig": {
+      "description": "Named LLM connection profile. Extends LlmConnectionConfig with supportsJsonSchema.",
+      "allOf": [
+        { "$ref": "#/$defs/LlmConnectionConfig" },
+        {
+          "type": "object",
+          "properties": {
+            "supportsJsonSchema": {
+              "type": "boolean",
+              "description": "When true, chatCompletion sends response_format: json_schema for structured output. Requires provider support (OpenAI, compatible endpoints).",
+              "default": false
+            }
+          }
+        }
+      ]
+    },
+    "AgentProfileConfigV2": {
+      "type": "object",
+      "description": "Named agent profile. platform discriminates between CLI subprocess and in-process opencode SDK.",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "description": "Agent runtime: opencode = opencode CLI subprocess, claude = claude CLI subprocess, opencode-sdk = in-process opencode programmatic API.",
+          "enum": ["opencode", "claude", "opencode-sdk"]
+        },
+        "bin": {
+          "type": "string",
+          "description": "Binary name or path for opencode/claude platforms.",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "description": "Extra CLI arguments for opencode/claude platforms.",
+          "items": { "type": "string" }
+        },
+        "workspace": {
+          "type": "string",
+          "description": "Workspace directory for opencode-sdk platform. ${PWD} is expanded at runtime.",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier for opencode-sdk platform (e.g. \"anthropic/claude-sonnet-4-5\").",
+          "minLength": 1
+        }
+      },
+      "required": ["platform"],
+      "additionalProperties": false
+    },
     "BaseConnectionConfig": {
       "type": "object",
       "description": "Shared fields for OpenAI-compatible connection configurations.",
@@ -247,43 +459,17 @@
             },
             "features": {
               "type": "object",
-              "description": "Bounded in-tree LLM feature gates.",
+              "description": "v1 compat: bounded in-tree LLM feature gates. Use the top-level features tree in v2.",
               "properties": {
-                "curate_rerank": {
-                  "type": "boolean",
-                  "description": "Gates the `akm curate` LLM rerank pass.",
-                  "default": false
-                },
-                "feedback_distillation": {
-                  "type": "boolean",
-                  "description": "Gates improve-driven feedback distillation into proposals.",
-                  "default": false
-                },
-                "memory_inference": {
-                  "type": "boolean",
-                  "description": "Gates the `akm index` memory-inference pass.",
-                  "default": true
-                },
-                "graph_extraction": {
-                  "type": "boolean",
-                  "description": "Gates the `akm improve` graph-extraction maintenance pass that refreshes SQLite graph tables in index.db.",
-                  "default": true
-                },
-                "memory_consolidation": {
-                  "type": "boolean",
-                  "description": "Gates automatic memory consolidation during `akm improve`.",
-                  "default": false
-                },
-                "lesson_quality_gate": {
-                  "type": "boolean",
-                  "description": "Gates the LLM-as-judge quality check in lesson distillation.",
-                  "default": false
-                },
-                "metadata_enhance": {
-                  "type": "boolean",
-                  "description": "Gates metadata enhancement during indexing.",
-                  "default": false
-                }
+                "curate_rerank": { "type": "boolean", "default": false },
+                "feedback_distillation": { "type": "boolean", "default": false },
+                "memory_inference": { "type": "boolean", "default": true },
+                "graph_extraction": { "type": "boolean", "default": true },
+                "memory_consolidation": { "type": "boolean", "default": false },
+                "lesson_quality_gate": { "type": "boolean", "default": false },
+                "proposal_quality_gate": { "type": "boolean", "default": false },
+                "metadata_enhance": { "type": "boolean", "default": false },
+                "memory_contradiction_detection": { "type": "boolean", "default": false }
               },
               "additionalProperties": true
             },
@@ -390,7 +576,7 @@
         },
         "options": {
           "type": "object",
-          "description": "Arbitrary provider-specific options. For `git` sources, `pushOnCommit: true` causes write-source to `git push` after each successful commit.",
+          "description": "Arbitrary provider-specific options.",
           "additionalProperties": true
         },
         "wikiName": {
@@ -450,6 +636,15 @@
           "type": "string",
           "description": "Resolved commit or revision (source-dependent).",
           "minLength": 1
+        },
+        "wikiName": {
+          "type": "string",
+          "description": "When set, all .md files in this kit are indexed as wiki pages.",
+          "minLength": 1
+        },
+        "writable": {
+          "type": "boolean",
+          "description": "Whether the installed kit source is writable."
         }
       },
       "required": ["id", "source", "ref", "artifactUrl", "stashRoot", "cacheDir", "installedAt"],
@@ -458,22 +653,27 @@
   },
   "examples": [
     {
-      "semanticSearchMode": "auto",
-      "registries": [
-        {
-          "url": "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
-          "name": "official"
+      "configVersion": 2,
+      "profiles": {
+        "llm": {
+          "openai-mini": {
+            "endpoint": "https://api.openai.com/v1/chat/completions",
+            "model": "gpt-4o-mini",
+            "temperature": 0.3,
+            "supportsJsonSchema": true
+          }
         },
-        {
-          "url": "https://skills.sh",
-          "name": "skills.sh",
-          "provider": "skills-sh"
+        "agent": {
+          "opencode-default": { "platform": "opencode", "bin": "opencode", "args": ["run"] }
         }
-      ],
-      "output": {
-        "format": "json",
-        "detail": "brief"
-      }
+      },
+      "defaults": { "llm": "openai-mini", "agent": "opencode-default" },
+      "features": {
+        "improve": { "reflect": { "mode": "llm", "profile": "openai-mini", "timeoutMs": 60000 } },
+        "index": { "memory_inference": true, "graph_extraction": false },
+        "search": { "curate_rerank": false }
+      },
+      "semanticSearchMode": "auto"
     },
     {
       "semanticSearchMode": "auto",
@@ -489,14 +689,7 @@
         "model": "llama3.2",
         "temperature": 0.3,
         "maxTokens": 512
-      },
-      "stashes": [
-        {
-          "type": "filesystem",
-          "path": "/home/user/extra-stash",
-          "name": "extra"
-        }
-      ]
+      }
     }
   ]
 }

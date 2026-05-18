@@ -130,6 +130,32 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   judgeModel?: string;
 }
 
+export interface LlmProfileConfig extends LlmConnectionConfig {
+  supportsJsonSchema?: boolean;
+}
+
+export interface AgentProfileConfigV2 {
+  platform: "opencode" | "claude" | "opencode-sdk";
+  bin?: string;
+  args?: string[];
+  workspace?: string;
+  model?: string;
+}
+
+export interface ProcessEntry {
+  enabled?: boolean;
+  mode?: "llm" | "agent" | "sdk";
+  profile?: string;
+  timeoutMs?: number | null;
+  options?: Record<string, unknown>;
+}
+
+export interface FeaturesConfig {
+  improve?: Record<string, ProcessEntry | boolean>;
+  index?: Record<string, ProcessEntry | boolean>;
+  search?: Record<string, ProcessEntry | boolean>;
+}
+
 export interface LlmFeatureFlags {
   /** Gates the `akm index` memory-inference pass (#201). Default: true. */
   memory_inference?: boolean;
@@ -318,6 +344,24 @@ export interface SecurityConfig {
 }
 
 export interface AkmConfig {
+  /** v2: schema version marker. 2 = already migrated to v2 shape. */
+  configVersion?: number;
+  /** v2: named LLM and agent profiles. */
+  profiles?: {
+    llm?: Record<string, LlmProfileConfig>;
+    agent?: Record<string, AgentProfileConfigV2>;
+  };
+  /** v2: default profile names and improve pipeline defaults. */
+  defaults?: {
+    llm?: string;
+    agent?: string;
+    improve?: {
+      limit?: number;
+      preset?: "fast" | "thorough" | "mixed" | "custom";
+    };
+  };
+  /** v2: unified features tree replacing the old top-level features flags. */
+  features?: FeaturesConfig;
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
   /** User preference for semantic search. "auto" means use semantic search whenever runtime prerequisites are healthy. */
@@ -781,6 +825,17 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
     const { apiKey, ...rest } = config.llm;
     sanitized.llm = rest;
   }
+  if (config.profiles?.llm) {
+    const llmProfiles: Record<string, unknown> = {};
+    for (const [name, profile] of Object.entries(config.profiles.llm)) {
+      const { apiKey: _apiKey, ...rest } = profile;
+      llmProfiles[name] = rest;
+    }
+    sanitized.profiles = {
+      ...((sanitized.profiles as Record<string, unknown> | undefined) ?? {}),
+      llm: llmProfiles,
+    };
+  }
   // Drop empty keys to keep config clean
   return sanitized;
 }
@@ -964,7 +1019,157 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
     if (Object.keys(improveConfig).length > 0) config.improve = improveConfig;
   }
 
+  // v2 fields
+  if (typeof raw.configVersion === "number" && Number.isFinite(raw.configVersion)) {
+    config.configVersion = raw.configVersion;
+  }
+
+  const profiles = parseProfilesConfig(raw.profiles);
+  if (profiles) config.profiles = profiles;
+
+  const defaults = parseDefaultsConfig(raw.defaults);
+  if (defaults) config.defaults = defaults;
+
+  const features = parseFeaturesConfig(raw.features);
+  if (features) config.features = features;
+
   return config;
+}
+
+function parseLlmProfileConfig(obj: Record<string, unknown>): LlmProfileConfig | undefined {
+  const base = parseLlmConfig(obj);
+  if (!base) return undefined;
+  const profile: LlmProfileConfig = { ...base };
+  if (typeof obj.supportsJsonSchema === "boolean") {
+    profile.supportsJsonSchema = obj.supportsJsonSchema;
+  }
+  return profile;
+}
+
+function parseAgentProfileConfigV2(obj: Record<string, unknown>): AgentProfileConfigV2 | undefined {
+  const VALID_PLATFORMS = ["opencode", "claude", "opencode-sdk"] as const;
+  if (!isOneOf(obj.platform, VALID_PLATFORMS)) {
+    warn(
+      `[akm] Ignoring agent profile: missing or invalid "platform" (must be one of: ${VALID_PLATFORMS.join(", ")}).`,
+    );
+    return undefined;
+  }
+  const profile: AgentProfileConfigV2 = { platform: obj.platform };
+  if (typeof obj.bin === "string" && obj.bin.trim()) profile.bin = obj.bin.trim();
+  if (Array.isArray(obj.args) && obj.args.every((a) => typeof a === "string")) {
+    profile.args = obj.args as string[];
+  }
+  if (typeof obj.workspace === "string" && obj.workspace.trim()) profile.workspace = obj.workspace.trim();
+  if (typeof obj.model === "string" && obj.model.trim()) profile.model = obj.model.trim();
+  return profile;
+}
+
+function parseProfilesConfig(value: unknown): AkmConfig["profiles"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: NonNullable<AkmConfig["profiles"]> = {};
+
+  if (typeof obj.llm === "object" && obj.llm !== null && !Array.isArray(obj.llm)) {
+    const llmMap: Record<string, LlmProfileConfig> = {};
+    for (const [name, raw] of Object.entries(obj.llm as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        warn(`[akm] Ignoring profiles.llm["${name}"]: expected an object.`);
+        continue;
+      }
+      const parsed = parseLlmProfileConfig(raw as Record<string, unknown>);
+      if (parsed) llmMap[name] = parsed;
+      else warn(`[akm] Ignoring profiles.llm["${name}"]: invalid or incomplete LLM connection config.`);
+    }
+    if (Object.keys(llmMap).length > 0) result.llm = llmMap;
+  }
+
+  if (typeof obj.agent === "object" && obj.agent !== null && !Array.isArray(obj.agent)) {
+    const agentMap: Record<string, AgentProfileConfigV2> = {};
+    for (const [name, raw] of Object.entries(obj.agent as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        warn(`[akm] Ignoring profiles.agent["${name}"]: expected an object.`);
+        continue;
+      }
+      const parsed = parseAgentProfileConfigV2(raw as Record<string, unknown>);
+      if (parsed) agentMap[name] = parsed;
+    }
+    if (Object.keys(agentMap).length > 0) result.agent = agentMap;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseDefaultsConfig(value: unknown): AkmConfig["defaults"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: NonNullable<AkmConfig["defaults"]> = {};
+
+  if (typeof obj.llm === "string" && obj.llm.trim()) result.llm = obj.llm.trim();
+  if (typeof obj.agent === "string" && obj.agent.trim()) result.agent = obj.agent.trim();
+
+  if (typeof obj.improve === "object" && obj.improve !== null && !Array.isArray(obj.improve)) {
+    const improveRaw = obj.improve as Record<string, unknown>;
+    const improve: NonNullable<NonNullable<AkmConfig["defaults"]>["improve"]> = {};
+    const limit = parsePositiveInteger("defaults.improve.limit", improveRaw.limit);
+    if (limit !== undefined) improve.limit = limit;
+    if (isOneOf(improveRaw.preset, ["fast", "thorough", "mixed", "custom"] as const)) {
+      improve.preset = improveRaw.preset;
+    }
+    if (Object.keys(improve).length > 0) result.improve = improve;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export function parseProcessEntry(value: unknown): ProcessEntry | boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const entry: ProcessEntry = {};
+  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
+  if (isOneOf(obj.mode, ["llm", "agent", "sdk"] as const)) entry.mode = obj.mode;
+  if (typeof obj.profile === "string" && obj.profile.trim()) entry.profile = obj.profile.trim();
+  if (obj.timeoutMs === null) {
+    entry.timeoutMs = null;
+  } else if (typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0) {
+    entry.timeoutMs = obj.timeoutMs;
+  }
+  if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
+    entry.options = obj.options as Record<string, unknown>;
+  }
+  return entry;
+}
+
+function parseFeaturesSection(value: unknown, section: string): Record<string, ProcessEntry | boolean> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: Record<string, ProcessEntry | boolean> = {};
+  for (const [name, raw] of Object.entries(obj)) {
+    const parsed = parseProcessEntry(raw);
+    if (parsed === undefined) {
+      warn(`[akm] Ignoring features.${section}["${name}"]: expected a boolean or process entry object.`);
+      continue;
+    }
+    result[name] = parsed;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseFeaturesConfig(value: unknown): FeaturesConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: FeaturesConfig = {};
+
+  const improve = parseFeaturesSection(obj.improve, "improve");
+  if (improve) result.improve = improve;
+
+  const index = parseFeaturesSection(obj.index, "index");
+  if (index) result.index = index;
+
+  const search = parseFeaturesSection(obj.search, "search");
+  if (search) result.search = search;
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function parseConfigText(text: string): Partial<AkmConfig> | undefined {
@@ -1832,6 +2037,43 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
   if (next.llm && !next.llm.apiKey) {
     const envKey = process.env.AKM_LLM_API_KEY?.trim();
     if (envKey) next.llm = { ...next.llm, apiKey: envKey };
+  }
+
+  // v2: inject AKM_LLM_API_KEY into the default LLM profile
+  if (next.profiles?.llm && next.defaults?.llm) {
+    const defaultProfileName = next.defaults.llm;
+    const defaultProfile = next.profiles.llm[defaultProfileName];
+    if (defaultProfile && !defaultProfile.apiKey) {
+      const envKey = process.env.AKM_LLM_API_KEY?.trim();
+      if (envKey) {
+        next.profiles = {
+          ...next.profiles,
+          llm: {
+            ...next.profiles.llm,
+            [defaultProfileName]: { ...defaultProfile, apiKey: envKey },
+          },
+        };
+      }
+    }
+  }
+
+  // v2: per-profile AKM_PROFILE_<UPPER_NAME>_API_KEY
+  if (next.profiles?.llm) {
+    const updatedLlmProfiles = { ...next.profiles.llm };
+    let changed = false;
+    for (const [profileName, profile] of Object.entries(updatedLlmProfiles)) {
+      if (!profile.apiKey) {
+        const envVarName = `AKM_PROFILE_${profileName.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+        const envKey = process.env[envVarName]?.trim();
+        if (envKey) {
+          updatedLlmProfiles[profileName] = { ...profile, apiKey: envKey };
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      next.profiles = { ...next.profiles, llm: updatedLlmProfiles };
+    }
   }
 
   return next;

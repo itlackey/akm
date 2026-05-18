@@ -60,7 +60,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "The configured stashDir exists but isn't a directory. Update stashDir to point at a folder.",
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update stashDir.",
   EMBEDDING_NOT_CONFIGURED: 'Run `akm config set embedding \'{"endpoint":"...","model":"..."}\'` to enable embeddings.',
-  LLM_NOT_CONFIGURED: 'Run `akm config set llm \'{"endpoint":"...","model":"..."}\'` to configure the LLM.',
+  LLM_NOT_CONFIGURED:
+    'Run `akm setup` or `akm config set profiles.llm.default \'{"endpoint":"...","model":"..."}\' to configure an LLM profile.',
 };
 
 /** Default hint for each UsageError code. */
