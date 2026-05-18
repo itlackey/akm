@@ -445,13 +445,11 @@ function memoryCleanupParentRef(
   return makeAssetRef("memory", parsed.name.slice(0, -".derived".length));
 }
 
-// Types that can produce a lesson via distill. Script/task/vault/lesson/memory are excluded:
-// scripts are raw code files with no markdown frontmatter; the others either already are
-// lessons, have their own distill path (memory), or are not knowledge assets.
-const LESSON_ELIGIBLE_TYPES = new Set(["knowledge", "skill", "agent", "command", "workflow", "wiki"]);
-
 function isLessonCandidate(ref: string): boolean {
-  return LESSON_ELIGIBLE_TYPES.has(parseAssetRef(ref).type);
+  // Only lesson assets need lesson-schema validation (description + when_to_use).
+  // Memories have their own distill path via shouldDistillMemoryRef.
+  // All other types go through reflect, not distill.
+  return parseAssetRef(ref).type === "lesson";
 }
 
 function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
