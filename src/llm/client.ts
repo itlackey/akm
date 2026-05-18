@@ -103,10 +103,17 @@ export interface ChatCompletionOptions {
   timeoutMs?: number;
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
+  /**
+   * JSON Schema for structured output. When provided AND the connection has
+   * `supportsJsonSchema: true`, sends `response_format: { type: "json_schema",
+   * json_schema: { schema, strict: true } }`. Otherwise the schema is ignored
+   * and callers rely on prompt-contract JSON.
+   */
+  responseSchema?: Record<string, unknown>;
 }
 
 export async function chatCompletion(
-  config: LlmConnectionConfig,
+  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ): Promise<string> {
@@ -121,6 +128,11 @@ export async function chatCompletion(
   // guess is wrong. Users who need a cap can set llm.maxTokens in config.
   const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
 
+  const responseFormat =
+    options?.responseSchema && config.supportsJsonSchema
+      ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
+      : {};
+
   let response: Response;
   try {
     response = await fetchWithTimeout(
@@ -133,6 +145,7 @@ export async function chatCompletion(
           messages,
           temperature: options?.temperature ?? config.temperature ?? 0.3,
           ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
+          ...responseFormat,
           ...config.extraParams,
         }),
       },

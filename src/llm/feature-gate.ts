@@ -27,6 +27,7 @@
  */
 
 import type { AkmConfig, LlmFeatureFlags } from "../core/config";
+import { isProcessEnabled as resolveProcessEnabled } from "../integrations/agent/runner";
 
 /** Locked v1 feature keys (mirrors `LOCKED_LLM_FEATURE_KEYS` in config.ts). */
 export type LlmFeatureKey = keyof LlmFeatureFlags;
@@ -47,6 +48,39 @@ export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmF
   if (configured === true) return true;
   if (configured === false) return false;
   return FEATURE_DEFAULTS[feature] === true;
+}
+
+/**
+ * v2 replacement for `isLlmFeatureEnabled`. Reads from the unified
+ * `config.features[section][processName]` tree introduced in v2 config.
+ *
+ * Falls back to `isLlmFeatureEnabled` when the process is not present in
+ * the v2 features tree, enabling transparent backward compatibility with
+ * v1 configs that still use `llm.features.*`.
+ */
+export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
+  if (!config) return false;
+  if (config.features) {
+    return resolveProcessEnabled(section, processName, config);
+  }
+  // Fall back to v1 llm.features gate for known v1 keys
+  const v1KeyMap: Record<string, Record<string, LlmFeatureKey>> = {
+    index: {
+      memory_inference: "memory_inference",
+      graph_extraction: "graph_extraction",
+      metadata_enhance: "metadata_enhance",
+    },
+    improve: {
+      memory_consolidation: "memory_consolidation",
+      feedback_distillation: "feedback_distillation",
+    },
+    search: {
+      curate_rerank: "curate_rerank",
+    },
+  };
+  const v1Key = v1KeyMap[section]?.[processName];
+  if (v1Key) return isLlmFeatureEnabled(config, v1Key);
+  return false;
 }
 
 /** Optional knobs for `tryLlmFeature`. */
