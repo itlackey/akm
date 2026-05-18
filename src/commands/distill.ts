@@ -979,12 +979,16 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           .replace(/^[#*\->_]+\s*/, "")
           .replace(/:\s*$/, "")
           .trim();
-      // Extract description: first non-trivial line after stripping markdown
+      // Skip lines that look like YAML field assignments (key: value) or frontmatter delimiters.
+      // These appear when the LLM leaks frontmatter content into the body, causing
+      // auto-repair to produce description: "description: Key Takeaways".
+      const isYamlLike = (l: string) => /^---/.test(l) || /^[a-z_]+:\s/i.test(l);
+      // Extract description: first non-trivial prose line after stripping markdown
       const descLine =
         body
           .split("\n")
           .map(stripMd)
-          .find((l) => l.length > 10 && l.length < 200) ?? `Lesson distilled from ${inputRef}`;
+          .find((l) => !isYamlLike(l) && l.length > 10 && l.length < 200) ?? `Lesson distilled from ${inputRef}`;
       // Extract when_to_use: look for a line starting with "When" or "Use when"
       const wtuLine =
         body
