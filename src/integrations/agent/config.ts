@@ -581,6 +581,44 @@ export function requireAgentProfile(agent: AgentConfig | undefined, requested?: 
 }
 
 /**
+ * Parse the v2 `profiles.agent` map (AgentProfileConfigV2 shape with required
+ * `platform` field). Returns a map of profile name → AgentProfile suitable for
+ * use with runner.ts dispatch. This is distinct from the v1 `parseAgentProfilesMap`
+ * (which parses the legacy `agent.profiles` shape).
+ */
+export function parseAgentProfilesMapV2(
+  value: unknown,
+): Record<string, import("../../core/config").AgentProfileConfigV2> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const out: Record<string, import("../../core/config").AgentProfileConfigV2> = {};
+  const VALID_PLATFORMS = ["opencode", "claude", "opencode-sdk"] as const;
+  for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      warn(`[akm] Ignoring profiles.agent["${name}"]: expected an object.`);
+      continue;
+    }
+    const obj = raw as Record<string, unknown>;
+    if (!VALID_PLATFORMS.includes(obj.platform as (typeof VALID_PLATFORMS)[number])) {
+      warn(
+        `[akm] Ignoring profiles.agent["${name}"]: missing or invalid "platform" (must be one of: ${VALID_PLATFORMS.join(", ")}).`,
+      );
+      continue;
+    }
+    const profile: import("../../core/config").AgentProfileConfigV2 = {
+      platform: obj.platform as (typeof VALID_PLATFORMS)[number],
+    };
+    if (typeof obj.bin === "string" && obj.bin.trim()) profile.bin = obj.bin.trim();
+    if (Array.isArray(obj.args) && obj.args.every((a) => typeof a === "string")) {
+      profile.args = obj.args as string[];
+    }
+    if (typeof obj.workspace === "string" && obj.workspace.trim()) profile.workspace = obj.workspace.trim();
+    if (typeof obj.model === "string" && obj.model.trim()) profile.model = obj.model.trim();
+    out[name] = profile;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
  * Convenience: list every fully-resolved profile (built-ins merged with
  * any user overrides). Used by setup detection to enumerate candidates.
  */

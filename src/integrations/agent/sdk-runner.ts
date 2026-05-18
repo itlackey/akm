@@ -83,7 +83,7 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
   return _server;
 }
 
-export async function runAgentSdk(
+export async function runOpencodeSdk(
   profile: AgentProfile,
   prompt: string,
   _opts: RunAgentOptions = {},
@@ -153,3 +153,6 @@ export async function runAgentSdk(
     await client.session.delete({ path: { id: sessionId } }).catch(() => {});
   }
 }
+
+/** @deprecated Use {@link runOpencodeSdk} instead. */
+export const runAgentSdk = runOpencodeSdk;
