@@ -38,6 +38,7 @@ import type { AkmConfig, SourceConfigEntry } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
+import { isProcessEnabled } from "../llm/feature-gate";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { compressMemoryToDerivedMemory, type DerivedMemoryDraft } from "../llm/memory-infer";
 import type { SearchSource } from "./search-source";
@@ -103,9 +104,10 @@ export async function runMemoryInferencePass(
     skippedNoFacts: 0,
   };
 
-  // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
-  // explicit `false` disables the pass entirely.
-  if (config.llm?.features?.memory_inference === false) return result;
+  // Gate 1 — v2-aware feature gate (§14). Uses isProcessEnabled so that both
+  // v1 (llm.features.memory_inference) and v2 (features.index.memory_inference)
+  // configs are honoured. Defaults to enabled when neither key is present.
+  if (!isProcessEnabled("index", "memory_inference", config)) return result;
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.

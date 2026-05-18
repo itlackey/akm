@@ -22,6 +22,7 @@
 import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
+import type { LlmConnectionConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
@@ -39,6 +40,7 @@ import {
   runAgent,
 } from "../integrations/agent";
 import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { type ChatMessage, chatCompletion } from "../llm/client";
 
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
@@ -149,6 +151,102 @@ function resolveProfile(options: AkmReflectOptions): AgentProfile {
   if (options.agentProfile) return options.agentProfile;
   const agent = options.agentConfig ?? loadAgentConfigFromDisk();
   return requireAgentProfile(agent, options.profile);
+}
+
+/**
+ * JSON Schema for structured reflect output. Passed to `chatCompletion` when
+ * the connection has `supportsJsonSchema: true` so the model returns a strict
+ * JSON object matching {@link AgentProposalPayload}.
+ */
+export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["ref", "content"],
+  additionalProperties: false,
+  properties: {
+    ref: { type: "string", description: "Asset ref in type:name format (e.g. lesson:my-lesson)." },
+    content: { type: "string", description: "Full markdown content for the asset." },
+    frontmatter: {
+      type: "object",
+      description: "Optional frontmatter key-value pairs to merge into the asset.",
+      additionalProperties: true,
+    },
+  },
+};
+
+/** Critique prompt injected between prior draft and refinement request (Self-Refine loop). */
+const REFLECT_CRITIQUE_PROMPT =
+  "Your previous proposal is shown above. Please review it critically and provide an improved version that is more specific, actionable, and avoids any issues with the previous attempt. Return only the improved JSON proposal.";
+
+/** Options for the direct-LLM reflect runner (v2 config path). */
+export interface RunReflectViaLlmOptions {
+  /** Reflect prompt text (built by {@link buildReflectPrompt}). */
+  prompt: string | undefined;
+  /** LLM connection config. `supportsJsonSchema` controls structured-output mode. */
+  connection: LlmConnectionConfig & { supportsJsonSchema?: boolean };
+  /** Hard timeout for the LLM request in ms. */
+  timeoutMs?: number;
+  /** Prior draft for Self-Refine critique (injected on iterations > 0). */
+  priorDraft?: string;
+  /** Current refinement iteration (0-based). */
+  iteration: number;
+  /**
+   * JSON Schema for structured output. When provided AND `connection.supportsJsonSchema`
+   * is `true`, passed through to `chatCompletion` so the provider enforces it.
+   */
+  responseSchema?: Record<string, unknown>;
+  /** Test seam: override the chat function (avoids real LLM calls in tests). */
+  chat?: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+}
+
+/**
+ * Run a single reflect iteration directly via the LLM API (v2 config path).
+ *
+ * Returns an {@link AgentRunResult}-shaped object so it can slot into the same
+ * dispatch loop as agent-based runners. On success, `stdout` contains the raw
+ * LLM response (unparsed JSON or prose). On failure, the error is captured
+ * into the result rather than thrown.
+ */
+export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<AgentRunResult> {
+  const start = Date.now();
+  const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
+
+  if (opts.priorDraft !== undefined && opts.iteration > 0) {
+    messages.push({ role: "assistant", content: opts.priorDraft });
+    messages.push({ role: "user", content: REFLECT_CRITIQUE_PROMPT });
+  }
+
+  try {
+    let stdout: string;
+    if (opts.chat) {
+      // Test seam: injected chat function (two-arg signature, no responseSchema).
+      stdout = await opts.chat(opts.connection, messages);
+    } else {
+      // Production path: full chatCompletion with optional structured-output schema.
+      stdout = await chatCompletion(
+        opts.connection,
+        messages,
+        opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : undefined,
+      );
+    }
+    return {
+      ok: true,
+      stdout,
+      stderr: "",
+      durationMs: Date.now() - start,
+      exitCode: 0,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      stdout: "",
+      stderr: msg,
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason: "non_zero_exit" as AgentFailureReason,
+      error: msg,
+    };
+  }
 }
 
 function failureEnvelope(

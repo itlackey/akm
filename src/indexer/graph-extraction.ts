@@ -37,6 +37,7 @@ import path from "node:path";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
+import { isProcessEnabled } from "../llm/feature-gate";
 import { extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import type { SearchSource } from "./search-source";
@@ -120,9 +121,10 @@ export async function runGraphExtractionPass(
   sources: SearchSource[],
   signal?: AbortSignal,
 ): Promise<GraphExtractionResult> {
-  // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
-  // explicit `false` disables the pass entirely.
-  if (config.llm?.features?.graph_extraction === false) return { ...EMPTY_RESULT };
+  // Gate 1 — v2-aware feature gate (§14). Uses isProcessEnabled so that both
+  // v1 (llm.features.graph_extraction) and v2 (features.index.graph_extraction)
+  // configs are honoured. Defaults to enabled when neither key is present.
+  if (!isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.

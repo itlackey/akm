@@ -46,6 +46,82 @@ export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmF
   return config.llm.features[feature] === true;
 }
 
+/**
+ * Feature processes that default to `true` when absent from the v1
+ * `llm.features` block. These mirror the original `=== false` guard semantics:
+ * blocking only on explicit `false`, not on absence.
+ */
+const V1_DEFAULT_ENABLED: ReadonlySet<LlmFeatureKey> = new Set<LlmFeatureKey>(["memory_inference", "graph_extraction"]);
+
+/**
+ * Read the v1 `llm.features` gate for a known feature key, honouring the
+ * per-key default: `true` for keys in {@link V1_DEFAULT_ENABLED}, `false` for
+ * all others (opt-in).
+ */
+function isV1FeatureEnabled(config: AkmConfig, key: LlmFeatureKey): boolean {
+  const configured = config.llm?.features?.[key];
+  if (configured === true) return true;
+  if (configured === false) return false;
+  // Key absent — return the per-feature default.
+  return V1_DEFAULT_ENABLED.has(key);
+}
+
+/**
+ * v2 replacement for `isLlmFeatureEnabled`. Reads from the unified
+ * `config.features[section][processName]` tree introduced in v2 config.
+ *
+ * Falls back to v1 `llm.features.*` when the specific `section` is absent
+ * from the v2 features tree, enabling transparent backward compatibility with
+ * v1 configs that still use `llm.features.*`.
+ *
+ * Bug fix: the fallback triggers on a missing *section*, not just a missing
+ * top-level `features` object — so a partial v2 config (e.g. only
+ * `features.improve` is present) still falls back to v1 for unregistered
+ * sections like `features.search`.
+ */
+export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
+  if (!config) return false;
+
+  // Check v2 features tree for this specific section.
+  const featuresSection = (config as Record<string, unknown> & AkmConfig).features as
+    | Record<string, unknown>
+    | undefined;
+  const sectionValue = featuresSection?.[section];
+  if (sectionValue !== undefined) {
+    // Section exists in the v2 tree — resolve through the v2 object.
+    if (typeof sectionValue === "object" && sectionValue !== null && !Array.isArray(sectionValue)) {
+      const entry = (sectionValue as Record<string, unknown>)[processName];
+      // A process entry may be a plain boolean or an object with an `enabled` field.
+      if (typeof entry === "boolean") return entry;
+      if (typeof entry === "object" && entry !== null) {
+        const enabled = (entry as Record<string, unknown>).enabled;
+        if (typeof enabled === "boolean") return enabled;
+        return true; // object present but no `enabled` key → treat as enabled
+      }
+      // Process not present in the section → disabled by default in v2.
+      return false;
+    }
+    return false;
+  }
+
+  // Section absent from v2 tree — fall back to v1 llm.features gate for known v1 keys.
+  const v1KeyMap: Record<string, Record<string, LlmFeatureKey>> = {
+    index: {
+      memory_inference: "memory_inference",
+      graph_extraction: "graph_extraction",
+    },
+    improve: {
+      feedback_distillation: "feedback_distillation",
+    },
+    search: {
+      curate_rerank: "curate_rerank",
+    },
+  };
+  const v1Key = v1KeyMap[section]?.[processName];
+  if (v1Key) return isV1FeatureEnabled(config, v1Key);
+  return false;
+}
+
 /** Optional knobs for `tryLlmFeature`. */
 export interface TryLlmFeatureOptions {
   /**

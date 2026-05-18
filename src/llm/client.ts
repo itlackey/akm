@@ -14,6 +14,26 @@ import type { LlmConnectionConfig } from "../core/config";
 /** Maximum length of an LLM error response body included in thrown errors. */
 const ERROR_BODY_MAX_LEN = 200;
 
+// ── Typed error class ───────────────────────────────────────────────────────
+
+export type LlmCallErrorCode =
+  | "rate_limited" // HTTP 429
+  | "provider_error" // HTTP 5xx
+  | "network_error" // fetch failed / timeout
+  | "parse_error" // response received but JSON parse failed
+  | "timeout"; // request exceeded timeoutMs
+
+export class LlmCallError extends Error {
+  constructor(
+    message: string,
+    public readonly code: LlmCallErrorCode,
+    public readonly statusCode?: number,
+  ) {
+    super(message);
+    this.name = "LlmCallError";
+  }
+}
+
 /**
  * Redact credential-shaped substrings from an upstream error body before
  * including it in a thrown Error. The body is also trimmed to a fixed length
@@ -62,10 +82,17 @@ export interface ChatCompletionOptions {
   timeoutMs?: number;
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
+  /**
+   * JSON Schema for structured output. When provided AND the connection has
+   * `supportsJsonSchema: true`, sends `response_format: { type: "json_schema",
+   * json_schema: { schema, strict: true } }`. Otherwise the schema is ignored
+   * and callers rely on prompt-contract JSON.
+   */
+  responseSchema?: Record<string, unknown>;
 }
 
 export async function chatCompletion(
-  config: LlmConnectionConfig,
+  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ): Promise<string> {
@@ -74,6 +101,12 @@ export async function chatCompletion(
   if (config.apiKey) {
     headers.Authorization = `Bearer ${config.apiKey}`;
   }
+
+  const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
+  const responseFormat =
+    options?.responseSchema && config.supportsJsonSchema
+      ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
+      : {};
 
   const response = await fetchWithTimeout(
     config.endpoint,
@@ -84,7 +117,8 @@ export async function chatCompletion(
         model: config.model,
         messages,
         temperature: options?.temperature ?? config.temperature ?? 0.3,
-        max_tokens: options?.maxTokens ?? config.maxTokens ?? 512,
+        ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
+        ...responseFormat,
         ...config.extraParams,
       }),
     },
