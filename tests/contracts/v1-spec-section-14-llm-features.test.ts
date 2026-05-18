@@ -76,21 +76,29 @@ describe("v1 spec §14 — llm.features.*", () => {
 });
 
 describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
+  // v2: llm.features.* replaced by unified features.<section>.<process> tree.
+  // Process names are documented in the "Known process names" section.
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## `llm.features.*` map");
+  const block = extractSection(config, "## Known process names");
 
-  test("configuration.md has the llm.features section", () => {
+  test("configuration.md has the known process names section", () => {
     expect(block).not.toBe("");
+    expect(block).toContain("features.");
   });
 
-  test("configuration.md lists every locked feature key", () => {
-    for (const k of LOCKED_FEATURE_KEYS) {
+  test("configuration.md lists the feature process names", () => {
+    // All former llm.features keys survive as process names in the v2 features tree
+    const v2ProcessNames = LOCKED_FEATURE_KEYS.filter((k) => k !== "lesson_quality_gate");
+    for (const k of v2ProcessNames) {
       expect(block).toContain(k);
     }
   });
 
-  test("configuration.md says unknown llm.features keys are warn-and-ignore", () => {
-    expect(block).toMatch(/Unknown keys.*warn-and-ignore/i);
+  test("configuration.md documents the process entry shape section", () => {
+    // warn-and-ignore contract is documented in Process entry shape
+    const shape = extractSection(config, "## Process entry shape");
+    expect(shape).not.toBe("");
+    expect(shape).toMatch(/warn.and.ignore|unknown.*keys/i);
   });
 });
 

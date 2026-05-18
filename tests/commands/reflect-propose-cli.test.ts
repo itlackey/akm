@@ -226,6 +226,14 @@ describe("improve argv coercion", () => {
 
   test("skill-scoped improve passes related lesson evidence into reflect for promotion decisions", async () => {
     const stash = makeStashDir();
+    // `findAssetFilePath` requires the scoped asset to exist on disk.
+    // Skill assets use directory form: skills/<name>/SKILL.md.
+    fs.mkdirSync(path.join(stash, "skills", "deploy"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stash, "skills", "deploy", "SKILL.md"),
+      "---\ndescription: Deployment skill for CI/CD pipelines\nwhen_to_use: When setting up deployment workflows\n---\n\nDeployment instructions.\n",
+      "utf8",
+    );
     fs.writeFileSync(
       path.join(stash, "lessons", "skill-deploy-lesson.md"),
       "---\ndescription: Capture rollback invariants\nwhen_to_use: When updating deployment guidance\nsources:\n  - skill:deploy\n---\n\nRecord rollback checks and readiness gates after repeated incidents.\n",
@@ -290,7 +298,9 @@ describe("improve argv coercion", () => {
 
     expect(result.plannedRefs.map((planned) => planned.ref)).toEqual(["skill:deploy"]);
     expect(reflected).toEqual(["skill:deploy"]);
-    expect(distilled).toEqual(["skill:deploy"]);
+    // skill:deploy is not a lesson/memory candidate so distill is not called — only lesson: and
+    // memory: refs enter the distill path after isLessonCandidate was narrowed (ef938fd).
+    expect(distilled).toEqual([]);
     expect(capturedPrompt).toContain("Related distilled lessons to evaluate for consolidation:");
     expect(capturedPrompt).toContain("Lesson ref: lesson:skill-deploy-lesson");
     expect(capturedPrompt).toContain("Record rollback checks and readiness gates after repeated incidents.");
