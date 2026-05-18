@@ -19,7 +19,15 @@ import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
 /** Stable failure-reason vocabulary. Wider strings are not allowed. */
-export type AgentFailureReason = "timeout" | "spawn_failed" | "non_zero_exit" | "parse_error" | "cooldown";
+export type AgentFailureReason =
+  | "timeout"
+  | "spawn_failed"
+  | "non_zero_exit"
+  | "parse_error"
+  | "cooldown"
+  | "llm_rate_limit"
+  | "llm_content_filter"
+  | "llm_invalid_json";
 
 /** Minimum subprocess surface we need. Bun.spawn returns this shape. */
 export interface SpawnedSubprocess {
