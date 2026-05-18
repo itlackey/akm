@@ -1517,8 +1517,15 @@ async function runImprovePreparationStage(args: {
   const totalReflectCooled = fullySkippedCount + distillOnlyRefs.length;
   if (totalReflectCooled > 0) {
     info(
-      `[improve] ${totalReflectCooled} of ${preCooldownCount} eligible refs on reflect cooldown ` +
+      `[improve] ${totalReflectCooled} of ${preCooldownCount} indexed refs on reflect cooldown ` +
         `(${fullySkippedCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
+    );
+  }
+  if (isFullyZeroFeedback) {
+    info(`[improve] cold-start: no feedback signals — exploration budget capped at ${explorationBudget} refs per run`);
+  } else if (signalAndRetrievalRefs.length > 0) {
+    info(
+      `[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback, ${highRetrievalRefs.length} high-retrieval)`,
     );
   }
   if (validationFailureRefs.size > 0) {
