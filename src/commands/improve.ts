@@ -1417,12 +1417,40 @@ async function runImprovePreparationStage(args: {
   // Refs: Zoph & Le arXiv:1611.01578 — exploration budgets; MemRL — utility sampling.
   const DEFAULT_EXPLORATION_BUDGET = 10;
   const explorationBudget = options.explorationBudget ?? DEFAULT_EXPLORATION_BUDGET;
-  const isFullyZeroFeedback =
+
+  // Check if the processable pool has no feedback at all. But distinguish:
+  //   true cold-start  = no feedback anywhere in the stash
+  //   cooldown-bubble  = feedback exists but all feedback-bearing refs are on cooldown
+  // We only want the exploration-budget cap for true cold-start. In a cooldown-bubble,
+  // processing anything is fine — we just don't have a signal-based priority list yet.
+  const processableHasNoFeedback =
     signalFiltered.length === 0 &&
     processableRefs.every((r) => {
       const s = feedbackSummary.get(r.ref);
       return (s?.positive ?? 0) === 0 && (s?.negative ?? 0) === 0;
     });
+
+  // Count total feedback events across the whole stash (not just processable).
+  let stashWideFeedbackCount = 0;
+  try {
+    const fbDb = openStateDatabase();
+    try {
+      const row = fbDb
+        .prepare(
+          "SELECT COUNT(*) AS cnt FROM events WHERE event_type = 'feedback' AND json_extract(metadata_json,'$.signal') IN ('positive','negative')",
+        )
+        .get() as { cnt: number };
+      stashWideFeedbackCount = row.cnt;
+    } finally {
+      fbDb.close();
+    }
+  } catch {
+    // best-effort
+  }
+
+  const isTrueColdStart = processableHasNoFeedback && stashWideFeedbackCount === 0;
+  const isCooldownBubble = processableHasNoFeedback && stashWideFeedbackCount > 0;
+  const isFullyZeroFeedback = isTrueColdStart;
 
   // If the user explicitly scoped to a single ref, always act on it —
   // skip the signal/retrieval filter entirely. The filter exists to avoid
@@ -1521,8 +1549,12 @@ async function runImprovePreparationStage(args: {
         `(${fullySkippedCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
     );
   }
-  if (isFullyZeroFeedback) {
+  if (isTrueColdStart) {
     info(`[improve] cold-start: no feedback signals — exploration budget capped at ${explorationBudget} refs per run`);
+  } else if (isCooldownBubble) {
+    info(
+      `[improve] cooldown bubble: ${stashWideFeedbackCount} feedback signal(s) exist but all feedback-bearing refs are on cooldown — sampling ${mergedRefs.length} processable refs`,
+    );
   } else if (signalAndRetrievalRefs.length > 0) {
     info(
       `[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback, ${highRetrievalRefs.length} high-retrieval)`,
