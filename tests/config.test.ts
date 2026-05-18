@@ -896,3 +896,158 @@ describe("search config", () => {
     }
   });
 });
+
+describe("v2 config shape parsing", () => {
+  test("parses configVersion", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: 2 }));
+    const loaded = loadConfig();
+    expect(loaded.configVersion).toBe(2);
+  });
+
+  test("parses profiles.llm with supportsJsonSchema", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          llm: {
+            "openai-mini": {
+              endpoint: "https://api.openai.com/v1/chat/completions",
+              model: "gpt-4o-mini",
+              temperature: 0.3,
+              supportsJsonSchema: true,
+            },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.llm?.["openai-mini"]?.model).toBe("gpt-4o-mini");
+    expect(loaded.profiles?.llm?.["openai-mini"]?.supportsJsonSchema).toBe(true);
+  });
+
+  test("parses profiles.agent with platform field", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          agent: {
+            "opencode-default": { platform: "opencode", bin: "opencode", args: ["run"] },
+            "opencode-sdk": { platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.agent?.["opencode-default"]?.platform).toBe("opencode");
+    expect(loaded.profiles?.agent?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
+    expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
+  });
+
+  test("warns and skips agent profile with invalid platform", () => {
+    const messages: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      messages.push(args.map(String).join(" "));
+    };
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          profiles: { agent: { bad: { platform: "invalid-platform" } } },
+        }),
+      );
+      const loaded = loadConfig();
+      expect(loaded.profiles?.agent?.bad).toBeUndefined();
+      expect(messages.some((m) => m.includes("platform"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("parses defaults.llm, defaults.agent, defaults.improve", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        defaults: {
+          llm: "openai-mini",
+          agent: "opencode-default",
+          improve: { limit: 25, preset: "custom" },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.defaults?.llm).toBe("openai-mini");
+    expect(loaded.defaults?.agent).toBe("opencode-default");
+    expect(loaded.defaults?.improve?.limit).toBe(25);
+    expect(loaded.defaults?.improve?.preset).toBe("custom");
+  });
+
+  test("parses features.improve with boolean and object entries", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        features: {
+          improve: {
+            reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
+            memory_consolidation: false,
+            feedback_distillation: true,
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    const reflect = loaded.features?.improve?.reflect;
+    expect(typeof reflect).toBe("object");
+    if (reflect && typeof reflect === "object") {
+      expect((reflect as { mode?: string }).mode).toBe("llm");
+      expect((reflect as { timeoutMs?: number }).timeoutMs).toBe(60000);
+    }
+    expect(loaded.features?.improve?.memory_consolidation).toBe(false);
+    expect(loaded.features?.improve?.feedback_distillation).toBe(true);
+  });
+
+  test("parses features.index and features.search", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        features: {
+          index: { memory_inference: true, graph_extraction: { profile: "openai-mini" }, metadata_enhance: false },
+          search: { curate_rerank: true },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.features?.index?.memory_inference).toBe(true);
+    expect(loaded.features?.index?.metadata_enhance).toBe(false);
+    expect(loaded.features?.search?.curate_rerank).toBe(true);
+  });
+
+  test("sanitizeConfigForWrite strips apiKey from profiles.llm entries", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          llm: {
+            myprofile: {
+              endpoint: "https://api.openai.com/v1/chat/completions",
+              model: "gpt-4o",
+              apiKey: "sk-secret",
+            },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    saveConfig(loaded);
+    // Re-read from disk to verify apiKey was stripped
+    const saved = JSON.parse(require("node:fs").readFileSync(getConfigPath(), "utf8"));
+    expect(saved.profiles?.llm?.myprofile?.apiKey).toBeUndefined();
+    expect(saved.profiles?.llm?.myprofile?.model).toBe("gpt-4o");
+  });
+});
