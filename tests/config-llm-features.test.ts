@@ -51,8 +51,13 @@ afterEach(() => {
 });
 
 describe("loadConfig — llm.features (v1 spec §14)", () => {
+  // These tests use configVersion: "0.8.0" to suppress auto-migration.
+  // Auto-migration rewrites llm.features.* → features.{index,improve,search}.* on first load
+  // of a v1 config; these tests verify the parser behaviour for already-migrated files where
+  // llm.features is still present for backward-compat reads.
   test("parses all locked feature keys with runtime consumers", () => {
     writeConfig({
+      configVersion: "0.8.0",
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
         model: "llama3.2",
@@ -75,6 +80,7 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
 
   test("absent keys remain absent (default-false at call sites)", () => {
     writeConfig({
+      configVersion: "0.8.0",
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
         model: "llama3.2",
@@ -92,6 +98,7 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     try {
       writeConfig({
+        configVersion: "0.8.0",
         llm: {
           endpoint: "http://localhost:11434/v1/chat/completions",
           model: "llama3.2",
@@ -119,6 +126,7 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     try {
       writeConfig({
+        configVersion: "0.8.0",
         llm: {
           endpoint: "http://localhost:11434/v1/chat/completions",
           model: "llama3.2",
