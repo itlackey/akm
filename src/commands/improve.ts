@@ -44,6 +44,7 @@ import {
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
+import { isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
@@ -2203,7 +2204,15 @@ async function runImproveMaintenancePasses(args: {
       }
     }
 
-    if (sources.length > 0) {
+    const graphEnabled = isProcessEnabled("index", "graph_extraction", config);
+    // Build the set of refs actually touched this run before entering the
+    // extraction block so the touchedRefs check is available regardless of
+    // whether extraction is gated.
+    const touchedRefs = new Set<string>();
+    for (const r of args.actionableRefs) touchedRefs.add(r.ref);
+    for (const r of memoryRefsForInference) touchedRefs.add(r);
+
+    if (sources.length > 0 && graphEnabled && touchedRefs.size > 0) {
       info("[improve] graph extraction starting");
       const extractionStart = Date.now();
       try {
@@ -2226,48 +2235,52 @@ async function runImproveMaintenancePasses(args: {
             config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
           );
         }
-        // Restrict graph extraction to refs actually touched this run. Without
-        // this filter the pass rescans the entire corpus on every improve call
-        // (cache hits still incur a per-file disk read + hash). When no refs
-        // were processed, fall back to a full scan (no candidatePaths option).
-        const touchedRefs = new Set<string>();
-        for (const r of args.actionableRefs) touchedRefs.add(r.ref);
-        for (const r of memoryRefsForInference) touchedRefs.add(r);
+        // Restrict graph extraction to refs actually touched this run.
+        // Full-corpus scans belong in `akm index`, not in the improve post-loop.
         let candidatePaths: Set<string> | undefined;
-        if (touchedRefs.size > 0 && primaryStashDir) {
+        if (primaryStashDir) {
           const writableDirSet = new Set(getWritableStashDirs(primaryStashDir).map((d) => path.resolve(d)));
           const resolved = await Promise.all(
             [...touchedRefs].map((ref) => findAssetFilePath(ref, primaryStashDir, writableDirSet).catch(() => null)),
           );
-          candidatePaths = new Set(resolved.filter((p): p is string => typeof p === "string" && p.length > 0));
-          if (candidatePaths.size === 0) candidatePaths = undefined;
+          const resolvedPaths = new Set(resolved.filter((p): p is string => typeof p === "string" && p.length > 0));
+          if (resolvedPaths.size > 0) candidatePaths = resolvedPaths;
         }
-        const progressHandler = (event: {
-          processed: number;
-          total: number;
-          extracted: number;
-          totalEntities: number;
-          totalRelations: number;
-          currentPath?: string;
-        }) => {
-          const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
+        if (!candidatePaths) {
+          // All touched refs resolved to missing files — nothing to extract.
+          info("[improve] graph extraction skipped (no resolvable file paths for touched refs)");
+        } else {
+          const progressHandler = (event: {
+            processed: number;
+            total: number;
+            extracted: number;
+            totalEntities: number;
+            totalRelations: number;
+            currentPath?: string;
+          }) => {
+            const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
+            info(
+              `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
+            );
+          };
+          // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
+          graphExtraction = await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler, {
+            candidatePaths,
+          });
+          graphExtractionDurationMs = Date.now() - extractionStart;
+          actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
           info(
-            `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
+            `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
           );
-        };
-        // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
-        graphExtraction = candidatePaths
-          ? await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler, { candidatePaths })
-          : await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler);
-        graphExtractionDurationMs = Date.now() - extractionStart;
-        actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
-        info(
-          `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
-        );
+        }
       } catch (err) {
         graphExtractionDurationMs = Date.now() - extractionStart;
         allWarnings.push(`graph extraction failed: ${err instanceof Error ? err.message : String(err)}`);
       }
+    } else if (sources.length > 0 && !graphEnabled) {
+      info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
+    } else if (sources.length > 0 && touchedRefs.size === 0) {
+      info("[improve] graph extraction skipped (no refs processed this run; run `akm index` for a full corpus scan)");
     }
 
     // Orphan proposal purge — reject pending reflect proposals whose target
