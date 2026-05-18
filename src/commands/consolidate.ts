@@ -40,6 +40,8 @@ export interface ConsolidatePromoteOp {
   ref: string;
   knowledgeRef: string;
   reason: string;
+  /** One-sentence description for the new knowledge asset's frontmatter. */
+  description?: string;
 }
 
 /**
@@ -110,7 +112,7 @@ Return ONLY JSON (no prose, no code fences):
   "operations": [
     { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize" },
     { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>" },
-    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>" },
+    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>", "description": "<one sentence describing the new knowledge asset>" },
     { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>" }
   ],
   "warnings": ["<optional concerns>"]
@@ -958,10 +960,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
 
       try {
+        // Use LLM-provided description; fall back to memory's own description.
+        const parsedMemory = parseFrontmatter(memoryContent);
+        const description: string =
+          (typeof op.description === "string" && op.description.trim()
+            ? op.description.trim()
+            : (parsedMemory.data?.description as string | undefined)?.trim()) ?? "";
         const proposalResult = createProposal(stashDir, {
           ref: knowledgeRef,
           source: "consolidate",
-          payload: { content: memoryContent },
+          payload: {
+            content: memoryContent,
+            frontmatter: { description },
+          },
         });
         if (isProposalSkipped(proposalResult)) {
           warnings.push(
