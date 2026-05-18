@@ -241,16 +241,23 @@ const LESSON_SYSTEM_PROMPT = [
   "concise *lesson* an agent should remember next time it works on this",
   "asset's domain.",
   "",
-  "Output MUST be a complete markdown file with YAML frontmatter:",
-  "  ---",
-  "  description: <one-line summary of what the lesson teaches>",
-  "  when_to_use: <one-line trigger that should make a caller apply it>",
-  "  ---",
+  "YOUR RESPONSE MUST START EXACTLY WITH `---` ON THE VERY FIRST LINE.",
+  "DO NOT output any prose, explanation, or code fences before or after.",
   "",
-  "  <lesson body, plain markdown, 1–3 short paragraphs>",
+  "Required output format — copy this structure exactly:",
+  "---",
+  "description: <one-line summary of what the lesson teaches>",
+  "when_to_use: <one-line trigger sentence — when should an agent reach for this lesson?>",
+  "---",
   "",
-  "Both `description` and `when_to_use` MUST be non-empty single-line strings.",
-  "Output ONLY the lesson file contents — no prose, no fences, no preamble.",
+  "<lesson body — plain markdown, 1–3 short paragraphs of practical guidance>",
+  "",
+  "RULES:",
+  "- `description` MUST be a non-empty single-line string (no newlines).",
+  "- `when_to_use` MUST be a non-empty single-line string (no newlines).",
+  "- The lesson body MUST be non-empty.",
+  "- Do NOT reproduce the source asset verbatim — distil what a caller needs to know.",
+  "- Output ONLY the lesson file. No preamble, no code fences, no trailing prose.",
 ].join("\n");
 
 const KNOWLEDGE_SYSTEM_PROMPT = [
@@ -258,10 +265,24 @@ const KNOWLEDGE_SYSTEM_PROMPT = [
   "Given an asset and recent feedback events about it, produce a concise",
   "*knowledge* markdown document capturing the durable, reusable facts.",
   "Prefer stable guidance over narrative recap.",
-  "If you include YAML frontmatter, keep it compatible with normal knowledge",
-  "assets (for example `description`, `tags`, `sources`, `observed_at`).",
-  "Include a meaningful markdown body.",
-  "Output ONLY the knowledge file contents — no prose, no fences, no preamble.",
+  "",
+  "YOUR RESPONSE MUST START EXACTLY WITH `---` ON THE VERY FIRST LINE.",
+  "DO NOT output any prose, explanation, or code fences before or after.",
+  "",
+  "Required output format:",
+  "---",
+  "description: <one-line summary of the knowledge asset>",
+  "tags: [<tag1>, <tag2>]",
+  "---",
+  "",
+  "# <Title>",
+  "",
+  "<body — structured markdown, durable facts only>",
+  "",
+  "RULES:",
+  "- `description` MUST be a non-empty single-line string.",
+  "- Include a meaningful markdown body with a `# Title` heading.",
+  "- Output ONLY the knowledge file. No preamble, no code fences, no trailing prose.",
 ].join("\n");
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
@@ -377,7 +398,13 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
       }
     }
   }
-  lines.push(`Produce the ${input.proposalKind === "knowledge" ? "knowledge" : "lesson"} markdown file now.`);
+  if (input.proposalKind === "knowledge") {
+    lines.push("Produce the knowledge markdown file now. Start your response with `---` on the first line.");
+  } else {
+    lines.push(
+      "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields.",
+    );
+  }
   return lines.join("\n");
 }
 
