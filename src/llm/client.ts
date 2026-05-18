@@ -127,7 +127,6 @@ export async function chatCompletion(
   // limits; a hardcoded default creates silent truncation failures when the
   // guess is wrong. Users who need a cap can set llm.maxTokens in config.
   const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
-
   const responseFormat =
     options?.responseSchema && config.supportsJsonSchema
       ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }

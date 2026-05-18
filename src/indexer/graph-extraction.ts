@@ -40,6 +40,7 @@ import { concurrentMap } from "../core/concurrent";
 import { type AkmConfig, resolveBatchSize } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn, warnVerbose } from "../core/warn";
+import { isProcessEnabled } from "../llm/feature-gate";
 import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../llm/graph-extract";
 import * as graphExtract from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
@@ -423,12 +424,10 @@ export async function runGraphExtractionPass(
   }) => void,
   options: GraphExtractionPassOptions = {},
 ): Promise<GraphExtractionResult> {
-  // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
-  // explicit `false` disables the pass entirely.
-  if (config.llm?.features?.graph_extraction === false) {
-    warnVerbose("graph extraction: skipped because llm.features.graph_extraction is false.");
-    return { ...EMPTY_RESULT };
-  }
+  // Gate 1 — v2-aware feature gate (§14). Uses isProcessEnabled so that both
+  // v1 (llm.features.graph_extraction) and v2 (features.index.graph_extraction)
+  // configs are honoured. Defaults to enabled when neither key is present.
+  if (!isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
