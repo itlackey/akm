@@ -970,17 +970,26 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     const missingWtu = typeof fm.when_to_use !== "string" || !(fm.when_to_use as string).trim();
     if (missingDesc || missingWtu) {
       const body = parsed.content.trim();
-      // Extract description: first non-empty non-heading line, or first heading
+      // Strip markdown formatting tokens from a line so extracted text is clean.
+      const stripMd = (l: string) =>
+        l
+          .replace(/\*\*([^*]+)\*\*/g, "$1")
+          .replace(/\*([^*]+)\*/g, "$1")
+          .replace(/`([^`]+)`/g, "$1")
+          .replace(/^[#*\->_]+\s*/, "")
+          .replace(/:\s*$/, "")
+          .trim();
+      // Extract description: first non-trivial line after stripping markdown
       const descLine =
         body
           .split("\n")
-          .map((l) => l.replace(/^#+\s*/, "").trim())
+          .map(stripMd)
           .find((l) => l.length > 10 && l.length < 200) ?? `Lesson distilled from ${inputRef}`;
       // Extract when_to_use: look for a line starting with "When" or "Use when"
       const wtuLine =
         body
           .split("\n")
-          .map((l) => l.replace(/^[-*]\s*/, "").trim())
+          .map(stripMd)
           .find((l) => /^(when |use when|apply when)/i.test(l) && l.length < 200) ??
         `When working with ${inputRef.split(":").pop() ?? "this asset"}.`;
       const repairedFm = {
