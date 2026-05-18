@@ -1137,8 +1137,17 @@ async function runImprovePreparationStage(args: {
   };
   const REFLECT_COOLDOWN_FALLBACK = 30; // unknown/future types
 
-  // Merge: built-in < config.improve.reflectCooldownByType (user wins per-type).
-  const configByType: Record<string, number> = loadConfig().improve?.reflectCooldownByType ?? {};
+  // Merge: built-in < config.improve.reflectCooldownByType (v1) or
+  // features.improve.reflect.options.cooldown (v2) — user config wins per-type.
+  const cfg = loadConfig();
+  const v2Cooldown =
+    cfg.features?.improve?.reflect &&
+    typeof cfg.features.improve.reflect === "object" &&
+    cfg.features.improve.reflect !== null &&
+    !Array.isArray(cfg.features.improve.reflect)
+      ? ((cfg.features.improve.reflect as { options?: { cooldown?: Record<string, number> } }).options?.cooldown ?? {})
+      : {};
+  const configByType: Record<string, number> = { ...cfg.improve?.reflectCooldownByType, ...v2Cooldown };
   const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
     ...REFLECT_COOLDOWN_BUILTIN,
     ...configByType,
