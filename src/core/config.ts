@@ -4,6 +4,7 @@ import path from "node:path";
 import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
+import { migrateConfigShape } from "./config-migration";
 import { ConfigError } from "./errors";
 import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
@@ -729,6 +730,13 @@ export function loadUserConfig(): AkmConfig {
     cachedUserConfig = undefined;
     return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
   }
+
+  // ── Auto-migration hook (between parse and normalize) ─────────────────────
+  // Check if the raw config needs migrating to the 0.8.0 shape. This runs on
+  // every cache miss so we catch configs written before the feature shipped.
+  // AKM_NO_AUTO_MIGRATE=1 skips the disk rewrite (still applies in-memory).
+  text = maybeAutoMigrateConfigFile(configPath, text);
+
   const contentHash = hashString(text);
 
   if (
@@ -743,11 +751,19 @@ export function loadUserConfig(): AkmConfig {
 
   const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(text));
   const finalConfig = applyRuntimeEnvApiKeys(config);
+
+  // Re-stat after potential write-back so the cache key reflects the new mtime.
+  let finalStat = stat;
+  try {
+    finalStat = fs.statSync(configPath);
+  } catch {
+    // Stat failed — use original stat for cache; no harm done.
+  }
   cachedUserConfig = {
     config: finalConfig,
     path: configPath,
-    mtime: stat.mtimeMs,
-    size: stat.size,
+    mtime: finalStat.mtimeMs,
+    size: finalStat.size,
     contentHash,
   };
   return finalConfig;
@@ -765,6 +781,47 @@ export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
   if (!config.llm)
     throw new ConfigError("LLM is not configured. Run `akm config set llm` to configure one.", "LLM_NOT_CONFIGURED");
   return config.llm;
+}
+
+/**
+ * Parse the config text, run `migrateConfigShape`, and — unless
+ * `AKM_NO_AUTO_MIGRATE=1` is set — write the migrated result back to disk.
+ *
+ * Returns the (possibly migrated) config JSON as a string so that the caller
+ * can continue with the standard `readNormalizedConfigFromText` path.
+ */
+function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(stripJsonComments(text));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return text; // Not a valid JSON object — let the normal loader handle it
+    }
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return text; // Malformed JSON — let the normal loader surface the error
+  }
+
+  const { changed, result } = migrateConfigShape(raw);
+  if (!changed) {
+    return text;
+  }
+
+  const migratedText = `${JSON.stringify(result, null, 2)}\n`;
+
+  if (process.env.AKM_NO_AUTO_MIGRATE !== "1") {
+    try {
+      backupExistingConfig(configPath);
+      writeConfigObject(configPath, result);
+      warn(
+        `[akm] Config at ${configPath} migrated to ${result.configVersion ?? "0.8.0"} format. Backup written to cache dir.`,
+      );
+    } catch {
+      warn(`[akm] Could not write migrated config to ${configPath}. Run 'akm config migrate' manually.`);
+    }
+  }
+
+  return migratedText;
 }
 
 export function loadConfig(): AkmConfig {

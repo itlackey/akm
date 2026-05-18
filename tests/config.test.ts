@@ -1051,3 +1051,110 @@ describe("v2 config shape parsing", () => {
     expect(saved.profiles?.llm?.myprofile?.model).toBe("gpt-4o");
   });
 });
+
+// ── Auto-migration hook ──────────────────────────────────────────────────────
+
+describe("auto-migration in loadConfig", () => {
+  const originalNoAutoMigrate = process.env.AKM_NO_AUTO_MIGRATE;
+
+  afterEach(() => {
+    // Restore env after each test
+    if (originalNoAutoMigrate === undefined) {
+      delete process.env.AKM_NO_AUTO_MIGRATE;
+    } else {
+      process.env.AKM_NO_AUTO_MIGRATE = originalNoAutoMigrate;
+    }
+    resetConfigCache();
+  });
+
+  test("auto-migrates a v1 config file (missing configVersion) and rewrites it to disk", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    // Write a pre-0.8.0 config: has llm.features block, no configVersion
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // loadConfig triggers auto-migration
+    const loaded = loadConfig();
+
+    // In-memory config should reflect the migrated shape
+    expect(loaded.llm?.endpoint).toBe("http://localhost:11434");
+
+    // The file on disk should have been rewritten with configVersion
+    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(onDisk.configVersion).toBe("0.8.0");
+    expect(onDisk.llm?.features).toBeUndefined();
+
+    // A backup should have been created in the cache dir
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const backupFiles = fs.readdirSync(backupDir);
+    expect(backupFiles.length).toBeGreaterThan(0);
+  });
+
+  test("does NOT rewrite the config file when AKM_NO_AUTO_MIGRATE=1", () => {
+    process.env.AKM_NO_AUTO_MIGRATE = "1";
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // loadConfig should NOT rewrite the file
+    loadConfig();
+
+    const onDisk = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(onDisk);
+    // File should still match v1 shape — no configVersion written
+    expect(parsed.configVersion).toBeUndefined();
+    expect(parsed.llm?.features?.memory_inference).toBe(true);
+  });
+
+  test("does not crash or backup when config file is already at 0.8.0", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    const currentConfig = {
+      configVersion: "0.8.0",
+      llm: { endpoint: "http://localhost:11434", model: "qwen3" },
+    };
+    writeRawConfig(configPath, JSON.stringify(currentConfig));
+
+    const loaded = loadConfig();
+    expect(loaded.configVersion).toBe("0.8.0");
+
+    // No backup should be created since nothing needed migrating
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const backupFiles = fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : [];
+    expect(backupFiles.length).toBe(0);
+  });
+
+  test("auto-migration is applied in-memory even when AKM_NO_AUTO_MIGRATE=1", () => {
+    process.env.AKM_NO_AUTO_MIGRATE = "1";
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { graph_extraction: false },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // The LLM endpoint should still be available even though migration was suppressed
+    const loaded = loadConfig();
+    expect(loaded.llm?.endpoint).toBe("http://localhost:11434");
+  });
+});
