@@ -162,6 +162,70 @@ improvements above make it dramatically faster than equivalent re-extraction
 on 0.7.x. See the migration guide section
 [Graph extraction will re-run after upgrade](../migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
 
+## Config v2 and reflect LLM mode
+
+0.8.0 introduces a new config shape (`configVersion: "0.8.0"`) that replaces
+the scattered v1 keys with a unified `profiles` + `features` tree. Named LLM
+connections live under `profiles.llm.<name>` and named agent connections under
+`profiles.agent.<name>`, each declared once and referenced by name from
+`features` process entries. The old `llm.features.*` boolean flags and
+`agent.processes` map are replaced by `features.improve.*`, `features.index.*`,
+and `features.search.*` — each entry using a unified `{mode, profile,
+timeoutMs, options}` shape. Configs without `configVersion` are auto-migrated
+at first run; a timestamped backup is written before any in-place rewrite.
+
+With the new config in place, `akm reflect` (and the reflect pass inside
+`akm improve`) can now run as a direct LLM call instead of spawning an opencode
+subprocess. For reflect, the context is statically pre-assembled, so a direct
+HTTP call captures the full quality benefit at a fraction of the cost. LLM mode
+also adds multi-turn self-refine (the prior draft is sent back as an assistant
+turn) and structured JSON output for providers that set `supportsJsonSchema:
+true`. The performance difference is significant:
+
+| Mode | Time per reflect call | 69-ref improve run |
+| --- | --- | --- |
+| agent (CLI subprocess) | ~30s | ~35 min |
+| sdk (in-process opencode) | ~10–15s | ~12–17 min |
+| llm (direct HTTP) | ~6–10s | ~8–10 min |
+
+To opt in to LLM mode for reflect:
+
+```jsonc
+// Opt in to LLM mode for reflect (3-5x faster)
+{
+  "configVersion": "0.8.0",
+  "profiles": {
+    "llm": {
+      "openai-mini": {
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4o-mini",
+        "apiKey": "${OPENAI_API_KEY}",
+        "supportsJsonSchema": true
+      }
+    }
+  },
+  "defaults": { "llm": "openai-mini" },
+  "features": {
+    "improve": {
+      "reflect": { "mode": "llm", "profile": "openai-mini" }
+    }
+  }
+}
+```
+
+To migrate an existing config:
+
+```sh
+# Preview the transformation
+akm config migrate --dry-run
+
+# Apply (writes a timestamped backup first)
+akm config migrate
+```
+
+Full reference: [docs/configuration.md](../configuration.md).
+Full key mapping: [docs/migration/v0.7-to-v0.8.md — Config v2 migration](../migration/v0.7-to-v0.8.md#config-v2-migration-reflect-multi-mode).
+
 ## Migration Guidance
 
 Breaking changes in 0.8.0:
@@ -180,6 +244,7 @@ To upgrade:
 4. Use `akm health --since 24h` after upgrade to confirm state-db and task-history health.
 5. Rename proposal queue commands as per the table above.
 6. Review task definitions for Windows path compatibility if using absolute paths.
+7. Run `akm config migrate` to upgrade your config to the v2 shape and unlock LLM-mode reflect.
 
 No manual data migration is required. The proposal queue and existing stash assets remain compatible.
 
@@ -200,6 +265,9 @@ akm accept <id>
 
 # Define and run a task
 akm task run daily-code-review
+
+# Run reflect in LLM mode for this invocation
+akm reflect memory:my-note --mode llm --profile openai-mini
 ```
 
 ## Verification
@@ -210,8 +278,9 @@ akm info --format text     # version 0.8.x
 akm health --since 24h     # runtime + improve telemetry checks
 akm proposals              # queue starts empty — that's expected
 akm task list              # shows your defined tasks
+akm config get configVersion  # "0.8.0" after akm config migrate
 ```
 
-Full details in the [v1 migration guide](../migration/v1.md) and the [0.8.0 release notes](../migration/release-notes/0.8.0.md).
+Full details in the [v0.7 to v0.8 migration guide](../migration/v0.7-to-v0.8.md) and the [configuration reference](../configuration.md).
 
 Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/.github/CHANGELOG.md).

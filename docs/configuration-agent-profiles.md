@@ -1,21 +1,141 @@
-# Configuring Agent Profiles and Model Aliases
+# Configuring Agent Profiles
 
 ## Overview
 
-An agent profile tells akm how to spawn a specific coding-agent CLI (OpenCode,
-Claude Code, Codex, Gemini, Aider, or a custom wrapper). It captures the binary
-name, base arguments, stdio mode, and platform-specific dispatch strategy so
-that `akm agent`, `akm reflect`, and `akm propose` can drive any CLI without
-hard-coded argument logic.
+An agent profile tells akm how to run a coding agent — either as a CLI
+subprocess or as an in-process library call. Profiles are declared once in
+`profiles.agent` and referenced by name from `features` process entries and
+task YAMLs.
 
-You configure profiles in the `agent.profiles` block of `~/.config/akm/config.json`
-(or your project's `.akm/config.json`). Every field in a built-in profile is
-individually overridable — you never need to re-state the whole profile.
+You configure profiles in `profiles.agent` inside `~/.config/akm/config.json`
+(or your project's `.akm/config.json`).
 
-## Built-in profiles
+**Backward compatibility note:** The old `agent.profiles` shape from v1 config
+is auto-migrated to `profiles.agent` at load time. Explicitly running
+`akm config migrate` rewrites the file in place.
 
-Five profiles ship with akm. Each one can be used immediately without any
-config (assuming the binary is on `PATH`):
+## Platform types
+
+The required `platform` field selects the runtime:
+
+| `platform` | Runtime | Startup cost | Tool access |
+| --- | --- | --- | --- |
+| `"opencode"` | opencode CLI subprocess | ~30s/call (subprocess + session init) | Full opencode tools, MCP, plugins |
+| `"claude"` | Claude Code CLI (`--print` mode) | ~30s/call | Claude tooling |
+| `"opencode-sdk"` | In-process opencode programmatic API | ~10–15s/call (no subprocess) | Same surface as CLI |
+
+The Anthropic / Claude Agent SDK is **not supported** in 0.8.0. The previous
+`sdkMode: true` flag (which selected the Anthropic SDK runner) is removed.
+The `sdk` mode now exclusively drives the opencode programmatic API via
+`platform: "opencode-sdk"`.
+
+## Profile field reference
+
+### CLI subprocess profiles (`platform: "opencode"` or `"claude"`)
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `platform` | yes | `"opencode"` or `"claude"` |
+| `bin` | yes | Command to spawn (e.g. `"opencode"`, `"claude"`) |
+| `args` | no | Extra args passed when akm spawns this profile |
+| `stdio` | no | `"captured"` (default for automation) or `"interactive"` (default for `akm agent`) |
+| `parseOutput` | no | `"text"` or `"json"` |
+| `env` | no | Extra env vars passed into the spawn |
+| `envPassthrough` | no | Array of env-var names to pass through from the calling process |
+| `timeoutMs` | no | Per-profile timeout override |
+| `commandBuilder` | no | `"opencode"` or `"claude"`. Use when a custom profile wraps one of these runtimes to get platform-correct flag shapes |
+| `modelAliases` | no | Per-profile model aliases. Keys are lowercase alias strings; values are the exact model string the CLI expects |
+
+### In-process opencode profile (`platform: "opencode-sdk"`)
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `platform` | yes | `"opencode-sdk"` |
+| `workspace` | no | Working directory for the opencode session (default `${PWD}`) |
+| `model` | no | Model identifier passed to opencode's programmatic API |
+
+## Declaring profiles
+
+```jsonc
+// ~/.config/akm/config.json
+{
+  "configVersion": "0.8.0",
+  "profiles": {
+    "agent": {
+      // opencode CLI subprocess — full tool + plugin access
+      "opencode-default": {
+        "platform": "opencode",
+        "bin": "opencode",
+        "args": ["run"]
+      },
+
+      // Claude Code CLI — non-interactive mode
+      "claude-cli": {
+        "platform": "claude",
+        "bin": "claude",
+        "args": ["--print"]
+      },
+
+      // In-process opencode — same tool surface, no subprocess startup
+      "opencode-sdk": {
+        "platform": "opencode-sdk",
+        "workspace": "${PWD}",
+        "model": "anthropic/claude-sonnet-4-5"
+      },
+
+      // Custom opencode wrapper (team config)
+      "my-opencode": {
+        "platform": "opencode",
+        "bin": "opencode",
+        "args": ["run", "--config", "~/.config/opencode/team.json"],
+        "commandBuilder": "opencode"
+      }
+    }
+  },
+  "defaults": {
+    "agent": "opencode-default"
+  }
+}
+```
+
+## Referencing profiles from features
+
+Process entries in `features` reference profiles by name:
+
+```jsonc
+{
+  "features": {
+    "improve": {
+      // reflect uses LLM mode — no agent profile needed
+      "reflect": { "mode": "llm", "profile": "openai-mini" },
+
+      // propose uses in-process opencode — tool access without subprocess startup
+      "propose": { "mode": "sdk", "profile": "opencode-sdk" },
+
+      // explicit agent subprocess
+      "memory_consolidation": { "mode": "agent", "profile": "opencode-default" }
+    }
+  }
+}
+```
+
+Task YAMLs at `<stash>/tasks/<id>.yml` reference profiles the same way:
+
+```yaml
+mode: agent
+profile: opencode-default
+command: akm improve --auto-accept safe
+schedule: "7 * * * *"
+```
+
+When `mode` is omitted from a features entry, the profile's pool determines it:
+LLM profile → `"llm"`, `"opencode-sdk"` platform → `"sdk"`,
+`"opencode"` / `"claude"` platform → `"agent"`.
+
+## Built-in profiles (unchanged from v1)
+
+Five profiles ship with akm and can be used without configuration (assuming the
+binary is on `PATH`):
 
 | Profile | `bin` | Default `args` | `stdio` | Command builder |
 | --- | --- | --- | --- | --- |
@@ -25,83 +145,31 @@ config (assuming the binary is on `PATH`):
 | `gemini` | `gemini` | `[]` | `interactive` | `default` |
 | `aider` | `aider` | `["--no-auto-commits"]` | `interactive` | `default` |
 
-The **command builder** column indicates which argv-construction strategy is
-used when `akm agent` dispatches with a system prompt or model. The `opencode`
-and `claude` builders know their respective `--system-prompt` / `--model` /
-`--allowedTools` flag shapes. Profiles that use the `default` builder receive
-the same flags in a generic form, but tool policy is not forwarded (no
-cross-platform flag standard exists for it).
+Each has a `-headless` variant (e.g. `opencode-headless`) that sets
+`stdio: "captured"` and `parseOutput: "json"` for automation contexts.
 
-## Basic profile override
-
-Override one or more fields in a built-in profile without restating the rest.
-For example, to lock the opencode profile to a specific model by default:
-
-```jsonc
-// ~/.config/akm/config.json
-{
-  "agent": {
-    "default": "opencode",
-    "profiles": {
-      "opencode": {
-        "args": ["run", "--model", "opencode/claude-sonnet-4-6"]
-      }
-    }
-  }
-}
-```
-
-Only the `args` field is overridden; all other built-in values (`bin`, `stdio`,
-`envPassthrough`, etc.) remain unchanged.
-
-To change the binary path (e.g. a local dev build):
-
-```jsonc
-{
-  "agent": {
-    "profiles": {
-      "opencode": {
-        "bin": "/home/me/src/opencode/dist/opencode"
-      }
-    }
-  }
-}
-```
+In v2 config the built-in profile names still resolve — but to use them from
+`profiles.agent`, declare them explicitly so the profile pool is self-contained.
 
 ## Configuring commandBuilder
 
-When you define a custom profile, akm looks up a command builder by profile
-name. If no builder is registered for that name, it falls back to the `default`
-builder — which passes `--system-prompt` and `--model` as bare flags and the
-prompt as a bare positional argument.
-
-If your custom profile **wraps opencode or claude**, set `commandBuilder` to
-get the platform-correct flag shapes (including `--print` for claude, `run`
-subcommand for opencode, and `--allowedTools` for tool policies):
+When you define a custom profile, set `commandBuilder` to get the platform-correct
+flag shapes. Without it, the `default` builder passes `--system-prompt` and
+`--model` as bare flags.
 
 ```jsonc
 {
-  "agent": {
-    "default": "my-opencode",
-    "profiles": {
+  "profiles": {
+    "agent": {
       "my-opencode": {
+        "platform": "opencode",
         "bin": "opencode",
         "args": ["run", "--config", "~/.config/opencode/team.json"],
-        "stdio": "interactive",
         "commandBuilder": "opencode"
       }
     }
   }
 }
-```
-
-Without `commandBuilder: "opencode"`, dispatching `akm agent my-opencode
-agent:code-reviewer --prompt "review src/"` would produce a malformed argv
-(the `run` subcommand already in `args` would conflict with naive flag
-injection). With the builder set, akm generates the correct:
-
-```
-opencode run --config ~/.config/opencode/team.json --system-prompt "..." --model "..." "review src/"
 ```
 
 Valid `commandBuilder` values: `"opencode"`, `"claude"`. Any other value (or
@@ -111,9 +179,7 @@ omitting the field) falls back to the `default` builder.
 
 ### Built-in aliases
 
-Three convenience aliases resolve to platform-appropriate model strings
-automatically. Pass them to `--model` or reference them in an agent asset's
-`modelHint` field:
+Three convenience aliases resolve to platform-appropriate model strings:
 
 | Alias | opencode model | claude model |
 | --- | --- | --- |
@@ -121,30 +187,24 @@ automatically. Pass them to `--model` or reference them in an agent asset's
 | `sonnet` | `opencode/claude-sonnet-4-6` | `claude-sonnet-4-6` |
 | `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
-Aliases are case-insensitive. An unrecognised alias is passed verbatim to the
-CLI as an exact model ID.
+Aliases are case-insensitive. An unrecognised alias is passed verbatim.
 
 ### Custom aliases
 
-Add per-profile aliases under `agent.profiles.<name>.modelAliases`. Keys are
-lowercase alias strings; values are the exact model string the CLI expects:
+Add per-profile aliases under the profile's `modelAliases` key:
 
 ```jsonc
 {
-  "agent": {
-    "default": "opencode",
-    "profiles": {
-      "opencode": {
+  "profiles": {
+    "agent": {
+      "opencode-default": {
+        "platform": "opencode",
+        "bin": "opencode",
+        "args": ["run"],
         "modelAliases": {
-          "fast":   "opencode/claude-haiku-4-5",
-          "big":    "opencode/claude-opus-4-7",
-          "local":  "opencode/qwen3-30b-a3b"
-        }
-      },
-      "claude": {
-        "modelAliases": {
-          "fast":   "claude-haiku-4-5-20251001",
-          "big":    "claude-opus-4-7"
+          "fast":  "opencode/claude-haiku-4-5",
+          "big":   "opencode/claude-opus-4-7",
+          "local": "opencode/qwen3-30b-a3b"
         }
       }
     }
@@ -152,48 +212,24 @@ lowercase alias strings; values are the exact model string the CLI expects:
 }
 ```
 
-User-defined aliases override built-in aliases for the same key. Only the
-matching profile's alias table is consulted — `opencode.modelAliases.fast`
-does not affect the `claude` profile.
-
 ```sh
-# Use custom alias:
-akm agent opencode --model fast --prompt "quick lint check"
-
-# Use a built-in alias:
-akm agent claude --model opus --prompt "deep architecture review"
-
-# Pass an exact model ID (no alias lookup):
-akm agent opencode --model "opencode/deepseek-v3" --prompt "review src/"
+akm agent opencode-default --model fast --prompt "quick lint check"
+akm agent opencode-default --model opus --prompt "deep architecture review"
 ```
 
 ## Using agent assets with akm agent
 
 A stash agent asset (`type: agent`) bundles a system prompt, an optional
 `modelHint`, and an optional `toolPolicy` into a single ref. Pass the ref as
-the second positional argument to `akm agent` to apply the asset's metadata to
-the dispatch:
+the second positional argument to `akm agent`:
 
 ```sh
-# Launch opencode embodying the code-reviewer agent:
-akm agent opencode agent:code-reviewer --prompt "review src/"
+# Launch opencode embodying the code-reviewer agent
+akm agent opencode-default agent:code-reviewer --prompt "review src/"
 
-# Override the asset's modelHint with an alias:
-akm agent claude agent:planner --model sonnet --prompt "plan the sprint"
-
-# Interactive session: no --prompt → agent waits for user input in the terminal:
-akm agent opencode agent:architect
+# Override the asset's modelHint with an alias
+akm agent claude-cli agent:planner --model sonnet --prompt "plan the sprint"
 ```
-
-**Model precedence** (highest → lowest):
-
-1. `--model` CLI flag — always wins.
-2. `modelHint` in the agent asset frontmatter.
-3. No `--model` flag passed — platform uses its configured default.
-
-The system prompt from the asset is always forwarded to the platform builder
-and injected using the platform-correct flag (`--system-prompt` for both
-opencode and claude builders).
 
 To discover available agent assets:
 
@@ -202,94 +238,36 @@ akm search --type agent
 akm curate "code review" --type agent
 ```
 
-## Full config example
-
-A complete `agent` block showing all new fields:
-
-```jsonc
-// ~/.config/akm/config.json
-{
-  "agent": {
-    "default": "opencode",
-    "timeoutMs": 3000000,
-    "profiles": {
-      "opencode": {
-        "bin": "opencode",
-        "args": ["run"],
-        "stdio": "interactive",
-        "parseOutput": "text",
-        "modelAliases": {
-          "fast":  "opencode/claude-haiku-4-5",
-          "big":   "opencode/claude-opus-4-7",
-          "local": "opencode/qwen3-30b-a3b"
-        }
-      },
-      "claude": {
-        "bin": "claude",
-        "args": [],
-        "stdio": "interactive",
-        "parseOutput": "text",
-        "modelAliases": {
-          "fast": "claude-haiku-4-5-20251001",
-          "big":  "claude-opus-4-7"
-        }
-      },
-      "my-opencode": {
-        "bin": "opencode",
-        "args": ["run", "--config", "~/.config/opencode/team.json"],
-        "stdio": "interactive",
-        "commandBuilder": "opencode",
-        "modelAliases": {
-          "fast": "opencode/claude-haiku-4-5"
-        }
-      },
-      "local": {
-        "sdkMode": true,
-        "model": "qwen2.5-coder:32b"
-      }
-    },
-    "processes": {
-      "reflect": "opencode-headless",
-      "propose": {
-        "profile": "claude",
-        "timeoutMs": 300000
-      }
-    }
-  }
-}
-```
-
 ## Headless vs interactive
 
-Each of the five built-in profiles has a `-headless` variant (e.g.
-`opencode-headless`, `claude-headless`) that sets `stdio: "captured"` and
-`parseOutput: "json"`. These are intended for automation contexts — `akm
-reflect`, `akm propose`, and `akm tasks run` (prompt targets) — where the
-agent's output must be captured and parsed by akm rather than streamed to the
-terminal.
-
-Use the interactive variants (the default) for `akm agent` sessions where you
-want the agent to paint its own UI. Use headless variants (or route automation
-processes via `agent.processes`) for unattended workflows:
+Use `"stdio": "interactive"` for `akm agent` sessions where the agent paints
+its own UI. Use `"stdio": "captured"` (headless) for automation contexts where
+akm must capture and parse the output:
 
 ```jsonc
 {
-  "agent": {
-    "default": "opencode",
-    "processes": {
-      "reflect": "opencode-headless",
-      "propose": "claude-headless"
+  "profiles": {
+    "agent": {
+      "opencode-headless": {
+        "platform": "opencode",
+        "bin": "opencode",
+        "args": ["run"],
+        "stdio": "captured",
+        "parseOutput": "text"
+      }
+    }
+  },
+  "features": {
+    "improve": {
+      "reflect": { "mode": "agent", "profile": "opencode-headless" }
     }
   }
 }
 ```
-
-Headless profiles do not appear in `akm agent --list` enumeration but can be
-referenced by name anywhere a profile name is accepted (e.g. `--profile
-opencode-headless` or `agent.default: "opencode-headless"`).
 
 ## See also
 
-- [Configuration reference](configuration.md) — full `agent.*` block schema and `agent.processes`
+- [Configuration reference](configuration.md) — full v2 config shape and process entry schema
 - [Agent Integration](features/agent-integration.md) — AGENTS.md setup and dispatch workflows
 - [CLI Reference](cli.md) — `akm agent` flags and examples
+- [Migration guide](migration/v0.7-to-v0.8.md) — old `agent.profiles` → `profiles.agent` mapping

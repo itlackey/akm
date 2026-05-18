@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking Changes
 
+- **Config v2 shape**: `config.llm`, `config.agent.profiles`, `config.agent.processes`, and the old `llm.features.*` flags are deprecated. Configs without `configVersion: "0.8.0"` are auto-migrated at first run with a one-time notice. A timestamped backup is written before any in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress.
+
+- **`config.improve.reflectCooldownByType` removed**: Moved to `features.improve.reflect.options.cooldown`. Migrated automatically.
+
+- **`config.agent.processes["task"]` removed**: Tasks now declare `mode` and `profile` in their stash YAML file directly.
+
+- **`improve.schedule` removed from config**: Scheduling is owned by stash task YAMLs that wrap `akm improve` calls. This key is stripped during auto-migration.
+
 - **`vault set` no longer accepts values via argv**: The positional `<VALUE>` argument and the `KEY=VALUE` combined form have been removed. Values must be supplied via stdin (default) or `--from-env <VAR>`. This eliminates `/proc/cmdline` secret exposure. Migrate existing scripts:
   ```sh
   # Before
@@ -44,6 +52,14 @@ All notable changes to this project will be documented in this file.
 - **Task files migrated from `.md`+YAML frontmatter to pure `.yml` format**: Tasks are now stored as plain YAML at `<stash>/tasks/<id>.yml`. Multi-line inline prompts use YAML block scalars (`prompt: |`), replacing the prior `prompt: inline` + markdown-body convention. Existing `.md` task files are no longer discovered by `akm tasks list` — they must be renamed and rewritten as YAML. The lint pass for `tasks/` now parses YAML directly (it was silently a no-op for pure YAML files when routed through the frontmatter parser). The lint issue code `invalid-task-frontmatter` has been renamed to `invalid-task-yaml`. See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for migration steps.
 
 ### New Features
+
+- **Config v2: profiles + features tree**: Named LLM and agent profiles under `profiles.llm` and `profiles.agent`. All process-level config consolidated into `features.improve.*`, `features.index.*`, `features.search.*` with a unified `{mode, profile, timeoutMs, options}` shape. Replaces the old top-level `llm.features.*` boolean flags and the scattered `agent.processes` map. See [docs/configuration.md](docs/configuration.md) for the full v2 reference.
+
+- **reflect LLM mode**: `akm reflect` (and `akm improve`'s reflect pass) can now run as a direct LLM call — 3–5× faster than the agent subprocess path. Configure via `features.improve.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
+
+- **`akm config migrate`**: New command to explicitly migrate v1 config to v2. Includes `--dry-run` and `--no-wait` flags. Acquires a file lock before write for safety. All config layers (user + project) are visited and rewritten in place; read-only layers print the migrated content for manual apply.
+
+- **`--mode` and `--profile` flags on reflect/improve/propose**: `akm reflect`, `akm improve`, and `akm propose` now accept `--mode <llm|agent|sdk>` and `--profile <name>` to override the configured dispatch for a single run. `--dry-run-resolve` prints the resolved RunnerSpec without executing.
 
 - **`vault set` reads from stdin by default**: Values are never passed via argv. `printf '%s' "$SECRET" | akm vault set vault:prod KEY` is the default pattern. Use `--from-env <VAR>` to read from a named environment variable instead.
 
@@ -88,6 +104,8 @@ All notable changes to this project will be documented in this file.
 - **Enriched `improve_completed` event**: Now includes `durationMs` (total wall-clock), `warningCount`, `orphansPurged`, `reflectCooldownActions`, `graphCoverage`, `graphDensity`, and `graphEntities` for richer self-tuning telemetry without requiring a separate stats query.
 
 ### Performance
+
+- **reflect LLM mode**: ~6–10s/call vs ~30s/call in agent subprocess mode. On a 69-ref improve run: ~8–10 min total vs ~35 min baseline. Enable with `features.improve.reflect.mode: "llm"` in your config.
 
 - **`akm improve` cooldown pre-filter**: Assets under cooldown are now filtered out before the main improvement loop rather than inside it. Reduces LLM API calls and speeds up runs on large stashes with many recently-processed assets.
 
@@ -157,9 +175,15 @@ See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for the com
 Quick reference:
 
 ```sh
-# Preview what the migration will do
+# Preview what the storage migration will do
 bun scripts/migrate-storage.ts --dry-run
 
-# Apply the migration
+# Apply the storage migration
 bun scripts/migrate-storage.ts --yes
+
+# Preview the config v2 migration
+akm config migrate --dry-run
+
+# Apply the config v2 migration
+akm config migrate
 ```
