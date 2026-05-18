@@ -213,6 +213,7 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -895,6 +896,7 @@ describe("akm improve memory cleanup", () => {
     await akmImprove({
       scope: "memory",
       stashDir,
+      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -938,6 +940,7 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -1590,6 +1593,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      minRetrievalCount: 0,
       distillCooldownDays: 30,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -1902,12 +1906,11 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
   });
 });
 
-// ── O-4 / #377 — exploration-budget cap on fully-zero-feedback stash ──────────
+// ── zero-signal stash: no eligible refs ───────────────────────────────────────
 
-describe("O-4: explorationBudget caps cold-start refs on fully-zero-feedback stash (#377)", () => {
-  test("only explorationBudget refs are reflected when stash has zero feedback", async () => {
-    const stashDir = makeTempDir("akm-o4-budget-");
-    // Write 5 memories — all will be processable with no feedback
+describe("zero-signal stash: 0 eligible refs when stash has no feedback or retrievals", () => {
+  test("nothing is reflected when stash has no feedback and no retrievals", async () => {
+    const stashDir = makeTempDir("akm-zero-signal-");
     for (let i = 1; i <= 5; i++) {
       writeMemory(stashDir, `mem-${i}`, { description: `Memory ${i}` }, `Memory ${i} content.`);
     }
@@ -1917,7 +1920,6 @@ describe("O-4: explorationBudget caps cold-start refs on fully-zero-feedback sta
     await akmImprove({
       scope: "memory",
       stashDir,
-      explorationBudget: 2, // cap to 2 even though 5 are processable
       config: {
         semanticSearchMode: "off",
         llm: {
@@ -1947,53 +1949,8 @@ describe("O-4: explorationBudget caps cold-start refs on fully-zero-feedback sta
       }),
     });
 
-    // With explorationBudget=2 and 5 zero-feedback memories, at most 2 should be reflected
-    expect(reflected.length).toBeLessThanOrEqual(2);
-  });
-
-  test("explorationBudget=0 disables cap and allows all zero-feedback refs", async () => {
-    const stashDir = makeTempDir("akm-o4-no-budget-");
-    for (let i = 1; i <= 4; i++) {
-      writeMemory(stashDir, `item-${i}`, { description: `Item ${i}` }, `Item ${i} content.`);
-    }
-    await buildIndex(stashDir);
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir,
-      explorationBudget: 0, // disabled — all refs should pass
-      config: {
-        semanticSearchMode: "off",
-        llm: {
-          endpoint: "http://localhost/chat/completions",
-          model: "test",
-          features: {},
-        },
-      },
-      ensureIndexFn: async () => false,
-      reflectFn: async ({ ref }) => {
-        reflected.push(ref ?? "");
-        return {
-          schemaVersion: 1,
-          ok: true,
-          proposal: makeProposal(ref ?? "memory:item-1"),
-          ref: ref ?? "",
-          agentProfile: "test",
-          durationMs: 1,
-        };
-      },
-      distillFn: async ({ ref }) => ({
-        schemaVersion: 1,
-        ok: true,
-        outcome: "queued" as const,
-        inputRef: ref,
-        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-      }),
-    });
-
-    // explorationBudget=0 disables cap, so all 4 refs should be reflected
-    expect(reflected.length).toBeGreaterThanOrEqual(4);
+    // No feedback, no retrievals → 0 eligible refs → nothing reflected
+    expect(reflected.length).toBe(0);
   });
 });
 
@@ -2043,6 +2000,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
         schemaVersion: 1,

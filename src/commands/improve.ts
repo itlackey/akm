@@ -120,23 +120,6 @@ export interface AkmImproveOptions {
    */
   agentProcess?: string;
   /**
-   * Maximum number of refs to process in a cold-start exploration run (O-4 / #377).
-   *
-   * When the stash has fully-zero explicit feedback (no positive or negative
-   * feedback events), the improve loop falls back to all processable refs to
-   * avoid a no-op run. Without a cap, this causes cold-start oscillation:
-   *   - First run: all N assets processed → all enter 7-day reflect cooldown
-   *   - Next day: same N assets fire again → another big burst → silence
-   *
-   * Setting this cap to a small value (default: 10) spreads cold-start
-   * processing across multiple days, avoiding the burst-then-silence pattern.
-   * Set to 0 to disable the cap (allow all refs on cold-start, pre-O-4 behavior).
-   *
-   * Refs: Zoph & Le NAS controllers arXiv:1611.01578 — exploration budgets
-   * prevent oscillation. MemRL — utility-based sampling prevents pure coverage.
-   */
-  explorationBudget?: number;
-  /**
    * Self-consistency multi-sample voting for high-utility refs (R-2 / #389).
    * When a ref's utility score is at or above this threshold, the improve loop
    * runs N reflect samples and picks the majority-vote winner by Jaccard token
@@ -1399,80 +1382,18 @@ async function runImprovePreparationStage(args: {
     if (dbForRetrieval) closeDatabase(dbForRetrieval);
   }
 
-  // O-4 / #377: Detect a fully-zero-feedback stash (no positive or negative
-  // explicit feedback events across all candidates). This is the cold-start
-  // condition that causes oscillation: all N assets processed on day 1 → all
-  // enter reflect cooldown → burst on day 8 → silence again.
-  //
-  // On a fully-zero-feedback stash, cap the cold-start fallback to
-  // `explorationBudget` refs (default: 10). This spreads cold-start processing
-  // across multiple runs instead of flooding all N refs at once.
-  //
-  // The cap applies only when:
-  //   1. The stash has ZERO explicit feedback (no positive or negative events).
-  //   2. The fallback to all processableRefs would be triggered (no signals, no high-retrieval).
-  //   3. The scope is NOT "ref" (explicit ref scope always acts on the target).
-  //
-  // Once any explicit feedback exists, normal feedback-based eligibility takes over.
-  // Refs: Zoph & Le arXiv:1611.01578 — exploration budgets; MemRL — utility sampling.
-  const DEFAULT_EXPLORATION_BUDGET = 10;
-  const explorationBudget = options.explorationBudget ?? DEFAULT_EXPLORATION_BUDGET;
-
-  // Check if the processable pool has no feedback at all. But distinguish:
-  //   true cold-start  = no feedback anywhere in the stash
-  //   cooldown-bubble  = feedback exists but all feedback-bearing refs are on cooldown
-  // We only want the exploration-budget cap for true cold-start. In a cooldown-bubble,
-  // processing anything is fine — we just don't have a signal-based priority list yet.
-  const processableHasNoFeedback =
-    signalFiltered.length === 0 &&
-    processableRefs.every((r) => {
-      const s = feedbackSummary.get(r.ref);
-      return (s?.positive ?? 0) === 0 && (s?.negative ?? 0) === 0;
-    });
-
-  // Count total feedback events across the whole stash (not just processable).
-  let stashWideFeedbackCount = 0;
-  try {
-    const fbDb = openStateDatabase();
-    try {
-      const row = fbDb
-        .prepare(
-          "SELECT COUNT(*) AS cnt FROM events WHERE event_type = 'feedback' AND json_extract(metadata_json,'$.signal') IN ('positive','negative')",
-        )
-        .get() as { cnt: number };
-      stashWideFeedbackCount = row.cnt;
-    } finally {
-      fbDb.close();
-    }
-  } catch {
-    // best-effort
-  }
-
-  const isTrueColdStart = processableHasNoFeedback && stashWideFeedbackCount === 0;
-  const isCooldownBubble = processableHasNoFeedback && stashWideFeedbackCount > 0;
-  const isFullyZeroFeedback = isTrueColdStart;
-
   // If the user explicitly scoped to a single ref, always act on it —
   // skip the signal/retrieval filter entirely. The filter exists to avoid
   // noisy "improve everything" runs; it should not gate an intentional
   // per-ref invocation where the user's explicit choice is the signal.
   //
-  // For type/all scope with no signals yet (fresh environment), fall back
-  // to all processableRefs (capped by explorationBudget on cold-start) so
-  // that the first improve run is not a no-op.
+  // For type/all scope: only process refs with usage signals (recent feedback
+  // or sufficient retrievals). A stash with no signals has 0 eligible refs —
+  // usage is the gate. Run `akm feedback <ref> --positive` or retrieve assets
+  // to bring them into the eligible pool.
   const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
-  const coldStartRefs: ImproveEligibleRef[] =
-    isFullyZeroFeedback && explorationBudget > 0 && scope.mode !== "ref"
-      ? processableRefs.slice(0, explorationBudget)
-      : processableRefs;
   const mergedRefs =
-    scope.mode === "ref"
-      ? processableRefs
-      : options.requireFeedbackSignal
-        ? signalFiltered
-        : signalAndRetrievalRefs.length === 0
-          ? coldStartRefs
-          : signalAndRetrievalRefs;
+    scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
 
   const utilityMap = buildUtilityMap(mergedRefs);
 
@@ -1549,13 +1470,7 @@ async function runImprovePreparationStage(args: {
         `(${fullySkippedCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
     );
   }
-  if (isTrueColdStart) {
-    info(`[improve] cold-start: no feedback signals — exploration budget capped at ${explorationBudget} refs per run`);
-  } else if (isCooldownBubble) {
-    info(
-      `[improve] cooldown bubble: ${stashWideFeedbackCount} feedback signal(s) exist but all feedback-bearing refs are on cooldown — sampling ${mergedRefs.length} processable refs`,
-    );
-  } else if (signalAndRetrievalRefs.length > 0) {
+  if (signalAndRetrievalRefs.length > 0) {
     info(
       `[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback, ${highRetrievalRefs.length} high-retrieval)`,
     );
