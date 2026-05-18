@@ -366,8 +366,9 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
   }
   const backend = backendNameForPlatform();
   const config = loadConfig();
-  const defaultProfile = config.agent?.default;
-  const profiles = listAgentProfileNames(config.agent);
+  // v2: prefer profiles.agent / defaults.agent; fall back to legacy agent.default
+  const defaultProfile = config.defaults?.agent ?? config.agent?.default;
+  const profiles = config.profiles?.agent ? Object.keys(config.profiles.agent) : listAgentProfileNames(config.agent);
 
   return {
     backend,

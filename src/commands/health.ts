@@ -258,6 +258,32 @@ function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: 
 
 function runAgentProbe(): HealthCheckResult {
   const config = loadConfig();
+
+  // v2: check profiles.agent first
+  if (config.profiles?.agent) {
+    const defaultName = config.defaults?.agent;
+    const profileCount = Object.keys(config.profiles.agent).length;
+    if (profileCount === 0) {
+      return {
+        name: "agent-profile",
+        kind: "deterministic",
+        status: "unknown",
+        confidence: "high",
+        message: "No agent profiles configured in profiles.agent.",
+      };
+    }
+    const profileName = defaultName ?? Object.keys(config.profiles.agent)[0];
+    const profile = config.profiles.agent[profileName];
+    return {
+      name: "agent-profile",
+      kind: "deterministic",
+      status: "pass",
+      confidence: "high",
+      message: `v2 agent profile "${profileName}" configured (platform: ${profile?.platform ?? "unknown"}).`,
+      evidence: { profile: profileName, platform: profile?.platform, profileCount },
+    };
+  }
+
   if (!config.agent) {
     return {
       name: "agent-profile",
