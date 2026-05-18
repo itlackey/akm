@@ -31,6 +31,7 @@ import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory 
 import { error } from "../core/warn";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
+import { resolveRunner } from "../integrations/agent/runner";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunDetail } from "../workflows/runs";
 import { startWorkflowRun } from "../workflows/runs";
@@ -333,7 +334,8 @@ async function runPromptTask(input: {
   // Use pre-resolved agent config when available to avoid redundant loadConfig()
   // calls in batch task runs (Fix C6). Fall back to loadConfig() for callers
   // that invoke runPromptTask directly without threading config.
-  const agentCfg = input.agentConfig !== undefined ? input.agentConfig : loadConfig().agent;
+  const fullConfig = loadConfig();
+  const agentCfg = input.agentConfig !== undefined ? input.agentConfig : fullConfig.agent;
 
   // Resolve the profile for this task. When the task doc specifies a profile,
   // use it directly. Otherwise fall back to the per-process config for "task"
@@ -341,8 +343,24 @@ async function runPromptTask(input: {
   let profile: ReturnType<typeof requireAgentProfile>;
   let processTimeoutMs: number | null | undefined;
   if (task.target.profile) {
-    // Task doc explicitly names a profile — honour it directly.
-    profile = requireAgentProfile(agentCfg, task.target.profile);
+    // v2: if profiles.agent is configured, resolve through new runner
+    if (fullConfig.profiles?.agent) {
+      const mode = (task.target as { mode?: "llm" | "agent" | "sdk" }).mode ?? "agent";
+      if (mode !== "llm") {
+        const runnerSpec = resolveRunner(mode, task.target.profile, fullConfig);
+        if (runnerSpec.kind === "agent" || runnerSpec.kind === "sdk") {
+          profile = runnerSpec.profile as ReturnType<typeof requireAgentProfile>;
+          processTimeoutMs = runnerSpec.timeoutMs;
+        } else {
+          profile = requireAgentProfile(agentCfg, task.target.profile);
+        }
+      } else {
+        profile = requireAgentProfile(agentCfg, task.target.profile);
+      }
+    } else {
+      // v1: Task doc explicitly names a profile — honour it directly.
+      profile = requireAgentProfile(agentCfg, task.target.profile);
+    }
   } else {
     // No per-task profile: use process config for "task" as a fallback.
     const resolved = resolveProcessAgentProfile("task", agentCfg);
