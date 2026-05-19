@@ -7,6 +7,7 @@ import { getDbPath } from "../core/paths";
 import { REGISTRY_INDEX_CACHE_DDL } from "../core/state-db";
 import { warn } from "../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../llm/embedders/types";
+import { backupDataDir } from "./db-backup";
 import type { StashEntry } from "./metadata";
 import { buildSearchFields } from "./search-fields";
 import { ensureUsageEventsSchema } from "./usage-events";
@@ -67,7 +68,7 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
   // Try to load sqlite-vec extension
   loadVecExtension(db);
 
-  ensureSchema(db, options?.embeddingDim ?? EMBEDDING_DIM);
+  ensureSchema(db, options?.embeddingDim ?? EMBEDDING_DIM, { dataDir: dir });
 
   // Warn once at init if using JS fallback with many entries
   warnIfVecMissing(db, { once: true });
@@ -147,7 +148,7 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
 /** A row backed up out of the legacy `usage_events` table during a version upgrade. */
 type UsageEventRow = Record<string, string | number | null>;
 
-function ensureSchema(db: Database, embeddingDim: number): void {
+function ensureSchema(db: Database, embeddingDim: number, options?: { dataDir?: string }): void {
   // Create meta table first so we can check version
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
@@ -155,6 +156,49 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       value TEXT NOT NULL
     );
   `);
+
+  // MVP DB-backup hook (0.8.x): when the stored DB version differs from the
+  // running binary's DB_VERSION, snapshot the data directory BEFORE
+  // `handleVersionUpgrade()` drops tables. This is best-effort —
+  // `backupDataDir` returns null on opt-out, missing data dir, low free
+  // space, or copy errors, and we proceed with the upgrade in all cases.
+  // The proper migration framework lands in 0.9.0; until then this lets
+  // operators recover with `scripts/migrations/restore-data-dir.sh`.
+  if (options?.dataDir) {
+    const storedVersionRaw = getMeta(db, "version");
+    const storedVersion =
+      storedVersionRaw !== undefined && storedVersionRaw !== "" ? Number.parseInt(storedVersionRaw, 10) : null;
+    const willUpgrade =
+      storedVersionRaw !== undefined && storedVersionRaw !== "" && storedVersionRaw !== String(DB_VERSION);
+    if (willUpgrade) {
+      try {
+        // Pass env explicitly so tests can override AKM_DB_BACKUP / AKM_DB_BACKUP_RETAIN
+        // without mutating process.env. Production callers default to process.env.
+        const result = backupDataDir({
+          dataDir: options.dataDir,
+          sourceVersion: storedVersion !== null && !Number.isNaN(storedVersion) ? storedVersion : null,
+          targetVersion: DB_VERSION,
+          env: process.env,
+        });
+        if (result) {
+          warn(
+            "[akm] data directory backed up to %s before v%s→v%d upgrade",
+            result.path,
+            storedVersionRaw,
+            DB_VERSION,
+          );
+        }
+      } catch (err) {
+        // Defensive — backupDataDir already swallows most errors, but if it
+        // throws for an unexpected reason we must still proceed with the
+        // upgrade so the user isn't locked out of their binary.
+        warn(
+          "[akm] pre-upgrade data dir backup raised an unexpected error — %s; upgrade will proceed without a snapshot",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  }
 
   // Check stored version — if it differs from DB_VERSION, drop and recreate all tables.
   // Usage events are preserved across version upgrades so that utility score

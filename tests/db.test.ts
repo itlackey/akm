@@ -140,6 +140,88 @@ describe("Schema", () => {
     }
   });
 
+  test("openDatabase writes a data-dir backup BEFORE the destructive version upgrade", () => {
+    // Seed a data dir at an older version with a known entry, then reopen
+    // with the current binary and verify a backup directory was created
+    // under <dataDir>/backups/ that still contains the pre-upgrade DB.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-backup-trigger-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath);
+    insertTestEntry(db, "pre-upgrade-entry");
+    expect(getEntryCount(db)).toBe(1);
+    setMeta(db, "version", "0");
+    closeDatabase(db);
+
+    // Reopen — must trigger the upgrade path AND the backup hook.
+    db = openDatabase(dbPath);
+    try {
+      // Post-upgrade the entry is gone (existing behavior).
+      expect(getEntryCount(db)).toBe(0);
+      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
+    } finally {
+      closeDatabase(db);
+    }
+
+    // A backup directory should exist with the pre-upgrade index.db inside.
+    const backupsRoot = path.join(dataDir, "backups");
+    expect(fs.existsSync(backupsRoot)).toBe(true);
+    const snapshots = fs
+      .readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(snapshots.length).toBeGreaterThanOrEqual(1);
+    expect(snapshots[0]).toContain(`pre-v${DB_VERSION}`);
+
+    const snapshotDir = path.join(backupsRoot, snapshots[0] as string);
+    expect(fs.existsSync(path.join(snapshotDir, "index.db"))).toBe(true);
+    expect(fs.existsSync(path.join(snapshotDir, "backup.meta.json"))).toBe(true);
+
+    // Open the snapshot DB read-only and confirm it still carries the
+    // pre-upgrade row — proving the backup was taken BEFORE the drop.
+    const { Database: SqliteDB } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const snapshotDb = new SqliteDB(path.join(snapshotDir, "index.db"), { readonly: true });
+    try {
+      const row = snapshotDb
+        .prepare("SELECT COUNT(*) AS cnt FROM entries WHERE entry_key = 'pre-upgrade-entry'")
+        .get() as { cnt: number };
+      expect(row.cnt).toBe(1);
+    } finally {
+      snapshotDb.close();
+    }
+  });
+
+  test("AKM_DB_BACKUP=0 skips the pre-upgrade snapshot", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-backup-optout-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath);
+    insertTestEntry(db, "pre-upgrade-entry");
+    setMeta(db, "version", "0");
+    closeDatabase(db);
+
+    const previous = process.env.AKM_DB_BACKUP;
+    process.env.AKM_DB_BACKUP = "0";
+    try {
+      db = openDatabase(dbPath);
+      closeDatabase(db);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AKM_DB_BACKUP;
+      } else {
+        process.env.AKM_DB_BACKUP = previous;
+      }
+    }
+
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs.readdirSync(backupsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      expect(snapshots.length).toBe(0);
+    }
+  });
+
   test("openDatabase creates FTS5 table", () => {
     const dbPath = tmpDbPath();
     const db = openDatabase(dbPath);

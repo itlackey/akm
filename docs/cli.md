@@ -296,6 +296,31 @@ Search ranking can optionally use graph-derived confidence-weighted boosts.
 Tune `search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight`
 in [`docs/configuration.md#graph-boost-search-tuning`](configuration.md#graph-boost-search-tuning).
 
+### db
+
+Inspect the AKM SQLite data directory.
+
+```sh
+akm db backups        # List pre-upgrade snapshots, newest first
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `backups` | List pre-upgrade snapshots written by AKM under `<dataDir>/backups/`. Returns a JSON list with `path`, `name`, `createdAt`, `sizeBytes`, and `sourceVersion` per entry. |
+
+Pre-upgrade snapshots are created automatically whenever the binary detects an
+on-disk `DB_VERSION` that differs from its own — that's the same moment the
+destructive `handleVersionUpgrade()` codepath drops every table to rebuild. The
+snapshot is a recursive `fs.cpSync` of the data directory; restoration is
+intentionally manual for the MVP: stop akm, then run
+`scripts/migrations/restore-data-dir.sh <backup-dir> <live-data-dir>` to roll
+back the data dir wholesale, or use the targeted helper scripts in
+`scripts/migrations/` to scavenge specific tables. See
+[`docs/configuration.md`](configuration.md) for the `AKM_DB_BACKUP` and
+`AKM_DB_BACKUP_RETAIN` environment variables.
+
 ### search
 
 Search stash assets, registry stashes, or both.

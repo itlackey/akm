@@ -15,6 +15,7 @@ import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
+import { akmDbBackups } from "./commands/db-cli";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import {
   akmGraphEntities,
@@ -593,6 +594,39 @@ const graphCommand = defineCommand({
     return runWithJsonErrors(() => {
       if (hasSubcommand(args, GRAPH_SUBCOMMAND_SET)) return;
       output("graph-summary", akmGraphSummary());
+    });
+  },
+});
+
+// MVP DB administration. Currently only `akm db backups`; restore is manual —
+// stop akm and run `scripts/migrations/restore-data-dir.sh <backup>`.
+const DB_SUBCOMMAND_SET = new Set(["backups"]);
+
+const dbCommand = defineCommand({
+  meta: {
+    name: "db",
+    description:
+      "Inspect the AKM SQLite data directory. Currently exposes `backups`; to restore from a snapshot, stop akm and run scripts/migrations/restore-data-dir.sh against the chosen backup.",
+  },
+  subCommands: {
+    backups: defineCommand({
+      meta: {
+        name: "backups",
+        description:
+          "List pre-upgrade snapshots of the data directory (newest first). Backups are created automatically before destructive DB version upgrades unless AKM_DB_BACKUP=0.",
+      },
+      run() {
+        return runWithJsonErrors(() => {
+          output("db-backups", akmDbBackups());
+        });
+      },
+    }),
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      if (hasSubcommand(args, DB_SUBCOMMAND_SET)) return;
+      // Default action: list backups.
+      output("db-backups", akmDbBackups());
     });
   },
 });
@@ -4395,6 +4429,7 @@ const main = defineCommand({
     health: healthCommand,
     info: infoCommand,
     graph: graphCommand,
+    db: dbCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,

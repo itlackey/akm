@@ -17,6 +17,7 @@ const PASSTHROUGH_COMMANDS = new Set([
   "config",
   "consolidate",
   "curate",
+  "db-backups",
   "disable",
   "enable",
   "feedback",

@@ -614,3 +614,25 @@ akm reads a small set of environment variables in addition to `config.json`.
 | `HF_HOME` | Hugging Face cache root for the local embedder. | `<AKM_CACHE_DIR>/hf` | akm sets this at process start when unset. |
 | `GITHUB_TOKEN` / `GH_TOKEN` | Token for authenticated GitHub API calls. | — | `GITHUB_TOKEN` wins if both are set. |
 | `AKM_VERBOSE` | When truthy, print verbose diagnostics. | unset | Env wins over `--verbose` / `--quiet` flags. |
+| `AKM_DB_BACKUP` | Set to `0`/`false`/`no`/`off` to skip the pre-upgrade data-dir snapshot. | unset (backups enabled) | The snapshot is a `fs.cpSync` of the data directory into `<dataDir>/backups/<timestamp>-pre-v<targetVersion>/` and only runs when the binary upgrades the on-disk `DB_VERSION`. Failures warn-and-proceed; they do not block the upgrade. |
+| `AKM_DB_BACKUP_RETAIN` | FIFO retention for pre-upgrade snapshots. | `5` | Older snapshots are pruned at backup time. Invalid values fall back to the default with a one-line warning. |
+
+### Pre-upgrade data-directory backups
+
+Whenever the running binary detects a stored `DB_VERSION` that differs from
+its own (`src/indexer/db.ts` `handleVersionUpgrade()` path), it writes a
+recursive `fs.cpSync` snapshot of the entire data directory to
+`<dataDir>/backups/<timestamp>-pre-v<targetVersion>/` **before** dropping any
+tables. The snapshot includes a `backup.meta.json` sidecar with the source
+and target versions, total bytes copied, and the ISO-8601 creation time.
+
+Inspect existing snapshots with `akm db backups`. The CLI emits a JSON list;
+restoration is intentionally manual for the MVP — stop akm and run
+`scripts/migrations/restore-data-dir.sh <backup-dir> <live-data-dir>` to roll
+back. See `scripts/migrations/README.md` for the helper scripts that target
+specific schema transitions.
+
+The backup is best-effort: when free space is below 1.1× the source size, or
+the destination is unwritable, akm emits a stderr warning and proceeds with
+the upgrade. Set `AKM_DB_BACKUP=0` to opt out entirely (e.g. in CI where the
+data dir is ephemeral).
