@@ -673,6 +673,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     let iterResult: AgentRunResult;
     if (options.runAgentOptions?.spawn) {
       // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
+      const resolvedProfile = profile;
+      if (!resolvedProfile) {
+        throw new Error("internal: reflect test-seam path requires a resolved agent profile");
+      }
       const runOptions: RunAgentOptions = {
         stdio: "captured",
         parseOutput: "text",
@@ -680,7 +684,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
         ...(options.runAgentOptions ?? {}),
       };
-      iterResult = await runAgent(profile!, prompt, runOptions);
+      iterResult = await runAgent(resolvedProfile, prompt, runOptions);
     } else if (runnerSpec) {
       // v2: dispatch through unified RunnerSpec
       const runOptions: RunAgentOptions = {
@@ -711,15 +715,22 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       }
     } else {
       // Production path (v1): dispatch directly to the appropriate runner.
+      // The fallback at the end of step 3 guarantees `profile` is set whenever
+      // `runnerSpec` is undefined, but TS can't prove that across the loop +
+      // await boundary — narrow into a const.
+      const resolvedProfile = profile;
+      if (!resolvedProfile) {
+        throw new Error("internal: reflect v1 dispatch reached without a resolved agent profile or runnerSpec");
+      }
       const runOptions: RunAgentOptions = {
         stdio: "captured",
         parseOutput: "text",
         ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
         ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
       };
-      iterResult = profile!.sdkMode
-        ? await runOpencodeSdk(profile!, prompt ?? "", runOptions)
-        : await runAgent(profile!, prompt, runOptions);
+      iterResult = resolvedProfile.sdkMode
+        ? await runOpencodeSdk(resolvedProfile, prompt ?? "", runOptions)
+        : await runAgent(resolvedProfile, prompt, runOptions);
     }
 
     result = iterResult;
