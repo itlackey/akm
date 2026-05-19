@@ -32,7 +32,7 @@ import { akmImprove } from "./commands/improve";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
-import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
+import { inferAssetName, readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
 
@@ -85,7 +85,7 @@ import {
 } from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
-import { isHttpUrl, isWithin, resolveStashDir } from "./core/common";
+import { isHttpUrl, isWithin, resolveStashDir, writeFileAtomic } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
 import {
   DEFAULT_CONFIG,
@@ -97,6 +97,7 @@ import {
 } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
+import { parseFrontmatter, parseFrontmatterBlock } from "./core/frontmatter";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
 import { clearLogFile, info, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
@@ -1607,6 +1608,13 @@ const feedbackCommand = defineCommand({
       type: "string",
       description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
     },
+    "applied-to": {
+      type: "string",
+      description:
+        "Credit a lesson that helped resolve this task. Accepts a `lesson:<name>` ref. " +
+        "When combined with --positive, appends this feedback ref to the target lesson's " +
+        "`lessonStrength[]` frontmatter array (dedup, idempotent). Ignored on non-lesson targets.",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1763,6 +1771,34 @@ const feedbackCommand = defineCommand({
         }
       }
 
+      // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
+      // target is a `lesson:<name>` ref and the signal is positive, append
+      // the feedback ref to the target lesson's `lessonStrength[]`
+      // frontmatter array (dedup, idempotent). Non-lesson targets are
+      // ignored. Failures here are warnings — feedback recording is the
+      // primary contract and must not regress on lesson-write errors.
+      const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();
+      let appliedToResult: { lessonRef: string; strength: number } | null = null;
+      if (appliedToRaw && signal === "positive") {
+        try {
+          const parsedApplied = parseAssetRef(appliedToRaw);
+          if (parsedApplied.type === "lesson") {
+            const updated = appendLessonStrength(parsedApplied.type, parsedApplied.name, ref);
+            if (updated) {
+              appliedToResult = { lessonRef: appliedToRaw, strength: updated.strength };
+            }
+          }
+        } catch (err) {
+          warn(
+            `[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else if (appliedToRaw && signal !== "positive") {
+        warn(
+          "[feedback] --applied-to is ignored without --positive; lesson credit is only recorded on positive signals.",
+        );
+      }
+
       output("feedback", {
         ok: true,
         ref,
@@ -1770,10 +1806,84 @@ const feedbackCommand = defineCommand({
         reason: reason?.trim() ?? null,
         failureMode: failureMode ?? null,
         tags: validatedTags,
+        ...(appliedToResult
+          ? { appliedTo: { ref: appliedToResult.lessonRef, lessonStrength: appliedToResult.strength } }
+          : {}),
       });
     });
   },
 });
+
+/**
+ * Phase 7A: append a feedback ref to a lesson's `lessonStrength[]`
+ * frontmatter array. Returns `{ strength }` (post-update count) on success,
+ * or `null` when the lesson cannot be located. Idempotent: if the ref is
+ * already credited, no write occurs.
+ *
+ * The function looks up the lesson's file via the indexer DB so the write
+ * targets the canonical on-disk location. Frontmatter is rewritten in
+ * place (no asset-spec round-trip) because we're modifying a single key on
+ * an existing asset — the same pattern memory-inference uses for
+ * `inferenceProcessed`.
+ */
+function appendLessonStrength(type: string, name: string, feedbackRef: string): { strength: number } | null {
+  const ref = `${type}:${name}`;
+  let filePath: string | undefined;
+  const db = openExistingDatabase();
+  try {
+    const entryId = findEntryIdByRef(db, ref);
+    if (entryId === undefined) {
+      warn(`[feedback] --applied-to: lesson ${ref} is not in the index.`);
+      return null;
+    }
+    const row = db.prepare("SELECT file_path FROM entries WHERE id = ?").get(entryId) as
+      | { file_path: string }
+      | undefined;
+    if (!row?.file_path) {
+      warn(`[feedback] --applied-to: cannot resolve file path for ${ref}.`);
+      return null;
+    }
+    filePath = row.file_path;
+  } finally {
+    closeDatabase(db);
+  }
+
+  if (!filePath || !fs.existsSync(filePath)) {
+    warn(`[feedback] --applied-to: lesson file missing on disk for ${ref}.`);
+    return null;
+  }
+
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const data = { ...parsed.data };
+  const existing = data.lessonStrength;
+  const strengthList: string[] = Array.isArray(existing)
+    ? existing.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim())
+    : typeof existing === "string" && existing.trim().length > 0
+      ? [existing.trim()]
+      : [];
+  if (strengthList.includes(feedbackRef)) {
+    // Already credited — idempotent no-op.
+    return { strength: strengthList.length };
+  }
+  strengthList.push(feedbackRef);
+  data.lessonStrength = strengthList;
+
+  const yaml = yamlStringify(data).trimEnd();
+  const block = parseFrontmatterBlock(raw);
+  const body = block?.content ?? raw;
+  const next = `---\n${yaml}\n---\n${body.startsWith("\n") ? "" : "\n"}${body}`;
+  try {
+    // Preserve the existing file's permission bits (markdown assets are
+    // typically 0o644); writeFileAtomic defaults to 0o600 otherwise.
+    const mode = fs.statSync(filePath).mode & 0o777;
+    writeFileAtomic(filePath, next, mode);
+  } catch (err) {
+    warn(`[feedback] --applied-to: failed to write ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return { strength: strengthList.length };
+}
 
 const historyCommand = defineCommand({
   meta: {
@@ -2228,11 +2338,22 @@ const rememberCommand = defineCommand({
       const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto;
 
       if (!hasStructuredArgs) {
+        // Phase 1B / Rec 7: even the zero-flag hot-path emits
+        // `captureMode: hot` + `beliefState: asserted` so user-supplied
+        // memories outrank background-derived ones during ranking.
+        const frontmatterBlock = buildMemoryFrontmatter({
+          captureMode: "hot",
+          beliefState: "asserted",
+        });
+        const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
+        // Derive the asset slug from the body (not the frontmatter block);
+        // otherwise inferAssetName would key off the leading `---` delimiter.
         const result = await writeMarkdownAsset({
           type: "memory",
-          content: body,
+          content: contentWithFrontmatter,
           name: args.name,
           fallbackPrefix: "memory",
+          preferredName: inferAssetName(body, "memory"),
           force: args.force,
           target: args.target,
         });
@@ -2307,6 +2428,10 @@ const rememberCommand = defineCommand({
       }
 
       // ── Build frontmatter and write ───────────────────────────────────────
+      // Phase 1B / Rec 7: the hot-path CLI write always marks the memory as
+      // `captureMode: hot` and `beliefState: asserted`. Ranking applies a
+      // hot-capture boost so user-supplied memories outrank otherwise-equal
+      // background-derived ones.
       const frontmatterBlock = buildMemoryFrontmatter({
         description,
         tags,
@@ -2314,6 +2439,8 @@ const rememberCommand = defineCommand({
         observed_at,
         expires,
         subjective,
+        captureMode: "hot",
+        beliefState: "asserted",
         ...(hasScope ? { scope: scopeFields } : {}),
       });
 
@@ -3328,6 +3455,83 @@ const eventsCommand = defineCommand({
   },
 });
 
+// ── lessons subcommands (Phase 7A / Advantage D4c) ──────────────────────────
+
+const lessonsCoverageCommand = defineCommand({
+  meta: {
+    name: "coverage",
+    description:
+      "Report tags that exist on indexed assets but are NOT yet covered by any lesson.\n\n" +
+      "Useful for spotting topics where the stash has skills/commands/scripts but no\n" +
+      "crystallized lesson — a signal that the team has tacit knowledge worth distilling.\n\n" +
+      "Default output is JSON: { uncoveredTags: string[], lessonTagCount: number, totalTagCount: number }.\n" +
+      "Pass --format text for a plain-text bulleted list.",
+  },
+  args: {},
+  run() {
+    return runWithJsonErrors(() => {
+      const db = openExistingDatabase();
+      try {
+        const allTagSet = collectTagSetFromEntries(db, undefined);
+        const lessonTagSet = collectTagSetFromEntries(db, "lesson");
+        const uncovered: string[] = [];
+        for (const tag of allTagSet) {
+          if (!lessonTagSet.has(tag)) uncovered.push(tag);
+        }
+        uncovered.sort((a, b) => a.localeCompare(b));
+        output("lessons-coverage", {
+          ok: true,
+          uncoveredTags: uncovered,
+          lessonTagCount: lessonTagSet.size,
+          totalTagCount: allTagSet.size,
+        });
+      } finally {
+        closeDatabase(db);
+      }
+    });
+  },
+});
+
+/**
+ * Walk indexed entries and collect a deduplicated set of tags. When
+ * `entryType` is provided, only entries of that type contribute tags.
+ *
+ * Pure read; never mutates the DB. Used by `akm lessons coverage` (Phase 7A)
+ * to compute the diff between all-asset tags and lesson tags.
+ */
+function collectTagSetFromEntries(db: import("bun:sqlite").Database, entryType: string | undefined): Set<string> {
+  const tags = new Set<string>();
+  const stmt = entryType
+    ? db.prepare("SELECT entry_json FROM entries WHERE entry_type = ?")
+    : db.prepare("SELECT entry_json FROM entries");
+  const rows = (entryType ? stmt.all(entryType) : stmt.all()) as Array<{ entry_json: string }>;
+  for (const row of rows) {
+    let parsed: { tags?: unknown };
+    try {
+      parsed = JSON.parse(row.entry_json) as { tags?: unknown };
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed.tags)) continue;
+    for (const tag of parsed.tags) {
+      if (typeof tag === "string" && tag.trim().length > 0) {
+        tags.add(tag.trim().toLowerCase());
+      }
+    }
+  }
+  return tags;
+}
+
+const lessonsCommand = defineCommand({
+  meta: {
+    name: "lessons",
+    description: "Lesson-asset tooling: tag-coverage gaps, strength queries.",
+  },
+  subCommands: {
+    coverage: lessonsCoverageCommand,
+  },
+});
+
 // ── proposal substrate (#225) ────────────────────────────────────────────────
 
 const proposalsCommand = defineCommand({
@@ -4124,6 +4328,7 @@ const main = defineCommand({
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
+    lessons: lessonsCommand,
     agent: agentCommand,
     lint: lintCommand,
     improve: improveCommand,

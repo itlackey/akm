@@ -312,6 +312,10 @@ describe("runMemoryInferencePass — enabled", () => {
 
     const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));
     expect(derived.data.inferred).toBe(true);
+    // Phase 1B / Rec 7: derived memories must be tagged as background-captured
+    // so ranking does not give them the hot-capture boost reserved for the
+    // user-driven `akm remember` write path.
+    expect(derived.data.captureMode).toBe("background");
     expect(derived.data.source).toBe("memory:parent");
     expect(derived.data.description).toBe("A higher-signal summary of the parent.");
     expect(derived.data.tags).toEqual(["one", "two", "three"]);

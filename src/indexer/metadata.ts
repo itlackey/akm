@@ -113,6 +113,30 @@ export interface StashEntry {
   supersededBy?: string[];
   contradictedBy?: string[];
   currentBeliefRefs?: string[];
+  /**
+   * How the memory was captured. `hot` indicates a user-driven write
+   * (the `akm remember` CLI path); `background` indicates an
+   * agent/derived write (e.g. memory-inference). Absent on legacy memories.
+   * Surfaced from the `captureMode:` frontmatter key.
+   */
+  captureMode?: "hot" | "background";
+  /**
+   * Free-form guidance describing when this asset should be applied.
+   * Surfaced from the `when_to_use:` frontmatter key. Indexed into the
+   * `hints` FTS column so retrieval can match query intent.
+   */
+  whenToUse?: string;
+  /**
+   * Strength signal for lessons: count of refs that have credited this
+   * lesson via `akm feedback --applied-to`. Extracted from frontmatter:
+   * an array stores its length here, a number stores directly.
+   */
+  lessonStrength?: number;
+  /**
+   * Source refs that this asset is derived from. Surfaced from the
+   * `evidenceSources:` frontmatter key.
+   */
+  evidenceSources?: string[];
 }
 
 export interface StashFile {
@@ -297,6 +321,17 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (contradictedBy) result.contradictedBy = contradictedBy;
   const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
   if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
+  if (e.captureMode === "hot" || e.captureMode === "background") {
+    result.captureMode = e.captureMode;
+  }
+  if (typeof e.whenToUse === "string" && e.whenToUse.trim().length > 0) {
+    result.whenToUse = e.whenToUse.trim();
+  }
+  if (typeof e.lessonStrength === "number" && Number.isFinite(e.lessonStrength) && e.lessonStrength >= 0) {
+    result.lessonStrength = Math.floor(e.lessonStrength);
+  }
+  const evidenceSources = normalizeNonEmptyStringList(e.evidenceSources);
+  if (evidenceSources) result.evidenceSources = evidenceSources;
   if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
     const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
     if (scope) result.scope = scope;
@@ -422,6 +457,25 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
 
   const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
   if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
+
+  // captureMode: "hot" | "background" — strict whitelist; unknown values are ignored.
+  if (fmData.captureMode === "hot" || fmData.captureMode === "background") {
+    entry.captureMode = fmData.captureMode;
+  }
+
+  // when_to_use → whenToUse — free-form guidance for retrieval/intent matching.
+  const whenToUse = asNonEmptyString(fmData.when_to_use);
+  if (whenToUse) entry.whenToUse = whenToUse;
+
+  // lessonStrength: array → length, number → direct. Negative numbers clamp to 0.
+  if (Array.isArray(fmData.lessonStrength)) {
+    entry.lessonStrength = fmData.lessonStrength.length;
+  } else if (typeof fmData.lessonStrength === "number" && Number.isFinite(fmData.lessonStrength)) {
+    entry.lessonStrength = Math.max(0, Math.floor(fmData.lessonStrength));
+  }
+
+  const evidenceSources = normalizeStringListOrUndefined(fmData.evidenceSources);
+  if (evidenceSources) entry.evidenceSources = evidenceSources;
 
   const intent = normalizeIntent(fmData.intent);
   if (intent) entry.intent = intent;

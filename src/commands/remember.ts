@@ -34,6 +34,19 @@ export interface MemoryFrontmatterFields {
   expires?: string;
   subjective?: boolean;
   scope?: StashEntryScope;
+  /**
+   * Capture-mode marker (Phase 1B / Rec 7). `hot` marks memories written via
+   * the `akm remember` CLI; `background` is reserved for derived/inferred
+   * memories. Persisted as the `captureMode:` frontmatter key.
+   */
+  captureMode?: "hot" | "background";
+  /**
+   * Belief state marker (Phase 1B). Hot-path memories are written as
+   * `asserted`; the value is persisted verbatim into the `beliefState:`
+   * frontmatter key for downstream consumers. Phase 1A widens the indexer's
+   * union; until then, the indexer simply passes the string through.
+   */
+  beliefState?: string;
 }
 
 /**
@@ -71,6 +84,12 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
+  if (fields.captureMode === "hot" || fields.captureMode === "background") {
+    obj.captureMode = fields.captureMode;
+  }
+  if (typeof fields.beliefState === "string" && fields.beliefState.trim()) {
+    obj.beliefState = fields.beliefState.trim();
+  }
   // Scope keys are emitted as flat top-level keys (`scope_user`, …) so the
   // existing one-level frontmatter parser can read them without nesting.
   // A scope object with no populated values is dropped.

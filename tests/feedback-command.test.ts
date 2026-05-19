@@ -336,6 +336,82 @@ describe("F-3: requireReason default + --failure-mode enum (#384)", () => {
     expect(String(out.error)).toContain("totally-invalid-mode");
   });
 
+  test("--applied-to lesson:x appends caller ref to lessonStrength array (Phase 7A)", async () => {
+    const stashDir = makeTempDir("akm-applied-to-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-at-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-at-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-at-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-at-state-");
+
+    writeFile(
+      path.join(stashDir, "memories", "auth.md"),
+      "---\ndescription: auth memory\n---\nUse token x for staging auth.\n",
+    );
+    writeFile(
+      path.join(stashDir, "lessons", "prefer-tokens.md"),
+      "---\ndescription: prefer scoped tokens\n---\nAlways prefer scoped tokens over long-lived bearer creds.\n",
+    );
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:auth",
+      "--positive",
+      "--applied-to",
+      "lesson:prefer-tokens",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    expect(out.appliedTo).toMatchObject({ ref: "lesson:prefer-tokens", lessonStrength: 1 });
+
+    const lessonContent = fs.readFileSync(path.join(stashDir, "lessons", "prefer-tokens.md"), "utf8");
+    const { parseFrontmatter } = await import("../src/core/frontmatter");
+    const lessonFm = parseFrontmatter(lessonContent);
+    expect(lessonFm.data.lessonStrength).toEqual(["memory:auth"]);
+
+    // Idempotent: re-applying with the same ref should not duplicate the entry.
+    const second = runCli([
+      "feedback",
+      "memory:auth",
+      "--positive",
+      "--applied-to",
+      "lesson:prefer-tokens",
+      "--format=json",
+    ]);
+    expect(second.status).toBe(0);
+    const second2 = parseJsonOutput(second);
+    expect(second2.appliedTo).toMatchObject({ ref: "lesson:prefer-tokens", lessonStrength: 1 });
+
+    const lessonContent2 = fs.readFileSync(path.join(stashDir, "lessons", "prefer-tokens.md"), "utf8");
+    const lessonFm2 = parseFrontmatter(lessonContent2);
+    expect(lessonFm2.data.lessonStrength).toEqual(["memory:auth"]);
+  });
+
+  test("--applied-to on a non-lesson target is silently ignored (Phase 7A)", async () => {
+    const stashDir = makeTempDir("akm-applied-to-nonlesson-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-at2-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-at2-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-at2-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-at2-state-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    writeFile(path.join(stashDir, "skills", "deploy.md"), "---\ndescription: deploy skill\n---\nDeploy steps.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "memory:auth", "--positive", "--applied-to", "skill:deploy", "--format=json"]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    // Output omits appliedTo when the target type is not "lesson".
+    expect(out.appliedTo).toBeUndefined();
+
+    // The non-lesson target must not have been mutated.
+    const skillContent = fs.readFileSync(path.join(stashDir, "skills", "deploy.md"), "utf8");
+    expect(skillContent).not.toContain("lessonStrength");
+  });
+
   test("--failure-mode on --positive is rejected (exit 2)", async () => {
     const stashDir = makeTempDir("akm-f3-mode-on-pos-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache5-");

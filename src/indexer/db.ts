@@ -46,7 +46,7 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 15;
+export const DB_VERSION = 16;
 export const EMBEDDING_DIM = 384;
 export const GRAPH_SCHEMA_VERSION = 3;
 

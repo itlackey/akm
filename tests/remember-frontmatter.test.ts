@@ -59,25 +59,34 @@ afterEach(() => {
 // ── Zero-flag path (backward compatibility) ──────────────────────────────────
 
 describe("zero-flag remember", () => {
-  test("writes bare memory with no frontmatter", () => {
+  test("writes memory with captureMode: hot + beliefState: asserted and nothing else", () => {
     const { stashDir, result } = runCli(["remember", "Deployment needs VPN access"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
 
-    // No frontmatter delimiter present
-    expect(content.startsWith("---")).toBe(false);
-    expect(content).toContain("Deployment needs VPN access");
+    // Phase 1B / Rec 7: zero-flag hot-path emits captureMode + beliefState
+    expect(content.startsWith("---")).toBe(true);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    // No other frontmatter keys
+    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
+    expect(parsed.content).toContain("Deployment needs VPN access");
     expect(stashDir).toBeTruthy();
   });
 
-  test("writes bare memory when reading from stdin", () => {
+  test("stdin zero-flag path also writes captureMode: hot + beliefState: asserted", () => {
     const { result } = runCli(["remember"], { input: "VPN needed for staging deploys" });
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
-    expect(content.startsWith("---")).toBe(false);
+    expect(content.startsWith("---")).toBe(true);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
   });
 
   test("reads stdin when --format json is present", () => {
@@ -445,5 +454,31 @@ describe("remember --enrich graceful degradation", () => {
     const parsed = parseFrontmatter(content);
     // At minimum, the --tag value must be present
     expect(parsed.data.tags as string[]).toContain("misc");
+  });
+});
+
+// ── Phase 1B / Rec 7: hot-path captureMode + beliefState ────────────────────
+
+describe("remember writes captureMode: hot + beliefState: asserted (Phase 1B)", () => {
+  test("--tag path writes captureMode: hot and beliefState: asserted", () => {
+    const { result } = runCli(["remember", "VPN required for staging", "--tag", "ops"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+  });
+
+  test("--auto path writes captureMode: hot and beliefState: asserted", () => {
+    const { result } = runCli(["remember", "Plain text note", "--auto", "--tag", "misc"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
   });
 });

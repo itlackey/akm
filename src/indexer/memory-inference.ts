@@ -55,6 +55,7 @@ import { walkMarkdownFiles } from "./walker";
 const FM_INFERRED = "inferred";
 const FM_INFERENCE_PROCESSED = "inferenceProcessed";
 const FM_SOURCE = "source";
+const FM_CAPTURE_MODE = "captureMode";
 
 /** Telemetry returned to the caller. Useful for tests + future progress events. */
 export interface MemoryInferenceResult {
@@ -339,6 +340,7 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): string {
   const fm: Record<string, unknown> = {
     [FM_INFERRED]: true,
+    [FM_CAPTURE_MODE]: "background",
     [FM_SOURCE]: parent.ref,
     description: derived.description,
     tags: derived.tags,

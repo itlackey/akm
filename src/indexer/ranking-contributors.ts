@@ -183,6 +183,43 @@ const graphRankingContributor: RankingContributor = {
   },
 };
 
+/**
+ * Capture-mode boost — Phase 1B / Rec 7.
+ *
+ * Memories captured via the hot path (`akm remember`) get a modest additive
+ * boost so they outrank otherwise-equal background-derived memories. Memories
+ * without `captureMode` (legacy) return 0 and rank exactly as before.
+ */
+const captureModeRankingContributor: RankingContributor = {
+  name: "capture-mode-ranking",
+  appliesTo(item) {
+    return item.entry.type === "memory" && item.entry.captureMode === "hot";
+  },
+  adjust() {
+    return 0.2;
+  },
+};
+
+/**
+ * Lesson strength boost — Phase 7A / Advantage D4b.
+ *
+ * Each ref that has credited a lesson via `akm feedback --applied-to` adds
+ * 0.06 to the boost (capped at 0.3 ≈ five credits). Lessons without a
+ * `lessonStrength` array (or a number) return 0.
+ */
+const lessonStrengthContributor: RankingContributor = {
+  name: "lesson-strength-ranking",
+  appliesTo(item) {
+    return (
+      item.entry.type === "lesson" && typeof item.entry.lessonStrength === "number" && item.entry.lessonStrength > 0
+    );
+  },
+  adjust(item) {
+    const strength = item.entry.lessonStrength ?? 0;
+    return Math.min(0.3, 0.06 * strength);
+  },
+};
+
 const utilityRankingContributor: UtilityRankingContributor = {
   name: "utility-ranking",
   appliesTo(item, ctx) {
@@ -216,6 +253,8 @@ export const defaultRankingContributors: RankingContributor[] = [
   descriptionRankingContributor,
   metadataRankingContributor,
   graphRankingContributor,
+  captureModeRankingContributor,
+  lessonStrengthContributor,
 ];
 
 export const defaultUtilityRankingContributors: UtilityRankingContributor[] = [utilityRankingContributor];

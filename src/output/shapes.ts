@@ -33,6 +33,7 @@ const PASSTHROUGH_COMMANDS = new Set([
   "index",
   "info",
   "init",
+  "lessons-coverage",
   "lint",
   "list",
   "registry-add",
