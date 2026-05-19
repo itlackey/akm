@@ -616,6 +616,38 @@ describe("Issue #12: buildWhyMatched includes description matches", () => {
 
     expect(reasons).not.toContain("matched description");
   });
+
+  // Phase 1A widening: ensure buildWhyMatched emits reasons for the full
+  // belief-state union (active, asserted, contradicted, superseded,
+  // deprecated, archived).
+  test("buildWhyMatched emits reason for every belief state", () => {
+    const expected: Record<string, string> = {
+      active: "active belief state",
+      asserted: "asserted belief state",
+      contradicted: "contradicted belief state",
+      superseded: "superseded belief state",
+      deprecated: "deprecated belief state",
+      archived: "archived belief state",
+    };
+
+    for (const [state, reason] of Object.entries(expected)) {
+      const reasons = buildWhyMatched(
+        {
+          name: `m-${state}`,
+          type: "memory",
+          description: "irrelevant",
+          tags: [],
+          beliefState: state as "active" | "asserted" | "contradicted" | "superseded" | "deprecated" | "archived",
+        },
+        "irrelevant",
+        "fts",
+        0,
+        0,
+      );
+
+      expect(reasons).toContain(reason);
+    }
+  });
 });
 
 // ── Issue #14: Unstable sort on tied DB scores ──────────────────────────────

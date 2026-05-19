@@ -144,6 +144,65 @@ function buildAgentRunnerSpec(
   };
 }
 
+/**
+ * Narrow predicate matching the `ConfigError` thrown by `resolveProcessRunner`
+ * when a feature is explicitly disabled (`enabled: false`). All ConfigErrors
+ * from this module share the `INVALID_CONFIG_FILE` code, so we additionally
+ * pattern-match the message to avoid swallowing unrelated misconfiguration
+ * errors (missing profile, mode/pool mismatch, etc.).
+ */
+function isProcessDisabledError(e: unknown): boolean {
+  return e instanceof ConfigError && /is disabled in config/.test(e.message);
+}
+
+/**
+ * Resolve the runner used for "validation" passes on the `improve` section
+ * (Advantage D3 / Phase 4B — third model tier).
+ *
+ * Look-up order:
+ *   1. `features.improve.validation` ProcessEntry (preferred — lets users wire
+ *      a lower-cost classifier model for staleness detection, confidence
+ *      scoring, and lesson classification).
+ *   2. `defaults.llm` as a final fallback so callers always get a usable
+ *      runner when any LLM is configured.
+ *
+ * Returns `null` when neither is configured (callers may then skip the
+ * validation pass rather than throwing).
+ */
+export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
+  if (isProcessEnabled("improve", "validation", config)) {
+    try {
+      return resolveProcessRunner("improve", "validation", config);
+    } catch (e) {
+      // Only swallow the expected "process is disabled" ConfigError so we can
+      // fall through to defaults.llm. Any other error (mode/pool mismatch,
+      // missing profile, malformed entry, etc.) is a real misconfiguration —
+      // rethrow it so the caller sees the diagnostic instead of silently
+      // degrading to a different runner.
+      if (!isProcessDisabledError(e)) {
+        throw e;
+      }
+      // Fall through to defaults.llm below.
+    }
+  }
+
+  const defaultLlm = config.defaults?.llm;
+  if (defaultLlm) {
+    try {
+      return buildLlmRunnerSpec(defaultLlm, undefined, config);
+    } catch {
+      return null;
+    }
+  }
+
+  // Legacy fallback to top-level config.llm (matches buildLlmRunnerSpec).
+  if (config.llm) {
+    return { kind: "llm", connection: config.llm };
+  }
+
+  return null;
+}
+
 export function resolveProcessRunner(section: ProcessSection, processName: string, config: AkmConfig): RunnerSpec {
   const sectionMap = (
     config.features as Record<string, Record<string, ProcessEntry | boolean> | undefined> | undefined

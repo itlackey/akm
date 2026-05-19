@@ -57,8 +57,8 @@ export async function akmSearch(input: {
   /**
    * Memory belief-state filter. Applies only to memory hits:
    * - `all` keeps current + historical memory hits (default)
-   * - `current` keeps active/unspecified memory beliefs
-   * - `historical` keeps contradicted/superseded/archived memory beliefs
+   * - `current` keeps active/asserted/unspecified memory beliefs
+   * - `historical` keeps deprecated/contradicted/superseded/archived memory beliefs
    */
   belief?: BeliefFilterMode;
   /**

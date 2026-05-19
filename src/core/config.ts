@@ -152,6 +152,18 @@ export interface ProcessEntry {
 }
 
 export interface FeaturesConfig {
+  /**
+   * Per-process runner overrides for the `improve` section (reflect, distill,
+   * propose, memory_consolidation, feedback_distillation, etc.).
+   *
+   * Known keys include:
+   *  - `validation`: third model tier (Advantage D3). A lower-cost classifier
+   *    runner used by staleness detection, confidence scoring, and lesson
+   *    classification. Default: off — callers fall back to `defaults.llm`
+   *    via {@link resolveValidationRunner}. Set this to point at a cheap
+   *    profile (for example a small local model) when running large
+   *    improvement passes where the primary model would be overkill.
+   */
   improve?: Record<string, ProcessEntry | boolean>;
   index?: Record<string, ProcessEntry | boolean>;
   search?: Record<string, ProcessEntry | boolean>;

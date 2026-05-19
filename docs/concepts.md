@@ -172,6 +172,38 @@ provide the same information in a parseable form.
 Source locators like `github:owner/repo` and `npm:@scope/pkg` are **install
 refs**, accepted only by `akm add` and `akm clone`. They are not asset refs.
 
+### Namespacing assets across projects and teams
+
+AKM already supports **physical-subdirectory namespacing** today — no extra
+flags required. Drop assets under nested directories beneath the type folder
+and the path becomes part of the ref's name. Examples:
+
+```text
+memories/projectA/auth-tip.md    →  memory:projectA/auth-tip
+memories/teamA/clientX/notes.md  →  memory:teamA/clientX/notes
+skills/projectB/lint-fix.md      →  skill:projectB/lint-fix
+knowledge/clientX/api-guide.md   →  knowledge:clientX/api-guide
+```
+
+This works for **any** asset type. Search and show treat the prefixed name
+like any other ref, so `akm search "memory:projectA/"` narrows results to
+that subtree.
+
+**Recommendation:** use physical subdirectories now to organize multi-project
+or multi-team stashes. They survive renames, sort cleanly on disk, and
+require no configuration.
+
+Future iterations (no committed dates):
+
+- A `--namespace <ns>` flag will provide a thin name-prefix normalizer on
+  `search`, `remember`, `improve`, `distill`, and `feedback` so the same
+  prefix doesn't have to be typed every time.
+- A `::` delimiter (for example `projectA::memory:auth-tip`) will provide
+  strict isolation so refs from different namespaces never collide in
+  ranking or recall.
+
+Until those land, physical subdirectories remain the recommended pattern.
+
 ## Search Priority
 
 `akm search` and `akm show` query a single local FTS5 index that covers every

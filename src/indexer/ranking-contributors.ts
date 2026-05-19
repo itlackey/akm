@@ -45,9 +45,14 @@ export interface UtilityRankingContributor {
 function beliefStateBoost(item: RankedEntryInput): number {
   const entry = item.entry;
   if (entry.type !== "memory") return 0;
+  // Phase 1A: `asserted` and `deprecated` are first-class states.
+  // `asserted` carries stronger user-explicit authority than `active`.
+  // `deprecated` is a frozen historical state — penalized but milder than `superseded`.
   if (entry.beliefState === "contradicted") return -0.45;
   if (entry.beliefState === "superseded") return -0.25;
   if (entry.beliefState === "archived") return -0.6;
+  if (entry.beliefState === "deprecated") return -0.15;
+  if (entry.beliefState === "asserted") return 0.08;
   if (entry.beliefState === "active") return 0.06;
   return 0;
 }

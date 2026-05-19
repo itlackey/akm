@@ -6,7 +6,7 @@ import { firstString, groupBy, stringArray } from "./common";
 import { parseFrontmatter } from "./frontmatter";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
-export type MemoryBeliefState = "active" | "superseded" | "contradicted" | "archived";
+export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
 
 export interface MemoryPruneCandidate {
   ref: string;
@@ -405,15 +405,24 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
     return {
       contradictionCandidates: [],
       transitions: family
-        .filter(
-          (record) =>
-            record.beliefState !== "active" || record.contradictedBy.length > 0 || record.currentBeliefRefs.length > 0,
-        )
+        .filter((record) => {
+          // `deprecated` is a frozen historical state — never refresh it to active.
+          // (`superseded` is intentionally still refreshable to preserve pre-Phase-1A behavior.)
+          if (isFrozenHistoricalBeliefState(record.beliefState)) return false;
+          // `active` and `asserted` are both "current/believed" states. Only emit a
+          // refresh if there is something to clear (contradictions / currentBeliefRefs)
+          // or the state is something else entirely (e.g. lingering `contradicted`).
+          if (isActiveLikeBeliefState(record.beliefState)) {
+            return record.contradictedBy.length > 0 || record.currentBeliefRefs.length > 0;
+          }
+          return true;
+        })
         .map((record) => ({
           ref: record.ref,
           parentRef: record.parentRef,
           fromState: record.beliefState,
-          toState: "active",
+          // Preserve `asserted` authority; otherwise refresh to plain `active`.
+          toState: record.beliefState === "asserted" ? "asserted" : "active",
           reason: "belief-refresh" as const,
         })),
     };
@@ -502,16 +511,23 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
 
     const componentRefs = [...components[componentIndex]].sort();
     const peerCurrentRefs = componentRefs.filter((ref) => ref !== record.ref);
-    if (
-      record.beliefState !== "active" ||
-      record.contradictedBy.length > 0 ||
-      !sameStringArray(record.currentBeliefRefs, peerCurrentRefs)
-    ) {
+    // `deprecated` is a frozen historical state — never refresh to active.
+    // (`superseded` is intentionally still refreshable to preserve pre-Phase-1A behavior.)
+    if (isFrozenHistoricalBeliefState(record.beliefState)) {
+      continue;
+    }
+    // For `active` / `asserted` records, only refresh when something changes.
+    // For everything else (e.g. lingering `contradicted`) always refresh.
+    const isActiveLike = isActiveLikeBeliefState(record.beliefState);
+    const needsRefresh =
+      !isActiveLike || record.contradictedBy.length > 0 || !sameStringArray(record.currentBeliefRefs, peerCurrentRefs);
+    if (needsRefresh) {
       transitions.push({
         ref: record.ref,
         parentRef: record.parentRef,
         fromState: record.beliefState,
-        toState: "active",
+        // Preserve `asserted` authority; otherwise refresh to plain `active`.
+        toState: record.beliefState === "asserted" ? "asserted" : "active",
         reason: "belief-refresh",
         ...(peerCurrentRefs[0] ? { relatedRef: peerCurrentRefs[0], relatedRefs: peerCurrentRefs } : {}),
         ...(peerCurrentRefs.length > 0 ? { currentBeliefRefs: peerCurrentRefs } : {}),
@@ -754,9 +770,44 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
   return records.sort(compareRecords);
 }
 
+/**
+ * `active` and `asserted` are both "currently believed" states. `asserted` carries
+ * stronger user-explicit authority (set by the hot-path `akm remember`) but for
+ * state-machine purposes (contradiction resolution, refresh logic) they are
+ * equivalent.
+ */
+function isActiveLikeBeliefState(state: Exclude<MemoryBeliefState, "archived">): state is "active" | "asserted" {
+  return state === "active" || state === "asserted";
+}
+
+/**
+ * `deprecated` is a frozen historical state introduced in Phase 1A. Once
+ * recorded, the contradiction-resolution pass must not refresh it back to
+ * active. (`contradicted` is also historical but it *is* updated by the
+ * contradiction resolver, so it is treated separately.)
+ *
+ * Note: `superseded` is deliberately NOT included here. Pre-Phase-1A,
+ * `superseded` records were refreshed to `active` by the belief-refresh
+ * pass (the old guard was `record.beliefState !== "active"`). In practice
+ * most `superseded` records are pruned earlier via `supersededBy` metadata
+ * in `analyzeMemoryCleanup`, so they never reach belief refresh — but a
+ * record marked `beliefState: superseded` without `supersededBy` metadata
+ * was previously refreshable. Preserving that behavior here avoids a
+ * surprise regression; only `deprecated` is the new frozen state.
+ */
+function isFrozenHistoricalBeliefState(state: Exclude<MemoryBeliefState, "archived">): state is "deprecated" {
+  return state === "deprecated";
+}
+
 function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<MemoryBeliefState, "archived"> {
   const explicit = firstString(frontmatter.beliefState);
-  if (explicit === "active" || explicit === "superseded" || explicit === "contradicted") {
+  if (
+    explicit === "active" ||
+    explicit === "asserted" ||
+    explicit === "deprecated" ||
+    explicit === "superseded" ||
+    explicit === "contradicted"
+  ) {
     return explicit;
   }
   return "active";

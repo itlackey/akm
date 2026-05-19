@@ -5,6 +5,7 @@ import {
   isProcessEnabled,
   resolveProcessRunner,
   resolveRunner,
+  resolveValidationRunner,
 } from "../../../src/integrations/agent/runner";
 
 function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
@@ -194,6 +195,79 @@ describe("isProcessEnabled", () => {
   test("returns false when features not configured", () => {
     const config = makeConfig();
     expect(isProcessEnabled("improve", "reflect", config)).toBe(false);
+  });
+});
+
+describe("resolveValidationRunner (Phase 4B / Advantage D3)", () => {
+  test("returns explicit features.improve.validation runner when set", () => {
+    const config = makeV2Config();
+    // Inject a validation entry pointing at the judge profile.
+    const improve = config.features?.improve;
+    if (!improve) throw new Error("expected features.improve to be defined");
+    improve.validation = {
+      mode: "llm",
+      profile: "openai-judge",
+      timeoutMs: 30000,
+    };
+    const runner = resolveValidationRunner(config);
+    expect(runner).not.toBeNull();
+    expect(runner?.kind).toBe("llm");
+    if (runner?.kind === "llm") {
+      expect(runner.connection.model).toBe("gpt-4o");
+      expect(runner.timeoutMs).toBe(30000);
+    }
+  });
+
+  test("falls back to defaults.llm when validation entry is absent", () => {
+    const config = makeV2Config();
+    // Make sure no validation entry exists in features.improve.
+    expect(config.features?.improve?.validation).toBeUndefined();
+    const runner = resolveValidationRunner(config);
+    expect(runner).not.toBeNull();
+    expect(runner?.kind).toBe("llm");
+    if (runner?.kind === "llm") {
+      // defaults.llm = "openai-mini"
+      expect(runner.connection.model).toBe("gpt-4o-mini");
+    }
+  });
+
+  test("returns null when neither validation nor defaults.llm is configured", () => {
+    const config = makeConfig();
+    expect(resolveValidationRunner(config)).toBeNull();
+  });
+
+  test("falls back to defaults.llm when validation entry is explicitly disabled", () => {
+    const config = makeV2Config();
+    const improve = config.features?.improve;
+    if (!improve) throw new Error("expected features.improve to be defined");
+    improve.validation = false;
+    const runner = resolveValidationRunner(config);
+    expect(runner).not.toBeNull();
+    if (runner?.kind === "llm") {
+      expect(runner.connection.model).toBe("gpt-4o-mini");
+    }
+  });
+
+  test("falls back to legacy config.llm when validation and defaults.llm are unset", () => {
+    // Legacy v1 config: no features.improve.validation, no defaults.llm, but
+    // top-level `config.llm` is set. resolveValidationRunner should surface
+    // the legacy connection directly rather than returning null.
+    const config = makeConfig({
+      llm: {
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "qwen2.5-legacy",
+      },
+    });
+    expect(config.features?.improve?.validation).toBeUndefined();
+    expect(config.defaults?.llm).toBeUndefined();
+
+    const runner = resolveValidationRunner(config);
+    expect(runner).not.toBeNull();
+    expect(runner?.kind).toBe("llm");
+    if (runner?.kind === "llm") {
+      expect(runner.connection.model).toBe("qwen2.5-legacy");
+      expect(runner.connection.endpoint).toBe("http://localhost:11434/v1/chat/completions");
+    }
   });
 });
 

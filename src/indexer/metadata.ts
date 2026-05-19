@@ -109,7 +109,7 @@ export interface StashEntry {
   xrefs?: string[];
   /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
   sources?: string[];
-  beliefState?: "active" | "superseded" | "contradicted" | "archived" | (string & {});
+  beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
   supersededBy?: string[];
   contradictedBy?: string[];
   currentBeliefRefs?: string[];

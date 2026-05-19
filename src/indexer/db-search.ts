@@ -378,8 +378,18 @@ async function searchDatabase(
 function matchBeliefFilter(type: string, beliefState: string | undefined, filter: BeliefFilterMode): boolean {
   if (filter === "all") return true;
   if (type !== "memory") return true;
-  if (filter === "current") return beliefState === undefined || beliefState === "active";
-  return beliefState === "contradicted" || beliefState === "superseded" || beliefState === "archived";
+  if (filter === "current") {
+    // Phase 1A: `asserted` is a "current" state (stronger authority than `active`);
+    // `deprecated` is excluded from current results.
+    return beliefState === undefined || beliefState === "active" || beliefState === "asserted";
+  }
+  // historical
+  return (
+    beliefState === "contradicted" ||
+    beliefState === "superseded" ||
+    beliefState === "deprecated" ||
+    beliefState === "archived"
+  );
 }
 
 // ── Vector scorer ───────────────────────────────────────────────────────────
@@ -548,8 +558,11 @@ export function buildWhyMatched(
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
   if (entry.beliefState === "active") reasons.push("active belief state");
+  if (entry.beliefState === "asserted") reasons.push("asserted belief state");
   if (entry.beliefState === "contradicted") reasons.push("contradicted belief state");
   if (entry.beliefState === "superseded") reasons.push("superseded belief state");
+  if (entry.beliefState === "deprecated") reasons.push("deprecated belief state");
+  if (entry.beliefState === "archived") reasons.push("archived belief state");
   if (utilityBoosted) reasons.push("usage history boost");
   if (typeof graphBoost === "number" && graphBoost > 0) {
     reasons.push(`graph boost +${graphBoost.toFixed(2)}`);
