@@ -136,6 +136,13 @@ the indexer uses for ranking. Supply those fields explicitly with
 `--auto`, or have the configured LLM propose them with `--enrich`. See
 [`akm remember`](cli.md#remember) for the full flag list.
 
+Hot-path memories (those written via `akm remember`) also receive
+`captureMode: hot` and `beliefState: asserted` in their frontmatter
+automatically. Background-derived memories (those inferred from other assets
+by `akm improve`) receive `captureMode: background`. The indexer applies a
+small ranking boost to hot-captured memories so explicit user-recorded context
+ranks above passive inference when both match a query.
+
 ## Refs
 
 Assets are identified by a **ref** -- a compact handle returned by

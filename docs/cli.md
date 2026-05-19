@@ -995,9 +995,44 @@ akm feedback skill:code-review --positive --note "Worked perfectly for PR review
 | `--positive` | Record positive feedback (use when an asset was helpful) |
 | `--negative` | Record negative feedback (use when an asset was not useful) |
 | `--note` | Optional text note to attach to the feedback event |
+| `--applied-to <ref>` | Credit a `lesson:<name>` that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). Silently ignored on non-lesson targets. |
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
+
+The `--applied-to` flag drives the lesson-strength ranking signal: lessons that
+have demonstrably helped resolve tasks receive a small additive ranking boost
+(capped at +0.3) so they float to the top of search. Pair with `akm lessons
+coverage` to find tags that don't yet have a crystallized lesson.
+
+### lessons
+
+**Status: Available since 0.8.0.**
+Lesson-asset tooling. Currently exposes a single subcommand for tag-coverage
+analysis.
+
+#### lessons coverage
+
+```sh
+akm lessons coverage
+akm lessons coverage --format text
+```
+
+Reports tags that exist on indexed assets but are NOT yet covered by any
+lesson. Useful for spotting topics where the stash has skills/commands/scripts
+but no crystallized lesson — a signal that the team has tacit knowledge worth
+distilling.
+
+Default output is JSON:
+
+```json
+{
+  "ok": true,
+  "uncoveredTags": ["auth", "networking", "observability"],
+  "lessonTagCount": 12,
+  "totalTagCount": 47
+}
+```
 
 ### history
 
@@ -1596,6 +1631,19 @@ akm improve workflow:release-checklist --task "reduce duplication"
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow that used to be split across multiple commands.
 
+The maintenance pass run by `improve` also expires stale proposals: any pending
+proposal older than `improve.archiveRetentionDays` (default 30) is moved to the
+archive with the reason `expired: no action within retention window` and a
+`proposal_expired` event is emitted. Set `archiveRetentionDays` to 0 to disable
+expiration entirely. The total expired count surfaces in the improve result as
+`proposalsExpired`.
+
+When auto-accept is enabled, the threshold from `--auto-accept` is compared
+against each proposal's `confidence` score (set by reflect/propose). Proposals
+with `confidence × 100 >= threshold` are promoted into the stash automatically.
+Reflect emits `confidence` as part of its JSON response schema; agents and
+custom runners should populate it (0..1) so auto-accept has signal to act on.
+
 Selection behavior defaults to recent feedback signals first, with a
 zero-feedback retrieval fallback for high-traffic refs. Use
 `--require-feedback-signal` to disable retrieval fallback for the run.
@@ -1640,15 +1688,21 @@ List proposal queue entries.
 
 ```sh
 akm proposals
-akm proposals --status pending|accepted|rejected
+akm proposals --status pending|accepted|rejected|reverted
 akm proposals --ref skill:deploy
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--status` | Filter by `pending`, `accepted`, or `rejected` |
+| `--status` | Filter by `pending`, `accepted`, `rejected`, or `reverted` |
 | `--ref` | Filter by exact asset ref |
 | `--type` | Reserved type filter |
+
+Each proposal record carries an optional `confidence` field (0..1) emitted by
+reflect/propose runs. The `--auto-accept` flag on `improve` uses this score to
+auto-promote high-confidence proposals — see the `improve` section above. After
+promotion, accepted proposals that overwrote an existing asset also carry a
+`backup` field pointing to the captured prior content, which `akm revert` uses.
 
 ### accept
 
@@ -1682,6 +1736,29 @@ Inspect a queued proposal.
 ```sh
 akm show proposal <id>
 ```
+
+### revert
+
+**Status: Available since 0.8.0.**
+Revert an accepted proposal by restoring the prior asset content from the
+backup captured at promotion time. Only works on proposals that overwrote an
+existing asset; new-asset proposals leave no backup. Sets the proposal's status
+to `reverted` and appends a `proposal_reverted` event to the audit log.
+
+```sh
+akm revert <id>
+akm revert skill:akm-dream                   # Asset ref
+akm revert <id> --target team-stash
+```
+
+| Flag | Description |
+| --- | --- |
+| `--target <name>` | Override the write destination by source name |
+
+Accepts the full proposal UUID or the asset ref. UUID prefixes are **not**
+supported for reverting (archived proposals require the full identifier). Errors
+with exit code 2 if the proposal is not in `accepted` status, has no captured
+backup, or cannot be found.
 
 ### diff proposal
 

@@ -269,7 +269,7 @@
     },
     "archiveRetentionDays": {
       "type": "number",
-      "description": "Number of days to retain soft-invalidated memory assets in .akm/archive/ before TTL cleanup.",
+      "description": "Number of days to retain soft-invalidated memory assets in .akm/archive/ before TTL cleanup. Also gates proposal expiration: pending proposals older than this threshold are archived as \"expired: no action within retention window\" during the improve maintenance pass. Set to 0 to disable both TTL cleanup and proposal expiration.",
       "minimum": 0
     }
   },
