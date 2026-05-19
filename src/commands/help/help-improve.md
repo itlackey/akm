@@ -53,6 +53,10 @@ Options:
                         Only process refs with recent feedback signal events
   --min-retrieval-count <n>
                         Retrieval fallback threshold when no recent feedback exists (default: 5)
+  --json-to-stdout      Emit the full JSON result on stdout (legacy behaviour).
+                        (0.8.0+: full JSON is written to .akm/runs/<run-id>/improve-result.json
+                        and stdout is empty; use --json-to-stdout for the prior behaviour,
+                        e.g. `akm improve --json-to-stdout | jq`.)
 
 Examples:
   akm improve

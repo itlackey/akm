@@ -116,6 +116,9 @@ describe("improve CLI cooldown flags", () => {
         "-1",
         "--consolidate-cooldown-days",
         "-1",
+        // 0.8.0+ default mode writes JSON to a file; use the legacy escape
+        // hatch so this assertion can read `ok` from stdout.
+        "--json-to-stdout",
       ],
       stash,
     );

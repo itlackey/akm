@@ -29,6 +29,7 @@ import {
 import { akmHealth } from "./commands/health";
 import { akmHistory } from "./commands/history";
 import { akmImprove } from "./commands/improve";
+import { buildImproveRunId, relativeImproveResultPath, writeImproveResultFile } from "./commands/improve-result-file";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
@@ -3981,6 +3982,12 @@ const improveCommand = defineCommand({
       description:
         "Minimum retrieval count for zero-feedback fallback eligibility (default: 1, set 0 to include all assets regardless of retrieval history)",
     },
+    "json-to-stdout": {
+      type: "boolean",
+      description:
+        "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full JSON is written to .akm/runs/<run-id>/improve-result.json and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve | jq`.)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -3992,6 +3999,7 @@ const improveCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
+      const jsonToStdout = getHyphenatedBoolean(args, "json-to-stdout");
       const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
       const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
       const targetArg = getStringArg(args, "target");
@@ -4034,6 +4042,7 @@ const improveCommand = defineCommand({
         `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
       );
       setLogFile(improveLogFile);
+      const startedAtMs = Date.now();
       let improveResult: Awaited<ReturnType<typeof akmImprove>>;
       try {
         improveResult = await akmImprove({
@@ -4060,7 +4069,42 @@ const improveCommand = defineCommand({
       } finally {
         clearLogFile();
       }
-      output("improve", improveResult);
+      const durationMs = Date.now() - startedAtMs;
+
+      if (jsonToStdout) {
+        // Legacy / escape-hatch mode: full JSON on stdout, no file write.
+        // Kept for scripts/agents that already pipe to jq.
+        output("improve", improveResult);
+        process.exit(0);
+      }
+
+      // Default mode (0.8.0+): persist the full result under
+      // `<stash>/.akm/runs/<run-id>/improve-result.json` and emit NOTHING
+      // on stdout. The verbose JSON would otherwise scroll earlier progress
+      // logs out of the terminal buffer. The existing `[improve] ...`
+      // progress log lines on stderr remain the canonical console UX —
+      // do NOT add any new console output here.
+      const runId = buildImproveRunId();
+      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      const resultPathFallback = relativeImproveResultPath(runId);
+      if (primaryStashDir) {
+        try {
+          writeImproveResultFile(primaryStashDir, runId, improveResult);
+        } catch (err) {
+          // Stderr warning on the failure path is preferable to crashing
+          // the run after all the work has completed.
+          process.stderr.write(
+            `warning: failed to write improve result file at ${path.join(primaryStashDir, resultPathFallback)}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      } else {
+        process.stderr.write(
+          `warning: no writable stash directory resolved; improve result not persisted to disk (use --json-to-stdout to capture)\n`,
+        );
+      }
+
+      // durationMs reserved for future use (no console emission today).
+      void durationMs;
       process.exit(0);
     });
   },
