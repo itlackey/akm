@@ -427,6 +427,60 @@ test("akmIndex applies curated frontmatter metadata for wiki-root stash sources"
   }
 });
 
+test("akmIndex populates derived_from column for derived memories (Phase 5A)", async () => {
+  const stashDir = tmpStash();
+  fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
+  writeFile(
+    path.join(stashDir, "memories", "parent-fact.md"),
+    ["---", "description: A parent memory.", "---", "", "Body of the parent.", ""].join("\n"),
+  );
+  // Derived child: identified by name suffix + frontmatter source/inferred.
+  writeFile(
+    path.join(stashDir, "memories", "parent-fact.derived.md"),
+    [
+      "---",
+      "description: Distilled child surface.",
+      "inferred: true",
+      "source: memory:parent-fact",
+      "derivedFrom: parent-fact",
+      "---",
+      "",
+      "Distilled body.",
+      "",
+    ].join("\n"),
+  );
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+  await akmIndex({ stashDir, full: true });
+
+  const db = openDatabase();
+  try {
+    // 1. The entry JSON for the derived child carries `derivedFrom`.
+    const memoryEntries = getAllEntries(db, "memory");
+    const child = memoryEntries.find((e) => e.entry.name === "parent-fact.derived");
+    const parent = memoryEntries.find((e) => e.entry.name === "parent-fact");
+    expect(parent).toBeDefined();
+    expect(child).toBeDefined();
+    expect(child?.entry.derivedFrom).toBe("memory:parent-fact");
+    // The non-derived parent must NOT carry derivedFrom.
+    expect(parent?.entry.derivedFrom).toBeUndefined();
+
+    // 2. The dedicated `derived_from` column is populated on the child row
+    //    AND null on the parent row. Verifies the indexer's column mirror.
+    const rows = db.prepare("SELECT entry_key, derived_from FROM entries").all() as Array<{
+      entry_key: string;
+      derived_from: string | null;
+    }>;
+    const childRow = rows.find((r) => r.entry_key.endsWith(":memory:parent-fact.derived"));
+    const parentRow = rows.find((r) => r.entry_key.endsWith(":memory:parent-fact"));
+    expect(childRow?.derived_from).toBe("memory:parent-fact");
+    expect(parentRow?.derived_from).toBeNull();
+  } finally {
+    closeDatabase(db);
+  }
+});
+
 test("akmIndex skips malformed workflow assets and reports warnings", async () => {
   const stashDir = tmpStash();
   writeFile(

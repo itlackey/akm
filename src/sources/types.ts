@@ -42,6 +42,20 @@ export interface SourceSearchHit {
   quality?: string;
   beliefState?: string;
   currentBeliefRefs?: string[];
+  /**
+   * Phase 5A / Advantage D5 — derived-memory pointer.
+   *
+   * When a parent memory has a derived child indexed, the parent's search hit
+   * is enriched with `expandTo` set to the child's ref (e.g.
+   * `"memory:claude-prefs.derived"`). Clients can fetch the child via
+   * `akm show <expandTo>` to retrieve the distilled lesson surface while the
+   * parent itself remains the primary retrieval result.
+   *
+   * Absent when no derived child exists. The accompanying description /
+   * searchHints / tags fields on the hit are swapped in from the derived
+   * child when this pointer is set.
+   */
+  expandTo?: string;
   graph?: {
     entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
     relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;

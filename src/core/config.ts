@@ -544,6 +544,30 @@ export interface ImproveConfig {
    * ```
    */
   reflectCooldownByType?: Record<string, number>;
+  /**
+   * Phase 2A / Rec 5 — configurable forgetting curve.
+   *
+   * Tunes the exponential utility-score recency decay applied during search
+   * ranking. `halfLifeDays` (default 30) replaces the historical hardcoded
+   * `RECENCY_DECAY_DAYS = 30`. `feedbackStabilityBoost` (default 1.5)
+   * multiplicatively extends the half-life by `^positiveFeedbackCount`,
+   * capped at `halfLifeDays × 4`, so memories that have repeatedly proven
+   * useful decay more slowly than first-use memories.
+   *
+   * Default-safe: the absence of this object — and the absence of any
+   * recorded positive feedback events — collapses the formula back to the
+   * original `exp(-days / 30)` curve so pre-2A behaviour is preserved.
+   */
+  utilityDecay?: {
+    /** Recency half-life in days (default 30). Minimum 0.1. */
+    halfLifeDays?: number;
+    /**
+     * Multiplicative half-life extension applied per positive feedback event
+     * recorded against the entry. Default 1.5; minimum 1.0 (no boost).
+     * Effective half-life is capped at `halfLifeDays × 4`.
+     */
+    feedbackStabilityBoost?: number;
+  };
 }
 
 export interface OutputConfig {
@@ -1084,6 +1108,30 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
         }
       }
       if (Object.keys(byType).length > 0) improveConfig.reflectCooldownByType = byType;
+    }
+    // Phase 2A / Rec 5: configurable forgetting curve.
+    if (improveRaw.utilityDecay !== null && typeof improveRaw.utilityDecay === "object") {
+      const decayRaw = improveRaw.utilityDecay as Record<string, unknown>;
+      const decay: NonNullable<ImproveConfig["utilityDecay"]> = {};
+      if (
+        typeof decayRaw.halfLifeDays === "number" &&
+        Number.isFinite(decayRaw.halfLifeDays) &&
+        decayRaw.halfLifeDays >= 0.1
+      ) {
+        decay.halfLifeDays = decayRaw.halfLifeDays;
+      } else if (decayRaw.halfLifeDays !== undefined) {
+        warn(`[akm] Ignoring improve.utilityDecay.halfLifeDays: expected a number ≥ 0.1.`);
+      }
+      if (
+        typeof decayRaw.feedbackStabilityBoost === "number" &&
+        Number.isFinite(decayRaw.feedbackStabilityBoost) &&
+        decayRaw.feedbackStabilityBoost >= 1.0
+      ) {
+        decay.feedbackStabilityBoost = decayRaw.feedbackStabilityBoost;
+      } else if (decayRaw.feedbackStabilityBoost !== undefined) {
+        warn(`[akm] Ignoring improve.utilityDecay.feedbackStabilityBoost: expected a number ≥ 1.0.`);
+      }
+      if (Object.keys(decay).length > 0) improveConfig.utilityDecay = decay;
     }
     if (Object.keys(improveConfig).length > 0) config.improve = improveConfig;
   }

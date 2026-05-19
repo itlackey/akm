@@ -137,6 +137,18 @@ export interface StashEntry {
    * `evidenceSources:` frontmatter key.
    */
   evidenceSources?: string[];
+  /**
+   * For derived memories (Phase 5A / Advantage D5), the parent ref that this
+   * entry was distilled from. Surfaced from the `source:` frontmatter key
+   * (form: `"memory:<parent-name>"`) when the entry is recognized as a
+   * derived child (either by frontmatter `inferred: true` or by name suffix
+   * `.derived`). Absent on non-derived entries.
+   *
+   * The indexer mirrors this value into the dedicated `entries.derived_from`
+   * column so `getDerivedForParent()` can resolve the child by parent ref
+   * without a full table scan.
+   */
+  derivedFrom?: string;
 }
 
 export interface StashFile {
@@ -332,6 +344,9 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   }
   const evidenceSources = normalizeNonEmptyStringList(e.evidenceSources);
   if (evidenceSources) result.evidenceSources = evidenceSources;
+  if (typeof e.derivedFrom === "string" && e.derivedFrom.trim().length > 0) {
+    result.derivedFrom = e.derivedFrom.trim();
+  }
   if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
     const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
     if (scope) result.scope = scope;
@@ -476,6 +491,30 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
 
   const evidenceSources = normalizeStringListOrUndefined(fmData.evidenceSources);
   if (evidenceSources) entry.evidenceSources = evidenceSources;
+
+  // Phase 5A / Advantage D5: capture parent ref for derived memories.
+  // Memory-inference writes `source: "memory:<parent>"` and `inferred: true`
+  // (and a derived child name suffix `.derived`). We mirror that source ref
+  // into `entry.derivedFrom` so the indexer can populate the dedicated
+  // `derived_from` column. Non-derived entries leave this field unset.
+  if (entry.type === "memory") {
+    const isDerivedByName = entry.name.toLowerCase().endsWith(".derived");
+    const isDerivedByFm = fmData.inferred === true;
+    if (isDerivedByName || isDerivedByFm) {
+      const sourceStr = asNonEmptyString(fmData.source);
+      if (sourceStr?.includes(":")) {
+        entry.derivedFrom = sourceStr;
+      } else {
+        // Fallback: some legacy renderings store only `derivedFrom: <name>`
+        // (a bare parent name). Promote it to a `memory:` ref so the lookup
+        // column stays consistent.
+        const derivedFromName = asNonEmptyString(fmData.derivedFrom);
+        if (derivedFromName) {
+          entry.derivedFrom = derivedFromName.includes(":") ? derivedFromName : `memory:${derivedFromName}`;
+        }
+      }
+    }
+  }
 
   const intent = normalizeIntent(fmData.intent);
   if (intent) entry.intent = intent;

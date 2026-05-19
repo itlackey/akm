@@ -8,10 +8,12 @@ import {
   DB_VERSION,
   deleteEntriesByDir,
   getAllEntries,
+  getDerivedForParent,
   getEntriesByDir,
   getEntryById,
   getEntryCount,
   getMeta,
+  getPositiveFeedbackCountsByIds,
   isVecAvailable,
   openDatabase,
   openExistingDatabase,
@@ -23,6 +25,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
+import { insertUsageEvent } from "../src/indexer/usage-events";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -781,6 +784,145 @@ describe("rebuildFts incremental", () => {
 
       rebuildFts(db, { incremental: true });
       expect(ftsCount(db)).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Phase 5A / DB v17: derived_from index ──────────────────────────────────
+
+describe("derived_from column (Phase 5A)", () => {
+  test("DB_VERSION is at least 17 — derived_from column shipped at v17", () => {
+    expect(DB_VERSION).toBeGreaterThanOrEqual(17);
+  });
+
+  test("entries table has a derived_from column on a freshly opened DB", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const cols = (db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((c) => c.name);
+      expect(cols).toContain("derived_from");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("idx_entries_derived_from index is created", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const idx = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_entries_derived_from'")
+        .get() as { name: string } | undefined;
+      expect(idx?.name).toBe("idx_entries_derived_from");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsertEntry writes derived_from when entry carries derivedFrom", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const child: StashEntry = {
+        name: "parent.derived",
+        type: "memory",
+        description: "Distilled child.",
+        derivedFrom: "memory:parent",
+      };
+      upsertEntry(db, "k:memory:parent.derived", "/d", "/d/child.md", "/stash", child, "search text");
+
+      const row = db.prepare("SELECT derived_from FROM entries WHERE entry_key = ?").get("k:memory:parent.derived") as
+        | { derived_from: string | null }
+        | undefined;
+      expect(row?.derived_from).toBe("memory:parent");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getDerivedForParent returns the derived row keyed by parent ref", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const parent: StashEntry = { name: "alpha", type: "memory", description: "Parent." };
+      const child: StashEntry = {
+        name: "alpha.derived",
+        type: "memory",
+        description: "Distilled alpha.",
+        derivedFrom: "memory:alpha",
+      };
+      upsertEntry(db, "k:memory:alpha", "/d", "/d/alpha.md", "/stash", parent, "alpha");
+      upsertEntry(db, "k:memory:alpha.derived", "/d", "/d/alpha.derived.md", "/stash", child, "alpha derived");
+
+      const found = getDerivedForParent(db, "memory:alpha");
+      expect(found).not.toBeNull();
+      expect(found?.entry.name).toBe("alpha.derived");
+      expect(found?.entry.derivedFrom).toBe("memory:alpha");
+
+      // No derived child for "beta": returns null.
+      expect(getDerivedForParent(db, "memory:beta")).toBeNull();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Phase 2A: positive feedback counts ─────────────────────────────────────
+
+describe("getPositiveFeedbackCountsByIds (Phase 2A)", () => {
+  test("returns counts of positive feedback events grouped by entry id", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const id1 = insertTestEntry(db, "asset-1");
+      const id2 = insertTestEntry(db, "asset-2");
+
+      // 3× positive feedback for id1, 0 for id2.
+      for (let i = 0; i < 3; i++) {
+        insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id1, entry_ref: "ref:1" });
+      }
+      // A negative feedback event must NOT count toward the positive total.
+      insertUsageEvent(db, { event_type: "feedback", signal: "negative", entry_id: id1, entry_ref: "ref:1" });
+      // A "show" event must NOT count toward feedback counts.
+      insertUsageEvent(db, { event_type: "show", entry_id: id1, entry_ref: "ref:1" });
+
+      const counts = getPositiveFeedbackCountsByIds(db, [id1, id2]);
+      expect(counts.get(id1)).toBe(3);
+      // id2 has no positive feedback at all → absent from the map.
+      expect(counts.has(id2)).toBe(false);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("returns empty map for empty id list (no SQL issued)", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const counts = getPositiveFeedbackCountsByIds(db, []);
+      expect(counts.size).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("chunks at 500 ids — exercises the SQLITE_CHUNK_SIZE path without crashing", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const targetIds: number[] = [];
+      // Seed two entries with positive feedback so we can assert non-empty
+      // results across a >500-id query.
+      const id1 = insertTestEntry(db, "chunked-1");
+      const id2 = insertTestEntry(db, "chunked-2");
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id1 });
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id1 });
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id2 });
+
+      // Pad to 700 ids — must split into 500 + 200 chunks.
+      for (let i = 0; i < 700; i++) targetIds.push(100_000 + i);
+      // Include the real ids near both chunk boundaries.
+      targetIds[0] = id1;
+      targetIds[600] = id2;
+
+      const counts = getPositiveFeedbackCountsByIds(db, targetIds);
+      expect(counts.get(id1)).toBe(2);
+      expect(counts.get(id2)).toBe(1);
     } finally {
       closeDatabase(db);
     }

@@ -16,7 +16,20 @@ const TYPE_BOOST: Record<string, number> = {
 const MAX_BOOST_SUM = 3.0;
 const UTILITY_WEIGHT = 0.5;
 const UTILITY_MAX_BOOST = 1.5;
-const RECENCY_DECAY_DAYS = 30;
+
+/**
+ * Phase 2A / Rec 5: default recency half-life (days) used when no
+ * `utilityDecayConfig` is supplied to the ranking pipeline. Matches the
+ * pre-2A hardcoded `RECENCY_DECAY_DAYS = 30` constant — the formula is
+ * default-safe and collapses to `exp(-days / 30)` when no overrides apply.
+ */
+const DEFAULT_RECENCY_HALF_LIFE_DAYS = 30;
+/**
+ * Cap on the effective half-life after applying the feedback stability
+ * boost — prevents indefinite half-life inflation for memories with many
+ * positive feedback events. `effectiveHalfLife = min(halfLife * boost^count, halfLife * 4)`.
+ */
+const FEEDBACK_HALF_LIFE_CAP_MULTIPLIER = 4;
 
 export interface RankingContext {
   db: Database;
@@ -34,6 +47,22 @@ export interface RankingContributor {
 
 export interface UtilityRankingContext extends RankingContext {
   utilityScores: Map<number, UtilityScoreRow>;
+  /**
+   * Phase 2A / Rec 5: configurable forgetting curve parameters. When absent
+   * the contributor falls back to {@link DEFAULT_RECENCY_HALF_LIFE_DAYS} and
+   * no feedback-stability boost, preserving the pre-2A `exp(-days/30)` curve.
+   */
+  utilityDecayConfig?: {
+    halfLifeDays: number;
+    feedbackStabilityBoost: number;
+  };
+  /**
+   * Phase 2A / Rec 5: per-entry positive feedback counts (keyed by entry id).
+   * Used to compute the stabilized half-life:
+   * `halfLifeDays * (feedbackStabilityBoost ^ positiveCount)`, capped at
+   * `halfLifeDays * 4`. Empty/absent means no boost (default behaviour).
+   */
+  positiveFeedbackCounts?: Map<number, number>;
 }
 
 export interface UtilityRankingContributor {
@@ -240,7 +269,21 @@ const utilityRankingContributor: UtilityRankingContributor = {
       const daysSinceLastUse = Number.isNaN(lastUsedMs)
         ? Infinity
         : Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
-      recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_DECAY_DAYS);
+
+      // Phase 2A / Rec 5: configurable forgetting curve with optional
+      // feedback-stability boost. Absent config + absent positive feedback
+      // collapses to `exp(-days / 30)` — pre-2A default-safe.
+      const halfLifeDays = ctx.utilityDecayConfig?.halfLifeDays ?? DEFAULT_RECENCY_HALF_LIFE_DAYS;
+      const stabilityBoost = ctx.utilityDecayConfig?.feedbackStabilityBoost ?? 1.5;
+      const positiveCount = ctx.positiveFeedbackCounts?.get(item.id) ?? 0;
+      // `boost^count` is 1 when count is 0 OR when boost is 1.0, so neither
+      // a missing feedback count nor a "no boost" config widens the half-life.
+      let stabilizedHalfLife = halfLifeDays * stabilityBoost ** positiveCount;
+      stabilizedHalfLife = Math.min(stabilizedHalfLife, halfLifeDays * FEEDBACK_HALF_LIFE_CAP_MULTIPLIER);
+      // Defensive: half-life must stay positive to avoid div-by-zero / Infinity.
+      const safeHalfLife = Math.max(0.0001, stabilizedHalfLife);
+
+      recencyFactor = Math.exp(-daysSinceLastUse / safeHalfLife);
     }
     const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
     item.score *= Math.min(rawBoost, UTILITY_MAX_BOOST);

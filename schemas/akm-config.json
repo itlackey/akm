@@ -263,6 +263,23 @@
           "type": "object",
           "description": "Per-asset-type reflect cooldown in days. Migrated to features.improve.reflect.options.cooldown in v2.",
           "additionalProperties": { "type": "number", "minimum": 0 }
+        },
+        "utilityDecay": {
+          "type": "object",
+          "description": "Phase 2A / Rec 5: configurable forgetting curve for the utility-recency boost used during search ranking. Default-safe: omitting this object preserves the legacy exp(-days/30) decay.",
+          "properties": {
+            "halfLifeDays": {
+              "type": "number",
+              "description": "Recency half-life in days for the utility decay curve. Default: 30 (matches the legacy hardcoded RECENCY_DECAY_DAYS).",
+              "minimum": 0.1
+            },
+            "feedbackStabilityBoost": {
+              "type": "number",
+              "description": "Multiplicative half-life extension per positive feedback event recorded against the entry. Effective half-life is capped at halfLifeDays * 4. Default: 1.5. Set to 1.0 to disable the boost entirely.",
+              "minimum": 1.0
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": true

@@ -18,6 +18,22 @@ export interface RankEntriesOptions {
   query: string;
   items: RankedEntryInput[];
   graphContext: GraphBoostContext | null;
+  /**
+   * Phase 2A / Rec 5: optional configurable forgetting curve. When absent,
+   * the utility recency decay falls back to its pre-2A default
+   * (`exp(-days/30)`). Threaded through to {@link UtilityRankingContext}.
+   */
+  utilityDecayConfig?: {
+    halfLifeDays: number;
+    feedbackStabilityBoost: number;
+  };
+  /**
+   * Phase 2A / Rec 5: optional per-entry positive feedback counts. When
+   * supplied, the utility-ranking contributor uses these to stretch the
+   * effective half-life of repeatedly-helpful entries. When absent or empty
+   * the contributor behaves exactly as it did pre-2A.
+   */
+  positiveFeedbackCounts?: Map<number, number>;
 }
 
 export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
@@ -100,6 +116,8 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
   const utilityContext = {
     ...rankingContext,
     utilityScores: utilScoresMap,
+    utilityDecayConfig: options.utilityDecayConfig,
+    positiveFeedbackCounts: options.positiveFeedbackCounts,
   };
   for (const item of options.items) {
     applyUtilityContributors(item, utilityContext);

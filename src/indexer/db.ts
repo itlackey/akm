@@ -46,7 +46,7 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 16;
+export const DB_VERSION = 17;
 export const EMBEDDING_DIM = 384;
 export const GRAPH_SCHEMA_VERSION = 3;
 
@@ -173,13 +173,25 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       stash_dir   TEXT NOT NULL,
       entry_json  TEXT NOT NULL,
       search_text TEXT NOT NULL,
-      entry_type  TEXT NOT NULL
+      entry_type  TEXT NOT NULL,
+      derived_from TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_entries_dir ON entries(dir_path);
     CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(entry_type);
     CREATE INDEX IF NOT EXISTS idx_entries_file_path ON entries(file_path);
   `);
+
+  // Phase 5A / DB v17: backfill `derived_from` column + index on databases
+  // that were created at v17 fresh OR carry a partial v17 schema (a DB whose
+  // `index_meta.version` was bumped to 17 but whose `entries` table still
+  // lacks the column — this happens when a previous v17 binary opened a
+  // pre-v17 DB without taking the upgrade path because no version mismatch
+  // was seen at boot). The PRAGMA-then-ALTER guard runs unconditionally so
+  // both fresh and partial schemas converge. The CREATE INDEX for
+  // `derived_from` MUST run after this helper so we never reference a
+  // column that has not yet been added on partial schemas.
+  ensureDerivedFromColumn(db);
 
   // Validated WorkflowDocument JSON, one row per indexed workflow entry.
   // Pure index data — fully rebuilt on each `akm index`. ON DELETE CASCADE
@@ -604,6 +616,13 @@ export function deleteIndexDirStatesByStashDir(db: Database, stashDir: string): 
 // ── Entry operations ────────────────────────────────────────────────────────
 
 /**
+ * SQLite parameter chunk size — chosen well below SQLITE_MAX_VARIABLE_NUMBER
+ * (default 999 on most builds) so multi-row `IN (?, ?, ...)` queries stay
+ * within bounds. Shared by helpers below.
+ */
+const SQLITE_CHUNK_SIZE = 500;
+
+/**
  * Insert or update an entry in the `entries` table. Returns the row id.
  *
  * **Important:** This does not update the FTS index. Callers must call
@@ -624,6 +643,11 @@ export function upsertEntry(
   // every call. The dirty-mark INSERT and the upsert-with-RETURNING
   // share the same WeakMap so they live and die with the connection.
   const stmts = getUpsertStmts(db);
+  // Phase 5A / Advantage D5: surface derived memory parent ref into the
+  // dedicated `derived_from` column so retrieval-time lookup (parent→child)
+  // does not have to scan + JSON-decode every memory row.
+  const derivedFrom =
+    typeof entry.derivedFrom === "string" && entry.derivedFrom.trim() ? entry.derivedFrom.trim() : null;
   const result = stmts.upsert.get(
     entryKey,
     dirPath,
@@ -632,6 +656,7 @@ export function upsertEntry(
     JSON.stringify(entry),
     searchText,
     entry.type,
+    derivedFrom,
   ) as { id: number } | undefined;
   if (!result) throw new Error("upsertEntry: entry_key not found after upsert");
 
@@ -657,21 +682,141 @@ function getUpsertStmts(db: Database): UpsertStmts {
     // SELECT round-trip needed (last_insert_rowid() is unreliable for
     // ON CONFLICT). Use `.get()` so a single row comes back.
     upsert: db.prepare(`
-      INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type, derived_from)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(entry_key) DO UPDATE SET
         dir_path = excluded.dir_path,
         file_path = excluded.file_path,
         stash_dir = excluded.stash_dir,
         entry_json = excluded.entry_json,
         search_text = excluded.search_text,
-        entry_type = excluded.entry_type
+        entry_type = excluded.entry_type,
+        derived_from = excluded.derived_from
       RETURNING id
     `),
     markDirty: db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)"),
   };
   upsertStmtsByDb.set(db, stmts);
   return stmts;
+}
+
+/**
+ * Phase 5A / DB v17 schema guard.
+ *
+ * Ensures the `entries.derived_from` column + index exist on the open
+ * connection. Called from `ensureSchema()` after the entries CREATE so that
+ * legacy databases (created against a pre-v17 binary but reopened without
+ * triggering `handleVersionUpgrade()`) still gain the new column without
+ * data loss. Idempotent: a `PRAGMA table_info` lookup gates the ALTER.
+ */
+function ensureDerivedFromColumn(db: Database): void {
+  try {
+    const cols = db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>;
+    const hasColumn = cols.some((c) => c.name === "derived_from");
+    if (!hasColumn) {
+      db.exec("ALTER TABLE entries ADD COLUMN derived_from TEXT");
+    }
+    // Index creation is idempotent on its own; safe to call unconditionally.
+    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_derived_from ON entries(derived_from)");
+  } catch {
+    /* table may not exist on a brand-new DB before CREATE — caller is responsible */
+  }
+}
+
+/**
+ * Phase 5A / Advantage D5: look up the derived-memory child row whose
+ * `derived_from` column matches `parentRef` (e.g. `"memory:claude-prefs"`).
+ *
+ * Returns the most-recently-updated derived child when multiple exist (one
+ * parent should yield exactly one `.derived` child in practice, but the
+ * ordering keeps results deterministic). Returns `null` when no derived
+ * child has been indexed for this parent.
+ */
+export function getDerivedForParent(db: Database, parentRef: string): DbIndexedEntry | null {
+  if (!parentRef) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text
+         FROM entries
+         WHERE derived_from = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(parentRef) as
+      | {
+          id: number;
+          entry_key: string;
+          dir_path: string;
+          file_path: string;
+          stash_dir: string;
+          entry_json: string;
+          search_text: string;
+        }
+      | undefined;
+    if (!row) return null;
+    let entry: StashEntry;
+    try {
+      entry = JSON.parse(row.entry_json) as StashEntry;
+    } catch {
+      warn(`[db] getDerivedForParent: skipping entry id=${row.id} — corrupt entry_json`);
+      return null;
+    }
+    return {
+      id: row.id,
+      entryKey: row.entry_key,
+      dirPath: row.dir_path,
+      filePath: row.file_path,
+      stashDir: row.stash_dir,
+      entry,
+      searchText: row.search_text,
+    };
+  } catch {
+    /* `derived_from` column may not exist on legacy DBs that haven't been
+       rebuilt; treat as "no derived child". */
+    return null;
+  }
+}
+
+/**
+ * Phase 2A / Rec 5: bulk-load positive feedback event counts for the given
+ * entry ids. Used by the utility-decay forgetting curve to stabilize
+ * (extend the half-life of) memories that have repeatedly proven useful.
+ *
+ * Returns a `Map<entryId, count>` containing only entries with at least one
+ * positive feedback event — missing ids implicitly map to `0`. Chunks at
+ * `SQLITE_CHUNK_SIZE` (500) to respect `SQLITE_MAX_VARIABLE_NUMBER`.
+ *
+ * Cheap when called with zero ids, and silently empty when the
+ * `usage_events` table is missing.
+ */
+export function getPositiveFeedbackCountsByIds(db: Database, ids: number[]): Map<number, number> {
+  const result = new Map<number, number>();
+  if (ids.length === 0) return result;
+  for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    try {
+      const rows = db
+        .prepare(
+          `SELECT entry_id, COUNT(*) AS cnt
+             FROM usage_events
+             WHERE event_type = 'feedback'
+               AND signal = 'positive'
+               AND entry_id IN (${placeholders})
+             GROUP BY entry_id`,
+        )
+        .all(...chunk) as Array<{ entry_id: number | null; cnt: number }>;
+      for (const row of rows) {
+        if (row.entry_id !== null && row.cnt > 0) {
+          result.set(row.entry_id, row.cnt);
+        }
+      }
+    } catch {
+      /* usage_events table may be missing on legacy DBs — treat as zero counts */
+    }
+  }
+  return result;
 }
 
 function deleteEntriesWhere(db: Database, column: "dir_path" | "stash_dir", value: string): void {
@@ -689,8 +834,6 @@ export function deleteEntriesByDir(db: Database, dirPath: string): void {
 export function deleteEntriesByStashDir(db: Database, stashDir: string): void {
   deleteEntriesWhere(db, "stash_dir", stashDir);
 }
-
-const SQLITE_CHUNK_SIZE = 500;
 
 function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
   if (ids.length === 0) return;

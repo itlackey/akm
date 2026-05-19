@@ -16,7 +16,7 @@ import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../core/action-contributors";
 import { makeAssetRef } from "../core/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-registry";
-import type { AkmConfig } from "../core/config";
+import type { AkmConfig, ImproveConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../sources/types";
@@ -26,6 +26,7 @@ import {
   getEntryById,
   getEntryCount,
   getMeta,
+  getPositiveFeedbackCountsByIds,
   openExistingDatabase,
   sanitizeFtsQuery,
   searchFts,
@@ -66,6 +67,23 @@ function resolveSearchHitRef(entry: StashEntry, refName: string, source?: Search
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {
   return source?.wikiName ? null : (source?.registryId ?? null);
+}
+
+/**
+ * Phase 2A / Rec 5: gate for the per-search `getPositiveFeedbackCountsByIds`
+ * lookup. Returns `true` only when the user has explicitly opted into
+ * `improve.utilityDecay` AND configured a `feedbackStabilityBoost > 1.0`.
+ * Either condition being false makes the DB query pure overhead (the ranking
+ * contributor ignores `positiveFeedbackCounts` when `utilityDecayConfig` is
+ * absent, and `1.0^count == 1` collapses the boost into a no-op).
+ *
+ * Exported for unit testing — keeps the gate decision pinned so a future edit
+ * can't quietly broaden the hot path.
+ */
+export function shouldQueryPositiveFeedbackCounts(utilityDecayRaw: ImproveConfig["utilityDecay"]): boolean {
+  if (utilityDecayRaw === undefined) return false;
+  const boost = utilityDecayRaw.feedbackStabilityBoost ?? 1.5;
+  return boost > 1.0;
 }
 
 // ── Main search entrypoint ───────────────────────────────────────────────────
@@ -248,6 +266,7 @@ async function searchDatabase(
           sources,
           config,
           rendererRegistry,
+          db,
         }),
       ),
     );
@@ -310,7 +329,33 @@ async function searchDatabase(
     return loadGraphBoostContext(allSourceDirs, query, config, db);
   })();
 
-  applyRankingRules({ db, query, items: scored, graphContext });
+  // Phase 2A / Rec 5: resolve forgetting-curve config and skip the feedback
+  // count query when the boost cannot make a difference (default ≤ 1.0 means
+  // boost^count == 1 — zero overhead for the common case).
+  const utilityDecayRaw = config.improve?.utilityDecay;
+  const halfLifeDays = utilityDecayRaw?.halfLifeDays ?? 30;
+  const feedbackStabilityBoost = utilityDecayRaw?.feedbackStabilityBoost ?? 1.5;
+  const utilityDecayConfig = utilityDecayRaw !== undefined ? { halfLifeDays, feedbackStabilityBoost } : undefined;
+  // Gate the feedback-count query on the user having explicitly opted into
+  // utilityDecay. Without an opt-in, `utilityDecayConfig` is undefined and the
+  // ranking contributor ignores `positiveFeedbackCounts` — so running the DB
+  // query here would be pure overhead. The boost > 1.0 sub-gate then skips the
+  // query when the configured boost is a no-op (1.5^count when boost==1 is 1).
+  const positiveFeedbackCounts = shouldQueryPositiveFeedbackCounts(utilityDecayRaw)
+    ? getPositiveFeedbackCountsByIds(
+        db,
+        scored.map((item) => item.id),
+      )
+    : undefined;
+
+  applyRankingRules({
+    db,
+    query,
+    items: scored,
+    graphContext,
+    utilityDecayConfig,
+    positiveFeedbackCounts,
+  });
 
   // ── minScore floor ──────────────────────────────────────────────────────
   // Drop semantic-only hits (cosine-only, no FTS match) whose score falls
@@ -368,6 +413,7 @@ async function searchDatabase(
         utilityBoosted,
         graphContext,
         rendererRegistry,
+        db,
       });
     }),
   );
@@ -440,6 +486,13 @@ export async function buildDbHit(input: {
   graphContext?: GraphBoostContext | null;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
+  /**
+   * Phase 5A / Advantage D5: open DB connection threaded into the search-hit
+   * enricher pipeline so the derived-memory enricher can resolve parent→child
+   * via the `entries.derived_from` index. Absent for unit tests / call sites
+   * that build hits without a DB — the enricher then becomes a no-op.
+   */
+  db?: Database;
 }): Promise<SourceSearchHit> {
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
@@ -505,6 +558,7 @@ export async function buildDbHit(input: {
     type: input.entry.type,
     stashDir: entryStashDir,
     rendererRegistry,
+    db: input.db,
   });
 
   return hit;
