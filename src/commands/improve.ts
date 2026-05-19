@@ -21,7 +21,14 @@ import {
   type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { getDbPath } from "../core/paths";
-import { createProposal, isProposalSkipped, listProposals, purgeOrphanProposals } from "../core/proposals";
+import {
+  createProposal,
+  expireStaleProposals,
+  isProposalSkipped,
+  listProposals,
+  promoteProposal,
+  purgeOrphanProposals,
+} from "../core/proposals";
 import { openStateDatabase } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
@@ -218,6 +225,11 @@ export interface AkmImproveResult {
   graphExtraction?: GraphExtractionResult;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
   orphansPurged?: number;
+  /**
+   * Phase 6B (Advantage D6b): pending proposals archived as expired this run
+   * because they aged past `config.archiveRetentionDays`.
+   */
+  proposalsExpired?: number;
   /** Number of reflect actions that were skipped due to cooldown/dedup signals. */
   reflectCooldownActions?: number;
 }
@@ -283,6 +295,8 @@ interface ImprovePostLoopResult {
   memoryInferenceDurationMs: number;
   graphExtractionDurationMs: number;
   orphansPurged?: number;
+  /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
+  proposalsExpired?: number;
 }
 
 interface ImproveMaintenanceResult {
@@ -292,6 +306,8 @@ interface ImproveMaintenanceResult {
   memoryInferenceDurationMs: number;
   graphExtractionDurationMs: number;
   orphansPurged?: number;
+  /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
+  proposalsExpired?: number;
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -705,6 +721,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memoryInferenceDurationMs,
       graphExtractionDurationMs,
       orphansPurged,
+      proposalsExpired,
     } = await runImprovePostLoopStage({
       scope,
       options,
@@ -770,6 +787,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
+      ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
     };
     if (!result.dryRun)
@@ -1782,6 +1800,64 @@ async function runImproveLoopStage(args: {
           },
           eventsCtx,
         );
+
+        // Phase 6A (Advantage D6a): Confidence-driven auto-accept.
+        //
+        // The existing `--auto-accept` flag (commit 0c5eaa1) is a 0-100 integer
+        // threshold; `undefined` means auto-accept is disabled. Until this
+        // wave, the consolidate path treated any non-undefined value as a
+        // whole-batch "safe" accept (see TODO in consolidate.ts). Now that
+        // reflect proposals carry a self-reported `confidence` score in
+        // [0, 1], we can compare per-proposal: confidence >= threshold/100
+        // auto-accepts via the standard `promoteProposal` path; otherwise the
+        // proposal waits in the pending queue for human review.
+        //
+        // Plan default is 0.8 (per `self-improvement-enhancements-plan.md`
+        // line 184). We honour the existing CLI default (90 → 0.9) because
+        // that is what users have been seeing since 0c5eaa1; the plan and the
+        // existing default agree directionally that high-confidence-only is
+        // the right policy. The CLI flag is the single knob.
+        if (
+          reflectResult.ok &&
+          options.autoAccept !== undefined &&
+          typeof reflectResult.proposal.confidence === "number" &&
+          primaryStashDir
+        ) {
+          const threshold = options.autoAccept / 100;
+          const confidence = reflectResult.proposal.confidence;
+          if (confidence >= threshold) {
+            try {
+              const cfg = options.config ?? loadConfig();
+              const promotion = await promoteProposal(primaryStashDir, cfg, reflectResult.proposal.id, {}, undefined);
+              appendEvent(
+                {
+                  eventType: "promoted",
+                  ref: promotion.ref,
+                  metadata: {
+                    proposalId: promotion.proposal.id,
+                    source: promotion.proposal.source,
+                    ...(promotion.proposal.sourceRun !== undefined ? { sourceRun: promotion.proposal.sourceRun } : {}),
+                    assetPath: promotion.assetPath,
+                    autoAccept: true,
+                    confidence,
+                    threshold,
+                  },
+                },
+                eventsCtx,
+              );
+              info(
+                `[improve] auto-accepted ${promotion.ref} (confidence=${confidence.toFixed(2)} >= threshold=${threshold.toFixed(2)})`,
+              );
+            } catch (err) {
+              // Auto-accept failures (validation, write error, etc.) must not
+              // poison the loop — surface a warning and leave the proposal
+              // pending so the reviewer can deal with it manually.
+              warn(
+                `[improve] auto-accept failed for ${reflectResult.proposal.ref}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
         // B6: .derived refs skip reflect; record synthetic skip action.
         actions.push({
@@ -2123,6 +2199,7 @@ async function runImprovePostLoopStage(args: {
     memoryInferenceDurationMs: maintenanceResult.memoryInferenceDurationMs,
     graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
     orphansPurged: maintenanceResult.orphansPurged,
+    proposalsExpired: maintenanceResult.proposalsExpired,
   };
 }
 
@@ -2165,6 +2242,7 @@ async function runImproveMaintenancePasses(args: {
   let memoryInferenceDurationMs = 0;
   let graphExtractionDurationMs = 0;
   let orphansPurged = 0;
+  let proposalsExpired = 0;
 
   try {
     db = openDatabase(
@@ -2326,6 +2404,38 @@ async function runImproveMaintenancePasses(args: {
       } catch (err) {
         allWarnings.push(`orphan purge failed: ${err instanceof Error ? err.message : String(err)}`);
       }
+
+      // Phase 6B (Advantage D6b): expire pending proposals that have aged past
+      // the retention window. Runs AFTER orphan purge so we never double-archive
+      // a proposal that orphan-purge already moved. `expireStaleProposals` emits
+      // its own per-proposal `proposal_expired` events; we additionally emit a
+      // single roll-up event here for parity with the orphan-purge surface.
+      try {
+        const expireResult = expireStaleProposals(primaryStashDir, config);
+        proposalsExpired = expireResult.expired;
+        if (expireResult.expired > 0) {
+          info(
+            `[improve] expiration: ${expireResult.expired}/${expireResult.checked} pending proposals expired ` +
+              `(retention=${expireResult.retentionDays}d, ${expireResult.durationMs}ms)`,
+          );
+        }
+        appendEvent(
+          {
+            eventType: "proposal_expiration_pass",
+            ref: "proposals:_expiration",
+            metadata: {
+              checked: expireResult.checked,
+              expired: expireResult.expired,
+              durationMs: expireResult.durationMs,
+              retentionDays: expireResult.retentionDays,
+              expiredProposals: expireResult.expiredProposals,
+            },
+          },
+          eventsCtx,
+        );
+      } catch (err) {
+        allWarnings.push(`proposal expiration failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   } finally {
     if (db) closeDatabase(db);
@@ -2338,6 +2448,7 @@ async function runImproveMaintenancePasses(args: {
     memoryInferenceDurationMs,
     graphExtractionDurationMs,
     orphansPurged,
+    proposalsExpired,
   };
 }
 

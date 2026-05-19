@@ -223,6 +223,9 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "proposal-diff": {
       return formatProposalDiffPlain(r);
     }
+    case "proposal-revert": {
+      return formatProposalRevertPlain(r);
+    }
     // Output shape registration for `akm reflect` / `akm propose` (#226).
     case "reflect":
     case "propose": {
@@ -680,6 +683,9 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   if (p.sourceRun) lines.push(`sourceRun: ${String(p.sourceRun)}`);
   if (p.createdAt) lines.push(`createdAt: ${String(p.createdAt)}`);
   if (p.updatedAt) lines.push(`updatedAt: ${String(p.updatedAt)}`);
+  // Phase 6A / 6C: surface confidence and backup metadata.
+  if (typeof p.confidence === "number") lines.push(`confidence: ${(p.confidence as number).toFixed(2)}`);
+  if (typeof p.backup === "string" && p.backup.length > 0) lines.push(`backup: ${String(p.backup)}`);
   const review = p.review as Record<string, unknown> | undefined;
   if (review) {
     lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);
@@ -712,6 +718,12 @@ export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
 export function formatProposalRejectPlain(r: Record<string, unknown>): string {
   const reason = r.reason ? ` (${String(r.reason)})` : "";
   return `Rejected proposal ${String(r.id ?? "?")} (${String(r.ref ?? "?")})${reason}`;
+}
+
+export function formatProposalRevertPlain(r: Record<string, unknown>): string {
+  // Phase 6C: mirror the accept-plain text — the user-facing message focuses
+  // on the destination path because that's what they need to verify.
+  return `Reverted proposal ${String(r.id ?? "?")} → restored prior content of ${String(r.ref ?? "?")} at ${String(r.assetPath ?? "?")}`;
 }
 
 export function formatDistillPlain(r: Record<string, unknown>): string {

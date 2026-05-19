@@ -31,6 +31,14 @@ export interface AgentProposalPayload {
   ref: string;
   content: string;
   frontmatter?: Record<string, unknown>;
+  /**
+   * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
+   * 6A). When provided by the agent (or LLM via structured output) and at or
+   * above the active threshold, `akm improve` may auto-accept the proposal
+   * without reviewer intervention. Out-of-range / non-finite values are
+   * clamped or dropped downstream in `createProposal`.
+   */
+  confidence?: number;
 }
 
 /**
@@ -416,6 +424,15 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
   };
   if (parsed.frontmatter && typeof parsed.frontmatter === "object" && !Array.isArray(parsed.frontmatter)) {
     out.frontmatter = parsed.frontmatter as Record<string, unknown>;
+  }
+  // Phase 6A: extract optional `confidence` (number in [0, 1]). Clamp gently
+  // rather than reject — a model that returns 1.0 or 0 with extra precision
+  // (e.g. 1.0000001) should still surface a usable score. Anything that isn't
+  // a finite number is dropped so downstream `createProposal` can rely on the
+  // shape invariant.
+  if (typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)) {
+    const clamped = Math.max(0, Math.min(1, parsed.confidence));
+    out.confidence = clamped;
   }
   return out;
 }

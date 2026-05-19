@@ -53,6 +53,7 @@ import {
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
+  akmProposalRevert,
   akmProposalShow,
 } from "./commands/proposal";
 import { akmPropose } from "./commands/propose";
@@ -3537,7 +3538,10 @@ const lessonsCommand = defineCommand({
 const proposalsCommand = defineCommand({
   meta: { name: "proposals", description: "List proposal queue entries" },
   args: {
-    status: { type: "string", description: "Filter by status (pending|accepted|rejected)" },
+    status: {
+      type: "string",
+      description: "Filter by status (pending|accepted|rejected|reverted)",
+    },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
     type: { type: "string", description: "Filter by asset type" },
   },
@@ -3547,7 +3551,7 @@ const proposalsCommand = defineCommand({
       const result = akmProposalList({
         status,
         ref: args.ref,
-        includeArchive: status === "accepted" || status === "rejected",
+        includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
       });
       output("proposal-list", result);
     });
@@ -3743,15 +3747,54 @@ const diffCommand = defineCommand({
   },
 });
 
+// Phase 6C (Advantage D6c): revert an accepted proposal.
+//
+// Exit codes (mapped by `runWithJsonErrors` from the typed errors thrown by
+// `akmProposalRevert` / `revertProposal`):
+//   0 — success; prior content restored.
+//   1 — generic error (also used by `UsageError("INVALID_FLAG_VALUE")` and
+//       `UsageError("MISSING_REQUIRED_ARGUMENT")` when the proposal is not
+//       accepted, or no backup is available).
+//   1 — `NotFoundError("FILE_NOT_FOUND")` when the proposal id does not resolve.
+const revertCommand = defineCommand({
+  meta: {
+    name: "revert",
+    description:
+      "Revert an accepted proposal: restore the prior asset content from the backup captured at promotion time. " +
+      "Errors if the proposal is not accepted or has no backup (new-asset proposals leave no backup). " +
+      "Accepts the full proposal UUID or the asset ref. UUID prefixes are not supported for archived proposals — use the full UUID.",
+  },
+  args: {
+    id: {
+      type: "positional",
+      description:
+        "Proposal id (full uuid) or asset ref (e.g. skill:akm-dream). UUID prefixes are not supported for archived proposals — use the full UUID.",
+      required: true,
+    },
+    target: { type: "string", description: "Override the write target by source name" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmProposalRevert({
+        id: args.id as string,
+        target: args.target as string | undefined,
+      });
+      output("proposal-revert", result);
+    });
+  },
+});
+
 // ── distill (#228) ──────────────────────────────────────────────────────────
 
-function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
+function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | "reverted" | undefined {
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  if (trimmed === "pending" || trimmed === "accepted" || trimmed === "rejected") return trimmed;
+  if (trimmed === "pending" || trimmed === "accepted" || trimmed === "rejected" || trimmed === "reverted") {
+    return trimmed;
+  }
   throw new UsageError(
-    `Invalid --status value: "${raw}". Expected one of: pending, accepted, rejected.`,
+    `Invalid --status value: "${raw}". Expected one of: pending, accepted, rejected, reverted.`,
     "INVALID_FLAG_VALUE",
   );
 }
@@ -4337,6 +4380,7 @@ const main = defineCommand({
     accept: acceptCommand,
     reject: rejectCommand,
     diff: diffCommand,
+    revert: revertCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,

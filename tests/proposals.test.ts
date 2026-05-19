@@ -7,6 +7,7 @@ import {
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
+  akmProposalRevert,
   akmProposalShow,
 } from "../src/commands/proposal";
 import type { AkmConfig } from "../src/core/config";
@@ -16,6 +17,7 @@ import {
   archiveProposal,
   createProposal,
   diffProposal,
+  expireStaleProposals,
   getProposal,
   isAutomatedProposalSource,
   isProposalSkipped,
@@ -533,5 +535,383 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
       payload: { content: VALID_LESSON },
     });
     expect(isProposalSkipped(result)).toBe(false);
+  });
+});
+
+// ── Phase 6A — Confidence score (Advantage D6a) ─────────────────────────────
+
+describe("Phase 6A: createProposal validates and round-trips confidence", () => {
+  test("accepts a valid confidence in [0, 1] and persists it on the proposal", () => {
+    const stash = makeStashDir();
+    const result = createProposal(stash, {
+      ref: "lesson:confidence-valid",
+      source: "reflect",
+      sourceRun: "run-c1",
+      force: true,
+      payload: { content: VALID_LESSON },
+      confidence: 0.85,
+    });
+    if (isProposalSkipped(result)) throw new Error("unexpected skip");
+    expect(result.confidence).toBe(0.85);
+
+    // Round-trip via getProposal so we know it survives JSON serialization.
+    const reloaded = getProposal(stash, result.id);
+    expect(reloaded.confidence).toBe(0.85);
+  });
+
+  test("accepts boundary values 0 and 1 exactly", () => {
+    const stash = makeStashDir();
+    const zero = createProposal(stash, {
+      ref: "lesson:confidence-zero",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+      confidence: 0,
+    });
+    const one = createProposal(stash, {
+      ref: "lesson:confidence-one",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+      confidence: 1,
+    });
+    if (isProposalSkipped(zero) || isProposalSkipped(one)) throw new Error("unexpected skip");
+    expect(zero.confidence).toBe(0);
+    expect(one.confidence).toBe(1);
+  });
+
+  test("drops confidence when omitted (round-trip preserves the absence)", () => {
+    const stash = makeStashDir();
+    const result = createProposal(stash, {
+      ref: "lesson:confidence-undefined",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(result)) throw new Error("unexpected skip");
+    expect(result.confidence).toBeUndefined();
+    const reloaded = getProposal(stash, result.id);
+    expect(reloaded.confidence).toBeUndefined();
+  });
+
+  test("rejects (drops) out-of-range values: NaN, Infinity, -0.1, 1.5", () => {
+    const stash = makeStashDir();
+    const cases: Array<{ ref: string; value: number }> = [
+      { ref: "lesson:c-nan", value: Number.NaN },
+      { ref: "lesson:c-inf", value: Number.POSITIVE_INFINITY },
+      { ref: "lesson:c-neg", value: -0.1 },
+      { ref: "lesson:c-hi", value: 1.5 },
+    ];
+    for (const { ref, value } of cases) {
+      const created = createProposal(stash, {
+        ref,
+        source: "reflect",
+        force: true,
+        payload: { content: VALID_LESSON },
+        confidence: value,
+      });
+      if (isProposalSkipped(created)) throw new Error("unexpected skip");
+      // All four invalid values must be silently dropped — no NaN persisted.
+      expect(created.confidence).toBeUndefined();
+    }
+  });
+});
+
+// ── Phase 6B — Proposal expiration (Advantage D6b) ──────────────────────────
+
+describe("Phase 6B: expireStaleProposals archives proposals past retention", () => {
+  test("expires only proposals older than archiveRetentionDays", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 30 } as AkmConfig;
+
+    // Three proposals: 60 days old, 31 days old, 1 day old (relative to fake now).
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    const oldA = createProposal(
+      stash,
+      {
+        ref: "lesson:expire-old-a",
+        source: "reflect",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 60 * DAY },
+    );
+    const oldB = createProposal(
+      stash,
+      {
+        ref: "lesson:expire-old-b",
+        source: "distill",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 31 * DAY },
+    );
+    const fresh = createProposal(
+      stash,
+      {
+        ref: "lesson:expire-fresh",
+        source: "reflect",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 1 * DAY },
+    );
+    if (isProposalSkipped(oldA) || isProposalSkipped(oldB) || isProposalSkipped(fresh)) {
+      throw new Error("unexpected skip");
+    }
+
+    const result = expireStaleProposals(stash, config, { now: () => NOW });
+    expect(result.expired).toBe(2);
+    expect(result.checked).toBe(3);
+    expect(result.retentionDays).toBe(30);
+    const expiredRefs = result.expiredProposals.map((p) => p.ref).sort();
+    expect(expiredRefs).toEqual(["lesson:expire-old-a", "lesson:expire-old-b"]);
+
+    // The fresh proposal remains pending.
+    const stillPending = listProposals(stash, { status: "pending" });
+    expect(stillPending.length).toBe(1);
+    expect(stillPending[0]?.ref).toBe("lesson:expire-fresh");
+
+    // Expired proposals are archived with reason "expired: ...".
+    const expiredArchived = listProposals(stash, { status: "rejected", includeArchive: true });
+    expect(expiredArchived.length).toBe(2);
+    for (const arch of expiredArchived) {
+      expect(arch.review?.reason).toMatch(/expired/);
+    }
+  });
+
+  test("is idempotent: running twice does not double-archive already-archived entries", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 7 } as AkmConfig;
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    createProposal(
+      stash,
+      {
+        ref: "lesson:idem-1",
+        source: "reflect",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 30 * DAY },
+    );
+    const first = expireStaleProposals(stash, config, { now: () => NOW });
+    expect(first.expired).toBe(1);
+    const second = expireStaleProposals(stash, config, { now: () => NOW });
+    expect(second.expired).toBe(0);
+    expect(second.checked).toBe(0); // No pending entries remain to check.
+  });
+
+  test("emits exactly one proposal_expired event per expired proposal", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 7 } as AkmConfig;
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    const a = createProposal(
+      stash,
+      {
+        ref: "lesson:event-a",
+        source: "reflect",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 30 * DAY },
+    );
+    const b = createProposal(
+      stash,
+      {
+        ref: "lesson:event-b",
+        source: "distill",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 30 * DAY },
+    );
+    if (isProposalSkipped(a) || isProposalSkipped(b)) throw new Error("unexpected skip");
+
+    expireStaleProposals(stash, config, { now: () => NOW });
+    const events = readEvents({ type: "proposal_expired" });
+    expect(events.events.length).toBe(2);
+    const expiredRefs = events.events.map((e) => e.ref).sort();
+    expect(expiredRefs).toEqual(["lesson:event-a", "lesson:event-b"]);
+  });
+
+  test("retentionDays === 0 disables expiration entirely", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 0 } as AkmConfig;
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    createProposal(
+      stash,
+      {
+        ref: "lesson:ttl-off",
+        source: "reflect",
+        force: true,
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW - 1000 * DAY },
+    );
+    const result = expireStaleProposals(stash, config, { now: () => NOW });
+    expect(result.expired).toBe(0);
+    expect(result.retentionDays).toBe(0);
+    expect(listProposals(stash, { status: "pending" }).length).toBe(1);
+  });
+});
+
+// ── Phase 6C — Proposal reversion (Advantage D6c) ───────────────────────────
+
+describe("Phase 6C: promoteProposal captures backup; revertProposal restores it", () => {
+  test("backup is captured when target asset exists; backup field present on archived proposal", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    // Pre-write existing lesson so promotion has prior content to back up.
+    const lessonPath = path.join(stash, "lessons", "rg-over-grep.md");
+    fs.writeFileSync(
+      lessonPath,
+      `---\ndescription: Old description\nwhen_to_use: Old usage\n---\n\nOriginal body content.\n`,
+      "utf8",
+    );
+
+    const created = createProposal(stash, {
+      ref: "lesson:rg-over-grep",
+      source: "distill",
+      sourceRun: "run-backup",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    expect(accepted.ok).toBe(true);
+
+    // Backup file should exist under archive/<id>/backup.md
+    const reloaded = getProposal(stash, created.id);
+    expect(reloaded.backup).toBe("backup.md");
+    const backupAbs = path.join(stash, ".akm", "proposals", "archive", created.id, "backup.md");
+    expect(fs.existsSync(backupAbs)).toBe(true);
+    expect(fs.readFileSync(backupAbs, "utf8")).toContain("Original body content.");
+
+    // New asset content was actually written.
+    expect(fs.readFileSync(lessonPath, "utf8")).toContain("Prefer rg over grep");
+  });
+
+  test("backup is NOT captured when target asset does not yet exist (new asset proposal)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const created = createProposal(stash, {
+      ref: "lesson:brand-new",
+      source: "reflect",
+      sourceRun: "run-new",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    const reloaded = getProposal(stash, created.id);
+    expect(reloaded.backup).toBeUndefined();
+  });
+
+  test("revert on an accepted proposal restores prior content and marks status=reverted", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    // Existing asset → promotion captures backup.
+    const lessonPath = path.join(stash, "lessons", "rg-over-grep.md");
+    fs.writeFileSync(lessonPath, `---\ndescription: Original D\nwhen_to_use: Original U\n---\n\nORIGINAL.\n`, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:rg-over-grep",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+
+    // Confirm the file was rewritten by accept.
+    expect(fs.readFileSync(lessonPath, "utf8")).toContain("Prefer rg over grep");
+
+    const revertResult = await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    expect(revertResult.ok).toBe(true);
+    expect(revertResult.ref).toBe("lesson:rg-over-grep");
+    // Prior content is back.
+    expect(fs.readFileSync(lessonPath, "utf8")).toContain("ORIGINAL.");
+    // Status flipped to reverted.
+    const reloaded = getProposal(stash, created.id);
+    expect(reloaded.status).toBe("reverted");
+    expect(reloaded.review?.reason).toMatch(/reverted/);
+
+    // proposal_reverted event was emitted with the expected ref.
+    const revertedEvents = readEvents({ type: "proposal_reverted" });
+    expect(revertedEvents.events.length).toBe(1);
+    expect(revertedEvents.events[0]?.ref).toBe("lesson:rg-over-grep");
+  });
+
+  test("revert on a non-accepted proposal fails with UsageError(INVALID_FLAG_VALUE)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const created = createProposal(stash, {
+      ref: "lesson:not-accepted-revert",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    // Proposal is pending — revert should fail.
+    let thrown: unknown;
+    try {
+      await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const e = thrown as Error & { code?: string; name: string };
+    expect(e.name).toBe("UsageError");
+    expect(e.code).toBe("INVALID_FLAG_VALUE");
+    expect(e.message).toMatch(/only accepted proposals can be reverted/);
+  });
+
+  test("revert on an accepted proposal with no backup (new asset) fails", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    // No pre-existing asset → backup will be undefined.
+    const created = createProposal(stash, {
+      ref: "lesson:no-backup-revert",
+      source: "reflect",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+
+    let thrown: unknown;
+    try {
+      await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const e = thrown as Error & { code?: string; name: string };
+    expect(e.name).toBe("UsageError");
+    expect(e.message).toMatch(/no backup available/);
+  });
+
+  test("revert on a missing proposal id surfaces NotFoundError(FILE_NOT_FOUND)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    let thrown: unknown;
+    try {
+      await akmProposalRevert({
+        stashDir: stash,
+        id: "deadbeef-0000-0000-0000-000000000000",
+        config,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const e = thrown as Error & { code?: string; name: string };
+    expect(e.name).toBe("NotFoundError");
+    expect(e.code).toBe("FILE_NOT_FOUND");
   });
 });

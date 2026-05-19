@@ -102,6 +102,19 @@ describe("akm proposals (CLI)", () => {
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
   });
+
+  test("accepts --status=reverted (parser allows reverted status)", () => {
+    // Regression: parseProposalStatus must accept "reverted" so that
+    // `akm proposal list --status reverted` works for archived/reverted proposals.
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = runCli(["proposals", "--status=reverted", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    // No proposals have been reverted in this fixture, so the list is empty.
+    expect(parsed.totalCount).toBe(0);
+    expect(Array.isArray(parsed.proposals)).toBe(true);
+  });
 });
 
 describe("akm show proposal (CLI)", () => {

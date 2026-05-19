@@ -1073,3 +1073,77 @@ describe("R-1: maxRefineIters Self-Refine loop (#372)", () => {
     expect(prompt).toContain(PRIOR_DRAFT);
   });
 });
+
+// ── Phase 6A — Confidence flows from LLM into the proposal record ───────────
+
+describe("Phase 6A: reflect surfaces LLM confidence into the proposal record", () => {
+  test("REFLECT_JSON_SCHEMA exposes optional confidence field in [0, 1]", async () => {
+    const mod = await import("../src/commands/reflect");
+    const schema = mod.REFLECT_JSON_SCHEMA as {
+      properties: Record<string, { type?: string; minimum?: number; maximum?: number }>;
+      required: string[];
+    };
+    expect(schema.properties.confidence).toBeDefined();
+    expect(schema.properties.confidence?.type).toBe("number");
+    expect(schema.properties.confidence?.minimum).toBe(0);
+    expect(schema.properties.confidence?.maximum).toBe(1);
+    // Confidence is NOT in `required` — older agents that don't emit it must work.
+    expect(schema.required).not.toContain("confidence");
+  });
+
+  test("confidence in agent JSON round-trips into proposal.confidence", async () => {
+    const stash = makeStashDir();
+    const payload = JSON.stringify({
+      ref: "lesson:with-confidence",
+      content:
+        "---\ndescription: With confidence\nwhen_to_use: When testing the confidence flow\n---\n\nWith confidence body.\n",
+      confidence: 0.92,
+    });
+    const result = await akmReflect({
+      ref: "lesson:with-confidence",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.proposal.confidence).toBe(0.92);
+  });
+
+  test("missing confidence in agent JSON leaves proposal.confidence undefined", async () => {
+    const stash = makeStashDir();
+    const payload = JSON.stringify({
+      ref: "lesson:no-confidence",
+      content:
+        "---\ndescription: No confidence\nwhen_to_use: When the agent does not emit a score\n---\n\nNo confidence body.\n",
+    });
+    const result = await akmReflect({
+      ref: "lesson:no-confidence",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.proposal.confidence).toBeUndefined();
+  });
+
+  test("out-of-range confidence is clamped to [0, 1] at the parser boundary", async () => {
+    const stash = makeStashDir();
+    const payload = JSON.stringify({
+      ref: "lesson:clamp-confidence",
+      content: "---\ndescription: Clamp\nwhen_to_use: When the agent emits an out-of-range score\n---\n\nClamp body.\n",
+      confidence: 1.5,
+    });
+    const result = await akmReflect({
+      ref: "lesson:clamp-confidence",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    // Parser clamps to 1; createProposal accepts 1 as in-range.
+    expect(result.proposal.confidence).toBe(1);
+  });
+});

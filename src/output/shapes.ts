@@ -111,6 +111,9 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
     case "proposal-diff":
       return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
+    // Phase 6C (Advantage D6c): revert envelope mirrors accept/reject.
+    case "proposal-revert":
+      return shapeProposalRevertOutput(result as Record<string, unknown>, detail);
     // Output shape registration for `akm reflect` and `akm propose` (#226).
     // Both share the proposal-producer envelope shape (success carries a
     // proposal entry; failure carries an AgentFailureReason discriminant).
@@ -191,10 +194,23 @@ export function shapeProposalProducerOutput(
 
 export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (detail === "brief") {
-    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
+    // Phase 6A: confidence is small + load-bearing for auto-accept telemetry,
+    // so include it even at brief detail.
+    return pickFields(entry, ["id", "ref", "status", "source", "createdAt", "confidence"]);
   }
   if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
+    return pickFields(entry, [
+      "id",
+      "ref",
+      "status",
+      "source",
+      "sourceRun",
+      "createdAt",
+      "updatedAt",
+      "review",
+      "confidence",
+      "backup",
+    ]);
   }
   // full / agent: project everything including the payload.
   return pickFields(entry, [
@@ -207,6 +223,8 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "updatedAt",
     "payload",
     "review",
+    "confidence",
+    "backup",
   ]);
 }
 
@@ -255,6 +273,29 @@ export function shapeProposalRejectOutput(
     id: result.id,
     ref: result.ref,
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
+}
+
+/**
+ * Shape the result of `akm proposal revert <id>` (Phase 6C / Advantage D6c).
+ *
+ * Mirrors {@link shapeProposalAcceptOutput} — the surface is intentionally
+ * symmetric with accept because the user-visible workflow is: accept restores
+ * the new content; revert restores the prior content; both should look the
+ * same in JSON output beyond the verb.
+ */
+export function shapeProposalRevertOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    id: result.id,
+    ref: result.ref,
+    assetPath: result.assetPath,
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
   return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);

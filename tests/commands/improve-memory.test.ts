@@ -2062,4 +2062,201 @@ describe("new 0.8.0 improve metrics", () => {
     // The ghost-asset proposal should have been purged.
     expect(result.orphansPurged).toBeGreaterThanOrEqual(1);
   });
+
+  // ── Phase 6A — Confidence-driven auto-accept ──────────────────────────────
+
+  test("auto-accept promotes a high-confidence reflect proposal when threshold met", async () => {
+    const { createProposal, getProposal, isProposalSkipped } = await import("../../src/core/proposals");
+    const stashDir = makeTempDir("akm-6a-auto-accept-");
+    writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
+    await buildIndex(stashDir);
+
+    // The mock reflectFn must persist a real proposal on disk so that
+    // promoteProposal() can find it. We persist with confidence 0.95 — well
+    // above the default threshold of 0.9 — to exercise the auto-accept path.
+    // scope is a specific ref so collectEligibleRefs unconditionally plans it.
+    const result = await akmImprove({
+      scope: "memory:target-asset",
+      stashDir,
+      ensureIndexFn: async () => false,
+      autoAccept: 90, // default; conversion = 0.9
+      minRetrievalCount: 0,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref, stashDir: sd }) => {
+        const created = createProposal(sd ?? stashDir, {
+          ref: ref ?? "memory:target-asset",
+          source: "reflect",
+          sourceRun: "test-confidence-high",
+          force: true,
+          payload: {
+            content: `---\ndescription: Updated memory\n---\n\nNEW BODY.\n`,
+            frontmatter: { description: "Updated memory" },
+          },
+          confidence: 0.95,
+        });
+        if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: created,
+          ref: created.ref,
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // Find the reflect action that fired for memory:target-asset
+    const reflectAction = result.actions?.find((a) => a.mode === "reflect" && a.ref === "memory:target-asset");
+    expect(reflectAction).toBeDefined();
+    if (!reflectAction || reflectAction.mode !== "reflect") throw new Error("expected reflect action");
+    const ar = reflectAction.result as AkmReflectResult;
+    if (!ar.ok) throw new Error("expected ok reflect result");
+    // Proposal should be auto-accepted → status === accepted
+    const proposal = getProposal(stashDir, ar.proposal.id);
+    expect(proposal.status).toBe("accepted");
+    // A `promoted` event with `autoAccept: true` is emitted from the loop.
+    const promotedEvents = readEvents({ type: "promoted" });
+    const auto = promotedEvents.events.find(
+      (e) => (e.metadata as Record<string, unknown> | undefined)?.autoAccept === true,
+    );
+    expect(auto).toBeDefined();
+  });
+
+  test("auto-accept skips proposals below the threshold (left pending)", async () => {
+    const { createProposal, getProposal, isProposalSkipped } = await import("../../src/core/proposals");
+    const stashDir = makeTempDir("akm-6a-below-threshold-");
+    writeMemory(stashDir, "target-low", { description: "Existing memory" }, "Existing body.");
+    await buildIndex(stashDir);
+
+    await akmImprove({
+      scope: "memory:target-low",
+      stashDir,
+      ensureIndexFn: async () => false,
+      autoAccept: 90,
+      minRetrievalCount: 0,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref, stashDir: sd }) => {
+        const created = createProposal(sd ?? stashDir, {
+          ref: ref ?? "memory:target-low",
+          source: "reflect",
+          sourceRun: "test-confidence-low",
+          force: true,
+          payload: { content: `---\ndescription: low confidence\n---\n\nLOW.\n` },
+          confidence: 0.3, // well below 0.9
+        });
+        if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: created,
+          ref: created.ref,
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    // Find the proposal directly on disk; status must remain pending.
+    const { listProposals } = await import("../../src/core/proposals");
+    const pending = listProposals(stashDir, { status: "pending", ref: "memory:target-low" });
+    expect(pending.length).toBe(1);
+    expect(pending[0]?.confidence).toBe(0.3);
+    // No auto-accept promoted event for this proposal.
+    const promotedEvents = readEvents({ type: "promoted" });
+    const autoForLow = promotedEvents.events.find(
+      (e) => e.ref === "memory:target-low" && (e.metadata as Record<string, unknown> | undefined)?.autoAccept === true,
+    );
+    expect(autoForLow).toBeUndefined();
+    // Verify with getProposal so we don't accidentally pass on an empty array.
+    if (pending[0]) {
+      expect(getProposal(stashDir, pending[0].id).status).toBe("pending");
+    }
+  });
+
+  // ── Phase 6B — proposalsExpired propagates through the improve result ─────
+
+  test("proposalsExpired surfaces in the result when stale proposals exist", async () => {
+    const { createProposal, isProposalSkipped } = await import("../../src/core/proposals");
+    const stashDir = makeTempDir("akm-6b-expired-");
+    writeMemory(stashDir, "live-asset", { description: "Live memory" }, "Live body.");
+    await buildIndex(stashDir);
+
+    // Seed a stale proposal that should be expired. We seed it on a ref that
+    // exists on disk so the orphan-purge pass does not race the expiration
+    // pass and pre-archive it.
+    const STALE_AGE_MS = 200 * 86_400_000;
+    const seeded = createProposal(
+      stashDir,
+      {
+        ref: "memory:live-asset",
+        source: "reflect",
+        sourceRun: "test-stale",
+        force: true,
+        payload: { content: "# Stale proposal\nOld content." },
+      },
+      { now: () => Date.now() - STALE_AGE_MS },
+    );
+    if (isProposalSkipped(seeded)) throw new Error("seed skipped");
+
+    const result = await akmImprove({
+      scope: "memory:live-asset",
+      stashDir,
+      ensureIndexFn: async () => false,
+      minRetrievalCount: 0,
+      // Disable auto-accept so the seed proposal doesn't get auto-promoted by
+      // a fresh reflect run before the expiration pass observes it. (The
+      // seeded proposal has no confidence anyway — defence in depth.)
+      autoAccept: undefined,
+      // Default config.archiveRetentionDays is 90; 200 days old > 90 → expire.
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: false,
+        reason: "cooldown" as const,
+        error: "test-suppressed",
+        ...(ref ? { ref } : {}),
+        exitCode: null,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+    });
+
+    expect(result.proposalsExpired).toBeGreaterThanOrEqual(1);
+    // The expired proposal must have been emitted as a `proposal_expired` event.
+    const expiredEvents = readEvents({ type: "proposal_expired" });
+    expect(expiredEvents.events.some((e) => e.ref === "memory:live-asset")).toBe(true);
+  });
 });

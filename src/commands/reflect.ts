@@ -441,6 +441,18 @@ export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
       description: "Optional frontmatter key-value pairs to merge into the asset.",
       additionalProperties: true,
     },
+    // Phase 6A (Advantage D6a): self-reported confidence in [0, 1]. When the
+    // LLM is well-calibrated, scores at or above the configured threshold
+    // (default 0.8) drive auto-accept in `akm improve`. Out-of-range or
+    // non-finite values are clamped/dropped by the parser — the schema keeps
+    // the field optional so older agents that don't emit a score still work.
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description:
+        "Optional self-reported quality confidence in [0, 1]. Proposals with confidence >= the active threshold (default 0.8) may be auto-accepted by `akm improve`.",
+    },
   },
 };
 
@@ -919,6 +931,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           ? { frontmatter: payloadFrontmatterWithProvenance }
           : {}),
       },
+      // Phase 6A: preserve confidence on the synthetic draft so the SC majority
+      // winner carries the score through to the persisted proposal.
+      ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
     };
     return {
       schemaVersion: 1,
@@ -940,6 +955,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         ? { frontmatter: payloadFrontmatterWithProvenance }
         : {}),
     },
+    // Phase 6A: forward LLM-reported confidence into the proposal record.
+    // `parseAgentProposalPayload` already clamps to [0, 1] and drops non-
+    // finite values; `createProposal` runs its own sanitizer as a safety net.
+    ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
   };
   const proposalResult = createProposal(stash, createInput, options.ctx);
 

@@ -127,9 +127,35 @@ export interface OrphanPurgeResult {
   orphans: Array<{ id: string; ref: string; reason: string }>;
 }
 
+/** Result of {@link expireStaleProposals} (Advantage D6b / Phase 6B). */
+export interface ExpireStaleResult {
+  /** Number of pending proposals scanned for expiry. */
+  checked: number;
+  /** Number of proposals archived because they aged past the retention window. */
+  expired: number;
+  /** Wall-clock duration of the expiration pass in ms. */
+  durationMs: number;
+  /** Retention threshold (days) applied during this pass. */
+  retentionDays: number;
+  /** Per-expired details for the event metadata. */
+  expiredProposals: Array<{ id: string; ref: string; ageDays: number }>;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type ProposalStatus = "pending" | "accepted" | "rejected";
+/**
+ * Lifecycle status of a proposal.
+ *
+ *   - `pending`   — Live queue entry awaiting review.
+ *   - `accepted`  — Promoted into the asset tree via {@link promoteProposal};
+ *                   archived under `.akm/proposals/archive/<id>/`.
+ *   - `rejected`  — Reviewer (or automated guard / orphan purge / expiration)
+ *                   declined the proposal; archived.
+ *   - `reverted`  — Previously `accepted` proposal that was rolled back via the
+ *                   `akm proposal revert <id>` flow (D6c). The asset on disk is
+ *                   restored from the backup captured at promotion time.
+ */
+export type ProposalStatus = "pending" | "accepted" | "rejected" | "reverted";
 
 export interface ProposalPayload {
   /** Full file content the accepted proposal will write to disk. */
@@ -171,6 +197,27 @@ export interface Proposal {
   updatedAt: string;
   payload: ProposalPayload;
   review?: ProposalReview;
+  /**
+   * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
+   *
+   * When the proposal source can self-estimate quality (e.g. the reflect LLM
+   * returning a calibrated score with its draft), this value drives the
+   * auto-accept policy in `akm improve`. Proposals with `confidence` at or
+   * above the active confidence threshold are accepted without reviewer
+   * intervention; everything else waits in the pending queue.
+   *
+   * Out-of-range or non-finite values are stripped at {@link createProposal}
+   * time so downstream code can rely on the invariant `0 <= confidence <= 1`.
+   */
+  confidence?: number;
+  /**
+   * Relative path (under the proposal directory) to the backup of the asset
+   * content that existed at the target ref BEFORE promotion (Advantage D6c /
+   * Phase 6C). Written exclusively by {@link promoteProposal} when the target
+   * file existed; absent for genuinely-new assets. Consumed by the
+   * `akm proposal revert <id>` flow to restore prior content.
+   */
+  backup?: string;
 }
 
 export interface ProposalsContext {
@@ -205,6 +252,15 @@ export interface CreateProposalInput {
    * forced re-proposals that the operator has explicitly requested.
    */
   force?: boolean;
+  /**
+   * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
+   *
+   * Values outside the closed interval `[0, 1]` and non-finite numbers
+   * (NaN / ±Infinity) are silently dropped at create time so the persisted
+   * proposal carries only well-formed scores. Callers that cannot estimate
+   * confidence should omit the field.
+   */
+  confidence?: number;
 }
 
 /**
@@ -492,6 +548,18 @@ export function createProposal(
 
   const id = newId(ctx);
   const created = nowIso(ctx);
+
+  // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
+  // is dropped silently — we never store NaN, Infinity, or out-of-range values.
+  // Callers that mis-report confidence should not poison the auto-accept gate.
+  const sanitizedConfidence =
+    typeof input.confidence === "number" &&
+    Number.isFinite(input.confidence) &&
+    input.confidence >= 0 &&
+    input.confidence <= 1
+      ? input.confidence
+      : undefined;
+
   const proposal: Proposal = {
     id,
     ref: normalizedRef,
@@ -504,6 +572,7 @@ export function createProposal(
       content: input.payload.content,
       ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
     },
+    ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
   };
 
   writeProposalFile(proposalFile(stashDir, id, false), proposal);
@@ -748,6 +817,86 @@ export function purgeOrphanProposals(
   };
 }
 
+/**
+ * Archive pending proposals older than `config.archiveRetentionDays` (Advantage
+ * D6b / Phase 6B).
+ *
+ * Reviewer fatigue and queue rot are the dominant failure modes of any
+ * human-in-the-loop pipeline (Settles 2009 active-learning survey). Pending
+ * proposals that have aged past the retention window are very rarely accepted
+ * — the reviewer either intentionally declined to act on them, or the asset
+ * they target has drifted enough that the proposal is no longer relevant.
+ * Auto-expiring them keeps the live queue focused on actionable work; the
+ * archive preserves the full audit trail.
+ *
+ * Each expired proposal is archived with status `rejected` and reason
+ * `"expired: no action within retention window"`. A `proposal_expired` event
+ * is appended for each expired proposal so downstream observability (events
+ * dashboards, source-acceptance-rate aggregations) can see expiry separately
+ * from explicit rejections.
+ *
+ * Idempotent: a second call within the same retention window finds nothing
+ * to expire (the archived entries are no longer in the pending queue).
+ */
+export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: ProposalsContext): ExpireStaleResult {
+  const t0 = Date.now();
+  const retentionDays = config.archiveRetentionDays ?? 90;
+  const expiredProposals: Array<{ id: string; ref: string; ageDays: number }> = [];
+
+  // retentionDays === 0 disables TTL cleanup globally (mirrors how
+  // consolidate.ts interprets the same config value).
+  if (retentionDays <= 0) {
+    return {
+      checked: 0,
+      expired: 0,
+      durationMs: Date.now() - t0,
+      retentionDays,
+      expiredProposals,
+    };
+  }
+
+  const retentionMs = retentionDays * MS_PER_DAY;
+  const nowMs = (ctx?.now ?? Date.now)();
+  const pending = listProposals(stashDir, { status: "pending" });
+
+  for (const p of pending) {
+    const createdMs = new Date(p.createdAt).getTime();
+    if (!Number.isFinite(createdMs)) continue;
+    const ageMs = nowMs - createdMs;
+    if (ageMs < retentionMs) continue;
+
+    try {
+      archiveProposal(stashDir, p.id, "rejected", "expired: no action within retention window", ctx);
+      const ageDays = Math.floor(ageMs / MS_PER_DAY);
+      expiredProposals.push({ id: p.id, ref: p.ref, ageDays });
+      appendEvent({
+        eventType: "proposal_expired",
+        ref: p.ref,
+        metadata: {
+          proposalId: p.id,
+          source: p.source,
+          ...(p.sourceRun !== undefined ? { sourceRun: p.sourceRun } : {}),
+          ageDays,
+          retentionDays,
+        },
+      });
+    } catch (err) {
+      // Best-effort — a single failure must not block the pass.
+      warn(
+        `[proposals] expireStaleProposals: failed to expire ${p.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  return {
+    checked: pending.length,
+    expired: expiredProposals.length,
+    durationMs: Date.now() - t0,
+    retentionDays,
+    expiredProposals,
+  };
+}
+
 // ── Validation ──────────────────────────────────────────────────────────────
 
 export interface ProposalValidationFinding {
@@ -787,6 +936,12 @@ export interface PromoteResult {
  * `source.kind`). On success the proposal directory is moved to the archive
  * with status `accepted`. Validation failures throw a `UsageError` carrying
  * every finding so the CLI can render a single clear error envelope.
+ *
+ * Phase 6C: when the target asset already exists at the resolved write path,
+ * a snapshot of the prior content is captured under
+ * `<proposalsRoot>/<id>/backup.<ext>` BEFORE the write. The relative path is
+ * recorded on the proposal record (`backup` field) so `akm proposal revert`
+ * can restore the prior content. Genuinely-new assets carry no backup.
  */
 export async function promoteProposal(
   stashDir: string,
@@ -819,10 +974,144 @@ export async function promoteProposal(
   }
 
   const target = resolveWriteTarget(config, options.target);
+
+  // Phase 6C: capture a backup of the prior content (if any) BEFORE writing the
+  // new asset. We use the resolved write target to compute the exact path the
+  // asset would land at — same resolver `writeAssetToSource` uses — so the
+  // backup always mirrors what would be overwritten.
+  let backupRelPath: string | undefined;
+  try {
+    const targetFilePath = resolveAssetFilePathSafe(target.source, ref);
+    if (targetFilePath && fs.existsSync(targetFilePath)) {
+      const ext = path.extname(targetFilePath) || ".md";
+      const proposalRoot = proposalDir(stashDir, id, false);
+      // Store relative path on the proposal record so the directory remains
+      // portable if the stash is moved.
+      const backupFilename = `backup${ext}`;
+      const backupAbsPath = path.join(proposalRoot, backupFilename);
+      fs.mkdirSync(proposalRoot, { recursive: true });
+      // Use copyFileSync — file-system atomicity is sufficient here because the
+      // backup is single-file and never read concurrently with this write.
+      fs.copyFileSync(targetFilePath, backupAbsPath);
+      backupRelPath = backupFilename;
+    }
+  } catch (err) {
+    // Backup capture is best-effort. A failure here must not block promotion
+    // (the user explicitly asked to accept); we surface a warning so the
+    // missing-revert path is visible.
+    warn(
+      `[proposals] promoteProposal: failed to capture backup for ${id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   const written = await writeAssetToSource(target.source, target.config, ref, proposal.payload.content);
 
   const archived = archiveProposal(stashDir, id, "accepted", undefined, ctx);
+
+  // Persist the backup path on the archived proposal record. archiveProposal
+  // moves the proposal dir into the archive subtree, so the backup file moves
+  // with it (the relative path stays valid).
+  if (backupRelPath) {
+    const archivedFile = proposalFile(stashDir, id, true);
+    const withBackup: Proposal = { ...archived, backup: backupRelPath };
+    writeProposalFile(archivedFile, withBackup);
+    return { proposal: withBackup, assetPath: written.path, ref: written.ref };
+  }
+
   return { proposal: archived, assetPath: written.path, ref: written.ref };
+}
+
+// ── Reversion (Phase 6C) ────────────────────────────────────────────────────
+
+/** Result of {@link revertProposal} (Advantage D6c / Phase 6C). */
+export interface RevertResult {
+  /** Updated proposal record with status === `"reverted"`. */
+  proposal: Proposal;
+  /** Path on disk that was restored from backup. */
+  assetPath: string;
+  /** Asset ref the revert acted on (re-serialized for the CLI envelope). */
+  ref: string;
+}
+
+/**
+ * Restore the prior content of an accepted proposal from its captured backup
+ * (Advantage D6c / Phase 6C).
+ *
+ * Pre-conditions:
+ *   - `id` resolves to a proposal with `status === "accepted"`.
+ *   - The proposal carries a `backup` field pointing to a readable file under
+ *     the proposal directory.
+ *
+ * On success:
+ *   - The backup content is written back through {@link writeAssetToSource},
+ *     so the canonical write-dispatch invariant is preserved.
+ *   - The archived proposal record is updated to `status: "reverted"`.
+ *   - Caller emits a `proposal_reverted` event in the CLI layer (mirrors how
+ *     `promoted` / `rejected` are emitted by the CLI command, not the core).
+ *
+ * Errors are thrown as `UsageError` / `NotFoundError` so the CLI can map them
+ * cleanly to exit codes — see `src/commands/proposal.ts` for the wrapper.
+ */
+export async function revertProposal(
+  stashDir: string,
+  config: AkmConfig,
+  id: string,
+  options: { target?: string } = {},
+  ctx?: ProposalsContext,
+): Promise<RevertResult> {
+  const proposal = getProposal(stashDir, id);
+  if (proposal.status !== "accepted") {
+    throw new UsageError(
+      `only accepted proposals can be reverted (proposal ${id} status: ${proposal.status})`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (!proposal.backup) {
+    throw new UsageError(
+      `no backup available for this proposal (id: ${id})`,
+      "MISSING_REQUIRED_ARGUMENT",
+      "Backups are only captured when a proposal overwrites an existing asset — new-asset proposals cannot be reverted via this path; delete the asset directly instead.",
+    );
+  }
+
+  // The proposal directory has been moved to the archive subtree (archiveProposal
+  // runs at the end of promoteProposal). Reads must resolve against that path.
+  const proposalRoot = proposalDir(stashDir, id, true);
+  const backupAbsPath = path.join(proposalRoot, proposal.backup);
+  if (!fs.existsSync(backupAbsPath)) {
+    throw new NotFoundError(
+      `no backup available for this proposal (id: ${id})`,
+      "FILE_NOT_FOUND",
+      `Expected backup file at ${backupAbsPath}; it may have been removed manually.`,
+    );
+  }
+
+  const backupContent = fs.readFileSync(backupAbsPath, "utf8");
+  const ref = parseAssetRef(proposal.ref);
+  if (!TYPE_DIRS[ref.type]) {
+    throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
+  }
+
+  const target = resolveWriteTarget(config, options.target);
+  const written = await writeAssetToSource(target.source, target.config, ref, backupContent);
+
+  // Update the archived proposal record to status: "reverted" and bump
+  // updatedAt + review so the audit trail reflects the second decision.
+  const archivedFile = proposalFile(stashDir, id, true);
+  const now = nowIso(ctx);
+  const reverted: Proposal = {
+    ...proposal,
+    status: "reverted",
+    updatedAt: now,
+    review: {
+      outcome: "rejected",
+      reason: "reverted: prior content restored from backup",
+      decidedAt: now,
+    },
+  };
+  writeProposalFile(archivedFile, reverted);
+
+  return { proposal: reverted, assetPath: written.path, ref: written.ref };
 }
 
 // ── Diff helpers ────────────────────────────────────────────────────────────
