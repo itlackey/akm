@@ -222,6 +222,152 @@ describe("Schema", () => {
     }
   });
 
+  test("embedding-dim change backs up the data dir BEFORE wiping embeddings", () => {
+    // Open with one dimension, write a known embeddings row, then reopen with
+    // a different dimension and verify a backup directory tagged
+    // `embedding-dim-change` was created with the OLD embeddings row still
+    // inside — proof the backup ran BEFORE the destructive DELETE/DROP.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-trigger-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    const id = insertTestEntry(db, "embdim-entry", { searchText: "embdim test" });
+    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    // Confirm the embedding is materialized before the dim change.
+    const preCount = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+    expect(preCount.cnt).toBe(1);
+    closeDatabase(db);
+
+    db = openDatabase(dbPath, { embeddingDim: 8 });
+    try {
+      expect(getMeta(db, "embeddingDim")).toBe("8");
+      // Post-dim-change the embeddings table has been wiped.
+      const postCount = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+      expect(postCount.cnt).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+
+    // A backup tagged `embedding-dim-change` should exist.
+    const backupsRoot = path.join(dataDir, "backups");
+    expect(fs.existsSync(backupsRoot)).toBe(true);
+    const snapshots = fs
+      .readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(snapshots.length).toBe(1);
+    expect(snapshots[0]).toContain("embedding-dim-change");
+    expect(snapshots[0]).not.toContain("pre-v");
+
+    const snapshotDir = path.join(backupsRoot, snapshots[0] as string);
+    expect(fs.existsSync(path.join(snapshotDir, "index.db"))).toBe(true);
+
+    // backup.meta.json should carry the `embedding-dim-change` reason.
+    const metaPath = path.join(snapshotDir, "backup.meta.json");
+    expect(fs.existsSync(metaPath)).toBe(true);
+    const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+    expect(meta.reason).toBe("embedding-dim-change");
+
+    // The snapshot DB must STILL contain the pre-change embedding row.
+    const { Database: SqliteDB } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const snapshotDb = new SqliteDB(path.join(snapshotDir, "index.db"), { readonly: true });
+    try {
+      const row = snapshotDb.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+      expect(row.cnt).toBe(1);
+    } finally {
+      snapshotDb.close();
+    }
+  });
+
+  test("AKM_DB_BACKUP=0 skips the embedding-dim-change snapshot but still wipes embeddings", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-optout-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    const id = insertTestEntry(db, "embdim-optout", { searchText: "optout" });
+    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    closeDatabase(db);
+
+    const previous = process.env.AKM_DB_BACKUP;
+    process.env.AKM_DB_BACKUP = "0";
+    try {
+      db = openDatabase(dbPath, { embeddingDim: 8 });
+      try {
+        expect(getMeta(db, "embeddingDim")).toBe("8");
+        // Destructive op still runs even when backup is opted out.
+        const postCount = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+        expect(postCount.cnt).toBe(0);
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AKM_DB_BACKUP;
+      } else {
+        process.env.AKM_DB_BACKUP = previous;
+      }
+    }
+
+    // No snapshot directories should have been created.
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs.readdirSync(backupsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      expect(snapshots.length).toBe(0);
+    }
+  });
+
+  test("no backup is taken when the embedding dim is unchanged across opens", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-noop-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    insertTestEntry(db, "embdim-noop");
+    closeDatabase(db);
+
+    // Reopen with the SAME dimension — no backup should be created.
+    db = openDatabase(dbPath, { embeddingDim: 4 });
+    closeDatabase(db);
+
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs.readdirSync(backupsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      expect(snapshots.length).toBe(0);
+    }
+  });
+
+  test("embedding-dim-change backup directory name is distinct from version-upgrade", () => {
+    // Seed two backups under the same data dir — one from a version upgrade,
+    // one from an embedding-dim change — and verify their directory names
+    // carry the different suffixes so operators can tell them apart.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-tag-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    // Version-upgrade backup.
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    insertTestEntry(db, "version-row");
+    setMeta(db, "version", "0");
+    closeDatabase(db);
+    db = openDatabase(dbPath, { embeddingDim: 4 });
+    closeDatabase(db);
+
+    // Embedding-dim-change backup.
+    db = openDatabase(dbPath, { embeddingDim: 8 });
+    closeDatabase(db);
+
+    const backupsRoot = path.join(dataDir, "backups");
+    const snapshots = fs
+      .readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+
+    expect(snapshots.some((n) => n.includes(`pre-v${DB_VERSION}`))).toBe(true);
+    expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(true);
+  });
+
   test("openDatabase creates FTS5 table", () => {
     const dbPath = tmpDbPath();
     const db = openDatabase(dbPath);

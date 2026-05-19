@@ -7,7 +7,7 @@ import { getDbPath } from "../core/paths";
 import { REGISTRY_INDEX_CACHE_DDL } from "../core/state-db";
 import { warn } from "../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../llm/embedders/types";
-import { backupDataDir } from "./db-backup";
+import { backupDataDir, EMBEDDING_DIM_CHANGE_REASON } from "./db-backup";
 import type { StashEntry } from "./metadata";
 import { buildSearchFields } from "./search-fields";
 import { ensureUsageEventsSchema } from "./usage-events";
@@ -420,6 +420,12 @@ function ensureSchema(db: Database, embeddingDim: number, options?: { dataDir?: 
     // Check if stored embedding dimension differs from configured one
     const storedDim = getMeta(db, "embeddingDim");
     if (storedDim && storedDim !== String(embeddingDim)) {
+      // Re-embedding the whole stash is expensive (LLM API calls + cache
+      // misses), so snapshot the data dir before we drop the vec table and
+      // wipe `embeddings`. This is the SAME hook the version-upgrade path
+      // uses earlier in this function, just gated on embedding-dim mismatch
+      // and tagged so operators can tell the two backup kinds apart.
+      backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
       try {
         db.exec("DROP TABLE IF EXISTS entries_vec");
       } catch {
@@ -455,6 +461,7 @@ function ensureSchema(db: Database, embeddingDim: number, options?: { dataDir?: 
     // changes, those stored BLOBs become silently incompatible.
     const storedDim = getMeta(db, "embeddingDim");
     if (storedDim && storedDim !== String(embeddingDim)) {
+      backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
       try {
         db.exec("DELETE FROM embeddings");
       } catch {
@@ -526,6 +533,55 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
 
   warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
   return usageBackup;
+}
+
+/**
+ * Snapshot the data directory before the embedding-dimension drop path wipes
+ * `embeddings` and recreates `entries_vec`. Re-embedding a real-world stash
+ * is expensive (LLM calls + cache misses), so we capture the pre-drop state
+ * here using the same MVP backup helper the version-upgrade hook uses
+ * earlier in {@link ensureSchema}.
+ *
+ * The backup is tagged with the `embedding-dim-change` reason so it lands in
+ * `<dataDir>/backups/<timestamp>-embedding-dim-change/` instead of the
+ * version-upgrade-flavored `<timestamp>-pre-v<N>/` directory. Restoration
+ * works identically via `scripts/migrations/restore-data-dir.sh`.
+ *
+ * Failures are non-fatal — they downgrade to a warning and the destructive
+ * ops run anyway, matching the version-upgrade hook's behavior so a broken
+ * backup cannot brick a binary that bumped the configured dim. Likewise,
+ * `AKM_DB_BACKUP=0` opts out via the same path.
+ */
+function backupBeforeEmbeddingDimChange(dataDir: string | undefined, fromDim: string, toDim: string): void {
+  if (!dataDir) return;
+  try {
+    const result = backupDataDir({
+      dataDir,
+      // The DB version isn't changing here — pass the current DB_VERSION for
+      // both source and target so the metadata sidecar still records the
+      // running binary's version for forensic context.
+      sourceVersion: DB_VERSION,
+      targetVersion: DB_VERSION,
+      reason: EMBEDDING_DIM_CHANGE_REASON,
+      env: process.env,
+    });
+    if (result) {
+      warn(
+        "[akm] embedding dimension changed %s→%s; data directory backed up to %s; embeddings will be regenerated",
+        fromDim,
+        toDim,
+        result.path,
+      );
+    }
+  } catch (err) {
+    // Defensive — backupDataDir already swallows most errors, but if it
+    // throws for an unexpected reason we must still proceed with the drop
+    // so the user isn't locked out of their binary on a changed dim.
+    warn(
+      "[akm] pre-embedding-dim-change data dir backup raised an unexpected error — %s; embeddings will be regenerated without a snapshot",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
 /**

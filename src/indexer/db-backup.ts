@@ -38,6 +38,16 @@ export interface BackupOptions {
   env?: NodeJS.ProcessEnv;
   /** Override `Date.now()` for deterministic timestamps in tests. */
   now?: () => Date;
+  /**
+   * Tag distinguishing the cause of this backup. When provided, the backup
+   * directory is named `<timestamp>-<reason>` instead of `<timestamp>-pre-v<N>`,
+   * and the metadata sidecar records the reason verbatim.
+   *
+   * Defaults to `"version-upgrade"` (which preserves the historical
+   * `pre-v<N>` directory naming for the DB version-upgrade hook). Pass
+   * `"embedding-dim-change"` for the embedding-dimension-change path.
+   */
+  reason?: string;
 }
 
 export interface BackupResult {
@@ -53,7 +63,14 @@ export interface BackupResult {
   sourceVersion: number | null;
   /** The version we were upgrading TO. */
   targetVersion: number;
+  /** The reason tag recorded for this backup. */
+  reason: string;
 }
+
+/** Default reason recorded for backups that don't override it. */
+export const DEFAULT_BACKUP_REASON = "version-upgrade";
+/** Reason recorded for backups taken before the embedding-dim drop path. */
+export const EMBEDDING_DIM_CHANGE_REASON = "embedding-dim-change";
 
 interface BackupMetadata {
   schemaVersion: 1;
@@ -61,6 +78,11 @@ interface BackupMetadata {
   sourceVersion: number | null;
   targetVersion: number;
   sizeBytes: number;
+  /**
+   * Tag describing why the backup was taken. Existing pre-0.8.x backups
+   * predate this field and are backfilled as `"version-upgrade"` on read.
+   */
+  reason: string;
   hostname?: string;
   // Free-form notes that future restore scripts may key off of.
   notes?: string;
@@ -181,6 +203,13 @@ export interface ListedBackup {
   createdAt: string;
   sizeBytes: number;
   sourceVersion: number | null;
+  /**
+   * Reason tag for the backup. Reads the `reason` field from `backup.meta.json`
+   * when present; pre-0.8.x backups without the field are reported as
+   * `"version-upgrade"` so downstream consumers can treat the field as
+   * always-present.
+   */
+  reason: string;
 }
 
 export function listBackups(dataDir: string): ListedBackup[] {
@@ -197,6 +226,7 @@ export function listBackups(dataDir: string): ListedBackup[] {
     let createdAt: string | undefined;
     let sourceVersion: number | null = null;
     let sizeBytes: number | undefined;
+    let reason: string = DEFAULT_BACKUP_REASON;
 
     if (fs.existsSync(metaPath)) {
       try {
@@ -206,6 +236,7 @@ export function listBackups(dataDir: string): ListedBackup[] {
         if (typeof parsed.sourceVersion === "number") sourceVersion = parsed.sourceVersion;
         else if (parsed.sourceVersion === null) sourceVersion = null;
         if (typeof parsed.sizeBytes === "number") sizeBytes = parsed.sizeBytes;
+        if (typeof parsed.reason === "string" && parsed.reason.length > 0) reason = parsed.reason;
       } catch {
         // Malformed metadata — fall back to filesystem-derived values.
       }
@@ -228,6 +259,7 @@ export function listBackups(dataDir: string): ListedBackup[] {
       createdAt,
       sizeBytes,
       sourceVersion,
+      reason,
     });
   }
 
@@ -267,6 +299,7 @@ export function backupDataDir(opts: BackupOptions): BackupResult | null {
   if (isBackupDisabled(env)) return null;
 
   const { dataDir, sourceVersion, targetVersion } = opts;
+  const reason = opts.reason && opts.reason.length > 0 ? opts.reason : DEFAULT_BACKUP_REASON;
 
   if (!fs.existsSync(dataDir)) {
     // Fresh install — nothing to back up.
@@ -309,7 +342,13 @@ export function backupDataDir(opts: BackupOptions): BackupResult | null {
 
   const now = (opts.now ?? (() => new Date()))();
   const stamp = formatTimestamp(now);
-  const dirName = `${stamp}-pre-v${targetVersion}`;
+  // Reason tags drive the directory suffix so operators can tell a
+  // version-upgrade snapshot apart from an embedding-dim-change snapshot.
+  // `version-upgrade` keeps the historical `pre-v<N>` suffix for backward
+  // compatibility with `scripts/migrations/restore-data-dir.sh` and existing
+  // tests; any other reason is appended verbatim.
+  const dirSuffix = reason === DEFAULT_BACKUP_REASON ? `pre-v${targetVersion}` : reason;
+  const dirName = `${stamp}-${dirSuffix}`;
   const destPath = path.join(backupsRoot, dirName);
 
   // If a previous run on the same second tried to write this name, append a
@@ -350,9 +389,12 @@ export function backupDataDir(opts: BackupOptions): BackupResult | null {
     sourceVersion,
     targetVersion,
     sizeBytes: sourceSize,
+    reason,
     hostname: tryHostname(),
     notes:
-      "Created by AKM before a destructive DB version upgrade. Restore manually by stopping akm and copying the contents back over the live data dir.",
+      reason === DEFAULT_BACKUP_REASON
+        ? "Created by AKM before a destructive DB version upgrade. Restore manually by stopping akm and copying the contents back over the live data dir."
+        : `Created by AKM before a destructive ${reason} operation. Restore manually by stopping akm and copying the contents back over the live data dir.`,
   };
   try {
     fs.writeFileSync(path.join(finalDest, BACKUP_METADATA_FILE), JSON.stringify(metadata, null, 2));
@@ -375,6 +417,7 @@ export function backupDataDir(opts: BackupOptions): BackupResult | null {
     sizeBytes: sourceSize,
     sourceVersion,
     targetVersion,
+    reason,
   };
 }
 
