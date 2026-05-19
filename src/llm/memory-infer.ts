@@ -30,8 +30,8 @@ const SYSTEM_PROMPT =
   "Return only valid JSON. No prose outside the JSON object. No markdown fences.";
 
 const USER_PROMPT_PREFIX = `Compress the memory below into one derived memory. Output ONLY JSON:
-{"title":"string","description":"string","tags":["string"],"searchHints":["string"],"content":"string"}
-Rules: be specific, no vague generalizations, preserve key facts (names/versions/paths/config keys verbatim), merge related points, max 3 sentences body, 3-8 tags, 3-6 searchHints.
+{"title":"short title string","description":"one sentence summary string","tags":["tag1","tag2"],"searchHints":["search phrase 1","search phrase 2"],"content":"2-3 sentence compressed body preserving key facts verbatim"}
+Rules: be specific, no vague generalizations, preserve key facts (names/versions/paths/config keys verbatim), merge related points, 3-8 tags, 3-6 searchHints. The content field must be a plain string with 2-3 sentences.
 
 Memory:
 `;
