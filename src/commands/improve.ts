@@ -59,7 +59,11 @@ export interface AkmImproveOptions {
   task?: string;
   dryRun?: boolean;
   target?: string;
-  autoAccept?: "safe";
+  /**
+   * Confidence threshold (0-100). Undefined disables auto-accept and enables
+   * interactive confirmation on the HTTP consolidation path.
+   */
+  autoAccept?: number;
   stashDir?: string;
   config?: AkmConfig;
   /** Wall-clock budget for the entire improve run in milliseconds. Defaults to 2 hours. */
@@ -2038,7 +2042,7 @@ async function runImprovePostLoopStage(args: {
       config: consolidationConfig,
       stashDir: options.stashDir,
       autoTriggered: volumeTriggered,
-      autoAccept: "safe",
+      autoAccept: 90,
     });
     if (consolidation.processed > 0) {
       appendEvent(

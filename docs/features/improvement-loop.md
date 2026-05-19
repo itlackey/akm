@@ -77,7 +77,8 @@ akm improve skill:code-review         # One asset
 akm improve --task "reduce duplication"
 akm improve --dry-run                 # Show planned refs without generating proposals
 akm improve --limit 10                # Cap assets processed
-akm improve --auto-accept safe        # Auto-apply low-risk proposals
+akm improve --auto-accept=false       # Disable auto-accept (prompt on HTTP path)
+akm improve --auto-accept=90          # Explicit threshold (also the default when flag is absent)
 ```
 
 Selection defaults to assets with recent feedback signals first, with a

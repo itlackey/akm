@@ -124,7 +124,7 @@ Task YAMLs at `<stash>/tasks/<id>.yml` reference profiles the same way:
 ```yaml
 mode: agent
 profile: opencode-default
-command: akm improve --auto-accept safe
+command: akm improve --auto-accept=90
 schedule: "7 * * * *"
 ```
 

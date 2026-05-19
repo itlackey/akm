@@ -1581,7 +1581,7 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show planned refs without generating proposals |
 | `--target` | Override the write target used later by `accept` |
-| `--auto-accept safe` | Low-risk auto-accept mode (only `safe` is accepted) |
+| `--auto-accept[=<value>]` | Confidence threshold (0-100) for auto-accepting proposals. Default ON at 90 when the flag is absent. Bare `--auto-accept` = 90. `--auto-accept=<N>` sets the threshold to integer N (0-100). `--auto-accept=safe` is a permanent alias for 90. `--auto-accept=false` disables auto-accept and restores the interactive prompt on the HTTP consolidation path. |
 | `--limit <n>` | Maximum number of assets to process |
 | `--timeout-ms <ms>` | Wall-clock budget for the run |
 | `--ignore-cooldown` | Disable all cooldown checks for this run |

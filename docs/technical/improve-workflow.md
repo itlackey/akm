@@ -10,7 +10,7 @@
 | `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
 | `--dry-run` | `boolean` | Compute the plan and memory cleanup analysis; emit no events, acquire no lock, write nothing. |
 | `--target` | `string` | Passed through to `akmConsolidate` as the write-target source override. |
-| `--auto-accept` | `"safe"` | Passed to `akmConsolidate`; skips interactive confirmation on the HTTP consolidation path. |
+| `--auto-accept` | `number \| "safe" \| false` (default `90`) | Confidence threshold (0-100) for auto-accepting proposals. Flag absent → ON at threshold 90. Bare `--auto-accept` → 90. `--auto-accept=<N>` → integer threshold. `--auto-accept=safe` → permanent alias for 90. `--auto-accept=false` → disable auto-accept; HTTP consolidation path prompts interactively before Phase B. Until proposals expose real confidence scores, any non-`false` value behaves like the legacy whole-batch accept. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
 | `--consolidate-recovery` | `"abort" \| "clean"` | Recovery mode for stale/incomplete consolidate journals. Default: `abort`. |
@@ -129,7 +129,7 @@ flowchart TD
         CON_ABORT --> CON_MERGE
         CON_G --> CON_MERGE[mergePlans: deduplicate ops\nmerge wins over delete]
         CON_MERGE --> CON_DRY{dryRun?} -- yes --> CON_DRYRESULT([return planned ops, no writes])
-        CON_DRY -- no --> CON_HTTP{HTTP path AND no autoAccept?}
+        CON_DRY -- no --> CON_HTTP{HTTP path AND autoAccept === undefined\n(--auto-accept=false explicitly passed)?}
         CON_HTTP -- yes --> CON_CONFIRM[promptConfirm: apply N ops?]
         CON_CONFIRM --> CON_CONFIRMED{user answered y?} -- no --> CON_ABORT2([return previewOnly result])
         CON_CONFIRMED -- yes --> PHASE_B
@@ -244,7 +244,7 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 4. For each `promote` op: idempotency check (pending proposals and existing file); `createProposal` with `source: "consolidate"`; mark journal completed.
 5. Clean up the journal and timestamp-keyed backup directory on success.
 
-**HTTP path confirmation:** when running on the HTTP path (no agent config) and `autoAccept` is not set, the user is prompted interactively before Phase B executes.
+**HTTP path confirmation:** auto-accept is **on by default** (threshold 90) when the `--auto-accept` flag is absent, so Phase B proceeds without prompting. The user is prompted interactively before Phase B executes only when `--auto-accept=false` is explicitly passed on the HTTP path (no agent config). Any other value of `--auto-accept` — including the bare flag, an integer threshold, or the `safe` alias — keeps auto-accept enabled and skips the prompt.
 
 **What it writes:**
 - `.akm/consolidate-journal.json` — operation log for crash recovery.
@@ -333,7 +333,7 @@ Before the per-asset loop, `akm improve` builds Sets of all refs that are curren
 | `feedback_distillation` | Whether `akmDistill` issues an LLM call. Disabled → outcome `"skipped"`, no proposal, exit 0. Enforced by `tryLlmFeature` with a 30 s hard timeout. |
 | `memory_consolidation` | Whether `akmConsolidate` runs Phase A or B at all. Disabled → immediate no-op return with `processed: 0`. Also gates the `generateMergedContent` call inside Phase B via a second `tryLlmFeature` call. |
 
-Agent path vs. HTTP path in consolidate is determined at runtime: `isAgentPath = !!config.agent`, `isHttpPath = !isAgentPath && !!config.llm`. The HTTP path adds a quality warning and, without `--auto-accept`, requires interactive confirmation.
+Agent path vs. HTTP path in consolidate is determined at runtime: `isAgentPath = !!config.agent`, `isHttpPath = !isAgentPath && !!config.llm`. The HTTP path adds a quality warning and requires interactive confirmation only when the caller explicitly passes `--auto-accept=false`. With the flag absent (default), auto-accept is ON at threshold 90 and no prompt is shown.
 
 ## Output shape
 

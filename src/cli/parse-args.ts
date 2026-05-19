@@ -68,6 +68,50 @@ export function parseNonNegativeIntFlag(raw: string | undefined, flagName: strin
   return parseInt(trimmed, 10);
 }
 
+// ── Auto-accept flag parsing ─────────────────────────────────────────────────
+
+/**
+ * Parse the value of `akm improve --auto-accept` into a confidence threshold.
+ *
+ * Semantics (see docs/migration/v0.7-to-v0.8.md):
+ * - `undefined` (flag absent) → `90` (default-on)
+ * - `""` (bare `--auto-accept`, no value) → `90`
+ * - `"false"` (case-insensitive) → `undefined` (disables auto-accept)
+ * - `"safe"` (case-insensitive) → `90` (permanent back-compat alias)
+ * - integer string `"0".."100"` → that integer
+ * - anything else → throws `UsageError("INVALID_FLAG_VALUE")`
+ *
+ * Citty's `type: "string"` resolves bare flags to `""` and an absent flag to
+ * `undefined`, which is how we distinguish those two cases.
+ *
+ * Until proposals expose per-operation confidence scores, any non-`undefined`
+ * threshold causes the consolidate path to auto-accept the whole batch
+ * (legacy "safe" behaviour). The threshold value is preserved for the eventual
+ * per-operation comparison; see the TODO in `consolidate.ts`.
+ */
+export function parseAutoAcceptFlag(raw: string | undefined): number | undefined {
+  if (raw === undefined) return 90;
+  const trimmed = raw.trim();
+  if (trimmed === "") return 90;
+  const lower = trimmed.toLowerCase();
+  if (lower === "false") return undefined;
+  if (lower === "safe") return 90;
+  if (!/^\d+$/.test(trimmed)) {
+    throw new UsageError(
+      `Invalid --auto-accept value: "${raw}". Must be an integer 0-100, 'safe', or 'false'.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const parsed = parseInt(trimmed, 10);
+  if (parsed < 0 || parsed > 100) {
+    throw new UsageError(
+      `Invalid --auto-accept value: "${raw}". Must be an integer 0-100, 'safe', or 'false'.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return parsed;
+}
+
 // ── String flag parsing ──────────────────────────────────────────────────────
 
 /**

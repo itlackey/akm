@@ -4,7 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
-import { getStringArg, hasSubcommand, parseNonNegativeIntFlag, parsePositiveIntFlag } from "./cli/parse-args";
+import {
+  getStringArg,
+  hasSubcommand,
+  parseAutoAcceptFlag,
+  parseNonNegativeIntFlag,
+  parsePositiveIntFlag,
+} from "./cli/parse-args";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
@@ -3686,7 +3692,8 @@ const improveCommand = defineCommand({
     target: { type: "string", description: "Override the write target for accepted proposals" },
     "auto-accept": {
       type: "string",
-      description: "Automatically accept low-risk proposals (only 'safe' is supported)",
+      description:
+        "Auto-accept proposals at or above this confidence threshold (0-100). Default: 90. Pass 'false' to disable. Legacy alias 'safe' = 90.",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
     "timeout-ms": {
@@ -3739,13 +3746,10 @@ const improveCommand = defineCommand({
         );
       }
       const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
-      if (autoAcceptRaw !== undefined && autoAcceptRaw !== "safe") {
-        throw new UsageError("--auto-accept only supports the value 'safe'.", "INVALID_FLAG_VALUE");
-      }
+      const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
       const targetArg = getStringArg(args, "target");
       const taskArg = getStringArg(args, "task");
       const dryRun = getHyphenatedBoolean(args, "dry-run");
-      const autoAccept = autoAcceptRaw === "safe" ? ("safe" as const) : undefined;
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
       const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");

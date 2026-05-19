@@ -30,7 +30,16 @@ Options:
   --task <text>        Add extra guidance for this improvement pass
   --dry-run            Show planned actions without generating proposals
   --target <source>    Override the write target for accepted proposals
-  --auto-accept safe   Automatically accept low-risk proposals
+  --auto-accept[=<value>]
+                        Confidence threshold (0-100) for auto-accepting proposals.
+                        Default when the flag is absent: ON at threshold 90.
+                        --auto-accept            same as --auto-accept=90
+                        --auto-accept=<N>        integer 0-100; accept proposals at or above N
+                        --auto-accept=safe       alias for 90 (back-compat, not deprecated)
+                        --auto-accept=false      disable auto-accept; HTTP consolidation path
+                                                 will prompt interactively before Phase B
+                        Note: until proposals carry real confidence scores, any non-`false`
+                        value behaves like the legacy "safe" mode (whole-batch auto-accept).
   --ignore-cooldown    Disable reflect/distill/consolidate cooldown checks for this run
   --reflect-cooldown-days <n>
                         Override reflect cooldown with a non-negative integer

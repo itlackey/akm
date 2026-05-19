@@ -1183,7 +1183,8 @@ Consolidation shares all of `improve`'s existing flags without adding new ones:
 akm improve                          # improve + consolidate (if feature enabled)
 akm improve --dry-run                # plan without writing (both improve and consolidate)
 akm improve --target <name>          # target a specific source
-akm improve --auto-accept safe       # skip confirmation prompts
+akm improve --auto-accept=false      # disable auto-accept (interactive prompt on HTTP path)
+akm improve --auto-accept=90         # explicit threshold (default when flag is absent)
 akm improve --task "..."             # extra AI guidance for both passes
 akm improve memory:my-note           # improve a specific ref; consolidation skipped
 ```

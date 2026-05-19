@@ -87,7 +87,11 @@ export interface ConsolidateResult {
 export interface AkmConsolidateOptions {
   target?: string; // which source to target; defaults to primary writable stash
   dryRun?: boolean; // generate AI plan but skip all writes
-  autoAccept?: "safe"; // skip interactive confirmation (mirrors improve --auto-accept)
+  /**
+   * Confidence threshold (0-100). Undefined disables auto-accept and enables
+   * interactive confirmation on the HTTP consolidation path.
+   */
+  autoAccept?: number;
   task?: string; // extra guidance appended to the system prompt
   stashDir?: string;
   config?: AkmConfig;
@@ -767,7 +771,11 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // -- HTTP path: warn about quality and confirm unless auto-accepted --------
   if (isHttpPath) {
     warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
-    if (!opts.autoAccept) {
+    // TODO(confidence-scoring): once proposals expose a per-operation
+    // confidence score, compare it against `opts.autoAccept` instead of
+    // treating any defined threshold as a whole-batch accept. Until then,
+    // any non-undefined threshold behaves like the legacy `"safe"` mode.
+    if (opts.autoAccept === undefined) {
       const n = allOps.length;
       const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
       if (!answer) {

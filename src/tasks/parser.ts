@@ -18,7 +18,7 @@
  *   Do the thing.
  *   And the other thing.
  * # ...or:
- * command: akm improve --auto-accept safe --limit 25
+ * command: akm improve --auto-accept=90 --limit 25
  * enabled: true                     # default true
  * name: Daily backup
  * description: …

@@ -82,7 +82,7 @@ describe("parseTaskDocument", () => {
   test("command target as string", () => {
     const yaml = [
       'schedule: "7 * * * *"',
-      "command: akm improve --auto-accept safe --limit 25",
+      "command: akm improve --auto-accept=90 --limit 25",
       "enabled: true",
       "",
     ].join("\n");
@@ -90,7 +90,7 @@ describe("parseTaskDocument", () => {
     expect(task.target.kind).toBe("command");
     if (task.target.kind === "command") {
       expect(task.target.cmd[0]).toBe("akm");
-      expect(task.target.cmd).toContain("--auto-accept");
+      expect(task.target.cmd).toContain("--auto-accept=90");
     }
   });
 
