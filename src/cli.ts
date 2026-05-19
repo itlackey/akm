@@ -3730,6 +3730,14 @@ const improveCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const formatFlagValue = parseFlagValue(process.argv, "--format");
+      if (formatFlagValue !== undefined) {
+        throw new UsageError(
+          `akm improve does not accept --format. That flag controls output formatting for other commands (search, show, etc.).\n` +
+            `Did you mean: akm improve (no --format flag)?`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
       const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
       if (autoAcceptRaw !== undefined && autoAcceptRaw !== "safe") {
         throw new UsageError("--auto-accept only supports the value 'safe'.", "INVALID_FLAG_VALUE");

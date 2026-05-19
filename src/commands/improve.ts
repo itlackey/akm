@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { daysToMs, isProcessAlive } from "../core/common";
+import { daysToMs, isAssetType, isProcessAlive } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
@@ -297,6 +297,13 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
     parseAssetRef(trimmed);
     return { mode: "ref", value: trimmed };
   } catch {
+    if (!isAssetType(trimmed)) {
+      throw new UsageError(
+        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, vault, task.\n` +
+          `If you passed --format to akm improve, that flag is not supported — use it with akm search or akm show instead.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
     return { mode: "type", value: trimmed };
   }
 }
@@ -2212,6 +2219,8 @@ async function runImproveMaintenancePasses(args: {
     for (const r of args.actionableRefs) touchedRefs.add(r.ref);
     for (const r of memoryRefsForInference) touchedRefs.add(r);
 
+    // INVARIANT: graph extraction must never run on the full corpus from the improve post-loop.
+    // Full-corpus scans belong in `akm index`. Only proceed when touchedRefs is non-empty.
     if (sources.length > 0 && graphEnabled && touchedRefs.size > 0) {
       info("[improve] graph extraction starting");
       const extractionStart = Date.now();
