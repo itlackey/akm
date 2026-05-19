@@ -13,6 +13,55 @@
 export const CURRENT_CONFIG_VERSION = "0.8.0";
 
 /**
+ * Compare two `configVersion` values and return -1/0/1 (a<b / a==b / a>b).
+ *
+ * Both the legacy numeric scheme (`1`, `2`, …) and the semver-string scheme
+ * (`"0.8.0"`, `"0.9.1"`) are accepted. Mixed comparisons promote the numeric
+ * value to a semver-like string of the form `0.N.0` (so legacy `2` ≈ `"0.2.0"`
+ * is compared element-wise against the string form). Returns `undefined`
+ * when either value cannot be parsed at all.
+ *
+ * This helper is intentionally tolerant: any unknown/garbage version value
+ * is treated as "older or equal to whatever we know" rather than throwing,
+ * so the read-path never breaks on a malformed `configVersion` field — that
+ * is the job of the normal config parser.
+ */
+export function compareConfigVersion(
+  a: string | number | undefined,
+  b: string | number | undefined,
+): -1 | 0 | 1 | undefined {
+  const partsA = normalizeVersion(a);
+  const partsB = normalizeVersion(b);
+  if (!partsA || !partsB) return undefined;
+  const len = Math.max(partsA.length, partsB.length);
+  for (let i = 0; i < len; i++) {
+    const ai = partsA[i] ?? 0;
+    const bi = partsB[i] ?? 0;
+    if (ai < bi) return -1;
+    if (ai > bi) return 1;
+  }
+  return 0;
+}
+
+function normalizeVersion(v: string | number | undefined): number[] | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) {
+    // Legacy numeric scheme: treat `2` as `0.2.0` so it compares element-wise
+    // against the string form, ordering it correctly below any `0.8.0`-style value.
+    return [0, Math.trunc(v), 0];
+  }
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    if (!trimmed) return undefined;
+    // Strip a leading `v` if present, drop any pre-release/build suffix.
+    const cleaned = trimmed.replace(/^v/i, "").split(/[-+]/, 1)[0];
+    const segments = cleaned.split(".").map((part) => Number.parseInt(part, 10));
+    if (segments.length === 0 || segments.some((n) => !Number.isFinite(n))) return undefined;
+    return segments;
+  }
+  return undefined;
+}
+
+/**
  * Determine whether a raw config object needs migration to the 0.8.0 shape and
  * apply any necessary field renames or promotions.
  *
