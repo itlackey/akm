@@ -23,6 +23,8 @@ afterAll(() => {
 
 const xdgCache = makeTempDir("akm-vqa-cache-");
 const xdgConfig = makeTempDir("akm-vqa-config-");
+const xdgData = makeTempDir("akm-vqa-data-");
+const xdgState = makeTempDir("akm-vqa-state-");
 const isolatedHome = makeTempDir("akm-vqa-home-");
 
 const repoRoot = path.resolve(import.meta.dir, "..");
@@ -43,6 +45,8 @@ function runCli(
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: undefined,
       ...extraEnv,
     },

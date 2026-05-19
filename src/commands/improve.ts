@@ -34,6 +34,7 @@ import { info, warn } from "../core/warn";
 import {
   closeDatabase,
   getAllEntries,
+  getEntryCount,
   getRetrievalCounts,
   getUtilityScoresByIds,
   getZeroResultSearches,
@@ -498,7 +499,6 @@ function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
 
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
   const scope: ImproveScope = resolveImproveScope(options.scope);
-  const { plannedRefs, memorySummary } = await collectEligibleRefs(scope, options.stashDir);
   const reflectFn = options.reflectFn ?? akmReflect;
   const distillFn = options.distillFn ?? akmDistill;
   const ensureIndexFn = options.ensureIndexFn ?? ensureIndex;
@@ -509,6 +509,62 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   } catch {
     primaryStashDir = undefined;
   }
+
+  // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
+  // query reads the `entries` table; if a DB version upgrade just dropped that
+  // table (or the index is otherwise empty), the prior run order silently
+  // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
+  // here repopulates the index first so the subsequent query sees fresh data.
+  const preEnsureCleanupWarnings: string[] = [];
+  if (primaryStashDir) {
+    // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
+    // Best-effort: a missing DB / unreadable schema is the fresh-install case
+    // and not a bug — we silently skip the probe.
+    let preEnsureEntryCount: number | undefined;
+    try {
+      const dbPath = getDbPath();
+      if (fs.existsSync(dbPath)) {
+        const probeDb = openExistingDatabase();
+        try {
+          preEnsureEntryCount = getEntryCount(probeDb);
+        } finally {
+          closeDatabase(probeDb);
+        }
+      }
+    } catch {
+      // best-effort; leave preEnsureEntryCount undefined
+    }
+
+    try {
+      await ensureIndexFn(primaryStashDir);
+    } catch (err) {
+      preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // #339 loud-fail: if the index was empty pre-ensureIndex but is now
+    // populated, a version-upgrade-triggered rebuild just happened. Surface
+    // that on stderr so the improve run is not silently masked by stale
+    // index state. Zero-before AND zero-after is the empty-stash case and
+    // is intentionally not warned (not a bug).
+    if (preEnsureEntryCount === 0) {
+      try {
+        const probeDb = openExistingDatabase();
+        let postCount = 0;
+        try {
+          postCount = getEntryCount(probeDb);
+        } finally {
+          closeDatabase(probeDb);
+        }
+        if (postCount > 0) {
+          warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
+        }
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  const { plannedRefs, memorySummary } = await collectEligibleRefs(scope, options.stashDir);
   const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
 
   // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
@@ -673,11 +729,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memoryCleanupPlan,
       primaryStashDir,
       memorySummary,
-      ensureIndexFn,
       reindexFn,
       startMs,
       budgetMs,
       eventsCtx,
+      initialCleanupWarnings: preEnsureCleanupWarnings,
     });
 
     // D6: pre-load all proposal_rejected events from the last 30 days once,
@@ -950,11 +1006,12 @@ async function runImprovePreparationStage(args: {
   memoryCleanupPlan?: MemoryCleanupPlan;
   primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
-  ensureIndexFn: (stashDir: string) => Promise<unknown>;
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   startMs: number;
   budgetMs: number;
   eventsCtx?: EventsContext;
+  /** Warnings accumulated in akmImprove() prior to this stage (e.g. from the hoisted ensureIndex call). */
+  initialCleanupWarnings?: string[];
 }): Promise<ImprovePreparationResult> {
   const {
     scope,
@@ -962,15 +1019,15 @@ async function runImprovePreparationStage(args: {
     plannedRefs,
     memoryCleanupPlan,
     primaryStashDir,
-    ensureIndexFn,
     reindexFn,
     startMs,
     budgetMs,
     eventsCtx,
+    initialCleanupWarnings,
   } = args;
 
   const actions: ImproveActionResult[] = [];
-  const cleanupWarnings: string[] = [];
+  const cleanupWarnings: string[] = initialCleanupWarnings ? [...initialCleanupWarnings] : [];
 
   // Phase 0 — MEMORY.md budget check (200-line cap; warn at 180)
   let memoryIndexHealth: { lineCount: number; overBudget: boolean } | undefined;
@@ -1010,13 +1067,10 @@ async function runImprovePreparationStage(args: {
     eventsCtx,
   );
 
-  if (primaryStashDir) {
-    try {
-      await ensureIndexFn(primaryStashDir);
-    } catch (err) {
-      cleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // ensureIndex now runs in akmImprove() BEFORE collectEligibleRefs so the
+  // eligible-ref query sees a populated `entries` table on the very first
+  // pass after a DB version upgrade (#339). Any failure messages from that
+  // earlier call were threaded in via args.initialCleanupWarnings.
 
   let appliedCleanup: Awaited<ReturnType<typeof applyMemoryCleanup>> | undefined;
   try {

@@ -35,6 +35,9 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
 function runCli(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
   const stashDir = options.stashDir ?? makeTempDir("akm-remember-stash-");
   const xdgCache = makeTempDir("akm-remember-cache-");
+  const xdgConfig = makeTempDir("akm-remember-config-");
+  const xdgData = makeTempDir("akm-remember-data-");
+  const xdgState = makeTempDir("akm-remember-state-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -44,6 +47,9 @@ function runCli(args: string[], options: { stashDir?: string; configDir: string;
       AKM_STASH_DIR: stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: xdgCache,
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   return { stashDir, result };

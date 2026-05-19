@@ -37,6 +37,8 @@ function runCli(
 ): { stdout: string; stderr: string; status: number } {
   const xdgCache = makeTempDir("akm-proposal-cli-cache-");
   const xdgConfig = makeTempDir("akm-proposal-cli-config-");
+  const xdgData = makeTempDir("akm-proposal-cli-data-");
+  const xdgState = makeTempDir("akm-proposal-cli-state-");
   const home = makeTempDir("akm-proposal-cli-home-");
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
@@ -48,6 +50,8 @@ function runCli(
       HOME: home,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       ...options.env,
     },
   });

@@ -32,6 +32,8 @@ function runCli(
 ): { stdout: string; stderr: string; status: number } {
   const xdgCache = makeTempDir("akm-distill-cli-cache-");
   const xdgConfig = makeTempDir("akm-distill-cli-config-");
+  const xdgData = makeTempDir("akm-distill-cli-data-");
+  const xdgState = makeTempDir("akm-distill-cli-state-");
   const home = makeTempDir("akm-distill-cli-home-");
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
@@ -43,6 +45,8 @@ function runCli(
       HOME: home,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       ...options?.env,
     },
   });
@@ -119,6 +123,8 @@ Use rg.
 beforeEachHappy(() => {
   process.env.XDG_CACHE_HOME = happyTempDir("akm-distill-happy-cache-");
   process.env.XDG_CONFIG_HOME = happyTempDir("akm-distill-happy-config-");
+  process.env.XDG_DATA_HOME = happyTempDir("akm-distill-happy-data-");
+  process.env.XDG_STATE_HOME = happyTempDir("akm-distill-happy-state-");
 });
 
 afterEachHappy(() => {

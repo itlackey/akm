@@ -39,6 +39,8 @@ afterAll(() => {
 
 const xdgCache = makeTempDir("akm-vtrav-cache-");
 const xdgConfig = makeTempDir("akm-vtrav-config-");
+const xdgData = makeTempDir("akm-vtrav-data-");
+const xdgState = makeTempDir("akm-vtrav-state-");
 const isolatedHome = makeTempDir("akm-vtrav-home-");
 
 const repoRoot = path.resolve(import.meta.dir, "..");
@@ -59,6 +61,8 @@ function runCli(
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: stashDir,
     },
   });

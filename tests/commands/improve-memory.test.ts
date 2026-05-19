@@ -750,6 +750,10 @@ describe("akm improve memory cleanup", () => {
       scope: "knowledge:skills/remote-deploy/references/gates",
       dryRun: true,
       stashDir,
+      // Avoid hitting the live website mirror — the URL is a placeholder.
+      // #339 hoisted ensureIndex above the dry-run early return so the index
+      // is fresh before collectEligibleRefs; the stub keeps the test offline.
+      ensureIndexFn: async () => false,
     });
     expect(dryRun.plannedRefs).toEqual([]);
 

@@ -36,6 +36,8 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string })
   const stashDir = options?.stashDir ?? makeTempDir("akm-rmfm-stash-");
   const xdgCache = makeTempDir("akm-rmfm-cache-");
   const xdgConfig = makeTempDir("akm-rmfm-config-");
+  const xdgData = makeTempDir("akm-rmfm-data-");
+  const xdgState = makeTempDir("akm-rmfm-state-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -45,6 +47,8 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string })
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   return { stashDir, result };
