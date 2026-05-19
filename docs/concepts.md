@@ -143,6 +143,38 @@ by `akm improve`) receive `captureMode: background`. The indexer applies a
 small ranking boost to hot-captured memories so explicit user-recorded context
 ranks above passive inference when both match a query.
 
+### Belief states
+
+Memories carry a `beliefState` field that signals how the indexer should weigh
+them in search. The supported values, from strongest to weakest authority:
+
+| State | When it's set | Ranking effect |
+|-------|---------------|----------------|
+| `asserted` | Written directly by `akm remember` (user-explicit) | strongest active boost |
+| `active` | Default for memories with no explicit state | active boost |
+| `deprecated` | Marked as no-longer-current but not yet superseded | small penalty; frozen (never auto-refreshed) |
+| `superseded` | Replaced by another memory via the `supersededBy` field | larger penalty |
+| `contradicted` | Marked as contradicted by other evidence | strong penalty |
+| `archived` | Soft-deleted; retained for audit | strongest penalty |
+
+`akm search` filters via `--belief current|historical|all`:
+- `current` (default for memory search) → `active` + `asserted`
+- `historical` → `deprecated` + `superseded` + `contradicted` + `archived`
+- `all` → no filter
+
+### Derived memories as retrieval shortcuts
+
+When `akm improve` infers a derived memory from a parent (e.g. distilling a
+verbose memory into a focused summary), the derived memory is written with a
+`source: memory:<parent>` frontmatter field and the indexer records the
+parent/child link in the `derived_from` column.
+
+Search hits for the parent memory are then enriched in-place: the parent's
+description and tags are swapped with the derived child's surface text, and an
+`expandTo: memory:<derived>` field on the hit points at the richer derived
+ref. The parent ref itself is preserved on the hit, so existing automation
+keeps working — agents that want the deeper summary follow `expandTo`.
+
 ## Refs
 
 Assets are identified by a **ref** -- a compact handle returned by

@@ -277,6 +277,32 @@ Unknown keys under `options` warn-and-ignore.
 | `propose` | `agent` | New-asset authoring; needs tool access |
 | `memory_improve` | `llm` | Memory enrichment |
 | `feedback_distillation` | `true` (defaults) | Turn collected feedback into lessons |
+| `validation` | unset → falls back to `defaults.llm` | Lower-tier classifier model used by staleness detection, confidence scoring, and lesson classification. Configure with a smaller/cheaper LLM profile to keep validation cycles cheap. |
+
+#### Tuning the forgetting curve
+
+The recency-decay component of search ranking exposes two knobs under
+`improve.utilityDecay`:
+
+```jsonc
+{
+  "improve": {
+    "utilityDecay": {
+      "halfLifeDays": 30,            // default 30 — how fast unused assets fade
+      "feedbackStabilityBoost": 1.5  // default 1.5 — per positive-feedback event
+    }
+  }
+}
+```
+
+The effective half-life for an asset is
+`halfLifeDays × (feedbackStabilityBoost ^ positiveFeedbackCount)`, capped at
+`halfLifeDays × 4`. Assets with repeated positive feedback resist decay; assets
+with none decay at the base rate.
+
+Leave the section absent to use the previous fixed 30-day formula
+unchanged — the feedback-count query is skipped entirely when `utilityDecay`
+is not configured, so there's zero overhead on the search hot path.
 
 ### `features.index.*`
 
