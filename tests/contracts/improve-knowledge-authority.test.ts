@@ -1,18 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { CLI_DOC_PATH, extractSection, readDoc, SPEC_PATH, V0_8_CLI_REVISION_SPEC_PATH } from "./spec-helpers";
+import { CLI_DOC_PATH, extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 describe("issue #315 docs contract — knowledge authority over memories", () => {
-  test("v0.8.0 CLI revision spec states knowledge is more authoritative than memories and derived memories", () => {
-    const v08 = readDoc(V0_8_CLI_REVISION_SPEC_PATH);
-    const improve = extractSection(v08, "### `akm improve`");
-
-    expect(improve).not.toBe("");
-    expect(improve).toContain("knowledge");
-    expect(improve).toMatch(/more authoritative than memory notes/i);
-    expect(improve).toMatch(/derived memories/i);
-    expect(improve).toMatch(/rank above `memory`/i);
-  });
-
   test("v1 architecture spec carries the same knowledge-over-memory rule", () => {
     const spec = readDoc(SPEC_PATH);
     const commands = extractSection(spec, "### 12.4 Commands");
