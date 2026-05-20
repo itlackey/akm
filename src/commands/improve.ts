@@ -1533,7 +1533,30 @@ async function runImprovePreparationStage(args: {
   // a semantic shift from earlier code where actionableRefs was the pre-cooldown
   // sorted set; the new meaning matches reality and is documented on
   // ImprovePreparationResult.actionableRefs.
-  const actionableRefs = sorted;
+  //
+  // Final guard: drop any candidate whose backing file is no longer on disk.
+  // Phase 1 validation captures missing files at the start of preparation, but
+  // the gap between that check and dispatch can be minutes on large stashes —
+  // long enough for a checkpoint / git checkout / external cleanup to delete
+  // the asset. Empirically (improve-critical-review 2026-05-20) the single
+  // biggest reject category was "Asset no longer exists on disk" (604/1407 =
+  // 43%), meaning reflect/distill was producing proposals against deleted refs.
+  // A cheap existsSync per surviving candidate eliminates that wasted work.
+  const assetMissingOnDisk: string[] = [];
+  const existsCheckedActionable: ImproveEligibleRef[] = [];
+  for (const candidate of sorted) {
+    const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+    if (filePath && fs.existsSync(filePath)) {
+      existsCheckedActionable.push(candidate);
+    } else {
+      assetMissingOnDisk.push(candidate.ref);
+      appendEvent(
+        { eventType: "improve_skipped", ref: candidate.ref, metadata: { reason: "asset_missing_on_disk" } },
+        eventsCtx,
+      );
+    }
+  }
+  const actionableRefs = existsCheckedActionable;
 
   // Re-split actionableRefs (sorted) into reflect-path vs distill-only-path while
   // preserving sort order. distillOnlyRefs participate in the sort so --limit
@@ -1572,6 +1595,9 @@ async function runImprovePreparationStage(args: {
   }
   if (validationFailureRefs.size > 0) {
     info(`[improve] ${validationFailureRefs.size} with validation failures excluded`);
+  }
+  if (assetMissingOnDisk.length > 0) {
+    info(`[improve] ${assetMissingOnDisk.length} candidates dropped — file not on disk`);
   }
   const deferredCount = actionableRefs.length - loopRefs.length;
   info(
