@@ -130,7 +130,8 @@ export function measureDataDirSize(dirPath: string): number {
   let total = 0;
   const stack: string[] = [dirPath];
   while (stack.length > 0) {
-    const current = stack.pop()!;
+    const current = stack.pop();
+    if (current === undefined) break;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
@@ -436,7 +437,9 @@ function copyDataDirExcludingBackups(srcRoot: string, destRoot: string): void {
   const stack: Array<{ src: string; dest: string }> = [{ src: srcRoot, dest: destRoot }];
 
   while (stack.length > 0) {
-    const { src, dest } = stack.pop()!;
+    const frame = stack.pop();
+    if (frame === undefined) break;
+    const { src, dest } = frame;
     const entries = fs.readdirSync(src, { withFileTypes: true });
     for (const entry of entries) {
       // Skip the embedded backups directory and the lockfile/sentinel — only
@@ -471,8 +474,6 @@ function copyDataDirExcludingBackups(srcRoot: string, destRoot: string): void {
 
 function tryHostname(): string | undefined {
   try {
-    // Lazy require to avoid pulling node:os into modules that don't need it.
-    // biome-ignore lint/style/useNodejsImportProtocol: dynamic import path
     const os = require("node:os") as typeof import("node:os");
     return os.hostname();
   } catch {
