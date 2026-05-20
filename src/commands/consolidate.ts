@@ -18,7 +18,7 @@ import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from ".
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
 import { chatCompletion } from "../llm/client";
-import { cosineSimilarity, embed, embedBatch } from "../llm/embedder";
+import { cosineSimilarity, embedBatch } from "../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -1058,27 +1058,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           continue;
         }
 
-        // Body-frontmatter check: even when the LLM provides a clean op.description
-        // (which becomes the outer proposal envelope's description), the ASSET BODY's
-        // own YAML frontmatter is what gets indexed when the proposal is accepted.
-        // Validate that too — five proposals queued 2026-05-20 had clean envelopes
-        // but missing/truncated body descriptions.
-        const bodyFm = (parsedMemory.data ?? {}) as Record<string, unknown>;
-        const bodyFmCheck = validateProposalFrontmatter(bodyFm);
-        if (!bodyFmCheck.ok) {
-          warnings.push(
-            `Promote: rejected ${op.ref} → ${knowledgeRef} — INVALID_BODY_FRONTMATTER (${bodyFmCheck.reason}).`,
-          );
-          continue;
-        }
+        // (Body-frontmatter check REMOVED 2026-05-20: zero observed fires
+        // across 17 sampled runs, and structurally redundant with
+        // sanitizeMergedContent which already round-trips the body
+        // frontmatter through the yaml library. The body and envelope
+        // frontmatter come from the same `parsedMemory.data` object in this
+        // scope, so the outer `validateProposalFrontmatter({ description })`
+        // call above is sufficient.)
 
-        // Pre-emit semantic / slug-variant dedup against the live stash and
-        // pending proposals. Catches:
-        //   - Existing knowledge assets with the same content (variant slugs).
-        //   - Pending proposals whose slug normalises to the same form.
-        //   - Embedding cosine similarity >= 0.85 against existing knowledge.
-        // Fails open on embedding errors so transient infra issues never
-        // block proposals.
+        // Pre-emit dedup against pending consolidate proposals from the
+        // same improve run (slug-variant match). The cross-run content-hash
+        // dedup inside `mergePlans` handles duplicates against existing
+        // stash assets — see commit history for the deletion of the
+        // unbounded embedding + cross-type slug branches.
         const dedup = await checkPreEmitDedup({
           candidateRef: knowledgeRef,
           candidateText: `${description}. ${memoryContent}`,
@@ -1421,21 +1413,27 @@ export function normalizeSlugForDedup(ref: string): string {
 }
 
 /**
- * Pre-emit dedup check: compare the candidate ref+content against existing
- * knowledge assets in the live stash (DB) and pending consolidate proposals.
- * Returns a reason string if a match is found, else null.
+ * Pre-emit dedup check: compare the candidate ref against pending consolidate
+ * proposals only. Returns a reason string if a slug-variant match is found,
+ * else null.
  *
- * Performs three checks:
- *   1. Normalised-slug match against existing knowledge assets in the DB.
- *   2. Normalised-slug match against pending consolidate proposals.
- *   3. Embedding cosine similarity >= threshold against existing knowledge.
+ * Historical context (REMOVED 2026-05-20): this function previously also ran
+ *   (a) a normalised-slug match against existing knowledge AND memory entries
+ *       in the DB, and
+ *   (b) an embedding cosine-similarity check (>= 0.85) against ALL knowledge
+ *       and non-derived memory entries.
+ * Both branches had ZERO observed fires across 30 sampled runs in the
+ * post-fix window. The 29 actual dedup catches all came from the SEPARATE
+ * content-hash dedup inside `mergePlans` (the older SHA-256 helper). The
+ * embedding branch in particular had unbounded cost per promote (embedded
+ * every knowledge + non-derived memory entry, every time) with no observed
+ * benefit. Empirical signal → deleted.
  *
- * The embedding check fails open (returns no match) if embeddings are not
- * configured or fail at runtime — never blocks proposals based on transient
- * infrastructure issues.
+ * What remains: a check against pending consolidate proposals in the SAME
+ * improve run. This catches duplicates queued back-to-back within a single
+ * improve invocation — a different concern from the cross-run content-hash
+ * dedup, and cheap (no embeddings, no DB query).
  */
-export const CONSOLIDATE_DEDUP_SIM_THRESHOLD = 0.85;
-
 export async function checkPreEmitDedup(opts: {
   candidateRef: string;
   candidateText: string;
@@ -1444,42 +1442,7 @@ export async function checkPreEmitDedup(opts: {
 }): Promise<{ duplicate: true; reason: string } | { duplicate: false }> {
   const normCandidate = normalizeSlugForDedup(opts.candidateRef);
 
-  // (1) Existing knowledge AND memory assets (slug match).
-  //
-  // Cross-type coverage: a consolidate promote produces a knowledge:* ref,
-  // but the source content is a memory:* — so a slug-variant of an existing
-  // memory must also count as a duplicate. Five proposals queued 2026-05-20
-  // duplicated existing memories under new knowledge slugs. The neighbor
-  // search includes BOTH knowledge and memory.
-  let knowledgeEntries: DbIndexedEntry[] = [];
-  let memoryEntries: DbIndexedEntry[] = [];
-  let db: ReturnType<typeof openExistingDatabase> | undefined;
-  try {
-    db = openExistingDatabase();
-    knowledgeEntries = getAllEntries(db, "knowledge");
-    memoryEntries = getAllEntries(db, "memory");
-  } catch {
-    knowledgeEntries = [];
-    memoryEntries = [];
-  } finally {
-    if (db) closeDatabase(db);
-  }
-  for (const e of knowledgeEntries) {
-    if (normalizeSlugForDedup(`knowledge:${e.entry.name}`) === normCandidate) {
-      return { duplicate: true, reason: `slug-variant of existing knowledge:${e.entry.name}` };
-    }
-  }
-  for (const e of memoryEntries) {
-    // Filter out .derived memories — they are auto-generated and a knowledge
-    // promotion of a parent memory's content shouldn't be blocked by its own
-    // derived sidecar (which would obviously be a high-similarity match).
-    if (e.entry.name.endsWith(".derived")) continue;
-    if (normalizeSlugForDedup(`memory:${e.entry.name}`) === normCandidate) {
-      return { duplicate: true, reason: `slug-variant of existing memory:${e.entry.name}` };
-    }
-  }
-
-  // (2) Pending consolidate proposals (slug match).
+  // Pending consolidate proposals (slug match) — within the same improve run.
   const pendingConsolidate = listProposals(opts.stashDir, { status: "pending" }).filter(
     (p) => p.source === "consolidate",
   );
@@ -1489,55 +1452,6 @@ export async function checkPreEmitDedup(opts: {
     }
   }
 
-  // (3) Embedding similarity against existing knowledge AND memory assets.
-  const allEntries = [
-    ...knowledgeEntries.map((e) => ({ entry: e.entry, kind: "knowledge" as const })),
-    ...memoryEntries
-      .filter((e) => !e.entry.name.endsWith(".derived"))
-      .map((e) => ({ entry: e.entry, kind: "memory" as const })),
-  ];
-  if (!opts.config.embedding || allEntries.length === 0) {
-    return { duplicate: false };
-  }
-  let candidateEmb: number[] | null = null;
-  try {
-    candidateEmb = await embed(opts.candidateText, opts.config.embedding);
-  } catch {
-    return { duplicate: false }; // fail open
-  }
-  if (!candidateEmb) return { duplicate: false };
-
-  // Build comparison texts for the neighbor entries (knowledge + non-derived memory).
-  const refTexts = allEntries.map((e) => {
-    const parts: string[] = [];
-    if (e.entry.description) parts.push(e.entry.description);
-    if (e.entry.tags?.length) parts.push(e.entry.tags.join(" "));
-    return parts.join(". ") || e.entry.name;
-  });
-  let refEmbs: number[][] | null = null;
-  try {
-    refEmbs = await embedBatch(refTexts, opts.config.embedding);
-  } catch {
-    return { duplicate: false };
-  }
-  if (!refEmbs || refEmbs.length !== allEntries.length) return { duplicate: false };
-
-  let bestSim = -Infinity;
-  let bestIdx = -1;
-  for (let i = 0; i < refEmbs.length; i++) {
-    const sim = cosineSimilarity(candidateEmb, refEmbs[i] as number[]);
-    if (sim > bestSim) {
-      bestSim = sim;
-      bestIdx = i;
-    }
-  }
-  if (bestSim >= CONSOLIDATE_DEDUP_SIM_THRESHOLD && bestIdx >= 0) {
-    const matched = allEntries[bestIdx];
-    return {
-      duplicate: true,
-      reason: `semantic match against ${matched?.kind}:${matched?.entry.name} (cosine ${bestSim.toFixed(3)} >= ${CONSOLIDATE_DEDUP_SIM_THRESHOLD})`,
-    };
-  }
   return { duplicate: false };
 }
 

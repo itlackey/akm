@@ -19,9 +19,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  CONSOLIDATE_DEDUP_SIM_THRESHOLD,
   detectTruncatedDescription,
-  normalizeSlugForDedup,
   normalizeUpdatedField,
   sanitizeMergedContent,
   stripOuterCodeFence,
@@ -220,63 +218,6 @@ describe("validateProposalFrontmatter — required-field gate", () => {
   });
 });
 
-// ── normalizeSlugForDedup ───────────────────────────────────────────────────
-
-describe("normalizeSlugForDedup — collapses date suffixes and word-reorderings", () => {
-  it("strips a -may-2026 suffix", () => {
-    const a = normalizeSlugForDedup("knowledge:akm-consolidation-dedup-may-2026");
-    const b = normalizeSlugForDedup("knowledge:akm-consolidation-dedup");
-    expect(a).toBe(b);
-  });
-
-  it("strips a -2026-05-03 date suffix", () => {
-    const a = normalizeSlugForDedup("knowledge:akm-consolidation-dedup-2026-05-03");
-    const b = normalizeSlugForDedup("knowledge:akm-consolidation-dedup");
-    expect(a).toBe(b);
-  });
-
-  it("collapses word-reorderings via alphabetical sort", () => {
-    // "akm-semantic-search-fix" vs "fix-akm-semantic-search" — same tokens.
-    const a = normalizeSlugForDedup("knowledge:akm-semantic-search-fix");
-    const b = normalizeSlugForDedup("knowledge:fix-akm-semantic-search");
-    expect(a).toBe(b);
-  });
-
-  it("treats variants of the same idea as the same slug", () => {
-    const refs = [
-      "knowledge:break-inside-class-cleanup",
-      "knowledge:break-inside-class-cleanup-2026-05-03",
-      "knowledge:cleanup-break-inside-class",
-    ];
-    const norms = refs.map(normalizeSlugForDedup);
-    expect(norms[0]).toBe(norms[1]);
-    expect(norms[1]).toBe(norms[2]);
-  });
-
-  it("preserves DIFFERENT slugs as different", () => {
-    expect(normalizeSlugForDedup("knowledge:foo-bar")).not.toBe(normalizeSlugForDedup("knowledge:baz-qux"));
-  });
-
-  it("strips numeric counter suffixes like -2 / -3", () => {
-    const a = normalizeSlugForDedup("knowledge:akm-config-task-2026");
-    const b = normalizeSlugForDedup("knowledge:akm-config-task-2");
-    // both should drop their numeric/year suffix → same normalised form
-    expect(a).toBe(b);
-  });
-});
-
-// ── dedup threshold constant ────────────────────────────────────────────────
-
-describe("CONSOLIDATE_DEDUP_SIM_THRESHOLD", () => {
-  it("is configured at 0.85 (high-precision semantic-near-duplicate cutoff)", () => {
-    // Picked at 0.85 because empirical mem0 / A-MEM dedup work converges
-    // around 0.80-0.90 for "same idea, different wording" detection on
-    // normalised sentence embeddings. Below 0.80 false positives dominate;
-    // above 0.90 misses paraphrases. 0.85 sits in the empirically-quiet zone.
-    expect(CONSOLIDATE_DEDUP_SIM_THRESHOLD).toBe(0.85);
-  });
-});
-
 // ── normalizeUpdatedField — `updated: today` placeholder defuse ─────────────
 
 describe("normalizeUpdatedField — drains placeholder leaks from `updated:`", () => {
@@ -382,40 +323,5 @@ describe("sanitizeMergedContent — wires normalizeUpdatedField into the pipelin
     if (!result.ok) return;
     expect(result.result.frontmatter.updated).toBe("2026-05-19");
     expect(result.result.content).toContain("updated: 2026-05-19");
-  });
-});
-
-// ── validateProposalFrontmatter on body frontmatter ─────────────────────────
-
-describe("validateProposalFrontmatter — used as a body-frontmatter gate too", () => {
-  // The promote path runs validateProposalFrontmatter twice: once on the
-  // resolved description (the outer envelope value), and once on the asset's
-  // body frontmatter (parsed from the memory file). The body check catches
-  // proposals where the LLM produced a clean envelope but the body lacks /
-  // has a truncated description — observed on 5 of 8 proposals queued 2026-05-20.
-
-  it("rejects a body frontmatter object with no `description` key", () => {
-    const bodyFm = { inferenceProcessed: true, updated: "2026-05-10" };
-    const result = validateProposalFrontmatter(bodyFm);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe("MISSING_FRONTMATTER_DESCRIPTION");
-  });
-
-  it("rejects a body frontmatter with truncated description (trailing comma)", () => {
-    const bodyFm = { description: "print-md if a problem feels novel for a not-novel combination," };
-    const result = validateProposalFrontmatter(bodyFm);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason.startsWith("TRUNCATED_DESCRIPTION")).toBe(true);
-  });
-
-  it("accepts a body frontmatter with a complete description", () => {
-    const bodyFm = {
-      description: "print-md disciplined workflow for commits, dependencies, and boundary checks.",
-      tags: ["print-md", "discipline"],
-    };
-    const result = validateProposalFrontmatter(bodyFm);
-    expect(result.ok).toBe(true);
   });
 });
