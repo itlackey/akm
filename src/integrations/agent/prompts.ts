@@ -296,6 +296,23 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   sections.push(
     "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the proposal's frontmatter is missing `when_to_use`, you MUST generate one — a one-line trigger sentence describing exactly when a user should reach for this asset.",
   );
+
+  // Content-preservation safety rails (#reflect-pipeline-fixes).
+  // These rules counter the observed failure modes where reflect rewrites
+  // asset content into shorter prose, drops concrete structure, or strips
+  // load-bearing frontmatter. Loud and explicit so small models follow.
+  if (input.ref && input.assetContent?.trim()) {
+    sections.push(
+      [
+        "## Content preservation rules (MUST follow)",
+        "1. PRESERVE ALL concrete content: code blocks, fenced snippets, CLI commands, numbered/bulleted checklists, tables, YAML/JSON examples, file paths, configuration keys, environment variable names, and CSS/HTML selectors. These are load-bearing — do NOT replace them with prose summaries.",
+        "2. PRESERVE the source asset's frontmatter. The post-processor reassembles the final asset from the original frontmatter plus your body. Do NOT emit `---` frontmatter delimiters at the top of `content` — start `content` with the markdown body (e.g. `# Heading` or the first paragraph). If you include frontmatter anyway, identity fields (`name`, `ref`, `id`, `slug`, `type`) will be reset to the original values.",
+        "3. DO NOT shrink the asset dramatically. The improved body must be at least 50% of the source body length. If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. `<!-- removed obsolete section X because ... -->`).",
+        "4. DO NOT pad the asset with speculative material. The improved body must be at most 200% of the source body length unless the feedback explicitly requests added sections.",
+        "5. Improve clarity of surrounding prose, fix structural issues, add missing required frontmatter fields. Do NOT rewrite a runbook into an essay.",
+      ].join("\n"),
+    );
+  }
   if (!input.draftFilePath && input.ref) {
     // Reinforce that the `ref` field is mandatory and must exactly match the target.
     // Small models frequently omit `ref` from the response JSON, causing parse errors.

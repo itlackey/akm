@@ -140,6 +140,15 @@ export interface AkmReflectOptions {
    * config-based runner resolution entirely.
    */
   runner?: RunnerSpec;
+  /**
+   * Test seam: pre-loaded source asset content. When set, bypasses the
+   * indexer `lookup()` step so the safety-rail / sanitizer tests can pin
+   * down what reflect sees as the source — without needing a fully built
+   * FTS index in the test fixture.
+   *
+   * In production this is always `undefined`; the indexer drives lookup.
+   */
+  assetContent?: string;
 }
 
 export interface AkmReflectFailure {
@@ -192,6 +201,52 @@ function readRecentFeedback(ref?: string): string[] {
 }
 
 const MAX_REJECTED_PROPOSALS = 3;
+
+/**
+ * Asset types that reflect is allowed to operate on.
+ *
+ * Reflect's canonical output shape is `frontmatter + markdown body`. Running it
+ * against types whose on-disk form is NOT markdown (executable scripts, vault
+ * env files, YAML tasks) blindly prepends `---\n…\n---\n` to the asset and
+ * breaks the runtime contract — for example a `.ts` script with a YAML preamble
+ * is a TypeScript syntax error.
+ *
+ * Whitelisting (rather than blacklisting) keeps the door closed by default as
+ * new asset types are registered. To allow a custom registered type, extend
+ * this set explicitly.
+ *
+ * Observed regression: proposal `8737ab63` (May 2026) prepended frontmatter to
+ * a `.ts` script file via reflect. This whitelist prevents that.
+ */
+const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
+  "knowledge",
+  "memory",
+  "lesson",
+  "wiki",
+  "skill",
+  "agent",
+  "command",
+  "workflow",
+]);
+
+/**
+ * Identity / structural frontmatter fields the LLM is NEVER allowed to change.
+ *
+ * Renaming `name` on a skill silently breaks ref resolution because the ref is
+ * derived from the on-disk path. Similar reasoning for `ref`, `id`, `slug`,
+ * and `type`. The post-processor below restores any of these fields if the
+ * LLM tried to rewrite them.
+ *
+ * Observed regression: proposal `26941510` (May 2026) renamed
+ * `skill:openpalm-stack-diagnostics`'s `name` field to `"diagnostic-checklist"`.
+ */
+const PROTECTED_FRONTMATTER_FIELDS: ReadonlySet<string> = new Set(["name", "ref", "id", "slug", "type"]);
+
+/** Safety-rail thresholds for reflect body size changes. */
+const REFLECT_SHRINK_RATIO_MIN = 0.5;
+const REFLECT_EXPAND_RATIO_MAX = 2.0;
+/** Below this byte count, ratio checks are too noisy — skip them. */
+const REFLECT_SIZE_GUARD_MIN_BYTES = 200;
 
 /**
  * Read the last 1–3 archived rejected proposals for a given ref from the
@@ -424,6 +479,190 @@ function looksLikeAssetContent(value: string, sdkMode = false, targetType?: stri
   return false;
 }
 
+/** Outcome of {@link sanitizeReflectPayload}. */
+interface ReflectSanitizeResult {
+  /** Sanitized content (frontmatter preserved + identity fields restored). */
+  content: string;
+  /** Sanitized frontmatter object suitable for {@link CreateProposalInput.payload.frontmatter}. */
+  frontmatter?: Record<string, unknown>;
+  /** Non-fatal warnings recorded in the event metadata. */
+  warnings: string[];
+  /** When set, the proposal must be rejected with this reason / error. */
+  reject?: { reason: AgentFailureReason; error: string };
+}
+
+/**
+ * Split a markdown blob into `[frontmatterText, bodyText]`.
+ *
+ * Returns `[null, raw]` when the blob does not start with a frontmatter block.
+ */
+function splitFrontmatter(raw: string): { fmText: string | null; body: string } {
+  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) return { fmText: null, body: raw };
+  return { fmText: m[1], body: m[2] };
+}
+
+/**
+ * Serialize a sanitized frontmatter map back into a YAML-subset block matching
+ * what `parseFrontmatter` accepts. Conservative — strings, numbers, booleans,
+ * scalar arrays. Anything exotic is JSON.stringified to keep the YAML valid.
+ */
+function serializeFrontmatter(data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      lines.push(`${key}:`);
+      continue;
+    }
+    if (typeof value === "string") {
+      // Multi-line strings would break the YAML-subset parser — fold to a
+      // single line. The reflect prompt forbids multi-line frontmatter values
+      // so this branch is defensive.
+      const flat = value.includes("\n") ? value.replace(/\s+/g, " ").trim() : value;
+      lines.push(`${key}: ${flat}`);
+      continue;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      lines.push(`${key}: ${String(value)}`);
+      continue;
+    }
+    if (Array.isArray(value)) {
+      lines.push(`${key}:`);
+      for (const item of value) {
+        if (item === null || item === undefined) continue;
+        if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+          lines.push(`  - ${String(item)}`);
+        } else {
+          lines.push(`  - ${JSON.stringify(item)}`);
+        }
+      }
+      continue;
+    }
+    // Objects / unknowns → JSON-string fallback. Reviewer can re-shape on accept.
+    lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Reflect post-processor — enforces the safety rails described at the top of
+ * this file:
+ *
+ *   1. Restore the source frontmatter so reflect never strips load-bearing
+ *      `description`, `when_to_use`, `tags`, etc. The LLM is only allowed to
+ *      change the markdown body. Frontmatter fields proposed by the LLM are
+ *      treated as a *merge on top* of the source — concrete field renames /
+ *      identity changes (`name`, `ref`, `id`, `slug`, `type`) are reverted.
+ *   2. Reject responses that shrink or expand the body past the configured
+ *      ratio thresholds, when the source body is large enough to be reliable.
+ *   3. Drop any leading `---` frontmatter block the LLM produced inside the
+ *      body — the prompt asks it to emit body only, and a stray YAML preamble
+ *      on top of an executable-typed asset is dangerous.
+ *
+ * Caller branches:
+ *   - On `reject`: surface as a failure with the reported reason.
+ *   - Otherwise: substitute `content` (and optional `frontmatter`) into the
+ *     proposal payload.
+ *
+ * Source-less / new-asset case (`sourceContent === undefined`): we still strip
+ * the LLM's frontmatter block from `content` and re-emit a clean block built
+ * from `payload.frontmatter` so identity fields can be enforced. Size guard
+ * is skipped because there is no source to compare against.
+ */
+function sanitizeReflectPayload(
+  payload: { content: string; frontmatter?: Record<string, unknown> },
+  sourceContent: string | undefined,
+  targetRef: string,
+): ReflectSanitizeResult {
+  const warnings: string[] = [];
+
+  const { fmText: sourceFmText, body: sourceBody } = sourceContent
+    ? splitFrontmatter(sourceContent)
+    : { fmText: null, body: "" };
+  const sourceFm = sourceFmText !== null ? parseFrontmatter(sourceContent ?? "").data : {};
+
+  const { fmText: llmFmText, body: rawLlmBody } = splitFrontmatter(payload.content);
+  if (llmFmText !== null) {
+    warnings.push("LLM emitted frontmatter in content; stripped and merged through identity guard.");
+  }
+
+  // Parse the LLM-emitted frontmatter (if any) so we can merge its non-identity
+  // keys into the source frontmatter.
+  let llmFm: Record<string, unknown> = {};
+  if (llmFmText !== null) {
+    try {
+      llmFm = parseFrontmatter(payload.content).data;
+    } catch {
+      llmFm = {};
+    }
+  }
+  // Also accept the explicit `frontmatter` field on the payload.
+  if (payload.frontmatter && typeof payload.frontmatter === "object") {
+    llmFm = { ...llmFm, ...payload.frontmatter };
+  }
+
+  // Strip protected identity fields from any LLM-supplied frontmatter — they
+  // must come from the source asset, never from the LLM.
+  for (const field of PROTECTED_FRONTMATTER_FIELDS) {
+    if (field in llmFm && llmFm[field] !== sourceFm[field]) {
+      warnings.push(`LLM attempted to change protected frontmatter field "${field}"; restored from source.`);
+      delete llmFm[field];
+    }
+  }
+
+  // Build the effective frontmatter: source overlaid with sanitized LLM fields.
+  // Source fields always win on identity keys.
+  const mergedFm: Record<string, unknown> = { ...sourceFm, ...llmFm };
+  for (const field of PROTECTED_FRONTMATTER_FIELDS) {
+    if (field in sourceFm) {
+      mergedFm[field] = sourceFm[field];
+    }
+  }
+
+  const cleanedBody = rawLlmBody.replace(/^\s+/, "");
+
+  // Size guard — only when source body is meaningfully large.
+  if (sourceBody.trim().length >= REFLECT_SIZE_GUARD_MIN_BYTES) {
+    const ratio = cleanedBody.trim().length / sourceBody.trim().length;
+    if (ratio < REFLECT_SHRINK_RATIO_MIN) {
+      return {
+        content: payload.content,
+        warnings,
+        reject: {
+          reason: "parse_error" as AgentFailureReason,
+          error: `Reflect rejected: EXCESSIVE_SHRINKAGE — proposed body is ${(ratio * 100).toFixed(0)}% of source (minimum 50%) for ref ${targetRef}. Concrete content was likely deleted.`,
+        },
+      };
+    }
+    if (ratio > REFLECT_EXPAND_RATIO_MAX) {
+      return {
+        content: payload.content,
+        warnings,
+        reject: {
+          reason: "parse_error" as AgentFailureReason,
+          error: `Reflect rejected: EXCESSIVE_EXPANSION — proposed body is ${(ratio * 100).toFixed(0)}% of source (maximum 200%) for ref ${targetRef}. Speculative material was likely added.`,
+        },
+      };
+    }
+  }
+
+  // Reassemble final content: merged frontmatter + cleaned body.
+  // When there is no frontmatter at all (no source fm and no LLM fm), emit body
+  // only so we don't add a stray `---` to e.g. a script asset that bypassed the
+  // type guard via a custom registration.
+  const hasFrontmatter = Object.keys(mergedFm).length > 0;
+  const reassembled = hasFrontmatter
+    ? `---\n${serializeFrontmatter(mergedFm)}\n---\n\n${cleanedBody.trimStart()}`
+    : cleanedBody;
+
+  return {
+    content: reassembled,
+    ...(hasFrontmatter ? { frontmatter: mergedFm } : {}),
+    warnings,
+  };
+}
+
 /**
  * JSON Schema for structured reflect output. Passed to `chatCompletion` when
  * the connection has `supportsJsonSchema: true` so the model returns a strict
@@ -562,13 +801,34 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   let parsedRef: { type: string; name: string } | undefined;
   if (options.ref) {
     parsedRef = parseAssetRef(options.ref);
-    try {
-      const entry = await lookup(parsedRef);
-      if (entry?.filePath && fs.existsSync(entry.filePath)) {
-        assetContent = fs.readFileSync(entry.filePath, "utf8");
+
+    // 2a. Type guard — reflect only operates on asset types whose canonical
+    // shape is `frontmatter + markdown body`. Refuse non-markdown types
+    // (script / vault / task) up-front so reflect never prepends YAML to a
+    // `.ts` file or rewrites a `.env` blob as prose. See REFLECT_ALLOWED_TYPES.
+    if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error" as AgentFailureReason,
+        error: `Reflect refused: asset type "${parsedRef.type}" is not supported by reflect (only markdown-canonical types are allowed: ${[...REFLECT_ALLOWED_TYPES].sort().join(", ")}). Use \`akm propose\` or edit the file directly.`,
+        ref: options.ref,
+        exitCode: null,
+      };
+    }
+
+    if (options.assetContent !== undefined) {
+      // Test seam — caller pre-loaded the source content.
+      assetContent = options.assetContent;
+    } else {
+      try {
+        const entry = await lookup(parsedRef);
+        if (entry?.filePath && fs.existsSync(entry.filePath)) {
+          assetContent = fs.readFileSync(entry.filePath, "utf8");
+        }
+      } catch {
+        // Index miss is non-fatal — the agent can still propose a fresh asset.
       }
-    } catch {
-      // Index miss is non-fatal — the agent can still propose a fresh asset.
     }
   }
 
@@ -892,6 +1152,48 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       };
     }
   }
+
+  // 7b. Reflect content-preservation rails:
+  //     - Restore source frontmatter so reflect can never strip indexable
+  //       fields (`description`, `when_to_use`, `tags`, ...).
+  //     - Reset protected identity fields (`name`, `ref`, `id`, `slug`,
+  //       `type`) the LLM tried to change.
+  //     - Reject proposals that shrink/expand the body past safe ratios.
+  //
+  // See REFLECT_ALLOWED_TYPES / sanitizeReflectPayload for the underlying
+  // hypotheses + observed regressions (`8737ab63`, `26941510`, and the
+  // catastrophic-shrinkage cases from the May 2026 review).
+  const sanitizeOutcome = sanitizeReflectPayload(
+    { content: payload.content, ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}) },
+    assetContent,
+    payload.ref,
+  );
+  if (sanitizeOutcome.reject) {
+    appendEvent({
+      eventType: "reflect_completed",
+      ref: payload.ref,
+      metadata: {
+        source: "reflect",
+        sanitized: true,
+        rejected: true,
+        rejectReason: sanitizeOutcome.reject.error,
+        ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
+      },
+    });
+    return {
+      schemaVersion: 1,
+      ok: false,
+      reason: sanitizeOutcome.reject.reason,
+      error: sanitizeOutcome.reject.error,
+      ...(options.ref ? { ref: options.ref } : {}),
+      exitCode: result.exitCode,
+    };
+  }
+  payload = {
+    ...payload,
+    content: sanitizeOutcome.content,
+    ...(sanitizeOutcome.frontmatter ? { frontmatter: sanitizeOutcome.frontmatter } : {}),
+  };
 
   // 8. Create the proposal. The proposal queue is the ONLY thing reflect
   // writes — promotion to a real asset is gated by `akm proposal accept`.
