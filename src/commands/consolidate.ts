@@ -121,7 +121,9 @@ Return ONLY JSON (no prose, no code fences):
     { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>" }
   ],
   "warnings": ["<optional concerns>"]
-}`;
+}
+
+When the merged content includes an \`updated\` frontmatter field, the value MUST be a real ISO date string (e.g. \`updated: 2026-05-20\`). NEVER emit \`updated: today\`, \`updated: {today}\`, \`updated: {today: null}\`, \`updated: now\`, or any other literal placeholder/template-variable. If you do not have a real source-of-truth date, OMIT the \`updated\` field entirely — the post-processor will not invent one for you.`;
 
 // ── Memory loading ───────────────────────────────────────────────────────────
 
@@ -1056,6 +1058,20 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           continue;
         }
 
+        // Body-frontmatter check: even when the LLM provides a clean op.description
+        // (which becomes the outer proposal envelope's description), the ASSET BODY's
+        // own YAML frontmatter is what gets indexed when the proposal is accepted.
+        // Validate that too — five proposals queued 2026-05-20 had clean envelopes
+        // but missing/truncated body descriptions.
+        const bodyFm = (parsedMemory.data ?? {}) as Record<string, unknown>;
+        const bodyFmCheck = validateProposalFrontmatter(bodyFm);
+        if (!bodyFmCheck.ok) {
+          warnings.push(
+            `Promote: rejected ${op.ref} → ${knowledgeRef} — INVALID_BODY_FRONTMATTER (${bodyFmCheck.reason}).`,
+          );
+          continue;
+        }
+
         // Pre-emit semantic / slug-variant dedup against the live stash and
         // pending proposals. Catches:
         //   - Existing knowledge assets with the same content (variant slugs).
@@ -1265,6 +1281,12 @@ export function sanitizeMergedContent(
   }
   const fm = parsedFm as Record<string, unknown>;
 
+  // Normalise placeholder leaks like `updated: today`, `updated: {today: null}`,
+  // `updated: now`, etc. The consolidate prompt instructs the LLM not to emit
+  // these, but small models still do. Replace any such leak with today's ISO
+  // date OR drop the field if we can't safely normalise it.
+  normalizeUpdatedField(fm);
+
   // Re-serialise via yaml.stringify to fix any quoting quirks.
   let serialized: string;
   try {
@@ -1275,6 +1297,56 @@ export function sanitizeMergedContent(
 
   const cleaned = `---\n${serialized}\n---\n${match[2]}`;
   return { ok: true, result: { content: cleaned, frontmatter: fm } };
+}
+
+/**
+ * Mutate `fm.updated` in place to normalise placeholder leaks emitted by the
+ * LLM. The consolidate prompt forbids these, but small models still produce
+ * literal `today` / `{today: null}` / `now` values.
+ *
+ * Rules:
+ *   - A real ISO-style date string (YYYY-MM-DD, optionally with time) stays as-is.
+ *   - A Date object (some YAML parsers materialise dates) is converted to its
+ *     ISO yyyy-mm-dd form.
+ *   - A placeholder string ("today", "now", "{today}", "${today}", template
+ *     variables) is replaced with today's ISO date.
+ *   - A map/object (e.g. `{today: null}`) is replaced with today's ISO date.
+ *   - `null`, empty string, missing → left alone (no field added; reviewers
+ *     should not silently gain metadata they didn't write).
+ *
+ * Exported for unit testing.
+ */
+export function normalizeUpdatedField(fm: Record<string, unknown>): void {
+  if (!("updated" in fm)) return;
+  const v = fm.updated;
+  if (v === null || v === undefined || v === "") return;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    fm.updated = v.toISOString().slice(0, 10);
+    return;
+  }
+  if (typeof v === "string") {
+    const trimmed = v.trim().toLowerCase();
+    if (/^\d{4}-\d{2}-\d{2}/.test(v.trim())) return; // already a real date
+    if (
+      trimmed === "today" ||
+      trimmed === "now" ||
+      trimmed === "{today}" ||
+      trimmed === "${today}" ||
+      trimmed === "{{today}}" ||
+      /^\{?\s*today\s*\}?$/.test(trimmed)
+    ) {
+      fm.updated = todayIso;
+      return;
+    }
+    // Unknown string format — leave alone so it's visible in the diff.
+    return;
+  }
+  if (typeof v === "object") {
+    // Maps like `{today: null}`, `{now: null}` — clearly a template leak.
+    fm.updated = todayIso;
+    return;
+  }
 }
 
 /**
@@ -1372,20 +1444,38 @@ export async function checkPreEmitDedup(opts: {
 }): Promise<{ duplicate: true; reason: string } | { duplicate: false }> {
   const normCandidate = normalizeSlugForDedup(opts.candidateRef);
 
-  // (1) Existing knowledge assets (slug match).
-  let dbEntries: DbIndexedEntry[] = [];
+  // (1) Existing knowledge AND memory assets (slug match).
+  //
+  // Cross-type coverage: a consolidate promote produces a knowledge:* ref,
+  // but the source content is a memory:* — so a slug-variant of an existing
+  // memory must also count as a duplicate. Five proposals queued 2026-05-20
+  // duplicated existing memories under new knowledge slugs. The neighbor
+  // search includes BOTH knowledge and memory.
+  let knowledgeEntries: DbIndexedEntry[] = [];
+  let memoryEntries: DbIndexedEntry[] = [];
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {
     db = openExistingDatabase();
-    dbEntries = getAllEntries(db, "knowledge");
+    knowledgeEntries = getAllEntries(db, "knowledge");
+    memoryEntries = getAllEntries(db, "memory");
   } catch {
-    dbEntries = [];
+    knowledgeEntries = [];
+    memoryEntries = [];
   } finally {
     if (db) closeDatabase(db);
   }
-  for (const e of dbEntries) {
+  for (const e of knowledgeEntries) {
     if (normalizeSlugForDedup(`knowledge:${e.entry.name}`) === normCandidate) {
       return { duplicate: true, reason: `slug-variant of existing knowledge:${e.entry.name}` };
+    }
+  }
+  for (const e of memoryEntries) {
+    // Filter out .derived memories — they are auto-generated and a knowledge
+    // promotion of a parent memory's content shouldn't be blocked by its own
+    // derived sidecar (which would obviously be a high-similarity match).
+    if (e.entry.name.endsWith(".derived")) continue;
+    if (normalizeSlugForDedup(`memory:${e.entry.name}`) === normCandidate) {
+      return { duplicate: true, reason: `slug-variant of existing memory:${e.entry.name}` };
     }
   }
 
@@ -1399,8 +1489,14 @@ export async function checkPreEmitDedup(opts: {
     }
   }
 
-  // (3) Embedding similarity against existing knowledge assets.
-  if (!opts.config.embedding || dbEntries.length === 0) {
+  // (3) Embedding similarity against existing knowledge AND memory assets.
+  const allEntries = [
+    ...knowledgeEntries.map((e) => ({ entry: e.entry, kind: "knowledge" as const })),
+    ...memoryEntries
+      .filter((e) => !e.entry.name.endsWith(".derived"))
+      .map((e) => ({ entry: e.entry, kind: "memory" as const })),
+  ];
+  if (!opts.config.embedding || allEntries.length === 0) {
     return { duplicate: false };
   }
   let candidateEmb: number[] | null = null;
@@ -1411,8 +1507,8 @@ export async function checkPreEmitDedup(opts: {
   }
   if (!candidateEmb) return { duplicate: false };
 
-  // Build comparison texts for the known knowledge entries.
-  const refTexts = dbEntries.map((e) => {
+  // Build comparison texts for the neighbor entries (knowledge + non-derived memory).
+  const refTexts = allEntries.map((e) => {
     const parts: string[] = [];
     if (e.entry.description) parts.push(e.entry.description);
     if (e.entry.tags?.length) parts.push(e.entry.tags.join(" "));
@@ -1424,7 +1520,7 @@ export async function checkPreEmitDedup(opts: {
   } catch {
     return { duplicate: false };
   }
-  if (!refEmbs || refEmbs.length !== dbEntries.length) return { duplicate: false };
+  if (!refEmbs || refEmbs.length !== allEntries.length) return { duplicate: false };
 
   let bestSim = -Infinity;
   let bestIdx = -1;
@@ -1436,10 +1532,10 @@ export async function checkPreEmitDedup(opts: {
     }
   }
   if (bestSim >= CONSOLIDATE_DEDUP_SIM_THRESHOLD && bestIdx >= 0) {
-    const matched = dbEntries[bestIdx];
+    const matched = allEntries[bestIdx];
     return {
       duplicate: true,
-      reason: `semantic match against knowledge:${matched?.entry.name} (cosine ${bestSim.toFixed(3)} >= ${CONSOLIDATE_DEDUP_SIM_THRESHOLD})`,
+      reason: `semantic match against ${matched?.kind}:${matched?.entry.name} (cosine ${bestSim.toFixed(3)} >= ${CONSOLIDATE_DEDUP_SIM_THRESHOLD})`,
     };
   }
   return { duplicate: false };
