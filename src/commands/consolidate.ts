@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { stringify as yamlStringify } from "yaml";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
@@ -18,7 +18,7 @@ import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from ".
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
 import { chatCompletion } from "../llm/client";
-import { cosineSimilarity, embedBatch } from "../llm/embedder";
+import { cosineSimilarity, embed, embedBatch } from "../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -868,11 +868,30 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
       if (mergedContent === null) continue;
 
-      // Validate frontmatter of merged content
+      // Validate frontmatter of merged content — must have a `---` block
+      // with at minimum a `description` field. We parse via the hand-rolled
+      // parser (cheap) AND require non-empty description. This guards against
+      // the historical defect where merged memories were written back with
+      // empty `description` and later polluted the promote path.
+      let parsedMerged: ReturnType<typeof parseFrontmatter>;
       try {
-        parseFrontmatter(mergedContent);
+        parsedMerged = parseFrontmatter(mergedContent);
       } catch {
         warnings.push(`Merge: merged content for ${op.primary} has invalid frontmatter — skipping.`);
+        continue;
+      }
+      if (parsedMerged.frontmatter === null) {
+        warnings.push(`Merge: merged content for ${op.primary} has no frontmatter block — skipping.`);
+        continue;
+      }
+      const mergedDesc = parsedMerged.data.description;
+      if (typeof mergedDesc !== "string" || mergedDesc.trim().length === 0) {
+        warnings.push(`Merge: merged content for ${op.primary} missing description — skipping.`);
+        continue;
+      }
+      const truncReason = detectTruncatedDescription(mergedDesc);
+      if (truncReason) {
+        warnings.push(`Merge: merged content for ${op.primary} has truncated description (${truncReason}) — skipping.`);
         continue;
       }
 
@@ -983,6 +1002,16 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
+      // Defensive sanitization: legacy memory files written by older
+      // consolidate runs may still carry outer code fences or broken YAML.
+      // Strip them here so we never propose a polluted asset.
+      const promoteSanitized = sanitizeMergedContent(memoryContent);
+      if (!promoteSanitized.ok) {
+        warnings.push(`Promote: rejected ${op.ref} — source memory failed sanitization (${promoteSanitized.reason}).`);
+        continue;
+      }
+      memoryContent = promoteSanitized.result.content;
+
       // Cross-run + within-run content dedup: if an identical payload already
       // exists in ANY pending consolidate proposal (regardless of target ref),
       // skip. This prevents duplicate proposals when:
@@ -1008,12 +1037,43 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
 
       try {
-        // Use LLM-provided description; fall back to memory's own description.
+        // Use LLM-provided description; fall back to memory's own description
+        // (post-sanitization frontmatter is authoritative).
         const parsedMemory = parseFrontmatter(memoryContent);
         const description: string =
           (typeof op.description === "string" && op.description.trim()
             ? op.description.trim()
             : (parsedMemory.data?.description as string | undefined)?.trim()) ?? "";
+
+        // Validate the resolved frontmatter before emitting a proposal.
+        // Required field: non-empty description. Reject obvious truncation
+        // markers (description ends with `,`/`;`/`:`/`...`/hanging connector)
+        // so the queue never sees half-formed metadata that the reviewer
+        // would only reject.
+        const fmCheck = validateProposalFrontmatter({ description });
+        if (!fmCheck.ok) {
+          warnings.push(`Promote: rejected ${op.ref} → ${knowledgeRef} — ${fmCheck.reason}.`);
+          continue;
+        }
+
+        // Pre-emit semantic / slug-variant dedup against the live stash and
+        // pending proposals. Catches:
+        //   - Existing knowledge assets with the same content (variant slugs).
+        //   - Pending proposals whose slug normalises to the same form.
+        //   - Embedding cosine similarity >= 0.85 against existing knowledge.
+        // Fails open on embedding errors so transient infra issues never
+        // block proposals.
+        const dedup = await checkPreEmitDedup({
+          candidateRef: knowledgeRef,
+          candidateText: `${description}. ${memoryContent}`,
+          stashDir,
+          config,
+        });
+        if (dedup.duplicate) {
+          warnings.push(`Promote: skipped ${op.ref} → ${knowledgeRef} — ${dedup.reason}.`);
+          continue;
+        }
+
         const proposalResult = createProposal(stashDir, {
           ref: knowledgeRef,
           source: "consolidate",
@@ -1113,6 +1173,278 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+// ── LLM-output sanitization ─────────────────────────────────────────────────
+//
+// Three classes of LLM defect have been observed across hundreds of
+// consolidate proposals (see audit notes in this branch):
+//
+//   1. Code-fence leakage: the entire merged asset is wrapped in
+//      ```markdown … ``` (or ```yaml … ```) despite the prompt forbidding
+//      fences. The post-processor used to pass this through verbatim, so the
+//      first character of the asset content became a backtick rather than
+//      `---`, defeating the frontmatter parser.
+//   2. YAML quote-escaping bugs: descriptions like `'"Specialty intro...:`
+//      with unbalanced quotes that break the YAML reader. The post-processor
+//      historically passed the LLM's raw scalar straight into a manually
+//      assembled `description: <raw>` line.
+//   3. Truncated descriptions hitting token cutoffs — the model's max_tokens
+//      runs out mid-sentence, leaving things like
+//      `description: "Tables in narrow column containers need max-width:100% +"`
+//      with no closing context.
+//
+// `sanitizeMergedContent` and `validateProposalFrontmatter` defend against
+// all three at the point where LLM output is consumed.
+
+/**
+ * Outer-fence stripper specific to consolidate. Unlike the shared
+ * `stripMarkdownFences` helper (which only handles markdown fences), this
+ * variant additionally recognises `yaml` and bare-language fences and refuses
+ * to strip an unbalanced fence — i.e. a leading ``` with no trailing ``` is
+ * treated as a malformed response, not partially sanitized.
+ *
+ * Returns `null` when only one half of a fence pair is present (caller
+ * should reject the response entirely).
+ */
+export function stripOuterCodeFence(raw: string): { content: string; stripped: boolean } | null {
+  const trimmed = raw.trim();
+  const leading = trimmed.match(/^```(?:markdown|md|yaml|yml)?\s*\r?\n/i);
+  const trailing = trimmed.match(/\r?\n```\s*$/);
+  if (!leading && !trailing) return { content: trimmed, stripped: false };
+  if (!leading || !trailing) return null; // unbalanced — refuse
+  const inner = trimmed.slice(leading[0].length, trimmed.length - trailing[0].length).trim();
+  return { content: inner, stripped: true };
+}
+
+/**
+ * Sanitize raw LLM output destined to be written as an asset body:
+ *   1. Strip outer code fences (rejects unbalanced fences).
+ *   2. Verify the remaining payload starts with `---\n` (frontmatter sentinel).
+ *   3. Re-serialise the frontmatter via the `yaml` library so any unbalanced
+ *      quoting or odd escaping the LLM produced gets normalised. If yaml.parse
+ *      throws, return `null` — the response is unusable.
+ */
+export interface SanitizedMergedContent {
+  /** Clean markdown with re-serialised frontmatter. */
+  content: string;
+  /** Parsed frontmatter object (after yaml round-trip). */
+  frontmatter: Record<string, unknown>;
+}
+
+export function sanitizeMergedContent(
+  raw: string,
+): { ok: true; result: SanitizedMergedContent } | { ok: false; reason: string } {
+  const fenceResult = stripOuterCodeFence(raw);
+  if (!fenceResult) {
+    return { ok: false, reason: "UNBALANCED_CODE_FENCE" };
+  }
+  let body = fenceResult.content;
+
+  // Strip <think> blocks (some local models still emit them despite system prompts).
+  body = body.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  if (!body.startsWith("---")) {
+    return { ok: false, reason: "MISSING_FRONTMATTER_SENTINEL" };
+  }
+
+  // Extract frontmatter block.
+  const match = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
+  if (!match) {
+    return { ok: false, reason: "MALFORMED_FRONTMATTER_BLOCK" };
+  }
+
+  // Re-parse via the yaml library so any quote-escaping mistakes either get
+  // normalised or surface as a parse error we can reject.
+  let parsedFm: unknown;
+  try {
+    parsedFm = yamlParse(match[1]);
+  } catch (e) {
+    return { ok: false, reason: `INVALID_YAML: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (parsedFm === null || typeof parsedFm !== "object" || Array.isArray(parsedFm)) {
+    return { ok: false, reason: "FRONTMATTER_NOT_OBJECT" };
+  }
+  const fm = parsedFm as Record<string, unknown>;
+
+  // Re-serialise via yaml.stringify to fix any quoting quirks.
+  let serialized: string;
+  try {
+    serialized = yamlStringify(fm).trimEnd();
+  } catch (e) {
+    return { ok: false, reason: `YAML_STRINGIFY_FAILED: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  const cleaned = `---\n${serialized}\n---\n${match[2]}`;
+  return { ok: true, result: { content: cleaned, frontmatter: fm } };
+}
+
+/**
+ * Returns a reason string when a description string looks truncated; returns
+ * `null` if the description appears complete.
+ *
+ * Heuristics:
+ *   - Ends with `,`, `;`, `:`, or `…`/`...`
+ *   - Ends with a hanging connector (`and`, `or`, `with`, `to`, `the`, `a`, `is`)
+ *   - Ends with a `+` operator (e.g. "max-width:100% +")
+ */
+export function detectTruncatedDescription(description: string): string | null {
+  const trimmed = description.trim();
+  if (trimmed.length === 0) return null; // empty handled elsewhere
+  if (/[,;:+]$/.test(trimmed)) return "ends with trailing punctuation/operator";
+  if (/\.{3,}$/.test(trimmed) || /…$/.test(trimmed)) return "ends with ellipsis";
+  const lastWord = trimmed.split(/\s+/).pop() ?? "";
+  if (
+    /^(?:and|or|with|to|the|a|an|is|are|of|in|on|by|for|that|which|if|while|when|before|after|has|have|had|but|so|as|at|from|be|been|being|was|were|will|would|can|could|may|might|should|must|shall)$/i.test(
+      lastWord,
+    )
+  ) {
+    return `ends with hanging connector "${lastWord}"`;
+  }
+  return null;
+}
+
+/**
+ * Validate the frontmatter of a consolidate-bound asset. Required fields are
+ * the bare minimum a reviewer needs to triage the proposal: `description`.
+ * Additionally enforces that the description is not obviously truncated.
+ *
+ * Returns `null` on success, or an error code on failure.
+ */
+export function validateProposalFrontmatter(fm: Record<string, unknown>): { ok: true } | { ok: false; reason: string } {
+  const desc = fm.description;
+  if (typeof desc !== "string" || desc.trim().length === 0) {
+    return { ok: false, reason: "MISSING_FRONTMATTER_DESCRIPTION" };
+  }
+  const truncReason = detectTruncatedDescription(desc);
+  if (truncReason) {
+    return { ok: false, reason: `TRUNCATED_DESCRIPTION (${truncReason})` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Normalise a knowledge slug for variant-aware deduplication. Collapses:
+ *   - date suffixes (`-may-2026`, `-2026-05-03`, `-2026`)
+ *   - numeric counter suffixes (`-2`, `-3`)
+ *   - trailing -patterns / -2026-05-03 styles
+ *   - word reorderings via alphabetical sort of the remaining tokens.
+ *
+ * Two slugs that normalise to the same string are considered the same asset
+ * for dedup purposes even if they don't share an exact ref.
+ */
+export function normalizeSlugForDedup(ref: string): string {
+  const slug = ref.replace(/^[^:]+:/, "");
+  const monthRe = /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
+  const tokens = slug
+    .toLowerCase()
+    .split("-")
+    .filter((tok) => tok.length > 0)
+    // Strip purely-numeric tokens (years, dates, counter suffixes like -2 / -3).
+    // Numbers carry no semantic information for our dedup purposes — every
+    // observed defective slug variant differs only in dates or counters.
+    .filter((tok) => !/^\d+$/.test(tok))
+    .filter((tok) => !monthRe.test(tok));
+  // Sort to absorb word reorderings.
+  tokens.sort();
+  return tokens.join("-");
+}
+
+/**
+ * Pre-emit dedup check: compare the candidate ref+content against existing
+ * knowledge assets in the live stash (DB) and pending consolidate proposals.
+ * Returns a reason string if a match is found, else null.
+ *
+ * Performs three checks:
+ *   1. Normalised-slug match against existing knowledge assets in the DB.
+ *   2. Normalised-slug match against pending consolidate proposals.
+ *   3. Embedding cosine similarity >= threshold against existing knowledge.
+ *
+ * The embedding check fails open (returns no match) if embeddings are not
+ * configured or fail at runtime — never blocks proposals based on transient
+ * infrastructure issues.
+ */
+export const CONSOLIDATE_DEDUP_SIM_THRESHOLD = 0.85;
+
+export async function checkPreEmitDedup(opts: {
+  candidateRef: string;
+  candidateText: string;
+  stashDir: string;
+  config: AkmConfig;
+}): Promise<{ duplicate: true; reason: string } | { duplicate: false }> {
+  const normCandidate = normalizeSlugForDedup(opts.candidateRef);
+
+  // (1) Existing knowledge assets (slug match).
+  let dbEntries: DbIndexedEntry[] = [];
+  let db: ReturnType<typeof openExistingDatabase> | undefined;
+  try {
+    db = openExistingDatabase();
+    dbEntries = getAllEntries(db, "knowledge");
+  } catch {
+    dbEntries = [];
+  } finally {
+    if (db) closeDatabase(db);
+  }
+  for (const e of dbEntries) {
+    if (normalizeSlugForDedup(`knowledge:${e.entry.name}`) === normCandidate) {
+      return { duplicate: true, reason: `slug-variant of existing knowledge:${e.entry.name}` };
+    }
+  }
+
+  // (2) Pending consolidate proposals (slug match).
+  const pendingConsolidate = listProposals(opts.stashDir, { status: "pending" }).filter(
+    (p) => p.source === "consolidate",
+  );
+  for (const p of pendingConsolidate) {
+    if (normalizeSlugForDedup(p.ref) === normCandidate) {
+      return { duplicate: true, reason: `slug-variant of pending proposal ${p.id} (${p.ref})` };
+    }
+  }
+
+  // (3) Embedding similarity against existing knowledge assets.
+  if (!opts.config.embedding || dbEntries.length === 0) {
+    return { duplicate: false };
+  }
+  let candidateEmb: number[] | null = null;
+  try {
+    candidateEmb = await embed(opts.candidateText, opts.config.embedding);
+  } catch {
+    return { duplicate: false }; // fail open
+  }
+  if (!candidateEmb) return { duplicate: false };
+
+  // Build comparison texts for the known knowledge entries.
+  const refTexts = dbEntries.map((e) => {
+    const parts: string[] = [];
+    if (e.entry.description) parts.push(e.entry.description);
+    if (e.entry.tags?.length) parts.push(e.entry.tags.join(" "));
+    return parts.join(". ") || e.entry.name;
+  });
+  let refEmbs: number[][] | null = null;
+  try {
+    refEmbs = await embedBatch(refTexts, opts.config.embedding);
+  } catch {
+    return { duplicate: false };
+  }
+  if (!refEmbs || refEmbs.length !== dbEntries.length) return { duplicate: false };
+
+  let bestSim = -Infinity;
+  let bestIdx = -1;
+  for (let i = 0; i < refEmbs.length; i++) {
+    const sim = cosineSimilarity(candidateEmb, refEmbs[i] as number[]);
+    if (sim > bestSim) {
+      bestSim = sim;
+      bestIdx = i;
+    }
+  }
+  if (bestSim >= CONSOLIDATE_DEDUP_SIM_THRESHOLD && bestIdx >= 0) {
+    const matched = dbEntries[bestIdx];
+    return {
+      duplicate: true,
+      reason: `semantic match against knowledge:${matched?.entry.name} (cosine ${bestSim.toFixed(3)} >= ${CONSOLIDATE_DEDUP_SIM_THRESHOLD})`,
+    };
+  }
+  return { duplicate: false };
+}
+
 function loadMemoriesForSource(source: string | undefined, stashDir: string, warnings: string[]): MemoryEntry[] {
   // Load from DB first
   let memories: MemoryEntry[] = [];
@@ -1210,7 +1542,16 @@ async function generateMergedContent(
     return null;
   }
 
-  const mergedRaw = result.content;
+  // Sanitize LLM output: strip outer code fences (defends against the
+  // ```markdown … ``` leak observed in production), re-serialise frontmatter
+  // through the yaml lib (fixes quote-escaping mistakes), and reject empty
+  // or fence-only responses.
+  const sanitized = sanitizeMergedContent(result.content ?? "");
+  if (!sanitized.ok) {
+    warnings.push(`Merge: rejected LLM output for ${primaryRef} — ${sanitized.reason}.`);
+    return null;
+  }
+  const mergedRaw = sanitized.result.content;
 
   // C-4 / #383: Content-preservation lint (mem0 §3.2, arXiv:2504.19413).
   // Guards against LLM-generated merged content that silently drops information
