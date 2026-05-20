@@ -249,7 +249,19 @@ describe("§11 event metadata shape (runtime)", () => {
       ref: "skill:deploy",
       config,
       stashDir: stash,
-      chat: async () => "---\ndescription: x\nwhen_to_use: y\n---\n\nbody.\n",
+      // Use a fixture that passes the description / when_to_use quality validators
+      // added in the improve-pipeline-fixes branch. The contract under test is the
+      // event metadata shape on the happy path, not lint behaviour.
+      chat: async () =>
+        [
+          "---",
+          "description: Always validate the deploy plan in staging before running it in production.",
+          "when_to_use: When promoting a new release artifact from the staging cluster to production.",
+          "---",
+          "",
+          "Deploy plans must be exercised end-to-end in staging first.",
+          "",
+        ].join("\n"),
       lookupFn: async () => null,
       readEventsFn: (() => ({ events: [], nextOffset: 0 })) as never,
     });

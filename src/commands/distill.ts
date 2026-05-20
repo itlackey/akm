@@ -233,6 +233,214 @@ interface DistillValidationFinding {
   message: string;
 }
 
+// ── Content quality validators ──────────────────────────────────────────────
+//
+// These validators run AFTER lesson-lint (which only checks "is the field
+// present and a non-empty string"). They reject the systematic failure modes
+// observed in 323 reviewed archived proposals:
+//   - `description` is a body fragment / section heading / placeholder string
+//   - `when_to_use` is the circular `"When working with <ref>"` fallback
+//   - `description` and `when_to_use` are identical
+//   - Body contains a second pseudo-frontmatter block (e.g. `**description:** ...`)
+//
+// Detection is intentionally conservative: any positive finding rejects the
+// generation. Improve's outer loop already treats validation_failed as a
+// recoverable per-ref outcome.
+
+/**
+ * Trailing tokens that indicate the description was truncated mid-clause.
+ * If the final word of the description is one of these, the LLM almost
+ * certainly hit a token limit or the line was sliced from a body sentence
+ * prefix. Observed examples:
+ *   - "Always validate your setup with"
+ *   - "Key fixes focus on"
+ *   - "Disable the runtime hook before"
+ */
+const TRUNCATION_TRAILING_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "of",
+  "in",
+  "on",
+  "at",
+  "by",
+  "to",
+  "for",
+  "with",
+  "from",
+  "into",
+  "onto",
+  "upon",
+  "via",
+  "per",
+  "as",
+  "than",
+  "that",
+  "which",
+  "if",
+  "when",
+  "while",
+  "before",
+  "after",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "can",
+  "could",
+  "should",
+  "would",
+  "may",
+  "might",
+  "must",
+  "will",
+  "shall",
+]);
+
+/** Headings / section labels that show up verbatim as "descriptions" in the bad samples. */
+const HEADING_FRAGMENT_PATTERNS = [
+  /^for example\b/i,
+  /^to reduce\b/i,
+  /^key (pitfalls|fixes|points|takeaways|considerations|steps|notes|tips|insights|features|benefits|risks)\b/i,
+  /^example[s]?$/i,
+  /^summary$/i,
+  /^overview$/i,
+  /^introduction$/i,
+  /^takeaways$/i,
+  /^conclusion$/i,
+  /^notes?$/i,
+  /^tips?$/i,
+];
+
+/**
+ * Heuristic: looks like a coherent one-sentence description?
+ *
+ * Rejects the systematic failure modes observed across 323 archived rejected
+ * proposals:
+ *   - section-heading fragments ("Key pitfalls", "For example", "Takeaways")
+ *   - mid-sentence prefixes ending with a preposition/conjunction
+ *   - the literal placeholder string left by the old auto-repair fallback
+ *   - pure-digit / pure-markdown content
+ *   - descriptions that start with "When " (that pattern belongs in when_to_use)
+ *
+ * Does NOT require terminal punctuation — VALID_LESSON test fixtures and many
+ * existing lessons describe themselves without a period. Truncation is detected
+ * via the trailing-preposition rule, not via a sentence-ending punctuation rule.
+ *
+ * Pure / exported so tests can pin individual cases.
+ */
+export function isValidDescription(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
+  if (typeof value !== "string") return { ok: false, reason: "description is not a string" };
+  const v = value.trim();
+  if (!v) return { ok: false, reason: "description is empty" };
+  if (v.length < 20) return { ok: false, reason: `description is too short (${v.length} chars; need ≥20)` };
+  if (v.length > 400) return { ok: false, reason: `description is too long (${v.length} chars; max 400)` };
+  // Pure-number or starts with markdown/structural marker.
+  if (/^\s*[\d#*\->`]/.test(v)) return { ok: false, reason: "description starts with a digit or markdown marker" };
+  // Ends with `:`, `;`, `,` — truncated mid-sentence.
+  const last = v.slice(-1);
+  if (last === ":" || last === ";" || last === ",") {
+    return { ok: false, reason: `description ends with truncation indicator "${last}"` };
+  }
+  // Trailing preposition / conjunction / auxiliary verb — sentence was sliced.
+  const lastWordMatch = v.match(/([A-Za-z']+)[.!?]*$/);
+  if (lastWordMatch) {
+    const lastWord = lastWordMatch[1].toLowerCase();
+    if (TRUNCATION_TRAILING_WORDS.has(lastWord)) {
+      return { ok: false, reason: `description ends with truncation-indicator word "${lastWord}"` };
+    }
+  }
+  // Literal placeholder text emitted by the previous auto-repair fallback.
+  if (/^lesson distilled from\b/i.test(v)) {
+    return { ok: false, reason: "description matches the auto-repair placeholder text" };
+  }
+  // Section-heading-like fragments.
+  for (const re of HEADING_FRAGMENT_PATTERNS) {
+    if (re.test(v)) return { ok: false, reason: `description looks like a section heading: "${v.slice(0, 40)}"` };
+  }
+  // Starts with `When ` — that pattern belongs in when_to_use.
+  if (/^when\b/i.test(v)) {
+    return { ok: false, reason: "description starts with 'When' — that pattern belongs in when_to_use" };
+  }
+  // Circular description that names the input ref's slug verbatim.
+  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40) {
+    return { ok: false, reason: "description appears to just name the input ref" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Heuristic: is when_to_use a real trigger sentence (not the circular
+ * `"When working with <slug>"` fallback)?
+ */
+export function isValidWhenToUse(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
+  if (typeof value !== "string") return { ok: false, reason: "when_to_use is not a string" };
+  const v = value.trim();
+  if (!v) return { ok: false, reason: "when_to_use is empty" };
+  if (v.length < 15) return { ok: false, reason: `when_to_use is too short (${v.length} chars; need ≥15)` };
+  if (v.length > 400) return { ok: false, reason: `when_to_use is too long (${v.length} chars; max 400)` };
+  // Circular pattern: "When working with <input-ref-slug>" (auto-repair fallback).
+  if (/^when working with\b/i.test(v)) {
+    return { ok: false, reason: "when_to_use is the circular 'When working with ...' fallback" };
+  }
+  // Naming the input ref tail with no other content is also circular.
+  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 25) {
+    return { ok: false, reason: "when_to_use appears to just name the input ref" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Detect the systematic "double frontmatter" defect: the LLM emits the
+ * required YAML frontmatter AND then restates the same fields inside the
+ * body using bold-markdown markers like `**description:** ...` or a second
+ * `---` fence pair. These contradict the canonical frontmatter and confuse
+ * reviewers.
+ *
+ * Exported as a pure function for testability.
+ */
+export function detectDoubleFrontmatter(content: string): { kind: string; message: string } | null {
+  // Count `---` fence lines at column 0. The lesson contract is exactly two
+  // (the opening and closing of the single frontmatter block). Anything else
+  // is either pseudo-frontmatter inside the body or a malformed second block.
+  const fenceLines = content.split(/\r?\n/).filter((l) => /^---\s*$/.test(l));
+  if (fenceLines.length > 2) {
+    return {
+      kind: "double-frontmatter-fence",
+      message: `Content contains ${fenceLines.length} \`---\` fence lines; lessons must have exactly 2 (opening and closing of one frontmatter block).`,
+    };
+  }
+  // Pseudo-frontmatter markers in the body: lines like `**description:** ...`,
+  // `**when_to_use:** ...`, `__description__: ...`, or bare `description: ...` /
+  // `when_to_use: ...` outside any frontmatter block.
+  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, ""); // strip first frontmatter block, if any
+  const pseudoLine = body
+    .split(/\r?\n/)
+    .find((l) => /^\s*(\*\*|__)?\s*(description|when_to_use)\s*(\*\*|__)?\s*:/i.test(l));
+  if (pseudoLine) {
+    return {
+      kind: "pseudo-frontmatter-in-body",
+      message: `Body contains a pseudo-frontmatter restatement: "${pseudoLine.slice(0, 80)}". The fields belong in the YAML frontmatter only.`,
+    };
+  }
+  return null;
+}
+
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 
 const LESSON_SYSTEM_PROMPT = [
@@ -246,16 +454,19 @@ const LESSON_SYSTEM_PROMPT = [
   "",
   "Required output format — copy this structure exactly:",
   "---",
-  "description: <one-line summary of what the lesson teaches>",
-  "when_to_use: <one-line trigger sentence — when should an agent reach for this lesson?>",
+  "description: <one complete sentence (ending with `.`) summarising what the lesson teaches>",
+  "when_to_use: <one complete sentence describing the concrete trigger condition>",
   "---",
   "",
   "<lesson body — plain markdown, 1–3 short paragraphs of practical guidance>",
   "",
   "RULES:",
-  "- `description` MUST be a non-empty single-line string (no newlines).",
-  "- `when_to_use` MUST be a non-empty single-line string (no newlines).",
-  "- The lesson body MUST be non-empty.",
+  '- `description` MUST be a complete sentence ending with `.`, `!`, or `?` — never a fragment, heading, or word like "For example", "Key pitfalls", or a bare number.',
+  "- `description` MUST NOT start with `When ` — that pattern belongs in `when_to_use`.",
+  "- `when_to_use` MUST be a complete sentence describing a concrete trigger. Never write `When working with <asset-name>` — that is circular and useless.",
+  "- `description` and `when_to_use` MUST differ from each other.",
+  "- The lesson body MUST be non-empty markdown prose. Do NOT restate `description:` or `when_to_use:` inside the body (no `**description:** ...` or `**when_to_use:** ...` lines — the frontmatter is the only place those keys belong).",
+  "- Do NOT emit a second `---` fence after the opening frontmatter — there are exactly two `---` lines in the output, both belonging to the single frontmatter block at the top.",
   "- Do NOT reproduce the source asset verbatim — distil what a caller needs to know.",
   "- Output ONLY the lesson file. No preamble, no code fences, no trailing prose.",
 ].join("\n");
@@ -623,8 +834,37 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
   }
   // Validate the ref shape up front so a typo never reaches the LLM.
-  parseAssetRef(inputRef);
+  const parsedInputRef = parseAssetRef(inputRef);
   const targetKind = options.proposalKind ?? "lesson";
+
+  // Recursive-distillation guard. Distill produces *lessons* from non-lesson
+  // sources (memory, skill, knowledge, etc.). Calling distill on an existing
+  // lesson would derive `lesson:lesson-<name>-lesson-lesson` (double `-lesson`
+  // suffix) and route a "lesson of a lesson" through the proposal queue —
+  // observed in 323 reviewed archived proposals as the recursive-ref defect.
+  // Refuse the input here so the improve loop (or other callers) get a clean
+  // skipped outcome instead of producing nonsense refs.
+  if (parsedInputRef.type === "lesson") {
+    const skippedRef = `lesson:${parsedInputRef.name}`;
+    appendEvent({
+      eventType: "distill_invoked",
+      ref: inputRef,
+      metadata: {
+        outcome: "skipped" as const,
+        lessonRef: skippedRef,
+        message: "distill refuses lesson inputs — lessons are the distilled form, not a source",
+        skipReason: "recursive_lesson_input",
+      },
+    });
+    return {
+      schemaVersion: 1,
+      ok: true,
+      outcome: "skipped",
+      inputRef,
+      lessonRef: skippedRef,
+      message: "Distill refuses lesson inputs — lessons are the distilled form, not a source.",
+    };
+  }
 
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
@@ -963,6 +1203,14 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // frequently produce a good lesson body but omit the YAML header entirely.
   // Rather than discarding valid content, we extract description/when_to_use
   // from the body and prepend the required frontmatter block.
+  //
+  // IMPORTANT: We do NOT synthesise placeholder strings here. If the body
+  // does not contain text that passes the post-LLM validators
+  // (`isValidDescription` / `isValidWhenToUse`), we leave the field missing
+  // and let the lesson lint reject the proposal as `validation_failed`.
+  // Emitting placeholders like `"Lesson distilled from <ref>"` or
+  // `"When working with <slug>"` is what produced the systematic broken
+  // proposals observed across 323 archived rejections.
   if (effectiveProposalKind !== "knowledge") {
     const parsed = parseFrontmatter(content);
     const fm = (parsed.data ?? {}) as Record<string, unknown>;
@@ -983,28 +1231,43 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       // These appear when the LLM leaks frontmatter content into the body, causing
       // auto-repair to produce description: "description: Key Takeaways".
       const isYamlLike = (l: string) => /^---/.test(l) || /^[a-z_]+:\s/i.test(l);
-      // Extract description: first non-trivial prose line after stripping markdown
-      const descLine =
-        body
-          .split("\n")
-          .map(stripMd)
-          .find((l) => !isYamlLike(l) && l.length > 10 && l.length < 200) ?? `Lesson distilled from ${inputRef}`;
-      // Extract when_to_use: look for a line starting with "When" or "Use when"
-      const wtuLine =
-        body
-          .split("\n")
-          .map(stripMd)
-          .find((l) => /^(when |use when|apply when)/i.test(l) && l.length < 200) ??
-        `When working with ${inputRef.split(":").pop() ?? "this asset"}.`;
+      const bodyLines = body.split("\n").map(stripMd);
+      // Extract description: first body line that BOTH looks like prose AND
+      // passes isValidDescription. If nothing qualifies, leave the field
+      // missing — the lint pass will reject the proposal cleanly.
+      let descLine: string | undefined;
+      for (const l of bodyLines) {
+        if (isYamlLike(l)) continue;
+        if (l.length <= 10 || l.length >= 400) continue;
+        if (isValidDescription(l, inputRef).ok) {
+          descLine = l;
+          break;
+        }
+      }
+      // Extract when_to_use: a line starting with "When" / "Use when" / "Apply when"
+      // that ALSO passes isValidWhenToUse (rejects circular fallbacks).
+      let wtuLine: string | undefined;
+      for (const l of bodyLines) {
+        if (!/^(when |use when|apply when)/i.test(l)) continue;
+        if (l.length >= 400) continue;
+        if (isValidWhenToUse(l, inputRef).ok) {
+          wtuLine = l;
+          break;
+        }
+      }
       const repairedFm = {
         ...fm,
-        ...(missingDesc ? { description: descLine } : {}),
-        ...(missingWtu ? { when_to_use: wtuLine } : {}),
+        ...(missingDesc && descLine ? { description: descLine } : {}),
+        ...(missingWtu && wtuLine ? { when_to_use: wtuLine } : {}),
       };
       const fmLines = Object.entries(repairedFm)
         .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
         .join("\n");
-      content = `---\n${fmLines}\n---\n\n${body}`;
+      // Only rewrite content if we actually have at least one field to write.
+      // Otherwise leave the original content for the lint pass to reject.
+      if (Object.keys(repairedFm).length > 0) {
+        content = `---\n${fmLines}\n---\n\n${body}`;
+      }
     }
   }
 
@@ -1012,10 +1275,62 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // canonical gate for required frontmatter (v1 spec §13). On failure we
   // surface a structured error and exit non-zero — but still emit
   // `distill_invoked` so the failure is observable.
-  const findings =
+  const findings: DistillValidationFinding[] =
     effectiveProposalKind === "knowledge"
       ? validateKnowledgeContent(content, inputRef)
       : lintLessonContent(content, `distill:${inputRef}`).findings;
+
+  // Additional quality validators run only on lessons. lesson-lint checks
+  // "field is present and non-empty"; these reject the systematic failure
+  // modes observed across 323 archived rejected proposals:
+  //   - description is a body fragment, section heading, or placeholder
+  //   - when_to_use is the circular "When working with <ref>" fallback
+  //   - description == when_to_use (LLM duplicated a single sentence)
+  //   - body contains a second pseudo-frontmatter block
+  if (effectiveProposalKind !== "knowledge" && findings.length === 0) {
+    const parsedQC = parseFrontmatter(content);
+    const fmQC = (parsedQC.data ?? {}) as Record<string, unknown>;
+
+    const descCheck = isValidDescription(fmQC.description, inputRef);
+    if (!descCheck.ok) {
+      findings.push({
+        kind: "invalid-description",
+        field: "description",
+        message: `Distilled lesson for ${inputRef} has an invalid description: ${descCheck.reason}.`,
+      });
+    }
+
+    const wtuCheck = isValidWhenToUse(fmQC.when_to_use, inputRef);
+    if (!wtuCheck.ok) {
+      findings.push({
+        kind: "invalid-when_to_use",
+        field: "when_to_use",
+        message: `Distilled lesson for ${inputRef} has an invalid when_to_use: ${wtuCheck.reason}.`,
+      });
+    }
+
+    // description and when_to_use must say different things.
+    if (
+      descCheck.ok &&
+      wtuCheck.ok &&
+      typeof fmQC.description === "string" &&
+      typeof fmQC.when_to_use === "string" &&
+      fmQC.description.trim().toLowerCase() === fmQC.when_to_use.trim().toLowerCase()
+    ) {
+      findings.push({
+        kind: "description-equals-when_to_use",
+        field: "description",
+        message: `Distilled lesson for ${inputRef} has identical description and when_to_use.`,
+      });
+    }
+
+    // Double-frontmatter / pseudo-frontmatter pollution in the body.
+    const dfm = detectDoubleFrontmatter(content);
+    if (dfm) {
+      findings.push({ kind: dfm.kind, field: "body", message: `Distilled lesson for ${inputRef}: ${dfm.message}` });
+    }
+  }
+
   if (findings.length > 0) {
     appendEvent({
       eventType: "distill_invoked",

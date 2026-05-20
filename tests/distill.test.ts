@@ -12,7 +12,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../src/commands/distill";
+import {
+  akmDistill,
+  buildDistillPrompt,
+  deriveLessonRef,
+  detectDoubleFrontmatter,
+  isValidDescription,
+  isValidWhenToUse,
+} from "../src/commands/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/distill-promotion-policy";
 import type { AkmConfig } from "../src/core/config";
 import { readEvents } from "../src/core/events";
@@ -398,25 +405,56 @@ describe("akmDistill — LLM error paths", () => {
 // ── Acceptance: validation failure ──────────────────────────────────────────
 
 describe("akmDistill — validation failure", () => {
-  test("LLM returns lesson missing `when_to_use` → auto-repaired, proposal queued", async () => {
-    // Previously this threw; now the auto-repair path injects a generated
-    // `when_to_use` from the body so valid content is never silently discarded.
+  test("LLM returns lesson missing `when_to_use` AND body has no real trigger → validation_failed (no placeholder fallback)", async () => {
+    // Updated for the pipeline-fix sweep: the previous behaviour synthesised a
+    // circular `When working with <slug>.` placeholder. That fallback is the
+    // root cause of one of the systematic defects observed across 323 archived
+    // rejected proposals, so we now refuse to fabricate a when_to_use when no
+    // trigger sentence can be extracted from the body. Validation fails cleanly.
     const stash = makeStashDir();
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "skill:deploy",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => INVALID_LESSON_MISSING_WHEN,
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+    expect(threw).toBeInstanceOf(Error);
+    expect(listProposals(stash)).toEqual([]);
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+  });
+
+  test("LLM returns lesson missing `when_to_use` BUT body contains a real 'When …' line → auto-repaired, queued", async () => {
+    // Auto-repair still works when there is real trigger prose to harvest.
+    const stash = makeStashDir();
+    const lesson = `---
+description: Always validate the ripgrep installation before running searches across very large monorepos.
+---
+
+When searching multi-thousand-file repos, prefer ripgrep to GNU grep — it is faster and respects .gitignore by default.`;
     const result = await akmDistill({
       ref: "skill:deploy",
       config: configEnabled(stash),
       stashDir: stash,
-      chat: async () => INVALID_LESSON_MISSING_WHEN,
+      chat: async () => lesson,
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
     expect(result.outcome).toBe("queued");
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    // Auto-repair should have injected a non-empty when_to_use
     const fm = proposals[0].payload.frontmatter ?? {};
     expect(typeof fm.when_to_use).toBe("string");
-    expect((fm.when_to_use as string).trim().length).toBeGreaterThan(0);
+    expect((fm.when_to_use as string).toLowerCase()).toContain("when ");
+    // Crucially NOT the circular fallback string.
+    expect((fm.when_to_use as string).toLowerCase()).not.toContain("when working with");
   });
 });
 
@@ -1082,5 +1120,244 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
     expect(proposals.length).toBeGreaterThan(0);
     const proposal = proposals[0];
     expect(proposal?.payload.content).toContain("Merged auth content");
+  });
+});
+
+// ── Pipeline-fix regression tests (improve-pipeline-fixes branch) ────────────
+//
+// These tests pin the systematic failure modes observed across 323 archived
+// rejected distill proposals on the 0.8.x release branch. Each test maps to
+// one of the four root causes the pipeline fix targets:
+//   1. Recursive lesson distillation (lesson:lesson-…-lesson-lesson refs).
+//   2. Double-frontmatter blocks (YAML header + bold-markdown restatement).
+//   3. `description` is a section-heading fragment or placeholder.
+//   4. `when_to_use` is the circular "When working with <ref>" fallback.
+
+describe("isValidDescription (pipeline-fix regression)", () => {
+  test.each([
+    ["For example", "section heading too short"],
+    ["To reduce clutter", "section heading too short"],
+    ["Key pitfalls", "section heading"],
+    ["Key fixes focus on", "ends with preposition"],
+    ["Always validate your setup with", "ends with preposition"],
+    ["Lesson distilled from lesson:foo", "literal placeholder"],
+    ["30", "pure number / too short"],
+    ["", "empty"],
+    ["When the deploy fails, retry once with the safe flag enabled.", "starts with When"],
+    ["# Heading line", "starts with markdown marker"],
+  ])("rejects %j (%s)", (bad, _why) => {
+    const r = isValidDescription(bad, "skill:deploy");
+    expect(r.ok).toBe(false);
+  });
+
+  test.each([
+    "Prefer ripgrep over grep on large repos",
+    "Always validate project filter existence before aborting to prevent premature workflow termination.",
+    "Use HMR-safe imports so SvelteKit does not double-evaluate stateful module-level code.",
+  ])("accepts %j", (good) => {
+    const r = isValidDescription(good, "skill:deploy");
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects description that just names the input ref's slug verbatim", () => {
+    // The slug includes hyphens; this description contains the exact slug.
+    const r = isValidDescription(
+      "Notes about pagedjs-content-none-transform-workaround.",
+      "knowledge:pagedjs-content-none-transform-workaround",
+    );
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("isValidWhenToUse (pipeline-fix regression)", () => {
+  test("rejects the circular fallback `When working with <slug>`", () => {
+    const r = isValidWhenToUse(
+      "When working with pagedjs-content-none-transform-workaround.",
+      "knowledge:pagedjs-content-none-transform-workaround",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  test("rejects too-short triggers", () => {
+    expect(isValidWhenToUse("When deploying.", "skill:deploy").ok).toBe(false);
+  });
+
+  test("accepts a real trigger sentence", () => {
+    const r = isValidWhenToUse(
+      "When designing a CSS solution for Paged.js footers that need content: none after the runtime stylesheet.",
+      "knowledge:pagedjs",
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("detectDoubleFrontmatter (pipeline-fix regression)", () => {
+  test("flags content with three or more `---` fences", () => {
+    const bad = [
+      "---",
+      "description: First-frontmatter description here is long enough to pass.",
+      "when_to_use: First-frontmatter trigger sentence here is long enough to pass.",
+      "---",
+      "",
+      "---",
+      "Some body that has its own fence below.",
+      "---",
+    ].join("\n");
+    const r = detectDoubleFrontmatter(bad);
+    expect(r).not.toBeNull();
+    expect(r?.kind).toBe("double-frontmatter-fence");
+  });
+
+  test("flags bold-markdown `**description:**` pseudo-frontmatter in body", () => {
+    const bad = [
+      "---",
+      "description: Real description that is long enough to be acceptable.",
+      "when_to_use: Real trigger that is long enough to be acceptable.",
+      "---",
+      "",
+      "**description:** something else entirely",
+      "**when_to_use:** another contradiction",
+      "",
+      "Lesson body prose.",
+    ].join("\n");
+    const r = detectDoubleFrontmatter(bad);
+    expect(r).not.toBeNull();
+    expect(r?.kind).toBe("pseudo-frontmatter-in-body");
+  });
+
+  test("passes a clean lesson with a single frontmatter block", () => {
+    const ok = [
+      "---",
+      "description: Real description that is long enough to be acceptable.",
+      "when_to_use: Real trigger that is long enough to be acceptable.",
+      "---",
+      "",
+      "Lesson body without restated metadata.",
+    ].join("\n");
+    expect(detectDoubleFrontmatter(ok)).toBeNull();
+  });
+});
+
+describe("akmDistill — pipeline-fix integration", () => {
+  test("refuses lesson refs as input (recursive-distillation guard)", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "lesson:skill-deploy-lesson",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("chat must not be called when input ref is a lesson");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("skipped");
+    expect(result.lessonRef).toBe("lesson:skill-deploy-lesson");
+    expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.skipReason).toBe("recursive_lesson_input");
+    // CRITICAL: the proposed ref must NOT carry the recursive `lesson-…-lesson-lesson` shape.
+    expect(result.lessonRef).not.toMatch(/^lesson:lesson-/);
+    expect(result.lessonRef).not.toMatch(/-lesson-lesson$/);
+  });
+
+  test("LLM returns the archived recursive-lesson bad fixture → validation_failed (no broken proposal queued)", async () => {
+    // Synthesised from proposal id 187de1c9-d7eb-47c1-92a2-23ad29f669cc (lesson-of-a-lesson
+    // with double frontmatter, placeholder description, and circular when_to_use). The
+    // recursive-ref guard fires first, so chat is never called — but to be defensive we
+    // also exercise the path where the bad content comes from a non-lesson source.
+    const stash = makeStashDir();
+    const archivedBadContent = [
+      "---",
+      'description: "Lesson distilled from knowledge:foo"',
+      'when_to_use: "When working with foo."',
+      "---",
+      "",
+      "---",
+      "**description:** Real-looking text crammed into the body.",
+      "**when_to_use:** Another contradiction crammed into the body.",
+      "",
+      "Some prose that an LLM happened to write.",
+    ].join("\n");
+
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "knowledge:foo",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => archivedBadContent,
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(threw?.message).toMatch(/description|when_to_use|frontmatter/);
+    expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+    const findingKinds = events.at(-1)?.metadata?.findingKinds as string[] | undefined;
+    expect(findingKinds?.some((k) => /description|when_to_use|frontmatter/.test(k))).toBe(true);
+  });
+
+  test("LLM returns description='Key pitfalls' → validation_failed (section-heading fragment caught)", async () => {
+    const stash = makeStashDir();
+    const badContent = [
+      "---",
+      'description: "Key pitfalls"',
+      'when_to_use: "When working with pagedjs."',
+      "---",
+      "",
+      "Body explaining the pitfalls of Paged.js usage.",
+    ].join("\n");
+
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "knowledge:pagedjs",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => badContent,
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(listProposals(stash)).toEqual([]);
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+  });
+
+  test("memory: source with valid LLM output → proposal queued (happy-path stays green)", async () => {
+    const stash = makeStashDir();
+    const goodLesson = [
+      "---",
+      "description: Always connect to the corporate VPN before triggering a production deploy.",
+      "when_to_use: When deploying to production over an untrusted network from a remote workstation.",
+      "---",
+      "",
+      "Production deploys assume an authenticated origin. Run the VPN check first.",
+    ].join("\n");
+    const result = await akmDistill({
+      ref: "memory:deploy-tips",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => goodLesson,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.lessonRef).toBe("lesson:memory-deploy-tips-lesson");
+    expect(listProposals(stash).length).toBe(1);
   });
 });
