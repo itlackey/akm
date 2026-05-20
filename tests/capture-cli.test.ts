@@ -44,7 +44,11 @@ describe("capture commands", () => {
     const parentDir = makeTempDir("akm-init-parent-");
     const customDir = path.join(parentDir, "custom-stash");
     const homeDir = makeTempDir("akm-init-home-");
-    const { result } = runCli(["init", flag, customDir], { env: { HOME: homeDir } });
+    // Init's sandbox guard (item 6) refuses explicit --dir /tmp/... under a
+    // test runner; this test legitimately exercises that flag, so opt out.
+    const { result } = runCli(["init", flag, customDir], {
+      env: { HOME: homeDir, AKM_FORCE_INIT_TMP_STASH: "1" },
+    });
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { stashDir: string; configPath: string; created: boolean };

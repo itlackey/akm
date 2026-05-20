@@ -10,8 +10,46 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { loadUserConfig, saveConfig } from "../core/config";
+import { ConfigError } from "../core/errors";
 import { getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
 import { ensureRg } from "../setup/ripgrep-install";
+
+/**
+ * Refuse to persist a temporary-directory stashDir to the user's config when
+ * running under a test runner AND `--dir <tempdir>` was passed explicitly.
+ * This guard targets the exact agent-overreach pattern documented in
+ * `memory:akm-init-persists-stashdir-warning`: an agent ran
+ * `akm init --dir $(mktemp -d)` for an E2E test and silently rewrote the
+ * developer's real config to point at a now-deleted temp dir.
+ *
+ * Tests that legitimately resolve a tempdir via HOME (default-path init) are
+ * unaffected — those are normal `~/akm` resolutions and not the failure mode.
+ *
+ * Test sentinels (either suffices):
+ *   - `BUN_TEST=1`     — explicit opt-in
+ *   - `NODE_ENV=test`  — what `bun test` sets today
+ *
+ * Tests that genuinely need to exercise `akm init --dir /tmp/...` should set
+ * `AKM_FORCE_INIT_TMP_STASH=1`.
+ */
+function assertInitSandbox(stashDir: string, dirExplicitlyProvided: boolean): void {
+  if (!dirExplicitlyProvided) return; // Only guard explicit --dir, not default HOME resolution.
+  const isUnderTest = process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
+  if (!isUnderTest) return;
+  if (process.env.AKM_FORCE_INIT_TMP_STASH === "1") return;
+  const isTmp =
+    stashDir.startsWith("/tmp/") ||
+    stashDir === "/tmp" ||
+    stashDir.startsWith("/var/tmp/") ||
+    stashDir === "/var/tmp" ||
+    stashDir.startsWith("/private/var/folders/") ||
+    stashDir.startsWith("/private/tmp/");
+  if (!isTmp) return;
+  throw new ConfigError(
+    `refusing to persist --dir stashDir to a temporary path while under test runner; set AKM_FORCE_INIT_TMP_STASH=1 if you really mean it (stashDir=${stashDir})`,
+    "INIT_TMP_STASH_REFUSED",
+  );
+}
 
 export interface InitResponse {
   stashDir: string;
@@ -26,6 +64,10 @@ export interface InitResponse {
 
 export async function akmInit(options?: { dir?: string }): Promise<InitResponse> {
   const stashDir = options?.dir ? path.resolve(options.dir) : getDefaultStashDir();
+
+  // Defense-in-depth: refuse to persist an explicit --dir /tmp/... stashDir
+  // to config under a test runner. Default HOME-resolved paths are exempt.
+  assertInitSandbox(stashDir, options?.dir != null);
 
   let created = false;
   if (!fs.existsSync(stashDir)) {

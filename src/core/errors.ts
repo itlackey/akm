@@ -24,7 +24,11 @@ export type ConfigErrorCode =
   | "STASH_DIR_UNREADABLE"
   | "EMBEDDING_NOT_CONFIGURED"
   | "LLM_NOT_CONFIGURED"
-  | "INVALID_CONFIG_FILE";
+  | "INVALID_CONFIG_FILE"
+  // Defense-in-depth sentinel raised by `akm init` under `bun test` to
+  // refuse persisting a temp-dir stashDir to the user's real config.
+  // See src/commands/init.ts.
+  | "INIT_TMP_STASH_REFUSED";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
