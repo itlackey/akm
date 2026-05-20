@@ -283,7 +283,7 @@ describe("buildDistillPrompt", () => {
 // ── Acceptance: gate disabled ───────────────────────────────────────────────
 
 describe("akmDistill — feature gate", () => {
-  test("absent feature flag → outcome 'skipped', exit 0, no proposal, event emitted", async () => {
+  test("absent feature flag → outcome 'config_disabled', no proposal, NO event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -297,16 +297,19 @@ describe("akmDistill — feature gate", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
+    expect(result.message).toContain("feedback_distillation is disabled");
     expect(result.proposalId).toBeUndefined();
     expect(listProposals(stash)).toEqual([]);
 
+    // No `distill_invoked` event for the config-gate-off branch: the LLM
+    // was never invoked, so emitting the event would inflate planner counts
+    // with phantom invocations.
     const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.length).toBe(1);
-    expect(events[0].metadata?.outcome).toBe("skipped");
+    expect(events.length).toBe(0);
   });
 
-  test("explicit `feedback_distillation: false` → also skipped", async () => {
+  test("explicit `feedback_distillation: false` → also config_disabled, NO event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -318,15 +321,18 @@ describe("akmDistill — feature gate", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
     expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(0);
   });
 });
 
 // ── Acceptance: LLM throws ──────────────────────────────────────────────────
 
 describe("akmDistill — LLM error paths", () => {
-  test("chat throws → graceful skipped outcome, no proposal, event emitted", async () => {
+  test("chat throws → llm_failed outcome, no proposal, event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -338,15 +344,16 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
+    expect(result.message).toContain("LLM call returned no usable output");
     expect(result.proposalId).toBeUndefined();
     expect(listProposals(stash)).toEqual([]);
 
     const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.at(-1)?.metadata?.outcome).toBe("skipped");
+    expect(events.at(-1)?.metadata?.outcome).toBe("llm_failed");
   });
 
-  test("chat returns empty string → also skipped", async () => {
+  test("chat returns empty string → llm_failed (LLM ran but produced nothing)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -356,11 +363,11 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
     expect(listProposals(stash)).toEqual([]);
   });
 
-  test("simulated timeout → handled like an error and falls back to skipped", async () => {
+  test("simulated timeout → llm_failed (LLM was invoked but timed out)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -374,11 +381,11 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
     expect(listProposals(stash)).toEqual([]);
   });
 
-  test("no `llm` block configured at all → gate is closed, outcome skipped", async () => {
+  test("no `llm` block configured at all → gate is closed, outcome config_disabled", async () => {
     const stash = makeStashDir();
     const config = {
       stashDir: stash,
@@ -397,8 +404,72 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
     expect(listProposals(stash)).toEqual([]);
+  });
+});
+
+// ── Acceptance: Item 1 — distinguish config_disabled from llm_failed ────────
+//
+// Empirical context: a 108-run audit on release/0.8.0 found 100% of skipped
+// outcomes were actually the config-gate-off branch. The previous conflated
+// message ("disabled or LLM failed") gave operators no signal to act on, and
+// the planner accumulated phantom `distill_invoked` events for invocations
+// that never made an LLM call. These two tests pin the new behaviour so the
+// signal does not regress.
+
+describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () => {
+  test("feedback_distillation undefined → outcome 'config_disabled', NO distill_invoked event emitted", async () => {
+    const stash = makeStashDir();
+    // configAbsentFeature leaves `llm.features` undefined → gate is closed
+    // → fallbackReason === "disabled" → suppress event, emit config_disabled.
+    let chatCalled = false;
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => {
+        chatCalled = true;
+        return "anything";
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    // The LLM must NOT have been called.
+    expect(chatCalled).toBe(false);
+    // Outcome must precisely identify the cause (config off, not LLM failure).
+    expect(result.outcome).toBe("config_disabled");
+    expect(result.message).toContain("feedback_distillation is disabled in config");
+    expect(result.message).toContain("enable to activate");
+    // CRITICAL: no `distill_invoked` event because no invocation occurred.
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(0);
+  });
+
+  test("gate enabled + LLM returns null → outcome 'llm_failed', event IS emitted", async () => {
+    const stash = makeStashDir();
+    // configEnabled flips feedback_distillation: true. The chat seam throws
+    // (simulating a transport failure); tryLlmFeature catches it with
+    // reason "error" → outcome resolves to llm_failed AND the event fires
+    // so the failure is observable on the events stream.
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("simulated upstream LLM error");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("llm_failed");
+    expect(result.message).toContain("LLM call returned no usable output");
+    // Event MUST be emitted: the LLM was actually invoked.
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(1);
+    expect(events[0].metadata?.outcome).toBe("llm_failed");
   });
 });
 
@@ -940,11 +1011,14 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
 // ── #284 GAP-HIGH 7: feature gate ON but llm config missing ────────────────
 
 describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
-  test("feature_distillation: true but no `llm` block → outcome=skipped, no crash", async () => {
+  test("feature_distillation: true but no `llm` block → outcome=llm_failed, no crash", async () => {
     const stash = makeStashDir();
     // Construct a config WITH features enabled but WITHOUT the `llm` block.
     // Validation in parseLlmFeatures requires `llm`; we bypass that by
     // assembling the shape directly (this mimics a partial / racy config).
+    // The gate is OPEN (feedback_distillation: true) but the inner LLM call
+    // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
+    // with reason "error" → outcome resolves to `llm_failed`.
     const config = {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
@@ -961,7 +1035,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
     expect(result.proposalId).toBeUndefined();
     expect(listProposals(stash)).toEqual([]);
   });
@@ -991,7 +1065,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
   });
 
-  test("skipped result preserves the same outer shape but omits proposalId", async () => {
+  test("config_disabled result preserves the same outer shape but omits proposalId", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -1004,7 +1078,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
       readEventsFn: emptyEvents,
     });
     expect(result.ok).toBe(true);
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
     expect(result.proposalId).toBeUndefined();
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
   });

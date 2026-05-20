@@ -92,7 +92,14 @@ import { akmSearch } from "./search";
  * The review-needed band converts uncertain cases into explicit human review
  * requests rather than opaque auto-decisions.
  */
-export type DistillOutcome = "queued" | "skipped" | "validation_failed" | "quality_rejected" | "review_needed";
+export type DistillOutcome =
+  | "queued"
+  | "skipped"
+  | "config_disabled"
+  | "llm_failed"
+  | "validation_failed"
+  | "quality_rejected"
+  | "review_needed";
 
 export interface AkmDistillOptions {
   /** Asset ref to distil from (`[origin//]type:name`). */
@@ -1147,6 +1154,14 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   // Single bounded LLM call. The wrapper handles the gate-check, 600s
   // (10 min) default timeout, and error fallback (returning `null`).
+  //
+  // Capture the fallback reason so we can distinguish "config gate is off"
+  // (no LLM was called — operator action required) from "LLM call was made
+  // but returned no usable output" (transport/timeout/empty — observability).
+  // The previous conflated message ("disabled or the LLM call failed") gave
+  // operators no signal to act on; a 108-run audit found 100% of skipped
+  // outcomes were actually the config-gate-off branch.
+  let fallbackReason: "disabled" | "timeout" | "error" | undefined;
   const raw = await tryLlmFeature(
     "feedback_distillation",
     config,
@@ -1165,6 +1180,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     null as string | null,
     {
       onFallback: (evt) => {
+        fallbackReason = evt.reason;
         // Log the fallback reason; the caller (raw === null path) handles
         // emitting the distill_invoked event so we don't double-emit here.
         warnVerbose(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
@@ -1173,11 +1189,32 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   );
 
   if (raw === null || raw.trim() === "") {
+    // Distinguish "config gate disabled" from "LLM call failed". For the
+    // config-disabled branch, we ALSO suppress the `distill_invoked` event
+    // because no LLM work was actually invoked — emitting the event causes
+    // the planner to accumulate phantom invocations that drown out real
+    // signal.
+    if (fallbackReason === "disabled") {
+      return {
+        schemaVersion: 1,
+        ok: true,
+        outcome: "config_disabled",
+        inputRef,
+        lessonRef: effectiveLessonRef,
+        proposalRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
+        message: "feedback_distillation is disabled in config; enable to activate.",
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+      };
+    }
+    // LLM was actually invoked but produced nothing usable (transport error,
+    // timeout, or empty/whitespace response). Emit the event so the failure
+    // is observable.
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
       metadata: {
-        outcome: "skipped" as const,
+        outcome: "llm_failed" as const,
         lessonRef: effectiveLessonRef,
         proposalKind: effectiveProposalKind,
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
@@ -1186,12 +1223,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     return {
       schemaVersion: 1,
       ok: true,
-      outcome: "skipped",
+      outcome: "llm_failed",
       inputRef,
       lessonRef: effectiveLessonRef,
       proposalRef: effectiveLessonRef,
       proposalKind: effectiveProposalKind,
-      message: "feedback distillation is disabled or the LLM call failed; no proposal created.",
+      message: "LLM call returned no usable output (timeout, empty, or error).",
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
     };
   }
