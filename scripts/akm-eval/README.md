@@ -79,6 +79,96 @@ Other case types declared in `src/types.ts` (`memory-safety`,
 `workflow-compliance`, `lesson-application`) are accepted in case files
 but produce a `skipped` result. They land in Phase 3.
 
+## LLM judging (optional, Phase 7)
+
+`--llm-judge` opts in to grading individual cases with an OpenAI-compatible
+LLM. LLM scores are **always recorded separately** from deterministic
+scores — they show up as `scores.llmJudged` in the run envelope and as
+`llmJudgement` on the per-case record, but are **never** folded into
+`scores.deterministic` or `scores.overall`. This separation exists
+because LLM-judge variance (cf. MT-Bench, arXiv:2306.05685) is too high
+to gate CI on without calibration; deterministic gates stay
+deterministic.
+
+Enable it on any suite that has at least one case with a
+`scoring.llmJudge` block (the smoke suite's `retrieval-deploy-keywords`
+ships with one):
+
+```sh
+# OpenAI default — needs OPENAI_API_KEY (or AKM_EVAL_JUDGE_API_KEY).
+OPENAI_API_KEY=sk-... \
+  scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --llm-judge
+
+# Any OpenAI-compatible local server (Ollama, llama.cpp, vLLM):
+AKM_EVAL_JUDGE_ENDPOINT=http://localhost:11434 \
+AKM_EVAL_JUDGE_PROVIDER=ollama \
+AKM_EVAL_JUDGE_MODEL=llama3.1:8b \
+  scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --llm-judge
+
+# Override per invocation:
+scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --llm-judge \
+  --judge-provider openrouter --judge-model anthropic/claude-3.5-sonnet \
+  --judge-temperature 0
+```
+
+If `--llm-judge` is set but neither an endpoint nor an API key can be
+resolved, the run **fails fast** with an actionable error rather than
+silently degrading.
+
+### What gets recorded
+
+Every judge call appends one JSON line to
+`<run-dir>/artifacts/llm-judgements.jsonl` with provenance:
+
+```json
+{"caseId":"retrieval-deploy-keywords","ts":"2026-05-21T19:58:34.280Z",
+ "model":"gpt-4o-mini","provider":"openai","temperature":0,
+ "promptHash":"65e793a9…","artifactHash":"2951eb03…",
+ "score":0.82,"band":"medium","rationale":"…","durationMs":22}
+```
+
+- `promptHash` is the SHA-256 of the rendered system + user prompt.
+- `artifactHash` is the SHA-256 of the (possibly truncated) artifact.
+- LLM failures are non-fatal: a per-call `error` field is recorded and
+  the run continues. The failed call does NOT contribute to
+  `scores.llmJudged`.
+
+### Authoring a judge case
+
+Add a `scoring.llmJudge` block to any case:
+
+```jsonc
+{
+  "scoring": {
+    "deterministic": true,
+    "weights": { /* ... */ },
+    "passThreshold": 0.6,
+    "llmJudge": {
+      "artifactField": "topHitArtifact",
+      "rubric": "Score 1.0 if the top hit is operationally useful for a deploy…",
+      "maxArtifactBytes": 16384
+    }
+  }
+}
+```
+
+- `artifactField` names a key on the case result's `evidence` (preferred)
+  or `metrics` — its stringified value is what the judge grades.
+- `rubric` is capped at 4 KB (hard error — fix the rubric).
+- `maxArtifactBytes` is optional (default 16 KB). Artifacts are
+  truncated on the artifact side; the rubric is never truncated.
+
+### Flags
+
+| Flag | Default | Env override |
+| --- | --- | --- |
+| `--llm-judge` | off | — |
+| `--judge-model <name>` | `gpt-4o-mini` | `AKM_EVAL_JUDGE_MODEL` |
+| `--judge-provider <name>` | `openai` | `AKM_EVAL_JUDGE_PROVIDER` |
+| `--judge-temperature <0..1>` | `0.0` | — |
+| — | — | `AKM_EVAL_JUDGE_ENDPOINT` (override base URL) |
+| — | — | `AKM_EVAL_JUDGE_API_KEY` (explicit key override) |
+
 ## Paired mode
 
 ```sh

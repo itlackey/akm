@@ -38,9 +38,22 @@ import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
 import { renderMarkdown } from "./report";
 import { aggregateScores, buildCountsByType } from "./scoring";
 import { AkmCli } from "./sources/akm-cli";
+import {
+  DEFAULT_JUDGE_MODEL,
+  llmJudge,
+  resolveJudgeApiKey,
+  resolveJudgeEndpoint,
+} from "./sources/llm-judge";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
 import { createSandbox, type Sandbox } from "./sources/sandbox";
-import type { EvalCase, EvalCaseResult, EvalContext, EvalMode, EvalRunResult } from "./types";
+import type {
+  EvalCase,
+  EvalCaseResult,
+  EvalContext,
+  EvalMode,
+  EvalRunResult,
+  LlmJudgeContext,
+} from "./types";
 
 interface CliOptions {
   suite: string;
@@ -57,6 +70,11 @@ interface CliOptions {
   sandbox: boolean;
   keepSandbox: boolean;
   threshold: number;
+  /** Phase 7: opt-in LLM judging. */
+  llmJudge: boolean;
+  judgeModel?: string;
+  judgeProvider?: string;
+  judgeTemperature: number;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -70,6 +88,8 @@ function parseArgs(argv: string[]): CliOptions {
     sandbox: true,
     keepSandbox: false,
     threshold: 0.1,
+    llmJudge: false,
+    judgeTemperature: 0.0,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -135,6 +155,23 @@ function parseArgs(argv: string[]): CliOptions {
       case "--threshold":
         opts.threshold = Number(next());
         break;
+      case "--llm-judge":
+        opts.llmJudge = true;
+        break;
+      case "--judge-model":
+        opts.judgeModel = next();
+        break;
+      case "--judge-provider":
+        opts.judgeProvider = next();
+        break;
+      case "--judge-temperature": {
+        const v = Number(next());
+        if (!Number.isFinite(v) || v < 0 || v > 1) {
+          throw new Error(`--judge-temperature must be in [0,1] (got ${v})`);
+        }
+        opts.judgeTemperature = v;
+        break;
+      }
       case "-h":
       case "--help":
         printHelp();
@@ -209,6 +246,15 @@ Options:
   --allow-mutate             Alias for --no-sandbox.
   --keep-sandbox             Don't delete the sandbox tmpdir on success.
   --threshold <0..1>         Score-drop threshold for regression diff (default: 0.1).
+  --llm-judge                Phase 7: opt in to LLM judging. Cases declaring
+                              \`scoring.llmJudge\` will be graded and recorded
+                              separately. NEVER folded into deterministic scores.
+  --judge-model <name>       Judge model (default: \$AKM_EVAL_JUDGE_MODEL or
+                              "${DEFAULT_JUDGE_MODEL}").
+  --judge-provider <name>    Judge provider (default: \$AKM_EVAL_JUDGE_PROVIDER or
+                              "openai"). Supported: openai, openrouter, ollama,
+                              llamacpp, lmstudio. Endpoint override: \$AKM_EVAL_JUDGE_ENDPOINT.
+  --judge-temperature <0..1> Judge temperature (default: 0.0 — deterministic-as-possible).
 `);
 }
 
@@ -257,6 +303,135 @@ function loadCases(casesRoot: string, suite: string): EvalCase[] {
   return cases;
 }
 
+/**
+ * Phase 7: build a judge context from CLI options + env. Throws with an
+ * actionable message when `--llm-judge` is on but the user hasn't given
+ * us enough to call an endpoint. We refuse to silently degrade — the
+ * user asked for LLM judging, so failing fast surfaces misconfiguration.
+ */
+function buildJudgeContext(opts: CliOptions, env: Record<string, string | undefined>): LlmJudgeContext {
+  const provider =
+    opts.judgeProvider ?? env.AKM_EVAL_JUDGE_PROVIDER ?? "openai";
+  const model = opts.judgeModel ?? env.AKM_EVAL_JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL;
+  const endpoint = resolveJudgeEndpoint(env);
+  const apiKey = resolveJudgeApiKey(provider, env);
+
+  if (!endpoint && !apiKey) {
+    throw new Error(
+      [
+        "--llm-judge requires either AKM_EVAL_JUDGE_ENDPOINT or an API key.",
+        `  provider = ${provider}; model = ${model}`,
+        "  set one of:",
+        "    AKM_EVAL_JUDGE_ENDPOINT=http://... (local OpenAI-compatible server)",
+        "    AKM_EVAL_JUDGE_API_KEY=...         (explicit override, all providers)",
+        "    OPENAI_API_KEY / OPENROUTER_API_KEY / ...  (per-provider default)",
+        "  also accepted: --judge-model, --judge-provider, --judge-temperature,",
+        "                 AKM_EVAL_JUDGE_MODEL, AKM_EVAL_JUDGE_PROVIDER.",
+      ].join("\n"),
+    );
+  }
+  return {
+    enabled: true,
+    model,
+    provider,
+    temperature: opts.judgeTemperature,
+    endpoint,
+    apiKey,
+  };
+}
+
+/**
+ * Phase 7: if the case declares LLM judging and the judge is enabled,
+ * grade the case's artifact and attach the result. Pure side-channel:
+ * never mutates `r.score` / `r.passed`.
+ */
+async function maybeAttachJudgement(
+  c: EvalCase,
+  r: EvalCaseResult,
+  judge: LlmJudgeContext | undefined,
+): Promise<EvalCaseResult> {
+  const spec = c.scoring?.llmJudge;
+  if (!judge?.enabled || !spec || r.skipped) return r;
+
+  // Pull the artifact text from evidence first, then metrics. Anything
+  // not already a string is JSON-stringified so the judge always sees text.
+  const fromEvidence = r.evidence?.[spec.artifactField];
+  const fromMetrics = r.metrics?.[spec.artifactField];
+  const raw = fromEvidence !== undefined ? fromEvidence : fromMetrics;
+  if (raw === undefined || raw === null) {
+    return {
+      ...r,
+      llmJudgement: {
+        score: 0,
+        band: "low",
+        rationale: "",
+        provenance: {
+          model: judge.model,
+          provider: judge.provider,
+          temperature: judge.temperature,
+          promptHash: "",
+          artifactHash: "",
+          durationMs: 0,
+          ts: new Date().toISOString(),
+        },
+        error: `case has no value for evidence/metrics field '${spec.artifactField}'`,
+      },
+    };
+  }
+  const artifact = typeof raw === "string" ? raw : JSON.stringify(raw);
+
+  try {
+    const verdict = await llmJudge(judge, {
+      artifact,
+      rubric: spec.rubric,
+      maxArtifactBytes: spec.maxArtifactBytes,
+    });
+    if (!verdict) {
+      return {
+        ...r,
+        llmJudgement: {
+          score: 0,
+          band: "low",
+          rationale: "",
+          provenance: {
+            model: judge.model,
+            provider: judge.provider,
+            temperature: judge.temperature,
+            promptHash: "",
+            artifactHash: "",
+            durationMs: 0,
+            ts: new Date().toISOString(),
+          },
+          error: "rubric exceeded 4 KB cap (judge skipped)",
+        },
+      };
+    }
+    return { ...r, llmJudgement: verdict };
+  } catch (err) {
+    // Defensive: llmJudge() promises not to throw, but if a host-level
+    // crash sneaks through, we still don't break deterministic scoring.
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ...r,
+      llmJudgement: {
+        score: 0,
+        band: "low",
+        rationale: "",
+        provenance: {
+          model: judge.model,
+          provider: judge.provider,
+          temperature: judge.temperature,
+          promptHash: "",
+          artifactHash: "",
+          durationMs: 0,
+          ts: new Date().toISOString(),
+        },
+        error: msg,
+      },
+    };
+  }
+}
+
 async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
   switch (c.type) {
     case "retrieval":
@@ -289,7 +464,10 @@ async function runCases(cases: EvalCase[], ctx: EvalContext): Promise<EvalCaseRe
   for (const c of cases) {
     const stepCtx: EvalContext = { ...ctx, currentResults: collected.slice() };
     const result = await runCase(c, stepCtx);
-    collected.push(result);
+    // Phase 7: optional, side-channel judging. Deterministic score on
+    // `result` is finalised before we touch the judge.
+    const withJudge = await maybeAttachJudgement(c, result, ctx.judge);
+    collected.push(withJudge);
   }
   return collected;
 }
@@ -317,6 +495,32 @@ function writeArtifacts(
       `${JSON.stringify(extra.pairedComparison, null, 2)}\n`,
     );
   }
+  // Phase 7: judge-provenance jsonl. One line per judged case (errors
+  // included so misconfiguration is auditable). Skip the file entirely
+  // when no case carried a judgement.
+  const judged = results.filter((r) => r.llmJudgement !== undefined);
+  if (judged.length > 0) {
+    fs.mkdirSync(path.join(runDir, "artifacts"), { recursive: true });
+    const lines = judged.map((r) => {
+      const j = r.llmJudgement!;
+      const rec = {
+        caseId: r.caseId,
+        ts: j.provenance.ts,
+        model: j.provenance.model,
+        provider: j.provenance.provider,
+        temperature: j.provenance.temperature,
+        promptHash: j.provenance.promptHash,
+        artifactHash: j.provenance.artifactHash,
+        score: j.score,
+        band: j.band,
+        rationale: j.rationale,
+        durationMs: j.provenance.durationMs,
+        ...(j.error ? { error: j.error } : {}),
+      };
+      return JSON.stringify(rec);
+    });
+    fs.writeFileSync(path.join(runDir, "artifacts", "llm-judgements.jsonl"), `${lines.join("\n")}\n`);
+  }
 }
 
 function updateLatestSymlink(outRoot: string, runId: string): void {
@@ -336,6 +540,14 @@ function updateLatestSymlink(outRoot: string, runId: string): void {
 
 async function main(): Promise<number> {
   const opts = parseArgs(process.argv.slice(2));
+
+  // Phase 7: resolve the judge context up-front so misconfiguration
+  // fails before we do any work. `buildJudgeContext` throws with an
+  // actionable message when --llm-judge is on without endpoint/key.
+  let judgeCtx: LlmJudgeContext | undefined;
+  if (opts.llmJudge) {
+    judgeCtx = buildJudgeContext(opts, process.env);
+  }
 
   const realStashRoot = resolveStashDir(opts.stash);
   const realDataDir = resolveDataDir();
@@ -381,6 +593,7 @@ async function main(): Promise<number> {
     keepSandbox: opts.keepSandbox,
     env,
     currentRunId: evalRunId,
+    judge: judgeCtx,
   };
 
   const cases = loadCases(casesRoot, opts.suite);
@@ -414,13 +627,18 @@ async function main(): Promise<number> {
   const results = await runCases(cases, baseCtx);
   const completedAt = new Date();
 
-  const { overall, deterministic } = aggregateScores(results);
+  const { overall, deterministic, llmJudged } = aggregateScores(results);
   const countsByType = buildCountsByType(results);
   const errors = results
     .filter((r) => r.errors && r.errors.length > 0)
     .flatMap((r) => (r.errors ?? []).map((m) => ({ caseId: r.caseId, message: m })));
 
   const scores: EvalRunResult["scores"] = { overall, deterministic };
+  // Phase 7: surface llmJudged only when at least one case produced a
+  // judge result. Never folded into `overall` / `deterministic`.
+  if (llmJudged !== undefined) {
+    scores.llmJudged = llmJudged;
+  }
   let regressionsForEnvelope: EvalRunResult["regressions"] | undefined;
   if (opts.mode === "paired" && baselineResults) {
     const baselineAgg = aggregateScores(baselineResults);
@@ -496,6 +714,9 @@ async function main(): Promise<number> {
       markdownReport: "report.md",
       ...(baselineResults ? { baselineCaseResults: "artifacts/baseline-case-results.jsonl" } : {}),
       ...(pairedComparison ? { pairedComparison: "artifacts/paired-comparison.json" } : {}),
+      ...(results.some((r) => r.llmJudgement !== undefined)
+        ? { llmJudgements: "artifacts/llm-judgements.jsonl" }
+        : {}),
     },
   };
 

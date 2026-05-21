@@ -206,13 +206,65 @@ Other types (`memory-safety`, `workflow-compliance`,
 | 1 | Overall score below `--fail-below-score`. |
 | 2 | Case error(s) or invocation failure (missing suite, malformed JSON, missing `bun`, etc.). |
 
+## LLM judging (optional, Phase 7)
+
+`--llm-judge` opts in to per-case grading with an OpenAI-compatible LLM.
+The result is **always recorded separately** from the deterministic
+score: it appears as `scores.llmJudged` in the run envelope and as
+`llmJudgement` on each per-case record, but is **never** folded into
+`scores.deterministic` or `scores.overall`. CI gates remain
+deterministic.
+
+This separation is deliberate. LLM-as-judge variance (cf. MT-Bench,
+arXiv:2306.05685) is high enough that judge scores cannot reliably gate
+merges without per-task calibration (which lands as `judge-calibration`
+cases via Phase 4). Until then, judge scores are an audit signal — they
+inform but never block.
+
+```sh
+# Hosted provider:
+OPENAI_API_KEY=sk-... \
+  scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --llm-judge
+
+# Local OpenAI-compatible server (Ollama, llama.cpp, vLLM):
+AKM_EVAL_JUDGE_ENDPOINT=http://localhost:11434 \
+AKM_EVAL_JUDGE_PROVIDER=ollama \
+AKM_EVAL_JUDGE_MODEL=llama3.1:8b \
+  scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --llm-judge
+```
+
+If `--llm-judge` is set but no endpoint or key can be resolved, the run
+fails fast with an actionable error — silent degradation is refused.
+
+Per-call provenance lands at
+`<run-dir>/artifacts/llm-judgements.jsonl`, one JSON line per case:
+
+```json
+{"caseId":"retrieval-deploy-keywords","ts":"…","model":"gpt-4o-mini",
+ "provider":"openai","temperature":0,"promptHash":"sha256:…",
+ "artifactHash":"sha256:…","score":0.82,"band":"medium",
+ "rationale":"…","durationMs":22}
+```
+
+- `promptHash` covers the rendered system + user prompt; `artifactHash`
+  covers the artifact actually sent to the judge (after the 16 KB cap).
+- LLM call failures are non-fatal: an `error` field is recorded on the
+  judgement and that call does NOT contribute to `scores.llmJudged`.
+- Rubrics are capped at 4 KB (hard error — fix the case). Artifacts are
+  capped at 16 KB by default; override per-case with
+  `scoring.llmJudge.maxArtifactBytes`.
+
+Author a judge case by adding a `scoring.llmJudge` block to any case
+file; see
+[`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md) for the
+full schema.
+
 ## What Phases 1 + 2 do not do
 
 - No mutation of the real stash (paired mode mutates only a tmpdir copy
   unless you pass `--no-sandbox` / `--allow-mutate`).
 - No memory-safety eval (lands in Phase 3 with a mandatory sandbox).
 - No workflow-compliance eval (lands in Phase 3).
-- No LLM judging (lands in Phase 7).
 
 ## See also
 

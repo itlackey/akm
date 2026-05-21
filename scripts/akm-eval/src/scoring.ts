@@ -19,6 +19,14 @@ const DEFAULT_TYPE_WEIGHTS: Record<EvalCaseType, number> = {
 export function aggregateScores(results: EvalCaseResult[]): {
   overall: number;
   deterministic: number;
+  /**
+   * Phase 7: mean of all `case.llmJudgement.score` values that came back
+   * from the judge (errors excluded). `undefined` when no case carried a
+   * judge result. This is recorded separately and is NEVER folded into
+   * `deterministic` or `overall` — the MT-Bench variance argument
+   * (arXiv:2306.05685) is why judge scores remain an audit signal only.
+   */
+  llmJudged?: number;
   byType: Record<EvalCaseType, { run: number; passed: number; skipped: number; score: number }>;
 } {
   const byType: Record<EvalCaseType, { run: number; passed: number; skipped: number; scores: number[] }> = {
@@ -64,7 +72,23 @@ export function aggregateScores(results: EvalCaseResult[]): {
   }
 
   const overall = weightTotal === 0 ? 0 : weightedSum / weightTotal;
-  return { overall, deterministic: overall, byType: reduced };
+
+  // Phase 7: LLM-judged mean — strictly separate from deterministic.
+  // Only judge calls that came back without `error` contribute to the
+  // mean; failed calls count as "skipped" for judging purposes.
+  const judgeScores: number[] = [];
+  for (const r of results) {
+    const j = r.llmJudgement;
+    if (!j) continue;
+    if (j.error) continue;
+    if (Number.isFinite(j.score)) judgeScores.push(j.score);
+  }
+  const llmJudged =
+    judgeScores.length === 0
+      ? undefined
+      : judgeScores.reduce((a, x) => a + x, 0) / judgeScores.length;
+
+  return { overall, deterministic: overall, llmJudged, byType: reduced };
 }
 
 export function buildCountsByType(results: EvalCaseResult[]): EvalRunResult["countsByType"] {
