@@ -42,8 +42,41 @@ const FEATURE_DEFAULTS: Partial<Record<LlmFeatureKey, boolean>> = {
   graph_extraction: true,
 };
 
+/**
+ * Reverse map: which v2 section owns each v1 feature key. Used by
+ * `isLlmFeatureEnabled` to honour the v2 `features.<section>.<process>` gate
+ * even when callers use the legacy `LlmFeatureKey` API.
+ *
+ * Mirrors the forward map in `isProcessEnabled` (line ~111-122). Keep in sync.
+ */
+const FEATURE_KEY_TO_SECTION: Partial<Record<LlmFeatureKey, string>> = {
+  memory_inference: "index",
+  graph_extraction: "index",
+  feedback_distillation: "improve",
+  curate_rerank: "search",
+};
+
 export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmFeatureKey): boolean {
-  const configured = config?.llm?.features?.[feature];
+  if (!config) return false;
+
+  // v2 first: if a `features.<section>.<process>` entry exists for this key,
+  // honour it. Without this, configs that set `features.improve.feedback_distillation: true`
+  // (the canonical v2 way to enable distill) get ignored by callers that use
+  // the legacy `tryLlmFeature(key, ...)` API.
+  const section = FEATURE_KEY_TO_SECTION[feature];
+  if (section) {
+    const featuresSection = (config as Record<string, unknown> & AkmConfig).features as
+      | Record<string, unknown>
+      | undefined;
+    const sectionValue = featuresSection?.[section];
+    if (sectionValue !== undefined) {
+      // Section present — `isProcessEnabled` is the authoritative reader.
+      return isProcessEnabled(section, feature, config);
+    }
+  }
+
+  // v1 fallback: section absent → read legacy `llm.features.<key>`.
+  const configured = config.llm?.features?.[feature];
   if (configured === true) return true;
   if (configured === false) return false;
   return FEATURE_DEFAULTS[feature] === true;
