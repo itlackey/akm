@@ -338,6 +338,45 @@ describe("Schema", () => {
     }
   });
 
+  test("openDatabase() without embeddingDim does NOT overwrite a previously set dim", () => {
+    // Regression: registry-side and other dim-unaware callers
+    // (static-index.ts:174, skills-sh.ts:125, graph.ts:550/591) call
+    // `openDatabase()` with no `embeddingDim`. Before the no-clobber fix
+    // this silently wrote `embeddingDim = "384"` (the EMBEDDING_DIM default)
+    // into `index_meta`, racing dim-aware callers and triggering repeat
+    // backup/wipe cycles. The contract is now: a caller that does not
+    // request a specific dim must not touch `index_meta.embeddingDim`.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-noclobber-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    // Establish dim=768 via a dim-aware open.
+    let db = openDatabase(dbPath, { embeddingDim: 768 });
+    insertTestEntry(db, "noclobber-entry");
+    if (isVecAvailable(db)) {
+      expect(getMeta(db, "embeddingDim")).toBe("768");
+    }
+    closeDatabase(db);
+
+    // A dim-unaware open MUST leave the stored dim alone.
+    db = openDatabase(dbPath);
+    try {
+      expect(getMeta(db, "embeddingDim")).toBe("768");
+    } finally {
+      closeDatabase(db);
+    }
+
+    // And it MUST NOT have produced a backup snapshot (no dim change → no wipe).
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs
+        .readdirSync(backupsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+      expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(false);
+    }
+  });
+
   test("embedding-dim-change backup directory name is distinct from version-upgrade", () => {
     // Seed two backups under the same data dir — one from a version upgrade,
     // one from an embedding-dim change — and verify their directory names

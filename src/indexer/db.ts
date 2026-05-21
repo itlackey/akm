@@ -68,7 +68,13 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
   // Try to load sqlite-vec extension
   loadVecExtension(db);
 
-  ensureSchema(db, options?.embeddingDim ?? EMBEDDING_DIM, { dataDir: dir });
+  // Forward `undefined` (not the EMBEDDING_DIM default) when the caller did
+  // not specify a dim. ensureSchema uses the `undefined` signal to keep its
+  // hands off `index_meta.embeddingDim` — without this, every registry-side
+  // openDatabase() call would silently overwrite "768" → "384" and trigger
+  // the dim-change backup/wipe on the next dim-aware call. See investigation
+  // 2026-05-20: embedding-dim oscillation fires twice per improve run.
+  ensureSchema(db, options?.embeddingDim, { dataDir: dir });
 
   // Warn once at init if using JS fallback with many entries
   warnIfVecMissing(db, { once: true });
@@ -148,7 +154,7 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
 /** A row backed up out of the legacy `usage_events` table during a version upgrade. */
 type UsageEventRow = Record<string, string | number | null>;
 
-function ensureSchema(db: Database, embeddingDim: number, options?: { dataDir?: string }): void {
+function ensureSchema(db: Database, embeddingDim: number | undefined, options?: { dataDir?: string }): void {
   // Create meta table first so we can check version
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
@@ -416,60 +422,79 @@ function ensureSchema(db: Database, embeddingDim: number, options?: { dataDir?: 
   `);
 
   // sqlite-vec table
+  //
+  // Dimension contract:
+  //   - When `embeddingDim` is `undefined`, the caller did NOT request a
+  //     specific dim. Do not touch `index_meta.embeddingDim` and do not run
+  //     the dim-change wipe — fall back to the stored dim (or the static
+  //     default) only when we have to materialise the vec table for the
+  //     first time. Without this guard, registry-side and other dim-unaware
+  //     `openDatabase()` callers would silently overwrite the dim-aware
+  //     improve/index value and oscillate the stored dim.
+  //   - When `embeddingDim` is a number, the caller explicitly asked for
+  //     that dim and owns the dim-change/backup/wipe semantics.
+  const dimExplicit = embeddingDim !== undefined;
+  const effectiveDim = embeddingDim ?? (Number(getMeta(db, "embeddingDim")) || EMBEDDING_DIM);
   if (isVecAvailable(db)) {
     // Check if stored embedding dimension differs from configured one
-    const storedDim = getMeta(db, "embeddingDim");
-    if (storedDim && storedDim !== String(embeddingDim)) {
-      // Re-embedding the whole stash is expensive (LLM API calls + cache
-      // misses), so snapshot the data dir before we drop the vec table and
-      // wipe `embeddings`. This is the SAME hook the version-upgrade path
-      // uses earlier in this function, just gated on embedding-dim mismatch
-      // and tagged so operators can tell the two backup kinds apart.
-      backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-      try {
-        db.exec("DROP TABLE IF EXISTS entries_vec");
-      } catch {
-        /* ignore */
+    if (dimExplicit) {
+      const storedDim = getMeta(db, "embeddingDim");
+      if (storedDim && storedDim !== String(embeddingDim)) {
+        // Re-embedding the whole stash is expensive (LLM API calls + cache
+        // misses), so snapshot the data dir before we drop the vec table and
+        // wipe `embeddings`. This is the SAME hook the version-upgrade path
+        // uses earlier in this function, just gated on embedding-dim mismatch
+        // and tagged so operators can tell the two backup kinds apart.
+        backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
+        try {
+          db.exec("DROP TABLE IF EXISTS entries_vec");
+        } catch {
+          /* ignore */
+        }
+        // Delete stale BLOB embeddings so they don't produce silently wrong
+        // similarity scores against the new-dimension vec table.
+        try {
+          db.exec("DELETE FROM embeddings");
+        } catch {
+          /* ignore */
+        }
+        setMeta(db, "hasEmbeddings", "0");
       }
-      // Delete stale BLOB embeddings so they don't produce silently wrong
-      // similarity scores against the new-dimension vec table.
-      try {
-        db.exec("DELETE FROM embeddings");
-      } catch {
-        /* ignore */
-      }
-      setMeta(db, "hasEmbeddings", "0");
     }
 
     const vecExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries_vec'").get();
     if (!vecExists) {
-      if (!Number.isInteger(embeddingDim) || embeddingDim <= 0 || embeddingDim > 4096) {
-        throw new Error(`Invalid embedding dimension: ${embeddingDim}`);
+      if (!Number.isInteger(effectiveDim) || effectiveDim <= 0 || effectiveDim > 4096) {
+        throw new Error(`Invalid embedding dimension: ${effectiveDim}`);
       }
       db.exec(`
         CREATE VIRTUAL TABLE entries_vec USING vec0(
           id       INTEGER PRIMARY KEY,
-          embedding FLOAT[${embeddingDim}]
+          embedding FLOAT[${effectiveDim}]
         );
       `);
     }
-    setMeta(db, "embeddingDim", String(embeddingDim));
+    if (dimExplicit) {
+      setMeta(db, "embeddingDim", String(embeddingDim));
+    }
   } else {
     // Also purge BLOB embeddings on dimension change (JS fallback path).
     // When sqlite-vec is unavailable, entries_vec doesn't exist but the BLOB
     // embeddings table still stores vectors. If the configured dimension
     // changes, those stored BLOBs become silently incompatible.
-    const storedDim = getMeta(db, "embeddingDim");
-    if (storedDim && storedDim !== String(embeddingDim)) {
-      backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-      try {
-        db.exec("DELETE FROM embeddings");
-      } catch {
-        /* ignore */
+    if (dimExplicit) {
+      const storedDim = getMeta(db, "embeddingDim");
+      if (storedDim && storedDim !== String(embeddingDim)) {
+        backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
+        try {
+          db.exec("DELETE FROM embeddings");
+        } catch {
+          /* ignore */
+        }
+        setMeta(db, "hasEmbeddings", "0");
       }
-      setMeta(db, "hasEmbeddings", "0");
+      setMeta(db, "embeddingDim", String(embeddingDim));
     }
-    setMeta(db, "embeddingDim", String(embeddingDim));
   }
 
   // Usage telemetry table
