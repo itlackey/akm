@@ -9,7 +9,7 @@
  */
 
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
-import { AkmCli } from "../sources/akm-cli";
+import { AkmCli, type SearchHit } from "../sources/akm-cli";
 
 export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
   const start = Date.now();
@@ -93,9 +93,30 @@ export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<E
       keywordHits,
       hitCount: hits.length,
     },
-    evidence: { query, topK, refs },
+    evidence: {
+      query,
+      topK,
+      refs,
+      // Phase 7: a compact, human-readable artifact for optional LLM
+      // judging. Pre-formatted here so cases can point their judge
+      // rubric at `evidence.topHitArtifact` without runner changes.
+      topHitArtifact: formatTopHitArtifact(query, hits.slice(0, 3)),
+    },
     durationMs: Date.now() - start,
   };
+}
+
+function formatTopHitArtifact(query: string, top: SearchHit[]): string {
+  const lines: string[] = [`Query: ${query}`, "", "Top hits:"];
+  for (const h of top) {
+    const ref = h.ref ?? "";
+    const name = h.name ? ` — ${h.name}` : "";
+    const type = h.type ? ` [${h.type}]` : "";
+    const desc = (h.description ?? h.snippet ?? "").trim();
+    lines.push(`- ${ref}${name}${type}`);
+    if (desc) lines.push(`    ${desc.replace(/\s+/g, " ").slice(0, 400)}`);
+  }
+  return lines.join("\n");
 }
 
 function errorResult(c: EvalCase, message: string, start: number): EvalCaseResult {
