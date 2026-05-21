@@ -8,6 +8,7 @@ export type EvalCaseType =
   | "retrieval"
   | "proposal-quality"
   | "reflect-quality"
+  | "planner-waste"
   | "lesson-application"
   | "memory-safety"
   | "workflow-compliance"
@@ -56,6 +57,14 @@ export interface EvalCase {
      * how `proposal-accept-rate-floor` no-ops on zero decisions).
      */
     minLlmTouchedReflects?: number;
+    /**
+     * Planner-waste: minimum total-action sample size across the
+     * window before any threshold check is evaluated. When fewer
+     * actions are present the runner returns `skipped` so the gate
+     * doesn't fire on tiny samples (e.g. a stash with only one improve
+     * run).
+     */
+    minActions?: number;
   };
   tags?: string[];
 }

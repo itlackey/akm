@@ -8,8 +8,8 @@
  *
  * Default metric is `overall` (`scores.overall`); `--metric deterministic`
  * picks `scores.deterministic`; any other value is first looked up in
- * METRIC_ALIASES (short names like `schemaShapeRate`) and then treated
- * as a dot-separated path into the envelope (e.g.
+ * METRIC_ALIASES (short names like `schemaShapeRate`, `noOpRefuseRate`)
+ * and then treated as a dot-separated path into the envelope (e.g.
  * `--metric countsByType.retrieval.passed`).
  */
 
@@ -73,8 +73,12 @@ Options:
   --suite <name>   Only include runs from this suite.
   --limit <N>      Max runs to include (default: 20). Most recent N kept.
   --metric <key>   overall | deterministic | <alias> | <dotted.path> (default: overall).
-                   Aliases: schemaShapeRate, contentPolicyRate, reflectSuccessRate,
-                   llmTouchedReflects (all expand under metrics.reflectQuality.*).
+                   Reflect aliases: schemaShapeRate, contentPolicyRate,
+                   reflectSuccessRate, llmTouchedReflects
+                   (under metrics.reflectQuality.*).
+                   Planner aliases: noOpRefuseRate, noOpRefuseRateLlmTouched,
+                   plannerRefuses, plannerActions
+                   (under metrics.plannerWaste.*).
 
 Output is tab-separated: ts  suite  mode  label  <metric>
 Pipe to \`column -t\` for a table.
@@ -102,6 +106,12 @@ const METRIC_ALIASES: Record<string, string> = {
   contentPolicyRate: "metrics.reflectQuality.contentPolicyRate",
   reflectSuccessRate: "metrics.reflectQuality.successRate",
   llmTouchedReflects: "metrics.reflectQuality.counts.llmTouched",
+  // Planner-waste. Hoisted into env.metrics.plannerWaste by src/run.ts
+  // when a planner-waste-breakdown case ran.
+  noOpRefuseRate: "metrics.plannerWaste.noOpRefuseRate",
+  noOpRefuseRateLlmTouched: "metrics.plannerWaste.noOpRefuseRateLlmTouched",
+  plannerRefuses: "metrics.plannerWaste.counts.noOpRefuses",
+  plannerActions: "metrics.plannerWaste.counts.totalActions",
 };
 
 function resolveMetric(env: EvalRunResult, metric: string): string {
