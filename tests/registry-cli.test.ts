@@ -48,11 +48,20 @@ afterAll(() => {
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
 beforeEach(() => {
   process.env.XDG_CONFIG_HOME = createTmpDir("akm-reg-config-");
   process.env.XDG_CACHE_HOME = createTmpDir("akm-reg-cache-");
+  // Pair with XDG_DATA_HOME / XDG_STATE_HOME so the bun-test isolation
+  // guard in src/core/paths.ts (tightened in 35ec047) does not fire when
+  // searchRegistry's static-index provider tries to open the DB cache.
+  // Without these the guard throws TEST_ISOLATION_MISSING, which surfaces
+  // as a warning + zero hits — see tests/test-isolation-no-swallow.test.ts.
+  process.env.XDG_DATA_HOME = createTmpDir("akm-reg-data-");
+  process.env.XDG_STATE_HOME = createTmpDir("akm-reg-state-");
   delete process.env.AKM_REGISTRY_URL;
 });
 
@@ -66,6 +75,16 @@ afterEach(() => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
   if (originalRegistryUrl === undefined) {
     delete process.env.AKM_REGISTRY_URL;
