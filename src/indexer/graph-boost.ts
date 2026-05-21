@@ -88,6 +88,27 @@ let cachedParsedGraph:
     }
   | undefined;
 
+/**
+ * Clear the module-level parsed-graph cache.
+ *
+ * The cache keeps the most recently parsed `ParsedGraphContext` keyed by
+ * (stashPath, generatedAt) tuples so back-to-back search invocations within
+ * the same process don't re-read the SQLite snapshot from disk. The cache
+ * persists across calls — which is the desired behaviour in production but
+ * pathological for tests that swap the underlying stash directory between
+ * test cases without bumping `generatedAt`. Such tests can observe stale
+ * graph nodes from a previous test's stash.
+ *
+ * Tests (and any tooling that swaps stash backings) should call this between
+ * setups to guarantee the next `loadGraphBoostContext` reads fresh state.
+ * Recommended placement: `beforeEach` for test files that mutate graph
+ * state, or after `deleteStoredGraph` / `replaceStoredGraph` calls that
+ * intentionally invalidate the cache.
+ */
+export function resetGraphBoostCache(): void {
+  cachedParsedGraph = undefined;
+}
+
 function resolveGraphBoostWeights(config?: AkmConfig): GraphBoostWeights {
   const configured = config?.search?.graphBoost;
   return {
