@@ -36,6 +36,31 @@ let extractor: (body: string) => {
 });
 let extractorCallCount = 0;
 
+/**
+ * Detect a batched graph-extract prompt and split it back into per-asset bodies.
+ *
+ * `extractGraphFromBodies` builds a prompt of the form:
+ *   "Extract entities and relations from the N=K assets below.
+ *    ...rules...
+ *    === ASSET 1 ===
+ *    <body 1>
+ *    === ASSET 2 ===
+ *    <body 2>
+ *    ..."
+ *
+ * Returns an empty array if the prompt is a single-asset call. Otherwise
+ * returns the per-asset bodies in order so the mock can invoke `extractor`
+ * for each and assemble an array response matching the production contract.
+ */
+function parseBatchBodies(userContent: string): string[] {
+  if (!userContent.includes("=== ASSET ") || !/\bN=\d+/.test(userContent)) return [];
+  return userContent
+    .split(/=== ASSET \d+ ===\n/g)
+    .slice(1)
+    .map((body) => body.trim())
+    .filter(Boolean);
+}
+
 const llmServer = Bun.serve({
   port: 0,
   async fetch(request) {
@@ -44,6 +69,25 @@ const llmServer = Bun.serve({
     };
     const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
     extractorCallCount++;
+
+    // Batch prompt: production sent N>=2 asset bodies in a single call and
+    // expects a JSON array of N results. Without this branch the mock would
+    // return a single object, force the non-array fallback path, and (after
+    // 2 non-array responses) latch `batchingDisabled=true` — which is fine
+    // in isolation but interacts badly with full-suite ordering once
+    // pollution between tests is closed. Returning the array directly keeps
+    // the mock contract aligned with what `extractGraphFromBodies` expects.
+    const batchBodies = parseBatchBodies(userContent);
+    if (batchBodies.length > 0) {
+      const arr = batchBodies.map((body) => extractor(body));
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(arr) } }],
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     const content = JSON.stringify(extractor(userContent));
     return new Response(
       JSON.stringify({
