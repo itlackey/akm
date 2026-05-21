@@ -258,9 +258,13 @@ export async function llmJudge(
   if (!ctx.enabled) return null;
 
   if (byteLength(req.rubric) > MAX_RUBRIC_BYTES) {
-    // Hard rubric cap: reject loudly so the case author fixes the case.
-    // (Truncating the rubric would silently change the grading instructions.)
-    return null;
+    // Hard rubric cap: throw so the case author fixes the case.
+    // Truncating the rubric would silently change the grading instructions;
+    // returning null would let callers ignore the cap (which is exactly
+    // what the "silent degradation refused" contract says not to do).
+    throw new Error(
+      `llmJudge: rubric exceeds ${MAX_RUBRIC_BYTES} bytes (got ${byteLength(req.rubric)}). Shorten the rubric in the case file.`,
+    );
   }
 
   const startedAt = new Date();

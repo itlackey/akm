@@ -419,8 +419,10 @@ async function maybeAttachJudgement(
     }
     return { ...r, llmJudgement: verdict };
   } catch (err) {
-    // Defensive: llmJudge() promises not to throw, but if a host-level
-    // crash sneaks through, we still don't break deterministic scoring.
+    // llmJudge() throws only on configuration errors (oversize rubric,
+    // bad endpoint construction); transport / parse failures return null.
+    // Either way, the deterministic flow keeps running and the case
+    // records the error on its llmJudgement.
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ...r,
@@ -477,9 +479,17 @@ async function runCases(cases: EvalCase[], ctx: EvalContext): Promise<EvalCaseRe
   for (const c of cases) {
     const stepCtx: EvalContext = { ...ctx, currentResults: collected.slice() };
     const result = await runCase(c, stepCtx);
+    // Stamp `deterministic` onto the result from the case's `scoring`
+    // block so aggregation can distinguish deterministic from LLM-only
+    // cases (e.g. `judge-calibration` declares `deterministic: false`).
+    // Default is `true` when the case omits the field.
+    const determinismFlagged: EvalCaseResult = {
+      ...result,
+      deterministic: c.scoring?.deterministic !== false,
+    };
     // Phase 7: optional, side-channel judging. Deterministic score on
     // `result` is finalised before we touch the judge.
-    const withJudge = await maybeAttachJudgement(c, result, ctx.judge);
+    const withJudge = await maybeAttachJudgement(c, determinismFlagged, ctx.judge);
     collected.push(withJudge);
   }
   return collected;

@@ -28,6 +28,12 @@ const DEFAULT_TYPE_WEIGHTS: Record<EvalCaseType, number> = {
 
 export function aggregateScores(results: EvalCaseResult[]): {
   overall: number;
+  /**
+   * Weighted mean restricted to cases where `result.deterministic !== false`.
+   * Cases that opt out (e.g. judge-calibration cases that depend on LLM
+   * outcomes) are excluded so CI gates remain deterministic. When no
+   * deterministic cases ran, `deterministic` falls back to `overall`.
+   */
   deterministic: number;
   /**
    * Phase 7: mean of all `case.llmJudgement.score` values that came back
@@ -39,14 +45,16 @@ export function aggregateScores(results: EvalCaseResult[]): {
   llmJudged?: number;
   byType: Record<EvalCaseType, { run: number; passed: number; skipped: number; score: number }>;
 } {
-  const byType: Record<EvalCaseType, { run: number; passed: number; skipped: number; scores: number[] }> = {
-    retrieval: { run: 0, passed: 0, skipped: 0, scores: [] },
-    "lesson-application": { run: 0, passed: 0, skipped: 0, scores: [] },
-    "proposal-quality": { run: 0, passed: 0, skipped: 0, scores: [] },
-    "memory-safety": { run: 0, passed: 0, skipped: 0, scores: [] },
-    "workflow-compliance": { run: 0, passed: 0, skipped: 0, scores: [] },
-    "judge-calibration": { run: 0, passed: 0, skipped: 0, scores: [] },
-    regression: { run: 0, passed: 0, skipped: 0, scores: [] },
+  type Bucket = { run: number; passed: number; skipped: number; scores: number[]; deterministicScores: number[] };
+  const blankBucket = (): Bucket => ({ run: 0, passed: 0, skipped: 0, scores: [], deterministicScores: [] });
+  const byType: Record<EvalCaseType, Bucket> = {
+    retrieval: blankBucket(),
+    "lesson-application": blankBucket(),
+    "proposal-quality": blankBucket(),
+    "memory-safety": blankBucket(),
+    "workflow-compliance": blankBucket(),
+    "judge-calibration": blankBucket(),
+    regression: blankBucket(),
   };
 
   for (const r of results) {
@@ -57,6 +65,7 @@ export function aggregateScores(results: EvalCaseResult[]): {
     }
     bucket.run += 1;
     bucket.scores.push(r.score);
+    if (r.deterministic !== false) bucket.deterministicScores.push(r.score);
     if (r.passed) bucket.passed += 1;
   }
 
@@ -70,20 +79,28 @@ export function aggregateScores(results: EvalCaseResult[]): {
     regression: { run: 0, passed: 0, skipped: 0, score: 0 },
   };
 
-  let weightedSum = 0;
-  let weightTotal = 0;
+  let overallSum = 0;
+  let overallW = 0;
+  let detSum = 0;
+  let detW = 0;
   for (const key of Object.keys(byType) as EvalCaseType[]) {
     const b = byType[key];
-    const avg = b.scores.length === 0 ? 0 : b.scores.reduce((a, x) => a + x, 0) / b.scores.length;
-    reduced[key] = { run: b.run, passed: b.passed, skipped: b.skipped, score: avg };
+    const avgAll = b.scores.length === 0 ? 0 : b.scores.reduce((a, x) => a + x, 0) / b.scores.length;
+    const avgDet = b.deterministicScores.length === 0 ? 0 : b.deterministicScores.reduce((a, x) => a + x, 0) / b.deterministicScores.length;
+    reduced[key] = { run: b.run, passed: b.passed, skipped: b.skipped, score: avgAll };
+    const w = DEFAULT_TYPE_WEIGHTS[key];
     if (b.scores.length > 0) {
-      const w = DEFAULT_TYPE_WEIGHTS[key];
-      weightedSum += avg * w;
-      weightTotal += w;
+      overallSum += avgAll * w;
+      overallW += w;
+    }
+    if (b.deterministicScores.length > 0) {
+      detSum += avgDet * w;
+      detW += w;
     }
   }
 
-  const overall = weightTotal === 0 ? 0 : weightedSum / weightTotal;
+  const overall = overallW === 0 ? 0 : overallSum / overallW;
+  const deterministic = detW === 0 ? overall : detSum / detW;
 
   // Phase 7: LLM-judged mean — strictly separate from deterministic.
   // Only judge calls that came back without `error` contribute to the
@@ -100,7 +117,7 @@ export function aggregateScores(results: EvalCaseResult[]): {
       ? undefined
       : judgeScores.reduce((a, x) => a + x, 0) / judgeScores.length;
 
-  return { overall, deterministic: overall, llmJudged, byType: reduced };
+  return { overall, deterministic, llmJudged, byType: reduced };
 }
 
 export function buildCountsByType(results: EvalCaseResult[]): EvalRunResult["countsByType"] {

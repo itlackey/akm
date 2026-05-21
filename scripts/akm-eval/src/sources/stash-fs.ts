@@ -65,7 +65,9 @@ export class StashFsSources {
     return fs.existsSync(path.join(this.stashRoot, ".akm", "proposals"));
   }
 
-  readProposals(opts: { status?: ProposalRow["status"]; ref?: string; source?: string } = {}): ProposalRow[] {
+  readProposals(
+    opts: { status?: ProposalRow["status"]; ref?: string; source?: string; since?: string } = {},
+  ): ProposalRow[] {
     const root = path.join(this.stashRoot, ".akm", "proposals");
     const live = scanDir(root, this.stashRoot);
     const archive = scanDir(path.join(root, "archive"), this.stashRoot);
@@ -73,6 +75,8 @@ export class StashFsSources {
     if (opts.status) rows = rows.filter((r) => r.status === opts.status);
     if (opts.ref) rows = rows.filter((r) => r.ref === opts.ref);
     if (opts.source) rows = rows.filter((r) => r.source === opts.source);
+    // Match state.db semantics: `created_at >= since` (inclusive ISO string compare).
+    if (opts.since) rows = rows.filter((r) => r.createdAt >= (opts.since as string));
     rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return rows;
   }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "retrieval-workflow-keywords",
+  "id": "retrieval-release-keywords",
   "suite": "improve-smoke",
   "type": "retrieval",
-  "description": "Searching for 'workflow' surfaces workflow-related content.",
+  "description": "Searching for 'release' surfaces release/workflow content.",
   "input": {
     "query": "release",
     "topK": 10

@@ -56,7 +56,6 @@ export async function runWorkflowComplianceCase(c: EvalCase, ctx: EvalContext): 
   try {
     events = stateDb.readEvents({ since, until, refs });
   } catch (err) {
-    stateDb.close();
     return errorResult(c, err instanceof Error ? err.message : String(err), start);
   } finally {
     stateDb.close();

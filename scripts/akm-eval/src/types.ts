@@ -89,6 +89,13 @@ export interface EvalCaseResult {
   errors?: string[];
   durationMs: number;
   /**
+   * Echo of `EvalCase.scoring.deterministic`. When `false`, the case
+   * does NOT contribute to the run envelope's `scores.deterministic` —
+   * but its score still feeds into `scores.overall`. Defaults to `true`
+   * when the case file omits the field.
+   */
+  deterministic?: boolean;
+  /**
    * Phase 7: LLM-judge result for this case. Present only when
    * `--llm-judge` was on AND the case declared `scoring.llmJudge`. The
    * score is recorded for audit but is NEVER folded into deterministic

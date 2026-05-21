@@ -21,7 +21,7 @@ export async function runProposalQualityCase(c: EvalCase, ctx: EvalContext): Pro
   const since = c.input.since as string | undefined;
   const filterSource = c.input.source as string | undefined;
 
-  const stateDb = makeStateDbSources({ record: ctx.recording });
+  const stateDb = makeStateDbSources({ dbPath: `${ctx.dataDir}/state.db`, record: ctx.recording });
   let proposals: ProposalRow[] = [];
   let creationRejected = 0;
   let dbAvailable = stateDb.available();
@@ -34,7 +34,7 @@ export async function runProposalQualityCase(c: EvalCase, ctx: EvalContext): Pro
         .length;
     } else {
       const fs = new StashFsSources(ctx.stashRoot);
-      proposals = fs.readProposals({ source: filterSource });
+      proposals = fs.readProposals({ source: filterSource, since });
     }
   } catch (err) {
     return errorResult(c, err instanceof Error ? err.message : String(err), start);
