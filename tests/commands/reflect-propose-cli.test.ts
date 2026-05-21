@@ -84,6 +84,15 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
 });
 
 beforeEach(() => {
+  // Isolate from the user's real stash. The two trivial argv-coercion tests
+  // (`empty scope becomes all-mode`, `type scope is preserved`) call
+  // `akmImprove({ dryRun: true })` without passing `stashDir`, which makes
+  // `resolveSourceEntries(undefined)` fall back to `resolveStashDir()` →
+  // `~/akm`. ensureIndex then walks the real 163 MB stash and the tests
+  // time out at the default 5 s. Setting AKM_STASH_DIR to an empty temp
+  // dir keeps the argv-coercion assertions intact (scope is parsed before
+  // any stash IO) and runs the whole file in ~4 s instead of ~53 s.
+  process.env.AKM_STASH_DIR = makeTempDir("akm-improve-cli-stash-root-");
   process.env.AKM_DATA_DIR = makeTempDir("akm-improve-cli-data-");
   process.env.AKM_STATE_DIR = makeTempDir("akm-improve-cli-state-");
   process.env.XDG_CACHE_HOME = makeTempDir("akm-improve-cli-cache-");
