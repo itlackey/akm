@@ -380,9 +380,12 @@ file; see
 [`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md) for the
 full schema.
 
-## What is not yet implemented
+## Status
 
-- Replay / capture-and-replay determinism check (Phase 6).
+All eight phases of `docs/technical/akm-eval-implementation-plan.md` are
+implemented and CI-gated via `.github/workflows/akm-eval-smoke.yml` (Phase 8).
+The smoke suite + deterministic replay + memory-regression suite run on every
+PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
 
 ## See also
 

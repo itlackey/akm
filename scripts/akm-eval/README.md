@@ -1,8 +1,8 @@
 # akm-eval — lightweight standalone evaluation toolkit
 
 Read-only-by-default, deterministic measurement of `akm` over the existing
-run envelopes, events table, and proposal queue. Implements Phases 1–4 of
-`docs/technical/akm-eval-implementation-plan.md`.
+run envelopes, events table, and proposal queue. Implements all eight
+phases of `docs/technical/akm-eval-implementation-plan.md`.
 
 Mirrors `scripts/improve-stats/`: shell entry points under `bin/`,
 TypeScript runners under `src/`, no `akm` subcommand integration.

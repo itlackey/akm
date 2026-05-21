@@ -1,11 +1,16 @@
 # akm-eval — Lightweight Standalone Evaluation Toolkit (Implementation Plan)
 
-> **Scope.** This document is the implementation plan for a lightweight,
-> standalone evaluation toolkit for `akm` 0.8.0. It is based on the
-> external "Lightweight AKM Eval Utility Design" proposal, re-grounded
-> against the actual `release/0.8.0` codebase, and restructured per the
-> user's request as a **standalone CLI/scripts toolkit, not an `akm`
-> subcommand**. The toolkit complements the roadmap in
+> **Status.** All eight phases are implemented and shipping under
+> `scripts/akm-eval/`. CI-gated via `.github/workflows/akm-eval-smoke.yml`
+> (Phase 8). See `docs/akm-eval.md` for operator usage and
+> `scripts/akm-eval/README.md` for the quick-start.
+>
+> **Original scope.** This document is the implementation plan for a
+> lightweight, standalone evaluation toolkit for `akm` 0.8.0. It is based
+> on the external "Lightweight AKM Eval Utility Design" proposal,
+> re-grounded against the actual `release/0.8.0` codebase, and structured
+> per the user's request as a **standalone CLI/scripts toolkit, not an
+> `akm` subcommand**. The toolkit complements the roadmap in
 > `docs/technical/improve-pipeline-analysis-0.8.0.md` and is the
 > implementation vehicle for roadmap items R1 (benchmark suite), R3
 > (judge calibration), R5 (graph A/B), R8 (replay), and R10
