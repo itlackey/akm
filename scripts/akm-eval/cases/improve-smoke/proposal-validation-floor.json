@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "proposal-validation-floor",
+  "suite": "improve-smoke",
+  "type": "proposal-quality",
+  "description": "Validation pass rate (created proposals vs proposal_creation_rejected events) is at least 0.7. Skipped when no proposal traffic is recorded.",
+  "input": {},
+  "expected": {
+    "minValidationPassRate": 0.7
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["proposal", "smoke", "quality"]
+}
