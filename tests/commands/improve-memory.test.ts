@@ -901,6 +901,81 @@ describe("akm improve memory cleanup", () => {
     expect(reflectedWithSignal).toEqual(["memory:alpha"]);
   });
 
+  test("derived memories never enter plannedRefs (skip-the-skip churn fix)", async () => {
+    // Regression: prior to 2026-05-21, `.derived` memories were enqueued in
+    // plannedRefs with reason="memory-cleanup", only to be immediately bounced
+    // by the in-loop check that refuses to reflect on derived refs. Observed
+    // effect: same 11 derived refs re-planned every hourly run with no real
+    // work done. The cleanup phase (analyzeMemoryCleanup) inspects derived
+    // memories independently of plannedRefs, so they should never appear.
+    const stashDir = makeTempDir("akm-improve-derived-not-planned-");
+    writeMemory(stashDir, "parent", { description: "parent memory" }, "Parent body.");
+    writeMemory(
+      stashDir,
+      "parent.derived",
+      {
+        inferred: true,
+        source: "memory:parent",
+        description: "Derived inference from parent.",
+      },
+      "# Derived\n\nInferred content.",
+    );
+    await buildIndex(stashDir);
+
+    const reflectedRefs: string[] = [];
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      minRetrievalCount: 0,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:parent"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    expect(result.ok).toBe(true);
+    // The derived memory MUST NOT appear in plannedRefs.
+    expect(result.plannedRefs.some((p) => p.ref.endsWith(".derived"))).toBe(false);
+    // The synthetic `derived-memory-reflect-skipped` action is no longer
+    // emitted because the ref never enters the loop.
+    expect(
+      result.actions?.some(
+        (a) =>
+          a.ref === "memory:parent.derived" &&
+          a.mode === "distill-skipped" &&
+          (a.result as { reason?: string } | undefined)?.reason === "derived-memory-reflect-skipped",
+      ),
+    ).toBe(false);
+    // memorySummary still reports both the eligible total and the derived count
+    // — the cleanup phase relies on these stats, not on plannedRefs.
+    expect(result.memorySummary).toEqual({ eligible: 2, derived: 1 });
+  });
+
   test("accepted refs bypass reflect cooldown during improve", async () => {
     const stashDir = makeTempDir("akm-improve-memory-accepted-bypass-");
     writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");

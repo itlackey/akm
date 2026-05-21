@@ -407,7 +407,15 @@ async function collectEligibleRefs(
     let memoryDerived = 0;
     for (const indexed of entries) {
       const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
-      if (!planned.has(ref)) {
+      const isDerived = indexed.entry.name.endsWith(".derived");
+      // `.derived` memories are LLM-inferred and intentionally skip reflect
+      // (see the synthetic `derived-memory-reflect-skipped` branch in the
+      // improve loop). Enqueueing them here just produced one synthetic skip
+      // per derived memory per hour with no real work — pure churn observed
+      // 2026-05-21: 11 derived refs re-planned every hour during idle periods.
+      // The cleanup phase (analyzeMemoryCleanup) inspects derived memories
+      // independently of `plannedRefs`, so dropping them here loses nothing.
+      if (!isDerived && !planned.has(ref)) {
         planned.set(ref, {
           ref,
           reason:
@@ -416,7 +424,7 @@ async function collectEligibleRefs(
       }
       if (indexed.entry.type === "memory") {
         memoryEligible += 1;
-        if (indexed.entry.name.endsWith(".derived")) memoryDerived += 1;
+        if (isDerived) memoryDerived += 1;
       }
     }
     return {
