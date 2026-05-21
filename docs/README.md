@@ -28,6 +28,10 @@
 - [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional integrations for tools like OpenCode
 - [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- the standalone benchmark and evaluation repo for akm
 
+## Operations
+
+- [Improve Stats](improve-stats.md) -- Analyze `akm improve` run logs with the `scripts/improve-stats/` toolkit (runs-trend, run-show, actions-breakdown, lint-current)
+
 ## Internals
 
 - [Search](technical/search.md) -- Hybrid search architecture and scoring
