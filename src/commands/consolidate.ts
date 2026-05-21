@@ -171,6 +171,24 @@ export function isHotCapturedMemory(filePath: string): boolean {
   }
 }
 
+/**
+ * Predicate over a parsed-frontmatter record: does it carry `status: superseded`?
+ *
+ * Added 2026-05-21 after triage found 5 consolidate-promoted proposals whose
+ * source memories were marked superseded — the superseded frontmatter dragged
+ * through verbatim into the new knowledge asset, producing broken-on-arrival
+ * proposals that had to be hand-rejected. Superseded memories are by
+ * definition no-longer-current; promoting them as fresh knowledge is incoherent.
+ *
+ * Pure / exported so tests can pin individual cases and the consolidate
+ * promote site can call it with already-parsed frontmatter without redundant
+ * file IO.
+ */
+export function hasSupersededStatus(frontmatter: Record<string, unknown> | undefined): boolean {
+  const status = frontmatter?.status;
+  return typeof status === "string" && status.trim().toLowerCase() === "superseded";
+}
+
 // ── Chunk sizing ─────────────────────────────────────────────────────────────
 
 /**
@@ -1074,6 +1092,16 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
       memoryContent = promoteSanitized.result.content;
+
+      // SOURCE_SUPERSEDED guard: refuse to promote a memory whose source
+      // frontmatter carries `status: superseded`. Predicate at module top
+      // (`hasSupersededStatus`) so tests can exercise it directly.
+      if (hasSupersededStatus(promoteSanitized.result.frontmatter as Record<string, unknown> | undefined)) {
+        warnings.push(
+          `Promote: refused for ${op.ref} → ${knowledgeRef} — source memory has status:superseded; superseded memories are not promotable knowledge.`,
+        );
+        continue;
+      }
 
       // Cross-run + within-run content dedup: if an identical payload already
       // exists in ANY pending consolidate proposal (regardless of target ref),

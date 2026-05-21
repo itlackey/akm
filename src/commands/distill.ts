@@ -326,6 +326,33 @@ export function isValidDescription(value: unknown, inputRef: string): { ok: true
   for (const re of HEADING_FRAGMENT_PATTERNS) {
     if (re.test(v)) return { ok: false, reason: `description looks like a section heading: "${v.slice(0, 40)}"` };
   }
+  // Code-fragment shape — triage 2026-05-21 found a proposal with
+  // `description: "def _dedup_proposal(proposal)"`. The LLM had pasted a
+  // function signature from the source memory into the description field.
+  // Common shapes: language keyword followed by a non-prose character
+  // (identifier, `{`, `*`, etc. — anything that's not a normal sentence
+  // start). `\S` rather than `\w` so `import { ... }` and similar destructured
+  // forms also match.
+  if (
+    /^(def|function|async\s+def|async\s+function|class|const|let|var|export\s+function|export\s+const|export\s+default|import|public|private|protected|fn|func)\s+\S/i.test(
+      v,
+    )
+  ) {
+    const firstWord = v.split(/\s+/)[0] ?? "";
+    return {
+      ok: false,
+      reason: `description starts with code keyword "${firstWord}" — looks like a code fragment, not prose`,
+    };
+  }
+  // Unbalanced backticks — the LLM dropped a code fragment mid-string and
+  // forgot to close it.
+  const backtickCount = (v.match(/`/g) ?? []).length;
+  if (backtickCount % 2 !== 0) {
+    return {
+      ok: false,
+      reason: `description has ${backtickCount} backticks (unbalanced); likely contains a malformed code fragment`,
+    };
+  }
   // Starts with `When ` — that pattern belongs in when_to_use.
   if (/^when\b/i.test(v)) {
     return { ok: false, reason: "description starts with 'When' — that pattern belongs in when_to_use" };

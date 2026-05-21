@@ -1241,6 +1241,44 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // Code-fragment shape — added 2026-05-21 after triage found a proposal with
+  // `description: "def _dedup_proposal(proposal)"` (LLM pasted a function
+  // signature from the source memory body into the description field).
+  test.each([
+    "def _dedup_proposal(proposal) -> ProposalResult",
+    "function handleClick(event: MouseEvent): void",
+    "async def fetch_data(url: string) -> Response",
+    "class ProposalValidator extends BaseValidator",
+    "const STALE_THRESHOLD_MS = 86400000 // ms",
+    "export function isValidDescription(value: unknown)",
+    "import { isValidDescription } from '../src/commands/distill'",
+    "func handleProposal(p Proposal) error { return nil }",
+  ])("rejects code-fragment description %j", (codey) => {
+    const r = isValidDescription(codey, "skill:deploy");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toMatch(/code/i);
+    }
+  });
+
+  test("rejects description with unbalanced backticks", () => {
+    const r = isValidDescription(
+      "Use the `--dry-run flag to preview proposals before writing them to disk.",
+      "skill:deploy",
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/backtick/i);
+  });
+
+  test("accepts description with balanced inline code", () => {
+    // Sanity check: balanced backticks must still pass.
+    const r = isValidDescription(
+      "Use the `--dry-run` flag to preview proposals before writing them to disk.",
+      "skill:deploy",
+    );
+    expect(r.ok).toBe(true);
+  });
 });
 
 describe("isValidWhenToUse (pipeline-fix regression)", () => {

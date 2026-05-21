@@ -22,6 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  hasSupersededStatus,
   isHotCapturedMemory,
   normalizeUpdatedField,
   sanitizeMergedContent,
@@ -406,5 +407,50 @@ Body.
     // do NOT trigger the guard. Documents the contract: the indexer only
     // accepts the literal "hot" enum value.
     expect(isHotCapturedMemory(file)).toBe(false);
+  });
+});
+
+// ── hasSupersededStatus — promote guard for superseded memories ─────────────
+
+describe("hasSupersededStatus — refuses consolidate promote of superseded memories", () => {
+  // Background: 5 of 7 pending consolidate promotes from 2026-05-20 were
+  // against source memories with `status: superseded`. The superseded
+  // frontmatter dragged through verbatim into the new knowledge asset
+  // (broken-on-arrival). This guard short-circuits the promote before any
+  // proposal is queued.
+
+  it("returns true when status is exactly 'superseded'", () => {
+    expect(hasSupersededStatus({ status: "superseded" })).toBe(true);
+  });
+
+  it("returns true when status is 'superseded' with surrounding whitespace", () => {
+    expect(hasSupersededStatus({ status: "  superseded  " })).toBe(true);
+  });
+
+  it("returns true when status is uppercase variant (case-insensitive)", () => {
+    expect(hasSupersededStatus({ status: "SUPERSEDED" })).toBe(true);
+    expect(hasSupersededStatus({ status: "Superseded" })).toBe(true);
+  });
+
+  it("returns false for the canonical active states", () => {
+    for (const s of ["active", "asserted", "deprecated", "contradicted", "archived"]) {
+      expect(hasSupersededStatus({ status: s })).toBe(false);
+    }
+  });
+
+  it("returns false when status is missing", () => {
+    expect(hasSupersededStatus({})).toBe(false);
+    expect(hasSupersededStatus({ description: "no status here" })).toBe(false);
+  });
+
+  it("returns false when frontmatter is undefined (defensive)", () => {
+    expect(hasSupersededStatus(undefined)).toBe(false);
+  });
+
+  it("returns false when status is a non-string type (defensive)", () => {
+    expect(hasSupersededStatus({ status: true })).toBe(false);
+    expect(hasSupersededStatus({ status: 42 })).toBe(false);
+    expect(hasSupersededStatus({ status: null })).toBe(false);
+    expect(hasSupersededStatus({ status: ["superseded"] })).toBe(false);
   });
 });
