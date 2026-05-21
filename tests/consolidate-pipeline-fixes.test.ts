@@ -19,12 +19,12 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  detectTruncatedDescription,
   normalizeUpdatedField,
   sanitizeMergedContent,
   stripOuterCodeFence,
   validateProposalFrontmatter,
 } from "../src/commands/consolidate";
+import { detectTruncatedDescription } from "../src/core/text-truncation";
 
 // ── stripOuterCodeFence ─────────────────────────────────────────────────────
 

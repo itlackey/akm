@@ -13,6 +13,7 @@ import { parseFrontmatter } from "../core/frontmatter";
 import { writeContradictEdge } from "../core/memory-belief";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
+import { detectTruncatedDescription } from "../core/text-truncation";
 import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
@@ -1342,31 +1343,6 @@ export function normalizeUpdatedField(fm: Record<string, unknown>): void {
 }
 
 /**
- * Returns a reason string when a description string looks truncated; returns
- * `null` if the description appears complete.
- *
- * Heuristics:
- *   - Ends with `,`, `;`, `:`, or `…`/`...`
- *   - Ends with a hanging connector (`and`, `or`, `with`, `to`, `the`, `a`, `is`)
- *   - Ends with a `+` operator (e.g. "max-width:100% +")
- */
-export function detectTruncatedDescription(description: string): string | null {
-  const trimmed = description.trim();
-  if (trimmed.length === 0) return null; // empty handled elsewhere
-  if (/[,;:+]$/.test(trimmed)) return "ends with trailing punctuation/operator";
-  if (/\.{3,}$/.test(trimmed) || /…$/.test(trimmed)) return "ends with ellipsis";
-  const lastWord = trimmed.split(/\s+/).pop() ?? "";
-  if (
-    /^(?:and|or|with|to|the|a|an|is|are|of|in|on|by|for|that|which|if|while|when|before|after|has|have|had|but|so|as|at|from|be|been|being|was|were|will|would|can|could|may|might|should|must|shall)$/i.test(
-      lastWord,
-    )
-  ) {
-    return `ends with hanging connector "${lastWord}"`;
-  }
-  return null;
-}
-
-/**
  * Validate the frontmatter of a consolidate-bound asset. Required fields are
  * the bare minimum a reviewer needs to triage the proposal: `description`.
  * Additionally enforces that the description is not obviously truncated.
@@ -1524,6 +1500,16 @@ async function generateMergedContent(
 
   const prompt = [
     "Merge these two memory assets into one. Output ONLY the merged markdown (with YAML frontmatter). Do not explain, do not use code fences.",
+    "",
+    "## OUTPUT FORMAT (MANDATORY)",
+    "Return raw markdown content beginning DIRECTLY with the `---` frontmatter delimiter.",
+    "DO NOT wrap your entire response in a code fence.",
+    "",
+    'GOOD: "---\\ndescription: ...\\n---\\nBody content."',
+    'BAD:  "```markdown\\n---\\ndescription: ...\\n---\\nBody content.\\n```"',
+    'BAD:  "```yaml\\n---\\ndescription: ...\\n---\\nBody content.\\n```"',
+    "",
+    "- The `updated:` field, if present, MUST be a real ISO date (e.g. `updated: 2026-05-20`). NEVER emit `updated: today`, `updated: now`, or `updated: {today: null}`. If you don't have a real date, OMIT the field — the post-processor will not invent one.",
     "",
     `=== Primary memory (${primaryRef}) ===`,
     primaryBody,

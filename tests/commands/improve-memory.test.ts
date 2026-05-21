@@ -793,7 +793,11 @@ describe("akm improve memory cleanup", () => {
     });
 
     expect(result.plannedRefs).toEqual([]);
-    expect(result.actions?.map((action) => action.mode)).toEqual(["graph-extraction"]);
+    // Post-Item-9 fix: memory-inference always runs and discovers its own
+    // candidates (no orchestrator candidateRefs filter). On this fixture it
+    // finds nothing, but the action is still recorded. Website-source
+    // exclusion still holds — what matters is reflectedRefs/distilledRefs.
+    expect(result.actions?.map((action) => action.mode)).toEqual(["memory-inference", "graph-extraction"]);
     expect(reflectedRefs).toEqual([]);
     expect(distilledRefs).toEqual([]);
   });
@@ -1063,7 +1067,11 @@ describe("akm improve memory cleanup", () => {
       },
     });
 
-    expect(inferredRefs).toEqual([["memory:vpn"]]);
+    // Item 9 fix: memory-inference no longer receives an explicit candidateRefs
+    // filter from the orchestrator — it discovers candidates via its own
+    // filesystem scan. The mock above pushes whatever options.candidateRefs is
+    // (now undefined → empty Set), so we just assert the pass was invoked.
+    expect(inferredRefs).toEqual([[]]);
     expect(graphCalls).toHaveLength(1);
     expect(result.memoryInference).toEqual({
       considered: 1,
@@ -2262,5 +2270,54 @@ describe("new 0.8.0 improve metrics", () => {
     // The expired proposal must have been emitted as a `proposal_expired` event.
     const expiredEvents = readEvents({ type: "proposal_expired" });
     expect(expiredEvents.events.some((e) => e.ref === "memory:live-asset")).toBe(true);
+  });
+});
+
+describe("Phase 4A: staleness-detection pass appears in maintenance result when enabled", () => {
+  test("akmImprove surfaces stalenessDetection telemetry from the injected pass", async () => {
+    const stashDir = makeTempDir("akm-improve-staleness-");
+    writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
+    await buildIndex(stashDir);
+
+    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:vpn"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued" as const,
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+      }),
+      stalenessDetectionFn: async () => ({
+        considered: 3,
+        deprecated: 1,
+        confirmed: 2,
+        skipped: 0,
+        durationMs: 7,
+        warnings: [],
+      }),
+    });
+
+    expect(result.stalenessDetection).toEqual({
+      considered: 3,
+      deprecated: 1,
+      confirmed: 2,
+      skipped: 0,
+      durationMs: 7,
+      warnings: [],
+    });
   });
 });

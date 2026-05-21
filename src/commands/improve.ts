@@ -51,6 +51,7 @@ import {
 } from "../indexer/memory-inference";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
+import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
@@ -91,6 +92,17 @@ export interface AkmImproveOptions {
     onProgress?: Parameters<typeof runMemoryInferencePass>[5],
     options?: MemoryInferencePassOptions,
   ) => Promise<MemoryInferenceResult>;
+  /**
+   * Phase 4A: injectable staleness-detection pass for tests. When omitted, the
+   * real `runStalenessDetectionPass` runs (which is itself a no-op unless
+   * `features.index.staleness_detection` is enabled).
+   */
+  stalenessDetectionFn?: (
+    config: AkmConfig,
+    sources: ReturnType<typeof resolveSourceEntries>,
+    signal?: AbortSignal,
+    db?: Database,
+  ) => Promise<StalenessDetectionResult>;
   graphExtractionFn?: (
     config: AkmConfig,
     sources: ReturnType<typeof resolveSourceEntries>,
@@ -224,6 +236,8 @@ export interface AkmImproveResult {
   reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
+  /** Phase 4A: result of the staleness-detection pass (only present when the feature is enabled and produced telemetry). */
+  stalenessDetection?: StalenessDetectionResult;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
   orphansPurged?: number;
   /**
@@ -298,6 +312,8 @@ interface ImprovePostLoopResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
+  /** Phase 4A: result of the staleness-detection pass, when it ran. */
+  stalenessDetection?: StalenessDetectionResult;
 }
 
 interface ImproveMaintenanceResult {
@@ -309,6 +325,8 @@ interface ImproveMaintenanceResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
+  /** Phase 4A: result of the staleness-detection pass, when enabled. */
+  stalenessDetection?: StalenessDetectionResult;
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -773,6 +791,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       deadUrls,
       memoryInference,
       graphExtraction,
+      stalenessDetection,
       maintenanceActions,
       memoryInferenceDurationMs,
       graphExtractionDurationMs,
@@ -842,6 +861,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(reflectsWithErrorContext > 0 ? { reflectsWithErrorContext } : {}),
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
+      ...(stalenessDetection ? { stalenessDetection } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
@@ -2273,6 +2293,7 @@ async function runImprovePostLoopStage(args: {
     deadUrls,
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
+    ...(maintenanceResult.stalenessDetection ? { stalenessDetection: maintenanceResult.stalenessDetection } : {}),
     ...(maintenanceResult.actions && maintenanceResult.actions.length > 0
       ? { maintenanceActions: maintenanceResult.actions }
       : {}),
@@ -2313,10 +2334,12 @@ async function runImproveMaintenancePasses(args: {
   const sources = resolveSourceEntries(options.stashDir, config);
   const memoryInferenceFn = options.memoryInferenceFn ?? runMemoryInferencePass;
   const graphExtractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
+  const stalenessDetectionFn = options.stalenessDetectionFn ?? runStalenessDetectionPass;
 
   let db: Database | undefined;
   let memoryInference: MemoryInferenceResult | undefined;
   let graphExtraction: GraphExtractionResult | undefined;
+  let stalenessDetection: StalenessDetectionResult | undefined;
   let reindexedAfterInference = false;
   const actions: ImproveActionResult[] = [];
   let memoryInferenceDurationMs = 0;
@@ -2330,27 +2353,35 @@ async function runImproveMaintenancePasses(args: {
       config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
     );
 
-    if (memoryRefsForInference.size > 0) {
-      info(`[improve] memory inference starting (${memoryRefsForInference.size} candidate refs)`);
+    // Memory inference candidate-discovery (post-Item 9 fix from
+    // memory:akm-improve-critical-review-2026-05-20). Previously this pass
+    // was gated on memoryRefsForInference.size > 0 AND passed those refs as a
+    // candidateRefs filter. But memoryRefsForInference is populated from refs
+    // distilled THIS RUN — by the time that happens, those parents are
+    // already split (`inferenceProcessed: true`) and `isPendingMemory` excludes
+    // them. The genuinely-pending parents in the stash never entered the
+    // filter. Result: 0/0/0 for 25 consecutive runs.
+    //
+    // Fix: always run the pass when the feature is enabled; let the pass's
+    // own `collectPendingMemories` + `isPendingMemory` predicate find
+    // candidates from the filesystem-of-truth. The this-run set is still
+    // logged as a hint but no longer used as a filter.
+    {
+      const hintRefs = memoryRefsForInference.size;
+      info(
+        hintRefs > 0
+          ? `[improve] memory inference starting (${hintRefs} hint refs touched this run; pass discovers all pending)`
+          : "[improve] memory inference starting (discovering pending parents)",
+      );
       const inferenceStart = Date.now();
       try {
         // O-1 (#364): pass budget signal so a hung inference call is cancelled.
-        memoryInference = await memoryInferenceFn(
-          config,
-          sources,
-          budgetSignal,
-          db,
-          false,
-          (event) => {
-            const current = event.currentRef ? ` ${event.currentRef}` : "";
-            info(
-              `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
-            );
-          },
-          {
-            candidateRefs: memoryRefsForInference,
-          } satisfies MemoryInferencePassOptions,
-        );
+        memoryInference = await memoryInferenceFn(config, sources, budgetSignal, db, false, (event) => {
+          const current = event.currentRef ? ` ${event.currentRef}` : "";
+          info(
+            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+          );
+        });
         memoryInferenceDurationMs = Date.now() - inferenceStart;
         actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
         info(
@@ -2517,6 +2548,26 @@ async function runImproveMaintenancePasses(args: {
         allWarnings.push(`proposal expiration failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+
+    // Phase 4A (staleness detection). Activates the `deprecated` belief-state
+    // machinery shipped in Phase 1A. Default OFF — gated by
+    // `features.index.staleness_detection.enabled`. Runs after orphan purge
+    // and before the URL check (which lives in the outer caller).
+    if (sources.length > 0) {
+      try {
+        stalenessDetection = await stalenessDetectionFn(config, sources, budgetSignal, db);
+        if (stalenessDetection.considered > 0) {
+          info(
+            `[improve] staleness detection complete (considered ${stalenessDetection.considered}, ` +
+              `deprecated ${stalenessDetection.deprecated}, confirmed ${stalenessDetection.confirmed}, ` +
+              `skipped ${stalenessDetection.skipped}, ${stalenessDetection.durationMs}ms)`,
+          );
+        }
+        for (const w of stalenessDetection.warnings) allWarnings.push(`[improve] staleness detection: ${w}`);
+      } catch (err) {
+        allWarnings.push(`staleness detection failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   } finally {
     if (db) closeDatabase(db);
   }
@@ -2524,6 +2575,7 @@ async function runImproveMaintenancePasses(args: {
   return {
     ...(memoryInference ? { memoryInference } : {}),
     ...(graphExtraction ? { graphExtraction } : {}),
+    ...(stalenessDetection ? { stalenessDetection } : {}),
     ...(actions.length > 0 ? { actions } : {}),
     memoryInferenceDurationMs,
     graphExtractionDurationMs,

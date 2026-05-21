@@ -65,6 +65,7 @@ import {
   type Proposal,
   type ProposalsContext,
 } from "../core/proposals";
+import { TRUNCATION_TRAILING_WORDS } from "../core/text-truncation";
 import { warnVerbose } from "../core/warn";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -256,66 +257,13 @@ interface DistillValidationFinding {
 
 /**
  * Trailing tokens that indicate the description was truncated mid-clause.
- * If the final word of the description is one of these, the LLM almost
- * certainly hit a token limit or the line was sliced from a body sentence
- * prefix. Observed examples:
+ * See {@link TRUNCATION_TRAILING_WORDS} in `../core/text-truncation` for the
+ * shared vocabulary (union of distill + consolidate hanging-connector words).
+ * Observed examples:
  *   - "Always validate your setup with"
  *   - "Key fixes focus on"
  *   - "Disable the runtime hook before"
  */
-const TRUNCATION_TRAILING_WORDS = new Set([
-  "a",
-  "an",
-  "the",
-  "and",
-  "or",
-  "but",
-  "of",
-  "in",
-  "on",
-  "at",
-  "by",
-  "to",
-  "for",
-  "with",
-  "from",
-  "into",
-  "onto",
-  "upon",
-  "via",
-  "per",
-  "as",
-  "than",
-  "that",
-  "which",
-  "if",
-  "when",
-  "while",
-  "before",
-  "after",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  "being",
-  "have",
-  "has",
-  "had",
-  "do",
-  "does",
-  "did",
-  "can",
-  "could",
-  "should",
-  "would",
-  "may",
-  "might",
-  "must",
-  "will",
-  "shall",
-]);
 
 /** Headings / section labels that show up verbatim as "descriptions" in the bad samples. */
 const HEADING_FRAGMENT_PATTERNS = [
@@ -467,9 +415,20 @@ const LESSON_SYSTEM_PROMPT = [
   "",
   "<lesson body — plain markdown, 1–3 short paragraphs of practical guidance>",
   "",
+  "## description field (MANDATORY)",
+  "- A single complete sentence in present tense, 80-200 chars, NO markdown.",
+  "- Self-contained: a reviewer must understand the lesson from this field alone.",
+  '- DO NOT start with "When ", "If ", or a connector word — that belongs in when_to_use.',
+  '- DO NOT copy a section heading ("Key takeaways", "For example", "Key pitfalls").',
+  "- DO NOT begin with a numbered list marker, code fence, or markdown heading.",
+  "",
+  'GOOD: "Always validate ref existence before promoting a memory to knowledge; missing refs surface as silent 404s during accept."',
+  'BAD:  "Key pitfalls"',
+  'BAD:  "When working with the akm CLI"',
+  'BAD:  "For example, you might..."',
+  'BAD:  "1. Check the file"',
+  "",
   "RULES:",
-  '- `description` MUST be a complete sentence ending with `.`, `!`, or `?` — never a fragment, heading, or word like "For example", "Key pitfalls", or a bare number.',
-  "- `description` MUST NOT start with `When ` — that pattern belongs in `when_to_use`.",
   "- `when_to_use` MUST be a complete sentence describing a concrete trigger. Never write `When working with <asset-name>` — that is circular and useless.",
   "- `description` and `when_to_use` MUST differ from each other.",
   "- The lesson body MUST be non-empty markdown prose. Do NOT restate `description:` or `when_to_use:` inside the body (no `**description:** ...` or `**when_to_use:** ...` lines — the frontmatter is the only place those keys belong).",
