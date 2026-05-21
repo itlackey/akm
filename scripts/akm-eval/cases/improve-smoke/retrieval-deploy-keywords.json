@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "retrieval-deploy-keywords",
+  "suite": "improve-smoke",
+  "type": "retrieval",
+  "description": "Searching for 'deploy' surfaces operational/release vocabulary when present.",
+  "input": {
+    "query": "deploy",
+    "topK": 10
+  },
+  "expected": {
+    "keywords": ["deploy"],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "keywordCoverage": 0.5,
+      "minHits": 0.5
+    },
+    "passThreshold": 0.5,
+    "llmJudge": {
+      "artifactField": "topHitArtifact",
+      "rubric": "You are grading the search results for an operator running a deploy task. The artifact is the top-3 hits returned for the query 'deploy'. Score 1.0 if at least one hit is an operationally useful guide for a deploy (release pipeline, rollout, ship-feature, release-train). Score 0.6 if one hit is tangentially relevant (incident triage during a release) and the rest are off-topic. Score 0.2 if no hit is operationally useful but the keyword appears. Score 0.0 if no hit appears at all. Be conservative."
+    }
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["retrieval", "smoke", "vocabulary"]
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "show-before-use",
+  "suite": "workflow-compliance",
+  "type": "workflow-compliance",
+  "description": "`select` events are emitted when `akm show <ref>` follows a recent search returning that ref (see EventType definition in src/core/events.ts). Therefore the first `show` of the run must occur strictly before the first `select`.",
+  "input": {},
+  "expected": {
+    "requiredOrder": ["show", "select"],
+    "minEventsOfType": { "select": 1 }
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 0.8
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["workflow", "compliance", "ordering"]
+}

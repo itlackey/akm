@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-03-review-mixed-feedback",
+  "assetType": "memory",
+  "assetRef": "memory:probe-03-cache-invalidation-heuristic",
+  "asset": {
+    "frontmatter": {
+      "description": "When the response cache misbehaves, restart the worker before reaching for a deeper invalidation strategy — but only for short-lived caches.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["cache", "ops"],
+      "createdAt": "2026-04-20T09:00:00.000Z"
+    },
+    "body": "Cache invalidation heuristic\n\nWhen the response cache returns stale data, the first step is usually to restart the worker process — most of our caches are in-process and short-lived.\n\nIf the restart does not clear the issue within one minute, escalate to a deliberate invalidation. The two-tier eviction tooling lives in `tools/cache-evict.ts`.\n\nNote: this guidance applies to the request-path cache only. The build-artifact cache uses a different invalidation contract; see ops runbook 042 before touching it.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-01T08:00:00.000Z",
+      "signal": "positive",
+      "reason": "Restart fixed it in under 30 seconds on May 1",
+      "note": "Worked as documented."
+    },
+    {
+      "ts": "2026-05-06T10:00:00.000Z",
+      "signal": "negative",
+      "reason": "Restart did not fix the build-artifact cache miss on May 6",
+      "failureMode": "incomplete",
+      "note": "Memory steered us toward a worker restart when the actual issue was in the artifact tier — guidance is too narrow."
+    },
+    {
+      "ts": "2026-05-15T15:00:00.000Z",
+      "signal": "negative",
+      "reason": "Ambiguous \"short-lived\" qualifier led to a wrong call during the May 15 incident",
+      "failureMode": "incorrect"
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "review_needed",
+    "expectedScoreBand": [2.5, 3.5],
+    "rationale": "Mixed signal — one positive, two related negatives that surface a real-but-narrow scoping issue. MT-Bench-style judges should land this in the uncertainty band (2.5–3.5) and request human review per D-5 / #388, rather than auto-promote or auto-reject."
+  }
+}

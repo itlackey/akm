@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "retrieval-skill-type-filter",
+  "suite": "improve-smoke",
+  "type": "retrieval",
+  "description": "Type-filtered search for skills returns only skill refs.",
+  "input": {
+    "query": "review",
+    "topK": 10,
+    "type": "skill"
+  },
+  "expected": {
+    "mustNotIncludeRefs": []
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "noForbiddenRefs": 1.0
+    },
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["retrieval", "smoke", "type-filter"]
+}

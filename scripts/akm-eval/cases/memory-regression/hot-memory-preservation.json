@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "hot-memory-preservation",
+  "suite": "memory-regression",
+  "type": "memory-safety",
+  "description": "Verifies fb72ada — akm improve must NEVER auto-archive, auto-merge, or transition away from `active`/`asserted` a memory marked captureMode:hot, even when the same stash has duplicate derived memories that get pruned.",
+  "input": {
+    "fixture": "fixtures/hot-memory-preservation"
+  },
+  "expected": {
+    "preservedRefs": ["memory:hot-incident"],
+    "forbiddenTransitions": {
+      "memory:hot-incident": [
+        "active->archived",
+        "active->superseded",
+        "active->deprecated",
+        "asserted->archived",
+        "asserted->superseded",
+        "asserted->deprecated"
+      ]
+    }
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["memory", "safety", "hot-capture", "regression-guard"]
+}

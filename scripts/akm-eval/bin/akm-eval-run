@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# akm-eval-run — Phase 1 entry point.
+#
+# Thin wrapper around scripts/akm-eval/src/run.ts. Resolves --stash and
+# forwards every other argument unchanged.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+# Forward all CLI args verbatim; src/run.ts owns argument parsing including
+# its own --stash flag. _lib.sh is sourced only so a future bin script can
+# share helpers.
+exec bun run "$dir/../src/run.ts" "$@"

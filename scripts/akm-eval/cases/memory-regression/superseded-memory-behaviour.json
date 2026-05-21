@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "superseded-memory-behaviour",
+  "suite": "memory-regression",
+  "type": "memory-safety",
+  "description": "Verifies analyzeMemoryCleanup's superseded-derived path — when an inferred memory declares `supersededBy:` pointing at another existing memory, akm improve archives the older file and preserves the survivor with beliefState:active.",
+  "input": {
+    "fixture": "fixtures/superseded-memory-behaviour"
+  },
+  "expected": {
+    "archivedRefs": ["memory:policy-v1"],
+    "preservedRefs": ["memory:policy-v2"],
+    "beliefStateAfter": {
+      "memory:policy-v2": "active"
+    }
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 0.8
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["memory", "safety", "supersession"]
+}

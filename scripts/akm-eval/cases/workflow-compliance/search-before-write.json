@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "search-before-write",
+  "suite": "workflow-compliance",
+  "type": "workflow-compliance",
+  "description": "Within the recorded window, every `feedback` event should be preceded by at least one `search` or `show` event (the agent should look at the asset before writing feedback on it). Operationalised as a first-occurrence ordering check.",
+  "input": {},
+  "expected": {
+    "requiredOrder": ["search", "feedback"],
+    "minEventsOfType": { "feedback": 1 }
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 0.8
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["workflow", "compliance", "ordering"]
+}

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-06-quality-reject-circular",
+  "assetType": "memory",
+  "assetRef": "memory:probe-06-circular-restate",
+  "asset": {
+    "frontmatter": {
+      "description": "When working with the deploy script, work with the deploy script.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["deploy"],
+      "createdAt": "2026-04-05T09:00:00.000Z"
+    },
+    "body": "When working with the deploy script, work with the deploy script.\n\nThe deploy script is the script you use for deploys. When deploying, use the\ndeploy script.\n\nSee the deploy script for more on deploys.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-03T14:00:00.000Z",
+      "signal": "negative",
+      "reason": "Pure tautology — restates its title without conveying any guidance",
+      "failureMode": "incorrect",
+      "note": "This is exactly the kind of `when_to_use: When working with <asset-name>` antipattern the LESSON_SYSTEM_PROMPT explicitly forbids."
+    },
+    {
+      "ts": "2026-05-12T10:30:00.000Z",
+      "signal": "negative",
+      "reason": "Wasted a retrieval slot during a real incident on May 12",
+      "failureMode": "incomplete"
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "quality_rejected",
+    "expectedScoreBand": [1.0, 2.0],
+    "rationale": "Tautological content that explicitly violates the documented LESSON prompt rules (circular when_to_use, no real guidance). A judge tuned against the system prompt should reject under 2.0."
+  }
+}

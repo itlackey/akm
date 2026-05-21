@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "proposal-queue-respect",
+  "suite": "workflow-compliance",
+  "type": "workflow-compliance",
+  "description": "Verifies the proposal-queue ordering — `promoted` events must be preceded by at least one `proposal_creation_rejected` or pending proposal-related event in the same window. Operationally: first occurrence of `promoted` must come after the first `reflect_completed` or `propose_invoked` (which is when proposals enter the queue). Skips cleanly when no proposal traffic exists.",
+  "input": {},
+  "expected": {
+    "requiredOrder": ["reflect_completed", "promoted"]
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 0.8
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["workflow", "compliance", "proposals"]
+}

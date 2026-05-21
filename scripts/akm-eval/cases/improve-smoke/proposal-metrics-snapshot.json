@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "proposal-metrics-snapshot",
+  "suite": "improve-smoke",
+  "type": "proposal-quality",
+  "description": "Snapshot of proposal-queue health: counts, validation pass rate, accept rate, and accept-rate-by-source. Always passes; the metrics are the deliverable.",
+  "input": {},
+  "expected": {},
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["proposal", "smoke", "metrics-only"]
+}

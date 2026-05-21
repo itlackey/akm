@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-04-review-borderline-novelty",
+  "assetType": "memory",
+  "assetRef": "memory:probe-04-pairing-bandwidth-policy",
+  "asset": {
+    "frontmatter": {
+      "description": "Pairing sessions over video should be capped at 90 minutes; longer sessions degrade decision quality and the recorded artifacts tend to be unusable.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["team", "process"],
+      "createdAt": "2026-03-15T12:00:00.000Z"
+    },
+    "body": "Pairing sessions over video should be capped at 90 minutes.\n\nObservations from the last quarter:\n\n- Sessions over 90 minutes produce decisions that are revisited at the next standup in 70% of cases.\n- Recordings over 90 minutes are rarely watched back; the index file is too dense to be useful.\n- Splitting a planned 3-hour session into two 90-minute halves with a 30-minute solo gap produces noticeably better followup notes.\n\nThis is partly subjective and partly observed from our retro data. The 90-minute number is rough — anywhere between 75 and 100 minutes shows the same pattern.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-04-22T10:00:00.000Z",
+      "signal": "positive",
+      "reason": "Used to justify splitting the April planning session in half",
+      "note": "Followup notes were measurably tighter."
+    },
+    {
+      "ts": "2026-05-09T12:00:00.000Z",
+      "signal": "negative",
+      "reason": "The 90-minute cap was too tight for a deep-dive design session",
+      "failureMode": "incomplete",
+      "note": "Probably want a separate carve-out for design vs implementation pairing."
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "review_needed",
+    "expectedScoreBand": [2.5, 3.5],
+    "rationale": "Useful but soft — partly subjective, with one positive and one substantive negative pointing at a missing nuance. A calibrated judge should request human review rather than commit to a binary accept/reject."
+  }
+}

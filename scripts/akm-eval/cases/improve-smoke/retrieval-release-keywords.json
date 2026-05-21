@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "retrieval-release-keywords",
+  "suite": "improve-smoke",
+  "type": "retrieval",
+  "description": "Searching for 'release' surfaces release/workflow content.",
+  "input": {
+    "query": "release",
+    "topK": 10
+  },
+  "expected": {
+    "keywords": ["release"],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "keywordCoverage": 0.7,
+      "minHits": 0.3
+    },
+    "passThreshold": 0.6
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["retrieval", "smoke", "vocabulary"]
+}
