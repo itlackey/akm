@@ -522,6 +522,64 @@ describe("missing-ref check", () => {
     const result = akmLint({ dir: stashDir });
     expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
   });
+
+  test("missing-ref: outer-frontmatter `refs:` array suppresses body scan", () => {
+    const stashDir = makeTempStash();
+    // The referenced asset DOES exist, so a frontmatter-listed ref does
+    // not produce a missing-ref flag — and the body's `memory:foo`
+    // literal (which would normally be flagged) is silently ignored.
+    writeFile(stashDir, "memories", "real-target.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(
+      stashDir,
+      "memories",
+      "captured.md",
+      "---\nupdated: 2025-01-01\nrefs:\n  - memory:real-target\n---\n\n## Bash output\nThe heredoc contained literal memory:foo and knowledge:projects/akm/bar.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
+  test("missing-ref: outer-frontmatter `refs:` flags entries that no longer resolve", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "captured.md",
+      "---\nupdated: 2025-01-01\nrefs:\n  - memory:was-deleted\n---\n\nbody\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("memory:was-deleted");
+  });
+
+  test("missing-ref: inner-frontmatter `refs:` (session-checkpoint nesting) also suppresses body scan", () => {
+    const stashDir = makeTempStash();
+    writeFile(stashDir, "memories", "rollout-notes.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    // Session-checkpoint pattern: `akm remember` wraps the file in a
+    // `---\n…\n---` block, and the hook's own `---\nakm_memory_kind:…\n---`
+    // block is preserved at the top of the body.
+    writeFile(
+      stashDir,
+      "memories",
+      "claude-session-20260520-abc.md",
+      "---\ncaptureMode: hot\nupdated: 2025-01-01\n---\n---\nakm_memory_kind: session_checkpoint\nrefs:\n  - memory:rollout-notes\n---\n\nGrep ran `memory:foo|knowledge:bar` and printed `memory:baz`.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
+  test("missing-ref: empty `refs:` array suppresses body scan entirely", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "captured.md",
+      "---\nupdated: 2025-01-01\nrefs: []\n---\n\nLiteral memory:nothing-here-resolves.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
 });
 
 // ── Exit code simulation tests ────────────────────────────────────────────────

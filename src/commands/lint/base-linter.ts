@@ -214,6 +214,108 @@ function checkMissingRefs(
   return missing;
 }
 
+// ── frontmatter refs ─────────────────────────────────────────────────────────
+
+/**
+ * Return the `refs:` array from frontmatter when it is present and is an
+ * array of strings; otherwise return `null` to signal the caller should
+ * fall back to scanning the body. An empty array (`refs: []`) is also
+ * treated as authoritative — it explicitly declares "this asset has no
+ * outbound refs" and suppresses the body scan.
+ *
+ * The `refs:` frontmatter key is used by the claude-code session-capture
+ * hook (see `shared/ref-extraction.ts` in the akm-plugins repo) to
+ * persist a validated outbound-ref list alongside the raw transcript.
+ * Hand-written memories rarely populate this key — for those the body
+ * scan remains the source of truth.
+ *
+ * Session-checkpoint memories use a nested frontmatter pattern: `akm
+ * remember` wraps the file in `---\n…\n---` and the hook's own
+ * `---\nakm_memory_kind: session_checkpoint\n…\n---` block is preserved
+ * inside the body. We look in both places so the `refs:` key works
+ * regardless of where the producer wrote it.
+ */
+function extractFrontmatterRefs(data: Record<string, unknown>, body: string): string[] | null {
+  const fromOuter = readRefsArray(data.refs);
+  if (fromOuter !== null) return fromOuter;
+  const innerData = parseInnerFrontmatterBlock(body);
+  if (innerData) {
+    const fromInner = readRefsArray(innerData.refs);
+    if (fromInner !== null) return fromInner;
+  }
+  return null;
+}
+
+function readRefsArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.trim()) out.push(entry.trim());
+  }
+  return out;
+}
+
+/**
+ * Detect a leading nested frontmatter block in `body` (i.e. a `---\n…\n---`
+ * pair that opens within the first few lines of the body). When present,
+ * parse a minimal subset of YAML — top-level scalars and block-list
+ * arrays — sufficient to recognise the `refs:` key. Anything fancier is
+ * silently ignored.
+ *
+ * This is a deliberately narrow parser: lint must never throw on
+ * unexpected YAML, and the only key we care about here is `refs:`.
+ */
+function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | null {
+  // Skip up to three blank/header lines, then require `---` to open the block.
+  const lines = body.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && i < 3 && lines[i].trim() === "") i += 1;
+  if (lines[i] !== "---") return null;
+  const open = i;
+  let close = -1;
+  for (let j = open + 1; j < lines.length; j += 1) {
+    if (lines[j] === "---") {
+      close = j;
+      break;
+    }
+  }
+  if (close === -1) return null;
+  const block = lines.slice(open + 1, close);
+  const data: Record<string, unknown> = {};
+  let currentKey: string | null = null;
+  let currentList: string[] | null = null;
+  for (const line of block) {
+    const listItem = line.match(/^(?: {2})?- (.*)$/);
+    if (listItem && currentList) {
+      currentList.push(listItem[1].trim().replace(/^["'](.*)["']$/, "$1"));
+      continue;
+    }
+    const inlineFlow = line.match(/^(\w[\w-]*):\s*\[(.*)\]\s*$/);
+    if (inlineFlow) {
+      currentKey = inlineFlow[1];
+      const items = inlineFlow[2]
+        .split(",")
+        .map((s) => s.trim().replace(/^["'](.*)["']$/, "$1"))
+        .filter(Boolean);
+      data[currentKey] = items;
+      currentList = null;
+      continue;
+    }
+    const kv = line.match(/^(\w[\w-]*):\s*(.*)$/);
+    if (!kv) continue;
+    currentKey = kv[1];
+    const value = kv[2].trim();
+    if (value === "") {
+      currentList = [];
+      data[currentKey] = currentList;
+    } else {
+      data[currentKey] = value.replace(/^["'](.*)["']$/, "$1");
+      currentList = null;
+    }
+  }
+  return data;
+}
+
 // ── BaseLinter ────────────────────────────────────────────────────────────────
 
 /**
@@ -301,7 +403,23 @@ export abstract class BaseLinter implements AssetLinter {
     }
 
     // ── 4. missing-ref ─────────────────────────────────────────────────────
-    const missingRefs = checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
+    // Carve-out for assets that declare an explicit `refs:` array in
+    // frontmatter (e.g. session-checkpoint memories captured by the
+    // claude-code hook). The frontmatter array is the *authoritative*
+    // ref list — any ref-shaped tokens in the body are treated as
+    // literal strings (heredocs, grep patterns, JSON values, regex
+    // patterns embedded in tool transcripts). Without this carve-out
+    // every session capture produces a fresh batch of `missing-ref`
+    // flags on every literal `<type>:<slug>` token in a transcript.
+    //
+    // The producer guarantees that entries in `refs:` already resolve
+    // (it validates against the live stash before writing), so we
+    // still run `checkMissingRefs` against the array itself to catch
+    // refs that were valid at capture time but later removed from the
+    // stash.
+    const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
+    const refSource = explicitRefs !== null ? explicitRefs.join("\n") : ctx.body;
+    const missingRefs = checkMissingRefs(refSource, ctx.stashRoot, ctx.extraStashRoots);
     for (const { ref, resolvedRelPath } of missingRefs) {
       issues.push({
         file: ctx.relPath,
