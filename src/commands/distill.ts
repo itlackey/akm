@@ -101,6 +101,35 @@ export type DistillOutcome =
   | "quality_rejected"
   | "review_needed";
 
+/**
+ * Asset-ref types that `akm distill` structurally refuses as inputs.
+ *
+ * Distill *produces* lessons from non-lesson sources (memory, skill, knowledge,
+ * etc.). Calling distill on an existing `lesson:*` ref would derive
+ * `lesson:lesson-<name>-lesson-lesson` (double `-lesson` suffix) — the
+ * recursive-ref defect observed across 323 archived rejected proposals.
+ *
+ * The runtime gate inside {@link akmDistill} still refuses these inputs
+ * defensively (returning an `outcome: "skipped"` envelope with `skipReason:
+ * "recursive_lesson_input"`). This exported set is the planner-side companion:
+ * callers that schedule distill attempts (e.g. `akm improve`'s distill queue)
+ * import it so refs of these types never enter the queue in the first place.
+ *
+ * Source of truth: this set drives the gate in `akmDistill` and is consumed
+ * directly by the improve planner. Adding a new structurally-refused input
+ * type means updating this constant — the planner picks the change up for
+ * free.
+ */
+export const DISTILL_REFUSED_INPUT_TYPES: ReadonlySet<string> = new Set(["lesson"]);
+
+/**
+ * Returns true when `type` is structurally refused as an input by
+ * {@link akmDistill}. See {@link DISTILL_REFUSED_INPUT_TYPES}.
+ */
+export function isDistillRefusedInputType(type: string): boolean {
+  return DISTILL_REFUSED_INPUT_TYPES.has(type);
+}
+
 export interface AkmDistillOptions {
   /** Asset ref to distil from (`[origin//]type:name`). */
   ref: string;
@@ -803,7 +832,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // observed in 323 reviewed archived proposals as the recursive-ref defect.
   // Refuse the input here so the improve loop (or other callers) get a clean
   // skipped outcome instead of producing nonsense refs.
-  if (parsedInputRef.type === "lesson") {
+  //
+  // The refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
+  // the improve planner can skip these refs before queuing distill attempts;
+  // this runtime check stays as a defensive backstop for direct callers.
+  if (isDistillRefusedInputType(parsedInputRef.type)) {
     const skippedRef = `lesson:${parsedInputRef.name}`;
     appendEvent({
       eventType: "distill_invoked",

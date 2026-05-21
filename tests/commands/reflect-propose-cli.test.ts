@@ -308,8 +308,10 @@ describe("improve argv coercion", () => {
 
     expect(result.plannedRefs.map((planned) => planned.ref)).toEqual(["skill:deploy"]);
     expect(reflected).toEqual(["skill:deploy"]);
-    // skill:deploy is not a lesson/memory candidate so distill is not called — only lesson: and
-    // memory: refs enter the distill path after isLessonCandidate was narrowed (ef938fd).
+    // skill:deploy is not a memory candidate so distill is not called. Lessons
+    // are likewise excluded by `isDistillCandidateRef` because they live in
+    // DISTILL_REFUSED_INPUT_TYPES — distill produces lessons, it does not
+    // consume them.
     expect(distilled).toEqual([]);
     expect(capturedPrompt).toContain("Related distilled lessons to evaluate for consolidation:");
     expect(capturedPrompt).toContain("Lesson ref: lesson:skill-deploy-lesson");
