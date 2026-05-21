@@ -29,8 +29,11 @@ const tempDirs: string[] = [];
 const savedEnv: Record<string, string | undefined> = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   AKM_DATA_DIR: process.env.AKM_DATA_DIR,
+  AKM_STATE_DIR: process.env.AKM_STATE_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -100,6 +103,7 @@ beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-no-hang-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-no-hang-config-");
   process.env.AKM_DATA_DIR = makeTempDir("akm-no-hang-data-");
+  process.env.AKM_STATE_DIR = makeTempDir("akm-no-hang-state-");
 });
 
 afterEach(() => {

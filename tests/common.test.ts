@@ -18,12 +18,22 @@ import {
 describe("resolveStashDir", () => {
   const origEnv = process.env.AKM_STASH_DIR;
   const origXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const origXdgDataHome = process.env.XDG_DATA_HOME;
+  const origXdgStateHome = process.env.XDG_STATE_HOME;
   const origHome = process.env.HOME;
   let testConfigHome: string;
+  let testDataHome: string;
+  let testStateHome: string;
 
   beforeEach(() => {
     testConfigHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-config-"));
+    testDataHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-data-"));
+    testStateHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-state-"));
     process.env.XDG_CONFIG_HOME = testConfigHome;
+    // Defense-in-depth: pair the AKM_STASH_DIR mutations below with XDG
+    // overrides so the test-isolation guard in src/core/paths.ts stays inert.
+    process.env.XDG_DATA_HOME = testDataHome;
+    process.env.XDG_STATE_HOME = testStateHome;
   });
 
   afterEach(() => {
@@ -37,6 +47,16 @@ describe("resolveStashDir", () => {
     } else {
       process.env.XDG_CONFIG_HOME = origXdgConfigHome;
     }
+    if (origXdgDataHome === undefined) {
+      delete process.env.XDG_DATA_HOME;
+    } else {
+      process.env.XDG_DATA_HOME = origXdgDataHome;
+    }
+    if (origXdgStateHome === undefined) {
+      delete process.env.XDG_STATE_HOME;
+    } else {
+      process.env.XDG_STATE_HOME = origXdgStateHome;
+    }
     if (origHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -44,6 +64,12 @@ describe("resolveStashDir", () => {
     }
     if (testConfigHome) {
       fs.rmSync(testConfigHome, { recursive: true, force: true });
+    }
+    if (testDataHome) {
+      fs.rmSync(testDataHome, { recursive: true, force: true });
+    }
+    if (testStateHome) {
+      fs.rmSync(testStateHome, { recursive: true, force: true });
     }
   });
 

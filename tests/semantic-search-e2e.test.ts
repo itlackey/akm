@@ -540,12 +540,20 @@ describe("Semantic search graceful degradation", () => {
   let stashDir: string;
   let degradationCacheDir: string;
   let degradationConfigDir: string;
+  let degradationDataDir: string;
+  let degradationStateDir: string;
 
   beforeAll(() => {
     degradationCacheDir = createTmpDir("akm-semantic-degrade-cache-");
     degradationConfigDir = createTmpDir("akm-semantic-degrade-config-");
+    degradationDataDir = createTmpDir("akm-semantic-degrade-data-");
+    degradationStateDir = createTmpDir("akm-semantic-degrade-state-");
     process.env.XDG_CACHE_HOME = degradationCacheDir;
     process.env.XDG_CONFIG_HOME = degradationConfigDir;
+    // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
+    // test-isolation guard in src/core/paths.ts stays inert.
+    process.env.XDG_DATA_HOME = degradationDataDir;
+    process.env.XDG_STATE_HOME = degradationStateDir;
 
     // Create a minimal stash
     stashDir = createTmpDir("akm-semantic-degrade-stash-");
@@ -574,6 +582,8 @@ describe("Semantic search graceful degradation", () => {
   beforeEach(() => {
     process.env.XDG_CACHE_HOME = degradationCacheDir;
     process.env.XDG_CONFIG_HOME = degradationConfigDir;
+    process.env.XDG_DATA_HOME = degradationDataDir;
+    process.env.XDG_STATE_HOME = degradationStateDir;
     process.env.AKM_STASH_DIR = stashDir;
     resetConfigCache();
   });

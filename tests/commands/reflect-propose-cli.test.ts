@@ -19,6 +19,9 @@ const savedEnv = {
   AKM_DATA_DIR: process.env.AKM_DATA_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  AKM_STATE_DIR: process.env.AKM_STATE_DIR,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -82,6 +85,7 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
 
 beforeEach(() => {
   process.env.AKM_DATA_DIR = makeTempDir("akm-improve-cli-data-");
+  process.env.AKM_STATE_DIR = makeTempDir("akm-improve-cli-state-");
   process.env.XDG_CACHE_HOME = makeTempDir("akm-improve-cli-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-improve-cli-config-");
 });
@@ -91,6 +95,12 @@ afterEach(() => {
   else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
   if (savedEnv.AKM_DATA_DIR === undefined) delete process.env.AKM_DATA_DIR;
   else process.env.AKM_DATA_DIR = savedEnv.AKM_DATA_DIR;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.AKM_STATE_DIR === undefined) delete process.env.AKM_STATE_DIR;
+  else process.env.AKM_STATE_DIR = savedEnv.AKM_STATE_DIR;
   if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;

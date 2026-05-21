@@ -315,10 +315,22 @@ describe("writeAssetToSource — unsupported kinds", () => {
 describe("resolveWriteTarget", () => {
   let savedEnv: string | undefined;
   let savedCfgEnv: string | undefined;
+  let savedDataHome: string | undefined;
+  let savedStateHome: string | undefined;
+  const xdgTempDirs: string[] = [];
 
   beforeEach(() => {
     savedEnv = process.env.AKM_STASH_DIR;
     savedCfgEnv = process.env.AKM_CONFIG_DIR;
+    savedDataHome = process.env.XDG_DATA_HOME;
+    savedStateHome = process.env.XDG_STATE_HOME;
+    // Pair AKM_STASH_DIR (set by individual tests below) with XDG_DATA_HOME /
+    // XDG_STATE_HOME so the test-isolation guard in src/core/paths.ts stays inert.
+    const dataTmp = makeTempDir("akm-write-source-data-");
+    const stateTmp = makeTempDir("akm-write-source-state-");
+    xdgTempDirs.push(dataTmp, stateTmp);
+    process.env.XDG_DATA_HOME = dataTmp;
+    process.env.XDG_STATE_HOME = stateTmp;
   });
 
   afterEach(() => {
@@ -326,6 +338,11 @@ describe("resolveWriteTarget", () => {
     else process.env.AKM_STASH_DIR = savedEnv;
     if (savedCfgEnv === undefined) delete process.env.AKM_CONFIG_DIR;
     else process.env.AKM_CONFIG_DIR = savedCfgEnv;
+    if (savedDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = savedDataHome;
+    if (savedStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = savedStateHome;
+    xdgTempDirs.length = 0;
   });
 
   test("explicit --target wins", () => {

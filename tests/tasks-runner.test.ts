@@ -30,11 +30,12 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-runner-"));
 const stashDir = path.join(tmpRoot, "stash");
 const cacheDir = path.join(tmpRoot, "cache");
 const dataDir = path.join(tmpRoot, "data");
+const stateDir = path.join(tmpRoot, "state");
 const logDir = path.join(cacheDir, "tasks", "logs");
 const tasksDir = path.join(stashDir, "tasks");
 const configDir = path.join(tmpRoot, "cfg");
 
-const TRACKED_ENV_KEYS = ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_STASH_DIR", "AKM_DATA_DIR"];
+const TRACKED_ENV_KEYS = ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_STASH_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR"];
 const PRESERVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -42,12 +43,16 @@ beforeEach(() => {
   fs.rmSync(stashDir, { recursive: true, force: true });
   fs.rmSync(cacheDir, { recursive: true, force: true });
   fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(stateDir, { recursive: true, force: true });
   fs.rmSync(configDir, { recursive: true, force: true });
   fs.mkdirSync(tasksDir, { recursive: true });
   // Workflows directory needs to exist so resolveAssetPath can stat the type root.
   fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
   // Point state.db to an isolated data dir so tests don't share history.
   process.env.AKM_DATA_DIR = dataDir;
+  // Pair AKM_STASH_DIR with AKM_STATE_DIR so the test-isolation guard in
+  // src/core/paths.ts (getStateDir) stays inert.
+  process.env.AKM_STATE_DIR = stateDir;
 });
 
 afterEach(() => {
