@@ -28,7 +28,12 @@ export type ConfigErrorCode =
   // Defense-in-depth sentinel raised by `akm init` under `bun test` to
   // refuse persisting a temp-dir stashDir to the user's real config.
   // See src/commands/init.ts.
-  | "INIT_TMP_STASH_REFUSED";
+  | "INIT_TMP_STASH_REFUSED"
+  // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
+  // when a test sets AKM_STASH_DIR but forgets to also point
+  // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
+  // at temp directories. See src/core/paths.ts.
+  | "TEST_ISOLATION_MISSING";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
@@ -66,6 +71,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   EMBEDDING_NOT_CONFIGURED: 'Run `akm config set embedding \'{"endpoint":"...","model":"..."}\'` to enable embeddings.',
   LLM_NOT_CONFIGURED:
     'Run `akm setup` or `akm config set profiles.llm.default \'{"endpoint":"...","model":"..."}\' to configure an LLM profile.',
+  TEST_ISOLATION_MISSING:
+    "Under bun test, when AKM_STASH_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
 };
 
 /** Default hint for each UsageError code. */

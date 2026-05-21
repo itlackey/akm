@@ -10,6 +10,37 @@ import path from "node:path";
 import { IS_WINDOWS } from "./common";
 import { ConfigError } from "./errors";
 
+/**
+ * Returns true when the current process appears to be running under
+ * `bun test` (either via the BUN_TEST sentinel Bun sets on the test
+ * worker, or via the conventional NODE_ENV=test).
+ *
+ * Used by getDataDir/getStateDir to enforce that any test which sets
+ * AKM_STASH_DIR ALSO redirects XDG_DATA_HOME and XDG_STATE_HOME (or the
+ * AKM_*_DIR overrides) to temp directories. Without that pairing, tests
+ * silently write SQLite databases, lockfiles, and task history into the
+ * developer's real `~/.local/share/akm` / `~/.local/state/akm`.
+ */
+function isUnderBunTest(env: NodeJS.ProcessEnv): boolean {
+  return env.BUN_TEST === "1" || env.NODE_ENV === "test";
+}
+
+/**
+ * Build a TEST_ISOLATION_MISSING ConfigError describing which env var(s)
+ * must be set so the data/state path resolves into a temp dir instead of
+ * the user's real XDG home.
+ */
+function testIsolationError(directoryKind: "data" | "state"): ConfigError {
+  const xdgVar = directoryKind === "data" ? "XDG_DATA_HOME" : "XDG_STATE_HOME";
+  const akmVar = directoryKind === "data" ? "AKM_DATA_DIR" : "AKM_STATE_DIR";
+  return new ConfigError(
+    `Refusing to resolve ${directoryKind} directory under bun test: AKM_STASH_DIR is set but ${xdgVar}/${akmVar} is not. ` +
+      "This guards against tests writing into the developer's real ~/.local/share/akm or ~/.local/state/akm. " +
+      `Set ${xdgVar} (or ${akmVar}) to a mktemp-d directory in this test's env block.`,
+    "TEST_ISOLATION_MISSING",
+  );
+}
+
 // ── Config directory ─────────────────────────────────────────────────────────
 
 export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
@@ -101,6 +132,14 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = proc
   const override = env.AKM_DATA_DIR?.trim();
   if (override) return override;
 
+  // Defense-in-depth: under `bun test`, refuse to fall through to the
+  // user's real $XDG_DATA_HOME / ~/.local/share/akm when AKM_STASH_DIR is
+  // set without a matching data-dir override. Item 5 of the 0.8.x
+  // critical-review plan: see memory:akm-improve-critical-review-2026-05-20.
+  if (isUnderBunTest(env) && env.AKM_STASH_DIR?.trim() && !env.XDG_DATA_HOME?.trim()) {
+    throw testIsolationError("data");
+  }
+
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();
     if (localAppData) return path.join(localAppData, "akm", "data");
@@ -143,6 +182,13 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = proc
 export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
   const override = env.AKM_STATE_DIR?.trim();
   if (override) return override;
+
+  // Defense-in-depth: under `bun test`, refuse to fall through to the
+  // user's real $XDG_STATE_HOME / ~/.local/state/akm when AKM_STASH_DIR
+  // is set without a matching state-dir override. See getDataDir above.
+  if (isUnderBunTest(env) && env.AKM_STASH_DIR?.trim() && !env.XDG_STATE_HOME?.trim()) {
+    throw testIsolationError("state");
+  }
 
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();
