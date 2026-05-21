@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# runs-trend — TSV trend across the last N runs.
+#
+# Usage:
+#   runs-trend [N] [--stash <path>]
+#
+# N defaults to 12. Pipe to `column -t` for a table.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
+REMAINING_ARGS=()
+resolve_stash "$@"
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+
+LIMIT="${1:-12}"
+
+rd="$(runs_dir)"
+if [[ ! -d "$rd" ]]; then
+  echo "no runs dir at $rd" >&2
+  exit 1
+fi
+
+{
+  printf "ts\tlint_fixed\tlint_flagged\tmem_written\tmem_considered\tgraph_entities\tgraph_relations\tdistill_attempt\tdistill_skipped\tplanned\tactions\n"
+  # ls -tr → oldest first → easier to read top-down. Show only the last N
+  # entries by piping through tail.
+  ls -t "$rd" | head -"$LIMIT" | tac | while read -r d; do
+    path="$rd/$d/improve-result.json"
+    [[ -f "$path" ]] || continue
+    ts="$(run_ts "$d")"
+    jq -r --arg ts "$ts" '
+      [
+        $ts,
+        (.lintSummary.fixed // 0),
+        (.lintSummary.flagged // 0),
+        (.memoryInference.writtenFacts // 0),
+        (.memoryInference.considered // 0),
+        (.graphExtraction.totalEntities // 0),
+        (.graphExtraction.totalRelations // 0),
+        ([.actions[]? | select(.mode == "distill-attempt" or .mode == "distill")] | length),
+        ([.actions[]? | select(.mode == "distill-skipped")] | length),
+        (.plannedRefs // [] | length),
+        (.actions // [] | length)
+      ] | @tsv
+    ' "$path"
+  done
+}

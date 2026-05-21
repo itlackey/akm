@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# runs-list — one-line summary per recent improve run.
+#
+# Usage:
+#   runs-list [N] [--stash <path>]
+#
+# N defaults to 20.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
+REMAINING_ARGS=()
+resolve_stash "$@"
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+
+LIMIT="${1:-20}"
+
+rd="$(runs_dir)"
+if [[ ! -d "$rd" ]]; then
+  echo "no runs dir at $rd" >&2
+  exit 1
+fi
+
+{
+  printf "ts\tok\tactions\tlint_fixed\tlint_flagged\tmem_written\tmem_considered\tdistill_attempt\tdistill_skipped\trun_id\n"
+  ls -t "$rd" | head -"$LIMIT" | while read -r d; do
+    path="$rd/$d/improve-result.json"
+    [[ -f "$path" ]] || continue
+    ts="$(run_ts "$d")"
+    jq -r --arg ts "$ts" --arg id "$d" '
+      [
+        $ts,
+        (.ok | tostring),
+        (.actions // [] | length),
+        (.lintSummary.fixed // 0),
+        (.lintSummary.flagged // 0),
+        (.memoryInference.writtenFacts // 0),
+        (.memoryInference.considered // 0),
+        ([.actions[]? | select(.mode == "distill-attempt" or .mode == "distill")] | length),
+        ([.actions[]? | select(.mode == "distill-skipped")] | length),
+        $id
+      ] | @tsv
+    ' "$path"
+  done
+} | column -t -s $'\t'

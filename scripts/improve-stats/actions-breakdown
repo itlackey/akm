@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# actions-breakdown — modes + skip-reason counts for one run.
+#
+# Usage:
+#   actions-breakdown <run-id|latest> [--stash <path>]
+#
+# Useful when "actions: 207" hides a single dominant skip reason.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
+REMAINING_ARGS=()
+resolve_stash "$@"
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: actions-breakdown <run-id|latest> [--stash <path>]" >&2
+  exit 2
+fi
+
+path="$(run_path "$1")"
+echo "# $path"
+echo
+
+echo "## modes"
+jq '
+  [.actions[]? | .mode]
+  | group_by(.)
+  | map({mode: .[0], count: length})
+  | sort_by(-.count)
+' "$path"
+
+echo
+echo "## distill skip reasons"
+jq '
+  [.actions[]? | select(.mode == "distill-skipped") | .result.reason]
+  | group_by(.)
+  | map({reason: .[0], count: length})
+  | sort_by(-.count)
+' "$path"
+
+echo
+echo "## reflect skip reasons"
+jq '
+  [.actions[]? | select(.mode == "reflect-skipped") | .result.reason]
+  | group_by(.)
+  | map({reason: .[0], count: length})
+  | sort_by(-.count)
+' "$path"
+
+echo
+echo "## non-skip outcomes (sample)"
+jq '
+  [.actions[]? | select(.mode != "distill-skipped" and .mode != "reflect-skipped")]
+  | .[0:5]
+' "$path"
