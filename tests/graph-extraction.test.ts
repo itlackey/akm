@@ -105,11 +105,25 @@ const { GRAPH_EXTRACT_PROMPT_VERSION: graphExtractPromptVersion } = await import
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
 let tmpStash = "";
+let tmpDataHome = "";
+let tmpStateHome = "";
+const savedXdgDataHome = process.env.XDG_DATA_HOME;
+const savedXdgStateHome = process.env.XDG_STATE_HOME;
+const savedAkmStashDir = process.env.AKM_STASH_DIR;
 
 beforeEach(() => {
   tmpStash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-ext-"));
   fs.mkdirSync(path.join(tmpStash, "memories"), { recursive: true });
   fs.mkdirSync(path.join(tmpStash, "knowledge"), { recursive: true });
+  // Pair tmpStash with XDG_DATA_HOME / XDG_STATE_HOME so that any
+  // production helper inside graph-db / graph-extraction that incidentally
+  // calls getDbPath()/getStateDir() (e.g. populating StoredGraphMeta.graphPath
+  // at src/indexer/graph-db.ts:410) does not fire the test-isolation guard
+  // when a prior leaky test left process.env.AKM_STASH_DIR set.
+  tmpDataHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-ext-data-"));
+  tmpStateHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-ext-state-"));
+  process.env.XDG_DATA_HOME = tmpDataHome;
+  process.env.XDG_STATE_HOME = tmpStateHome;
   extractor = () => ({ entities: [], relations: [] });
   extractorCallCount = 0;
 });
@@ -119,6 +133,20 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+  if (tmpDataHome) {
+    fs.rmSync(tmpDataHome, { recursive: true, force: true });
+    tmpDataHome = "";
+  }
+  if (tmpStateHome) {
+    fs.rmSync(tmpStateHome, { recursive: true, force: true });
+    tmpStateHome = "";
+  }
+  if (savedXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedXdgDataHome;
+  if (savedXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedXdgStateHome;
+  if (savedAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
+  else process.env.AKM_STASH_DIR = savedAkmStashDir;
 });
 
 afterAll(() => {
