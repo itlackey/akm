@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "reflect-schema-shape-floor",
+  "suite": "improve-smoke",
+  "type": "reflect-quality",
+  "description": "PR 3 gate: schema-shape failure rate (schema-shape / LLM-touched) is at most 0.10. Above this we escalate to a per-type writer-tool refactor; at or below we accept the current responseSchema approach. Skipped when fewer than 10 LLM-touched reflects are available across the window (sample too small to gate on).",
+  "input": {
+    "windowRuns": 20
+  },
+  "expected": {
+    "maxSchemaShapeRate": 0.10
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0",
+    "minLlmTouchedReflects": 10
+  },
+  "tags": ["reflect", "smoke", "quality", "pr3-gate"]
+}

@@ -110,6 +110,14 @@ Phase 1 + Phase 2 runner types:
 - **proposal-quality** — reads `state.db` (or `<stash>/.akm/proposals/`
   as fallback) and reports counts, validation pass rate, accept rate,
   reject rate, and accept-rate-per-source.
+- **reflect-quality** — walks `<stash>/.akm/runs/<id>/improve-result.json`
+  for the most recent N runs (default 20) and classifies every
+  `reflect`/`reflect-failed` action into succeeded vs schema-shape vs
+  content-policy vs gate-refused. Reports the LLM-touched denominator
+  (succeeded + schemaShape + contentPolicy + other; gateRefused
+  excluded) and the schemaShapeRate the PR 3 gate hinges on. Replaces
+  the hand-rolled jq-on-improve-result.json classification used during
+  May 2026 pipeline tuning.
 - **regression** — diffs the current `case-results.jsonl` against a
   previous eval-run-id (literal or `latest`). Surfaces newly-failing
   cases, newly-passing cases, score drops above a configurable

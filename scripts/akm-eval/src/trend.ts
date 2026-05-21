@@ -7,8 +7,10 @@
  * pretty table.
  *
  * Default metric is `overall` (`scores.overall`); `--metric deterministic`
- * picks `scores.deterministic`; any other value is treated as a
- * dot-separated path into the envelope (e.g. `--metric countsByType.retrieval.passed`).
+ * picks `scores.deterministic`; any other value is first looked up in
+ * METRIC_ALIASES (short names like `schemaShapeRate`) and then treated
+ * as a dot-separated path into the envelope (e.g.
+ * `--metric countsByType.retrieval.passed`).
  */
 
 import path from "node:path";
@@ -70,7 +72,9 @@ Options:
   --stash <path>   Stash root (default: $AKM_STASH_DIR or ~/akm).
   --suite <name>   Only include runs from this suite.
   --limit <N>      Max runs to include (default: 20). Most recent N kept.
-  --metric <key>   overall | deterministic | <dotted.path> (default: overall).
+  --metric <key>   overall | deterministic | <alias> | <dotted.path> (default: overall).
+                   Aliases: schemaShapeRate, contentPolicyRate, reflectSuccessRate,
+                   llmTouchedReflects (all expand under metrics.reflectQuality.*).
 
 Output is tab-separated: ts  suite  mode  label  <metric>
 Pipe to \`column -t\` for a table.
@@ -86,10 +90,25 @@ function getByPath(obj: unknown, dotted: string): unknown {
   return cur;
 }
 
+/**
+ * Convenience aliases for metrics that are buried under `metrics.*` but
+ * referenced often enough to deserve a short name. Keep this list small;
+ * the canonical access path is still the dotted form.
+ */
+const METRIC_ALIASES: Record<string, string> = {
+  // Reflect-quality (PR 3 gate). Hoisted into env.metrics.reflectQuality
+  // by src/run.ts when a reflect-failure-breakdown case ran.
+  schemaShapeRate: "metrics.reflectQuality.schemaShapeRate",
+  contentPolicyRate: "metrics.reflectQuality.contentPolicyRate",
+  reflectSuccessRate: "metrics.reflectQuality.successRate",
+  llmTouchedReflects: "metrics.reflectQuality.counts.llmTouched",
+};
+
 function resolveMetric(env: EvalRunResult, metric: string): string {
   let value: unknown;
   if (metric === "overall") value = env.scores.overall;
   else if (metric === "deterministic") value = env.scores.deterministic;
+  else if (METRIC_ALIASES[metric]) value = getByPath(env, METRIC_ALIASES[metric]);
   else value = getByPath(env, metric);
   if (value === undefined || value === null) return "—";
   if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(3) : String(value);

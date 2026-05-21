@@ -33,6 +33,7 @@ import { diffCaseResults } from "./runners/regression";
 import { runJudgeCalibrationCase } from "./runners/judge-calibration";
 import { runMemorySafetyCase } from "./runners/memory-safety";
 import { runProposalQualityCase } from "./runners/proposal-quality";
+import { runReflectQualityCase } from "./runners/reflect-quality";
 import { runRegressionCase } from "./runners/regression";
 import { runRetrievalCase } from "./runners/retrieval";
 import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
@@ -451,6 +452,8 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
       return runRetrievalCase(c, ctx);
     case "proposal-quality":
       return runProposalQualityCase(c, ctx);
+    case "reflect-quality":
+      return runReflectQualityCase(c, ctx);
     case "regression":
       return runRegressionCase(c, ctx);
     case "judge-calibration":
@@ -741,9 +744,24 @@ async function main(): Promise<number> {
     .filter((v): v is Record<string, unknown> => v !== undefined && typeof v === "object")
     .pop();
 
+  // Hoist reflect-quality metrics from the breakdown case into the run
+  // envelope's top-level metrics so `akm-eval-trend --metric
+  // metrics.reflectQuality.schemaShapeRate` (and the alias
+  // `--metric schemaShapeRate`, resolved by trend.ts) work without
+  // walking case-results.jsonl. We pick the case explicitly named
+  // `reflect-failure-breakdown` first (the metrics-only deliverable);
+  // fall back to the first non-skipped reflect-quality case if absent.
+  const reflectQualityCase =
+    results.find((r) => r.type === "reflect-quality" && r.caseId === "reflect-failure-breakdown" && !r.skipped) ??
+    results.find((r) => r.type === "reflect-quality" && !r.skipped);
+  const reflectQualityMetrics = reflectQualityCase
+    ? (reflectQualityCase.metrics as Record<string, unknown>)
+    : undefined;
+
   const envelopeMetrics: Record<string, unknown> = {};
   if (pairedImproveSummary) envelopeMetrics.pairedImprove = pairedImproveSummary;
   if (judgeCalibrationMetrics) envelopeMetrics.judgeCalibration = judgeCalibrationMetrics;
+  if (reflectQualityMetrics) envelopeMetrics.reflectQuality = reflectQualityMetrics;
 
   const envelope: EvalRunResult = {
     schemaVersion: 1,

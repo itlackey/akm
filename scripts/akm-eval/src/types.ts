@@ -7,6 +7,7 @@
 export type EvalCaseType =
   | "retrieval"
   | "proposal-quality"
+  | "reflect-quality"
   | "lesson-application"
   | "memory-safety"
   | "workflow-compliance"
@@ -48,6 +49,13 @@ export interface EvalCase {
   requires?: {
     features?: string[];
     minAkmVersion?: string;
+    /**
+     * Reflect-quality: minimum LLM-touched reflect sample size before any
+     * threshold check is evaluated. When fewer LLM-touched reflects are
+     * available across the configured window, the case is skipped (mirrors
+     * how `proposal-accept-rate-floor` no-ops on zero decisions).
+     */
+    minLlmTouchedReflects?: number;
   };
   tags?: string[];
 }
