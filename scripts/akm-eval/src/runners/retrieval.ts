@@ -9,7 +9,7 @@
  */
 
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
-import { AkmCli } from "../sources/akm-cli";
+import { makeAkmCli } from "../sources/akm-cli";
 
 export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
   const start = Date.now();
@@ -27,7 +27,7 @@ export async function runRetrievalCase(c: EvalCase, ctx: EvalContext): Promise<E
     return errorResult(c, "case is missing `input.query`", start);
   }
 
-  const cli = new AkmCli(ctx.akmBin, ctx.env);
+  const cli = makeAkmCli(ctx.akmBin, ctx.env, { record: ctx.recording });
   let hits;
   try {
     hits = cli.search(query, { limit: topK, type });

@@ -101,4 +101,15 @@ export interface EvalContext {
   currentResults?: EvalCaseResult[];
   /** Phase 2: the in-flight eval run id; lets the regression runner skip self-diffs. */
   currentRunId?: string;
+  /**
+   * Phase 6: when `true`, runners route their AkmCli / StateDb /
+   * improve-result reads through the process-level recorder/player held by
+   * `src/sources/replay-log.ts` (`getCurrentRecorder()` / `getCurrentPlayer()`).
+   *
+   * Kept as a single boolean so this file stays small and additive for the
+   * Phase 4 + Phase 7 worktrees that are editing it in parallel. The
+   * orchestrator owns the recorder/player; runners only know "am I in a
+   * recording/replay session?" via this flag.
+   */
+  recording?: boolean;
 }

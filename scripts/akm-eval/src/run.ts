@@ -37,8 +37,9 @@ import { runRetrievalCase } from "./runners/retrieval";
 import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
 import { renderMarkdown } from "./report";
 import { aggregateScores, buildCountsByType } from "./scoring";
-import { AkmCli } from "./sources/akm-cli";
+import { AkmCli, makeAkmCli } from "./sources/akm-cli";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
+import { ReplayRecorder, setCurrentRecorder } from "./sources/replay-log";
 import { createSandbox, type Sandbox } from "./sources/sandbox";
 import type { EvalCase, EvalCaseResult, EvalContext, EvalMode, EvalRunResult } from "./types";
 
@@ -57,6 +58,7 @@ interface CliOptions {
   sandbox: boolean;
   keepSandbox: boolean;
   threshold: number;
+  record: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -70,6 +72,7 @@ function parseArgs(argv: string[]): CliOptions {
     sandbox: true,
     keepSandbox: false,
     threshold: 0.1,
+    record: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -134,6 +137,9 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case "--threshold":
         opts.threshold = Number(next());
+        break;
+      case "--record":
+        opts.record = true;
         break;
       case "-h":
       case "--help":
@@ -209,6 +215,9 @@ Options:
   --allow-mutate             Alias for --no-sandbox.
   --keep-sandbox             Don't delete the sandbox tmpdir on success.
   --threshold <0..1>         Score-drop threshold for regression diff (default: 0.1).
+  --record                   Capture every akm/state-db/improve-result I/O
+                             into <run-dir>/artifacts/replay/ for use with
+                             akm-eval-replay (Phase 6).
 `);
 }
 
@@ -369,7 +378,15 @@ async function main(): Promise<number> {
   const evalRunId = buildEvalRunId();
   const runDir = path.join(runsDir, evalRunId);
 
-  const akmCli = new AkmCli(opts.akmBin, env);
+  // Phase 6: install the process-level recorder before any AkmCli or
+  // StateDbSources factory call so every I/O lands in the same log. The
+  // recorder is held by `src/sources/replay-log.ts`; runners see it via
+  // `makeAkmCli({ record: ctx.recording })` etc. Cleared in the `finally`
+  // below so test harnesses that re-import this module don't bleed state.
+  const recorder = opts.record ? new ReplayRecorder() : undefined;
+  if (recorder) setCurrentRecorder(recorder);
+
+  const akmCli = makeAkmCli(opts.akmBin, env, { record: opts.record });
   const akmVersion = akmCli.version();
 
   const baseCtx: EvalContext = {
@@ -381,6 +398,7 @@ async function main(): Promise<number> {
     keepSandbox: opts.keepSandbox,
     env,
     currentRunId: evalRunId,
+    recording: opts.record || undefined,
   };
 
   const cases = loadCases(casesRoot, opts.suite);
@@ -503,6 +521,13 @@ async function main(): Promise<number> {
     baselineResults,
     pairedComparison,
   });
+  // Phase 6: flush the recorder to artifacts/replay/ alongside the rest of
+  // the run output. Done after writeArtifacts so the replay logs are
+  // guaranteed to land in a real on-disk run dir.
+  if (recorder) {
+    recorder.flushTo(path.join(runDir, "artifacts", "replay"));
+    setCurrentRecorder(undefined);
+  }
   updateLatestSymlink(runsDir, evalRunId);
 
   if (opts.format === "json") {

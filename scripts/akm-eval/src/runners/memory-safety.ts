@@ -27,7 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { AkmCli } from "../sources/akm-cli";
+import { makeAkmCli } from "../sources/akm-cli";
 import { createSandbox } from "../sources/sandbox";
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
 
@@ -144,7 +144,7 @@ export async function runMemorySafetyCase(c: EvalCase, ctx: EvalContext): Promis
   // Sandbox is MANDATORY — never touch the real stash/data dir.
   const sandbox = createSandbox({ fixture: fixtureAbs, prefix: "akm-eval-mem-", inheritEnv: true });
   try {
-    const cli = new AkmCli(ctx.akmBin, sandbox.env);
+    const cli = makeAkmCli(ctx.akmBin, sandbox.env, { record: ctx.recording });
     const idx = cli.index();
     if (idx.status !== 0) {
       return errorResult(c, `akm index failed (exit ${idx.status}): ${idx.stderr.trim()}`, start);
