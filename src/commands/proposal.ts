@@ -20,10 +20,13 @@ import {
   createProposal,
   diffProposal,
   getProposal,
+  isProposalSkipped,
   listProposals,
   type Proposal,
   type ProposalsContext,
   promoteProposal,
+  resolveProposalId,
+  revertProposal,
   validateProposal,
 } from "../core/proposals";
 
@@ -38,7 +41,7 @@ function resolveStash(stashDir?: string): string {
 
 export interface ProposalListOptions {
   stashDir?: string;
-  status?: "pending" | "accepted" | "rejected";
+  status?: "pending" | "accepted" | "rejected" | "reverted";
   ref?: string;
   includeArchive?: boolean;
 }
@@ -51,10 +54,13 @@ export interface ProposalListResult {
 
 export function akmProposalList(options: ProposalListOptions = {}): ProposalListResult {
   const stash = resolveStash(options.stashDir);
-  // `--status accepted|rejected` implies archive-inclusion since the live
-  // queue only ever contains pending entries.
+  // `--status accepted|rejected|reverted` implies archive-inclusion since the
+  // live queue only ever contains pending entries.
   const includeArchive =
-    options.includeArchive === true || options.status === "accepted" || options.status === "rejected";
+    options.includeArchive === true ||
+    options.status === "accepted" ||
+    options.status === "rejected" ||
+    options.status === "reverted";
   const proposals = listProposals(stash, {
     includeArchive,
     status: options.status,
@@ -110,7 +116,8 @@ export interface ProposalAcceptResult {
 export async function akmProposalAccept(options: ProposalAcceptOptions): Promise<ProposalAcceptResult> {
   const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
-  const result = await promoteProposal(stash, config, options.id, { target: options.target }, options.ctx);
+  const resolvedId = resolveProposalId(stash, options.id).id;
+  const result = await promoteProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
 
   // Emit `promoted` to the events stream so observers (audit, dashboards,
   // sync) see the accept happen. Only emit on the happy path — promotion
@@ -157,14 +164,14 @@ export interface ProposalRejectResult {
 
 export function akmProposalReject(options: ProposalRejectOptions): ProposalRejectResult {
   const stash = resolveStash(options.stashDir);
-  const existing = getProposal(stash, options.id);
+  const existing = resolveProposalId(stash, options.id);
   if (existing.status !== "pending") {
     throw new UsageError(
-      `Proposal ${options.id} is not pending (current status: ${existing.status}). Only pending proposals can be rejected.`,
+      `Proposal ${existing.id} is not pending (current status: ${existing.status}). Only pending proposals can be rejected.`,
       "INVALID_FLAG_VALUE",
     );
   }
-  const updated = archiveProposal(stash, options.id, "rejected", options.reason, options.ctx);
+  const updated = archiveProposal(stash, existing.id, "rejected", options.reason, options.ctx);
 
   appendEvent({
     eventType: "rejected",
@@ -208,8 +215,8 @@ export interface ProposalDiffResult {
 export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResult {
   const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
-  const proposal = getProposal(stash, options.id);
-  const diff = diffProposal(stash, config, options.id, { target: options.target });
+  const proposal = resolveProposalId(stash, options.id);
+  const diff = diffProposal(stash, config, proposal.id, { target: options.target });
   return {
     schemaVersion: 1,
     id: proposal.id,
@@ -235,15 +242,88 @@ export interface ProposalCreateResult {
 
 export function akmProposalCreate(options: ProposalCreateOptions): ProposalCreateResult {
   const stash = resolveStash(options.stashDir);
-  const proposal = createProposal(
+  // Manual proposal creation (via `akm proposal create`) always bypasses
+  // dedup/cooldown guards — the operator is explicitly requesting a proposal.
+  const result = createProposal(
     stash,
     {
       ref: options.ref,
       source: options.source,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: options.payload,
+      force: true,
     },
     options.ctx,
   );
-  return { schemaVersion: 1, ok: true, proposal };
+  if (isProposalSkipped(result)) {
+    // Should never happen with force:true — defensive only.
+    throw new Error(`Unexpected proposal skip: ${result.message}`);
+  }
+  return { schemaVersion: 1, ok: true, proposal: result };
+}
+
+// ── revert (Phase 6C / Advantage D6c) ────────────────────────────────────────
+
+export interface ProposalRevertOptions {
+  stashDir?: string;
+  /** Proposal id (uuid / prefix) or asset ref. */
+  id: string;
+  /** Override the write target by source name (same semantics as accept). */
+  target?: string;
+  /** Test seam — overrides config used for the write target. */
+  config?: AkmConfig;
+  /** Test seam — overrides clock / id source. */
+  ctx?: ProposalsContext;
+}
+
+export interface ProposalRevertResult {
+  schemaVersion: 1;
+  ok: true;
+  id: string;
+  ref: string;
+  assetPath: string;
+  proposal: Proposal;
+}
+
+/**
+ * Restore an accepted proposal's prior content from the backup captured at
+ * promotion time (Advantage D6c / Phase 6C).
+ *
+ * Failure modes (all surface as typed errors so the CLI can map exit codes):
+ *   - Proposal id does not resolve → `NotFoundError("FILE_NOT_FOUND")`
+ *     (raised by `resolveProposalId` / `getProposal`).
+ *   - Proposal is not `status === "accepted"` → `UsageError("INVALID_FLAG_VALUE")`
+ *     with message `"only accepted proposals can be reverted ..."`.
+ *   - No `backup` field, or the backup file is missing on disk →
+ *     `UsageError` with message `"no backup available for this proposal ..."`.
+ *
+ * On success, emits a `proposal_reverted` event for observability, mirroring
+ * how `akmProposalAccept` emits `promoted` and `akmProposalReject` emits
+ * `rejected`.
+ */
+export async function akmProposalRevert(options: ProposalRevertOptions): Promise<ProposalRevertResult> {
+  const stash = resolveStash(options.stashDir);
+  const config = options.config ?? loadConfig();
+  const resolvedId = resolveProposalId(stash, options.id).id;
+  const result = await revertProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
+
+  appendEvent({
+    eventType: "proposal_reverted",
+    ref: result.ref,
+    metadata: {
+      proposalId: result.proposal.id,
+      source: result.proposal.source,
+      ...(result.proposal.sourceRun !== undefined ? { sourceRun: result.proposal.sourceRun } : {}),
+      assetPath: result.assetPath,
+    },
+  });
+
+  return {
+    schemaVersion: 1,
+    ok: true,
+    id: result.proposal.id,
+    ref: result.ref,
+    assetPath: result.assetPath,
+    proposal: result.proposal,
+  };
 }

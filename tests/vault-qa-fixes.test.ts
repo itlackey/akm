@@ -23,6 +23,8 @@ afterAll(() => {
 
 const xdgCache = makeTempDir("akm-vqa-cache-");
 const xdgConfig = makeTempDir("akm-vqa-config-");
+const xdgData = makeTempDir("akm-vqa-data-");
+const xdgState = makeTempDir("akm-vqa-state-");
 const isolatedHome = makeTempDir("akm-vqa-home-");
 
 const repoRoot = path.resolve(import.meta.dir, "..");
@@ -31,16 +33,20 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
+  stdinInput?: string,
 ): { stdout: string; stderr: string; status: number } {
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     cwd: repoRoot,
+    input: stdinInput,
     env: {
       ...process.env,
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: undefined,
       ...extraEnv,
     },
@@ -126,10 +132,11 @@ describe("vault list", () => {
     expect(parsed.vaults).toEqual([
       expect.objectContaining({
         ref: "vault:prod",
-        path: path.join(stashDir, "vaults", "prod.env"),
         keys: ["API_KEY"],
       }),
     ]);
+    // path must not leak into structured JSON output (security fix M3)
+    expect(parsed.vaults[0]).not.toHaveProperty("path");
   });
 
   test("6. vault list aggregates vaults across configured stashes", () => {
@@ -175,46 +182,6 @@ describe("vault list", () => {
   });
 });
 
-// ── vault set combined KEY=VALUE form (CLI tests) ────────────────────────────
-
-describe("vault set: KEY=VALUE combined form", () => {
-  test("8. vault set prod KEY=value succeeds and writes KEY=value", () => {
-    const stashDir = makeTempDir("akm-vqa-stash-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
-
-    const result = runCli(["vault", "set", "prod", "MY_KEY=myvalue"], { AKM_STASH_DIR: stashDir });
-    expect(result.status).toBe(0);
-
-    const vaultPath = path.join(stashDir, "vaults", "prod.env");
-    expect(loadEnv(vaultPath).MY_KEY).toBe("myvalue");
-  });
-
-  test("9. vault set prod KEY value (3-arg form) still works", () => {
-    const stashDir = makeTempDir("akm-vqa-stash-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
-
-    const result = runCli(["vault", "set", "prod", "ANOTHER_KEY", "anothervalue"], { AKM_STASH_DIR: stashDir });
-    expect(result.status).toBe(0);
-
-    const vaultPath = path.join(stashDir, "vaults", "prod.env");
-    expect(loadEnv(vaultPath).ANOTHER_KEY).toBe("anothervalue");
-  });
-
-  test("10. vault set prod KEY=val1=val2 writes KEY with value val1=val2 (split on first =)", () => {
-    const stashDir = makeTempDir("akm-vqa-stash-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
-
-    const result = runCli(["vault", "set", "prod", "COMPLEX_KEY=val1=val2"], { AKM_STASH_DIR: stashDir });
-    expect(result.status).toBe(0);
-
-    const vaultPath = path.join(stashDir, "vaults", "prod.env");
-    expect(loadEnv(vaultPath).COMPLEX_KEY).toBe("val1=val2");
-  });
-});
-
 // ── vault set --comment flag (CLI tests) ─────────────────────────────────────
 
 describe("vault set: --comment flag", () => {
@@ -223,9 +190,13 @@ describe("vault set: --comment flag", () => {
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "AUTH_TOKEN", "tok123", "--comment", "auth secret"], {
-      AKM_STASH_DIR: stashDir,
-    });
+    const result = runCli(
+      ["vault", "set", "prod", "AUTH_TOKEN", "--comment", "auth secret"],
+      {
+        AKM_STASH_DIR: stashDir,
+      },
+      "tok123",
+    );
     expect(result.status).toBe(0);
 
     const vaultPath = path.join(stashDir, "vaults", "prod.env");

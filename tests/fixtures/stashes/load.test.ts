@@ -34,9 +34,9 @@ describe("loadFixtureStash", () => {
       expect(process.env.AKM_STASH_DIR).toBe(stashDir);
 
       // Default behaviour runs `akm index`, which writes the SQLite DB into
-      // the helper's isolated XDG_CACHE_HOME (sibling of stashDir).
+      // the helper's isolated XDG_DATA_HOME (sibling of stashDir).
       const tmpRoot = path.dirname(stashDir);
-      const dbPath = path.join(tmpRoot, "cache", "akm", "index.db");
+      const dbPath = path.join(tmpRoot, "data", "akm", "index.db");
       expect(fs.existsSync(dbPath)).toBe(true);
     } finally {
       cleanup();

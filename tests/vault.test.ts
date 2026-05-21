@@ -11,7 +11,6 @@ import {
   setKey,
   unsetKey,
 } from "../src/commands/vault";
-import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
 
@@ -211,6 +210,16 @@ describe("unsetKey", () => {
   test("returns false when the file does not exist", () => {
     expect(unsetKey(path.join(tmpDir(), "missing.env"), "FOO")).toBe(false);
   });
+
+  test("preserves mode 0o600 after removing a key", () => {
+    if (process.platform === "win32") return; // chmod is best-effort on win32
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "FOO=one\nBAR=two\n");
+    fs.chmodSync(fp, 0o600);
+    expect(unsetKey(fp, "FOO")).toBe(true);
+    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ── createVault ─────────────────────────────────────────────────────────────
@@ -230,6 +239,14 @@ describe("createVault", () => {
     fs.writeFileSync(fp, "FOO=existing\n");
     createVault(fp);
     expect(loadEnv(fp).FOO).toBe("existing");
+  });
+
+  test("creates the file with mode 0o600", () => {
+    if (process.platform === "win32") return; // chmod is best-effort on win32
+    const dir = tmpDir();
+    const fp = path.join(dir, "vaults", "secure.env");
+    createVault(fp);
+    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -379,24 +396,23 @@ describe("buildShellExportScript", () => {
 
 const originalXdgConfig = process.env.XDG_CONFIG_HOME;
 const originalXdgCache = process.env.XDG_CACHE_HOME;
+const originalXdgData = process.env.XDG_DATA_HOME;
+const originalXdgState = process.env.XDG_STATE_HOME;
 const originalAkmStash = process.env.AKM_STASH_DIR;
 let testConfigDir = "";
 let testCacheDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-config-"));
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-cache-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-state-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
-
-  const dbPath = getDbPath();
-  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-    try {
-      fs.unlinkSync(f);
-    } catch {
-      /* ignore */
-    }
-  }
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 });
 
 afterEach(() => {
@@ -404,10 +420,16 @@ afterEach(() => {
   else process.env.XDG_CONFIG_HOME = originalXdgConfig;
   if (originalXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCache;
+  if (originalXdgData === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgData;
+  if (originalXdgState === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgState;
   if (originalAkmStash === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStash;
   if (testConfigDir) fs.rmSync(testConfigDir, { recursive: true, force: true });
   if (testCacheDir) fs.rmSync(testCacheDir, { recursive: true, force: true });
+  if (testDataDir) fs.rmSync(testDataDir, { recursive: true, force: true });
+  if (testStateDir) fs.rmSync(testStateDir, { recursive: true, force: true });
 });
 
 const SECRET_VALUE = "correct-horse-battery-staple-do-not-leak";

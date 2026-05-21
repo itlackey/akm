@@ -20,6 +20,8 @@ afterAll(() => {
 
 const xdgCache = makeTempDir("akm-vpr-cache-");
 const xdgConfig = makeTempDir("akm-vpr-config-");
+const xdgData = makeTempDir("akm-vpr-data-");
+const xdgState = makeTempDir("akm-vpr-state-");
 const isolatedHome = makeTempDir("akm-vpr-home-");
 
 const repoRoot = path.resolve(import.meta.dir, "..");
@@ -28,16 +30,20 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
+  stdinInput?: string,
 ): { stdout: string; stderr: string; status: number } {
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 15_000,
     cwd: repoRoot,
+    input: stdinInput,
     env: {
       ...process.env,
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: undefined,
       ...extraEnv,
     },
@@ -121,5 +127,151 @@ describe("vault run", () => {
     expect(status).toBe(0);
     expect(stdout.trim()).toBe("bar|");
     expect(stderr.trim()).toBe("");
+  });
+});
+
+describe("vault set (stdin default)", () => {
+  test("reads value from stdin and writes it to the vault", () => {
+    const stashDir = makeTempDir("akm-vault-stdin-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { stdout, stderr, status } = runCli(
+      ["vault", "set", "vault:prod", "DB_URL"],
+      { AKM_STASH_DIR: stashDir },
+      "postgres://secret@host/db",
+    );
+
+    expect(status).toBe(0);
+    expect(stderr.trim()).toBe("");
+    const contents = fs.readFileSync(vaultPath, "utf8");
+    expect(contents).toContain("DB_URL=");
+    expect(contents).toContain("postgres://secret@host/db");
+    const out = JSON.parse(stdout.trim());
+    expect(out.key).toBe("DB_URL");
+  });
+
+  test("strips trailing newline from stdin value", () => {
+    const stashDir = makeTempDir("akm-vault-stdin-nl-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    runCli(["vault", "set", "vault:prod", "KEY"], { AKM_STASH_DIR: stashDir }, "myvalue\n");
+
+    const contents = fs.readFileSync(vaultPath, "utf8");
+    expect(contents).not.toContain("myvalue\n=");
+    expect(contents).toContain("KEY=myvalue");
+  });
+
+  // moved from vault-qa-fixes.test.ts test 8
+  test("vault set accepts bare vault name without type prefix", () => {
+    const stashDir = makeTempDir("akm-vault-stdin-qa-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { status } = runCli(["vault", "set", "prod", "MY_KEY"], { AKM_STASH_DIR: stashDir }, "myvalue");
+    expect(status).toBe(0);
+    expect(fs.readFileSync(vaultPath, "utf8")).toContain("MY_KEY=myvalue");
+  });
+
+  // moved from vault-qa-fixes.test.ts test 10
+  test("vault set stdin value containing = is stored without data loss", () => {
+    const stashDir = makeTempDir("akm-vault-stdin-eq-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { status } = runCli(["vault", "set", "prod", "COMPLEX_KEY"], { AKM_STASH_DIR: stashDir }, "val1=val2");
+    expect(status).toBe(0);
+    // The value may be quoted in the .env file; assert the key exists and the
+    // file contains "val1=val2" somewhere (either raw or shell-quoted).
+    const raw = fs.readFileSync(vaultPath, "utf8");
+    expect(raw).toContain("COMPLEX_KEY=");
+    expect(raw).toContain("val1=val2");
+  });
+});
+
+describe("vault set stale lock recovery", () => {
+  test("succeeds when a .lock file containing a dead PID is present", () => {
+    const stashDir = makeTempDir("akm-vault-stalelock-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    // Write a stale lock file containing a PID that is guaranteed not to exist.
+    const lockPath = `${vaultPath}.lock`;
+    fs.writeFileSync(lockPath, "999999999", "utf8");
+
+    const { stdout, stderr, status } = runCli(
+      ["vault", "set", "vault:prod", "STALE_KEY"],
+      { AKM_STASH_DIR: stashDir },
+      "stale-value",
+    );
+
+    expect(status).toBe(0);
+    expect(stderr.trim()).toBe("");
+    const contents = fs.readFileSync(vaultPath, "utf8");
+    expect(contents).toContain("STALE_KEY=stale-value");
+    const out = JSON.parse(stdout.trim());
+    expect(out.key).toBe("STALE_KEY");
+
+    // Verify the stale lock was cleaned up.
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
+
+describe("vault set --from-env", () => {
+  test("reads value from the named env var and writes it to the vault", () => {
+    const stashDir = makeTempDir("akm-vault-fromenv-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { stdout, stderr, status } = runCli(["vault", "set", "vault:prod", "API_TOKEN", "--from-env", "AKM_VALUE"], {
+      AKM_STASH_DIR: stashDir,
+      AKM_VALUE: "supersecret",
+    });
+
+    expect(status).toBe(0);
+    expect(stderr.trim()).toBe("");
+    const contents = fs.readFileSync(vaultPath, "utf8");
+    expect(contents).toContain("API_TOKEN=");
+    expect(contents).toContain("supersecret");
+    const out = JSON.parse(stdout.trim());
+    expect(out.key).toBe("API_TOKEN");
+  });
+
+  test("errors when the named env var is not set", () => {
+    const stashDir = makeTempDir("akm-vault-fromenv-missing-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
+
+    const { stderr, status } = runCli(["vault", "set", "vault:prod", "KEY", "--from-env", "DOES_NOT_EXIST_XYZ"], {
+      AKM_STASH_DIR: stashDir,
+      DOES_NOT_EXIST_XYZ: undefined,
+    });
+
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain("DOES_NOT_EXIST_XYZ");
+  });
+
+  // moved from vault-qa-fixes.test.ts test 9
+  test("vault set --from-env accepts bare vault name without type prefix", () => {
+    const stashDir = makeTempDir("akm-vault-fromenv-qa-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    fs.writeFileSync(vaultPath, "", "utf8");
+
+    const { status } = runCli(["vault", "set", "prod", "ANOTHER_KEY", "--from-env", "AKM_VALUE"], {
+      AKM_STASH_DIR: stashDir,
+      AKM_VALUE: "anothervalue",
+    });
+    expect(status).toBe(0);
+    expect(fs.readFileSync(vaultPath, "utf8")).toContain("ANOTHER_KEY=anothervalue");
   });
 });

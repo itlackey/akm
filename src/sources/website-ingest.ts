@@ -213,6 +213,10 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
 }
 
 async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; links: URL[] } | null> {
+  const parsedUrl = new URL(pageUrl);
+  if (parsedUrl.hostname.endsWith(".invalid")) {
+    throw new Error(`Refusing to fetch reserved invalid hostname: ${parsedUrl.hostname}`);
+  }
   const response = await fetchWithRetry(
     pageUrl,
     {

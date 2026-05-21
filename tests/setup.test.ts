@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const DETECT_SOURCE_PATH = path.join(import.meta.dir, "../src/setup/detect.ts");
+
+async function loadDetectModule(fromDir: string) {
+  const copiedPath = path.join(fromDir, `detect-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
+  fs.copyFileSync(DETECT_SOURCE_PATH, copiedPath);
+  return import(pathToFileURL(copiedPath).href);
+}
 
 // ── detect.ts tests ─────────────────────────────────────────────────────────
 
@@ -20,26 +29,25 @@ describe("detectAgentPlatforms", () => {
   });
 
   test("returns empty array when no platforms found", async () => {
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
     expect(result).toEqual([]);
   });
 
   test("detects .claude directory", async () => {
     fs.mkdirSync(path.join(testHome, ".claude"), { recursive: true });
-    // Re-import to pick up fresh HOME
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
-    const claude = result.find((p) => p.name === "Claude Code");
+    const claude = result.find((p: { name: string }) => p.name === "Claude Code");
     expect(claude).toBeDefined();
     expect(claude?.path).toBe(path.join(testHome, ".claude"));
   });
 
   test("detects .config/opencode directory", async () => {
     fs.mkdirSync(path.join(testHome, ".config", "opencode"), { recursive: true });
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
-    const opencode = result.find((p) => p.name === "OpenCode");
+    const opencode = result.find((p: { name: string }) => p.name === "OpenCode");
     expect(opencode).toBeDefined();
     expect(opencode?.path).toBe(path.join(testHome, ".config", "opencode"));
   });
@@ -48,23 +56,23 @@ describe("detectAgentPlatforms", () => {
     fs.mkdirSync(path.join(testHome, ".claude"), { recursive: true });
     fs.mkdirSync(path.join(testHome, ".cursor"), { recursive: true });
     fs.mkdirSync(path.join(testHome, ".continue"), { recursive: true });
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
     expect(result.length).toBeGreaterThanOrEqual(3);
   });
 
   test("ignores files (only detects directories)", async () => {
     fs.writeFileSync(path.join(testHome, ".claude"), "not a directory");
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
-    const claude = result.find((p) => p.name === "Claude Code");
+    const claude = result.find((p: { name: string }) => p.name === "Claude Code");
     expect(claude).toBeUndefined();
   });
 
   test("returns empty when HOME and USERPROFILE are both unset", async () => {
     delete process.env.HOME;
     delete process.env.USERPROFILE;
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
     expect(result).toEqual([]);
   });
@@ -73,9 +81,9 @@ describe("detectAgentPlatforms", () => {
     delete process.env.HOME;
     process.env.USERPROFILE = testHome;
     fs.mkdirSync(path.join(testHome, ".claude"), { recursive: true });
-    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { detectAgentPlatforms } = await loadDetectModule(testHome);
     const result = detectAgentPlatforms();
-    const claude = result.find((p) => p.name === "Claude Code");
+    const claude = result.find((p: { name: string }) => p.name === "Claude Code");
     expect(claude).toBeDefined();
     expect(claude?.path).toBe(path.join(testHome, ".claude"));
     delete process.env.USERPROFILE;
@@ -107,7 +115,7 @@ describe("detectOllama", () => {
       return new Response("", { status: 404 });
     }) as unknown as typeof fetch;
 
-    const { detectOllama } = await import("../src/setup/detect");
+    const { detectOllama } = await loadDetectModule(os.tmpdir());
     const result = await detectOllama();
     expect(result.available).toBe(true);
     expect(result.models).toContain("llama3.2");
@@ -125,7 +133,7 @@ describe("detectOllama", () => {
       );
     }) as unknown as typeof fetch;
 
-    const { detectOllama } = await import("../src/setup/detect");
+    const { detectOllama } = await loadDetectModule(os.tmpdir());
     const result = await detectOllama();
     expect(result.models).toContain("llama3.2");
     expect(result.models).toContain("phi3:v2");
@@ -137,7 +145,7 @@ describe("detectOllama", () => {
       throw new Error("Connection refused");
     }) as unknown as typeof fetch;
 
-    const { detectOllama } = await import("../src/setup/detect");
+    const { detectOllama } = await loadDetectModule(os.tmpdir());
     const result = await detectOllama();
     // May still be available=true if `ollama list` CLI works, or false if both fail
     // Just verify it doesn't throw
@@ -155,7 +163,7 @@ describe("detectOllama", () => {
       );
     }) as unknown as typeof fetch;
 
-    const { detectOllama } = await import("../src/setup/detect");
+    const { detectOllama } = await loadDetectModule(os.tmpdir());
     const result = await detectOllama();
     expect(result.models).toEqual(["alpaca", "mistral", "zephyr"]);
   });

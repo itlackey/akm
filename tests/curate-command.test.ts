@@ -21,6 +21,7 @@ function writeFile(filePath: string, content: string): void {
 function runCli(stashDir: string, args: string[]): string {
   const xdgCache = makeTempDir("akm-curate-cache-");
   const xdgConfig = makeTempDir("akm-curate-config-");
+  const xdgData = makeTempDir("akm-curate-data-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -29,6 +30,7 @@ function runCli(stashDir: string, args: string[]): string {
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
     },
   });
   expect(result.status).toBe(0);
@@ -111,5 +113,44 @@ describe("curate command", () => {
     expect(json.items).toEqual([]);
     // Auto-index runs but finds nothing in the empty stash
     expect(json.tip).toContain("Index is empty");
+  });
+
+  test("logs a curate event to usage_events", () => {
+    const stashDir = makeStash();
+    const xdgData = makeTempDir("akm-curate-data-");
+    const xdgCache = makeTempDir("akm-curate-cache-");
+    const xdgConfig = makeTempDir("akm-curate-config-");
+
+    const result = spawnSync("bun", [CLI, "curate", "release", "--format=json"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: xdgCache,
+        XDG_CONFIG_HOME: xdgConfig,
+        XDG_DATA_HOME: xdgData,
+      },
+    });
+    expect(result.status).toBe(0);
+
+    // Check the database for the curate event
+    const dbPath = path.join(xdgData, "akm", "index.db");
+    expect(fs.existsSync(dbPath)).toBe(true);
+
+    const { Database } = require("bun:sqlite");
+    const db = new Database(dbPath);
+    try {
+      const rows = db
+        .prepare("SELECT event_type, query, metadata FROM usage_events WHERE event_type = 'curate'")
+        .all() as Array<{ event_type: string; query: string; metadata: string }>;
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows[0].query).toBe("release");
+      const meta = JSON.parse(rows[0].metadata);
+      expect(meta.itemCount).toBeGreaterThan(0);
+      expect(Array.isArray(meta.itemRefs)).toBe(true);
+    } finally {
+      db.close();
+    }
   });
 });

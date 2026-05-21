@@ -163,10 +163,3 @@ export function parseYamlScalar(value: string): unknown {
   }
   return value;
 }
-
-/**
- * Coerce an unknown value to a trimmed string, or return undefined if empty/non-string.
- */
-export function toStringOrUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}

@@ -108,11 +108,19 @@ function runRealSpawnSync(
 }
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeEach(() => {
   testConfigDir = makeTempDir("akm-registry-config-");
+  testDataDir = makeTempDir("akm-registry-data-");
+  testStateDir = makeTempDir("akm-registry-state-");
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 });
 
 afterEach(() => {
@@ -121,9 +129,27 @@ afterEach(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 

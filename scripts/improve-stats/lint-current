@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# lint-current — current lint flags grouped by issue type.
+#
+# Usage:
+#   lint-current [--stash <path>] [--sample N]
+#
+# --sample shows N representative entries per issue class (default 0).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
+SAMPLE=0
+REMAINING_ARGS=()
+# Pull --sample out before resolve_stash sees it.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sample)
+      SAMPLE="$2"
+      shift 2
+      ;;
+    --sample=*)
+      SAMPLE="${1#--sample=}"
+      shift
+      ;;
+    *)
+      REMAINING_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+REMAINING_ARGS=()
+resolve_stash "$@"
+
+if ! command -v akm >/dev/null 2>&1; then
+  echo "akm CLI not on PATH" >&2
+  exit 1
+fi
+
+# akm lint reads the stash from $AKM_STASH_DIR, not the working dir.
+export AKM_STASH_DIR="$STASH_DIR"
+
+echo "# lint flags grouped by issue (stash: $STASH_DIR)"
+echo
+
+akm lint --json 2>/dev/null | jq '
+  {
+    total: (.flagged | length),
+    by_issue: (
+      [.flagged[].issue]
+      | group_by(.)
+      | map({issue: .[0], count: length})
+      | sort_by(-.count)
+    )
+  }
+'
+
+if [[ "$SAMPLE" -gt 0 ]]; then
+  echo
+  echo "## samples per issue (limit $SAMPLE)"
+  akm lint --json 2>/dev/null | jq --argjson n "$SAMPLE" '
+    .flagged
+    | group_by(.issue)
+    | map({issue: .[0].issue, samples: (. | .[0:$n])})
+  '
+fi

@@ -2,14 +2,14 @@
  * Integration test for the search-time graph boost (#207).
  *
  * Asserts deterministically that for a corpus with a known graph-eligible
- * query, the rank of the expected target improves when a `graph.json`
- * artifact is present versus absent. No LLM calls are made — the graph
- * file is written directly to the fixture stash, simulating what the
+ * query, the rank of the expected target improves when SQLite-backed graph
+ * data is present versus absent. No LLM calls are made — the graph
+ * snapshot is written directly to the fixture DB, simulating what the
  * extraction pass would produce.
  *
  * The test uses TWO independent runs against the SAME database state:
- *   1. Baseline — `graph.json` deleted before search.
- *   2. Boosted — `graph.json` present before search.
+ *   1. Baseline — graph snapshot removed before search.
+ *   2. Boosted — graph snapshot present before search.
  *
  * Acceptance: the target's rank in the boosted run must be ≤ its rank in
  * the baseline run, and at least one of (rank improves) OR (score
@@ -26,10 +26,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
+import type { AkmConfig } from "../src/core/config";
 import { resetConfigCache, saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
-import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, getGraphFilePath } from "../src/indexer/graph-extraction";
+import { closeDatabase, openDatabase, openExistingDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import {
+  computeGraphBoost,
+  GRAPH_CONFIDENCE_MODE,
+  GRAPH_CONFIDENCE_WEIGHT,
+  GRAPH_DIRECT_BOOST_CAP,
+  GRAPH_DIRECT_BOOST_PER_ENTITY,
+  GRAPH_HOP_BOOST_CAP,
+  GRAPH_HOP_BOOST_PER_ENTITY,
+  listRelatedPathsForFile,
+  loadGraphBoostContext,
+} from "../src/indexer/graph-boost";
+import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
+import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph-extraction";
 import type { StashEntry } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
 
@@ -38,29 +51,35 @@ import { buildSearchText } from "../src/indexer/search-fields";
 let stashDir = "";
 let originalXdgCacheHome: string | undefined;
 let originalXdgConfigHome: string | undefined;
+let originalXdgDataHome: string | undefined;
+let originalXdgStateHome: string | undefined;
 let originalAkmStashDir: string | undefined;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeAll(() => {
   originalXdgCacheHome = process.env.XDG_CACHE_HOME;
   originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  originalXdgDataHome = process.env.XDG_DATA_HOME;
+  originalXdgStateHome = process.env.XDG_STATE_HOME;
   originalAkmStashDir = process.env.AKM_STASH_DIR;
 
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-cache-"));
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-config-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-state-"));
   stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-stash-"));
 
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 
   resetConfigCache();
-  saveConfig({
-    semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: stashDir }],
-    registries: [],
-  });
+  saveTestConfig();
 
   buildFixture();
 });
@@ -70,10 +89,14 @@ afterAll(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
   resetConfigCache();
-  for (const dir of [testCacheDir, testConfigDir, stashDir]) {
+  for (const dir of [testCacheDir, testConfigDir, testDataDir, testStateDir, stashDir]) {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -94,7 +117,7 @@ afterAll(() => {
 //   - memory:incident-2024-shard — operational note. Anchors the graph
 //     edge connecting "outage recovery" to the runbook file.
 //
-// With graph.json present, the runbook's entities directly match the
+// With graph data present, the runbook's entities directly match the
 // query tokens and pick up the graph boost; the FAQ has no graph node
 // and gets nothing. The deterministic acceptance is "rank improves OR
 // score strictly increases" — both work even if the baseline already
@@ -103,7 +126,7 @@ afterAll(() => {
 function buildFixture(): void {
   // Asset files on disk — the search-time graph boost matches by absolute
   // file path, so paths must be consistent between fixture build and
-  // graph.json contents.
+  // graph snapshot contents.
   const knowledgeDir = path.join(stashDir, "knowledge");
   const memoryDir = path.join(stashDir, "memories");
   fs.mkdirSync(knowledgeDir, { recursive: true });
@@ -125,6 +148,12 @@ function buildFixture(): void {
   fs.writeFileSync(
     memoryPath,
     "---\ntype: memory\n---\n\nDuring the 2024 database outage we recovered shard-3 by following the runbook.\n",
+  );
+
+  const checklistPath = path.join(knowledgeDir, "incident-checklist.md");
+  fs.writeFileSync(
+    checklistPath,
+    "---\ntype: knowledge\n---\n\nDatabase outage recovery checklist for incident triage and escalation.\n",
   );
 
   // Index the corpus directly into the SQLite DB.
@@ -164,6 +193,16 @@ function buildFixture(): void {
         filePath: memoryPath,
         dirPath: memoryDir,
       },
+      {
+        entry: {
+          name: "incident-checklist",
+          type: "knowledge",
+          filename: "incident-checklist.md",
+          description: "Database outage recovery checklist for incident triage and escalation.",
+        },
+        filePath: checklistPath,
+        dirPath: knowledgeDir,
+      },
     ];
     for (const e of entries) {
       const entryKey = `${stashDir}:${e.entry.type}:${e.entry.name}`;
@@ -179,59 +218,100 @@ function buildFixture(): void {
     closeDatabase(db);
   }
 
-  // Pre-build the graph file once, but DON'T install it yet — each test
-  // installs/removes it as needed. The entity set is exactly what the
-  // graph-extraction LLM helper would have produced for these bodies.
-  const graphFile: GraphFile = {
+  installGraphWithMutator((graph) => graph);
+  uninstallGraph();
+}
+
+function installGraph(): void {
+  installGraphWithMutator((graph) => graph);
+}
+
+function uninstallGraph(): void {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    deleteStoredGraph(db, stashDir);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function installGraphWithMutator(mutator: (graph: GraphFile) => GraphFile): void {
+  const mutated = mutator({
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot: stashDir,
     files: [
       {
-        path: runbookPath,
+        path: path.join(stashDir, "knowledge", "database-runbook.md"),
         type: "knowledge",
         entities: ["database", "outage", "recovery", "runbook"],
         relations: [
           { from: "outage", to: "recovery" },
           { from: "recovery", to: "database" },
+          { from: "recovery", to: "runbook" },
         ],
       },
       {
-        path: memoryPath,
+        path: path.join(stashDir, "memories", "incident-2024-shard.md"),
         type: "memory",
         entities: ["database", "outage", "recovery", "shard-3"],
         relations: [{ from: "outage", to: "recovery" }],
       },
-      // database-faq has NO graph entries — the FAQ doesn't operationally
-      // relate to outage recovery; it just shares vocabulary. This is the
-      // asymmetry that lets the graph signal differentiate the runbook
-      // from a vocabulary-matching FAQ.
+      {
+        path: path.join(stashDir, "knowledge", "incident-checklist.md"),
+        type: "knowledge",
+        entities: ["playbook"],
+        relations: [{ from: "runbook", to: "playbook" }],
+      },
     ],
-  };
-
-  // Stash the prepared graph payload as a JSON file alongside the stash so
-  // tests can install/uninstall by file rename.
-  fs.mkdirSync(path.join(stashDir, ".akm"), { recursive: true });
-  fs.writeFileSync(
-    path.join(stashDir, ".akm", "graph.prepared.json"),
-    `${JSON.stringify(graphFile, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-function installGraph(): void {
-  const prepared = path.join(stashDir, ".akm", "graph.prepared.json");
-  fs.copyFileSync(prepared, getGraphFilePath(stashDir));
-}
-
-function uninstallGraph(): void {
-  const target = getGraphFilePath(stashDir);
-  if (fs.existsSync(target)) fs.unlinkSync(target);
+  });
+  const db = openExistingDatabase(getDbPath());
+  try {
+    replaceStoredGraph(db, mutated);
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 async function searchHits(query: string) {
-  const result = await akmSearch({ query, source: "stash", limit: 20 });
+  const result = await akmSearch({ query, source: "stash", limit: 100 });
   return result.hits;
+}
+
+function configWithGraphBoost(graphBoost: NonNullable<NonNullable<AkmConfig["search"]>["graphBoost"]>): AkmConfig {
+  return {
+    semanticSearchMode: "off",
+    search: { graphBoost },
+  };
+}
+
+function saveTestConfig(search?: {
+  minScore?: number;
+  graphBoost?: {
+    directBoostPerEntity?: number;
+    directBoostCap?: number;
+    hopBoostPerEntity?: number;
+    hopBoostCap?: number;
+    maxHops?: number;
+    confidenceMode?: "off" | "blend" | "multiply";
+    confidenceWeight?: number;
+  };
+}): void {
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: stashDir }],
+    registries: [],
+    ...(search ? { search } : {}),
+  });
+}
+
+function resetUtilityScores(): void {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    db.exec("DELETE FROM utility_scores");
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 function rankOf(hits: { name: string }[], name: string): number {
@@ -282,9 +362,14 @@ describe("graph boost — search-time integration (#207)", () => {
     // confirms the graph integration is purely additive — there's no
     // hidden second scorer running unconditionally.
     uninstallGraph();
+    resetUtilityScores();
     const without = await searchHits("database");
     expect(without.length).toBeGreaterThan(0);
 
+    // Reset utility scores bumped by the first search's logSearchEvent() call
+    // so the second run sees the same baseline scores and produces identical
+    // hits and scores.
+    resetUtilityScores();
     // Re-run the same query while the file is uninstalled — must be
     // byte-identical (same hits, same scores) within the deterministic
     // tiebreaker.
@@ -342,5 +427,225 @@ describe("graph boost — search-time integration (#207)", () => {
     );
     expect((boostedHit as { ref?: string } | undefined)?.ref).toBe((baselineHit as { ref?: string } | undefined)?.ref);
     expect(boostedHit?.score ?? 0).toBeGreaterThanOrEqual(baselineHit?.score ?? 0);
+  });
+
+  test("explicit legacy graphBoost config matches default behavior", async () => {
+    const query = "database outage recovery";
+    installGraph();
+
+    resetUtilityScores();
+    saveTestConfig();
+    const defaultHits = await searchHits(query);
+
+    resetUtilityScores();
+    saveTestConfig({
+      graphBoost: {
+        directBoostPerEntity: GRAPH_DIRECT_BOOST_PER_ENTITY,
+        directBoostCap: GRAPH_DIRECT_BOOST_CAP,
+        hopBoostPerEntity: GRAPH_HOP_BOOST_PER_ENTITY,
+        hopBoostCap: GRAPH_HOP_BOOST_CAP,
+        maxHops: 1,
+        confidenceMode: GRAPH_CONFIDENCE_MODE,
+        confidenceWeight: GRAPH_CONFIDENCE_WEIGHT,
+      },
+    });
+    const explicitLegacyHits = await searchHits(query);
+
+    expect(explicitLegacyHits.map((h) => h.name)).toEqual(defaultHits.map((h) => h.name));
+    expect(explicitLegacyHits.map((h) => h.score)).toEqual(defaultHits.map((h) => h.score));
+  });
+
+  test("maxHops=2 enables bounded multi-hop boost beyond default one hop", async () => {
+    const query = "database outage recovery";
+    installGraph();
+
+    resetUtilityScores();
+    saveTestConfig({ graphBoost: { maxHops: 1 } });
+    const oneHopHits = await searchHits(query);
+    const oneHopScore = scoreOf(oneHopHits, "incident-checklist");
+    const oneHopRank = rankOf(oneHopHits, "incident-checklist");
+    expect(oneHopRank).not.toBe(Infinity);
+
+    resetUtilityScores();
+    saveTestConfig({ graphBoost: { maxHops: 2 } });
+    const twoHopHits = await searchHits(query);
+    const twoHopScore = scoreOf(twoHopHits, "incident-checklist");
+    const twoHopRank = rankOf(twoHopHits, "incident-checklist");
+    expect(twoHopRank).not.toBe(Infinity);
+
+    expect(twoHopScore).toBeGreaterThan(oneHopScore);
+    expect(twoHopRank).toBeLessThanOrEqual(oneHopRank);
+  });
+
+  test("node and relation confidence affect boost when present", async () => {
+    const query = "database outage recovery";
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+
+    installGraph();
+    const baselineContext = loadGraphBoostContext(
+      stashDir,
+      query,
+      configWithGraphBoost({ confidenceMode: "multiply" }),
+    );
+    expect(baselineContext).not.toBeNull();
+    if (!baselineContext) throw new Error("expected baseline graph boost context");
+    const baselineBoost = computeGraphBoost(baselineContext, runbookPath);
+
+    installGraphWithMutator((graph) => ({
+      ...graph,
+      files: graph.files.map((file) => {
+        if (file.path.endsWith("database-runbook.md")) {
+          return {
+            ...file,
+            confidence: 0.25,
+            relations: file.relations.map((rel) => ({ ...rel, confidence: 0.25 })),
+          };
+        }
+        return file;
+      }),
+    }));
+    const confidenceContext = loadGraphBoostContext(
+      stashDir,
+      query,
+      configWithGraphBoost({ confidenceMode: "multiply" }),
+    );
+    expect(confidenceContext).not.toBeNull();
+    if (!confidenceContext) throw new Error("expected confidence graph boost context");
+    const confidenceBoost = computeGraphBoost(confidenceContext, runbookPath);
+
+    expect(confidenceBoost).toBeLessThan(baselineBoost);
+  });
+
+  test("absent confidence remains neutral in confidence-aware mode", async () => {
+    const query = "database outage recovery";
+
+    resetUtilityScores();
+    saveTestConfig({ graphBoost: { confidenceMode: "multiply" } });
+    installGraph();
+    const withoutConfidence = await searchHits(query);
+
+    resetUtilityScores();
+    installGraphWithMutator((graph) => ({
+      ...graph,
+      files: graph.files.map((file) => {
+        if (file.path.endsWith("database-runbook.md") || file.path.endsWith("incident-checklist.md")) {
+          return {
+            ...file,
+            confidence: 1,
+            relations: file.relations.map((rel) => ({ ...rel, confidence: 1 })),
+          };
+        }
+        return file;
+      }),
+    }));
+    const explicitNeutralConfidence = await searchHits(query);
+
+    expect(explicitNeutralConfidence.map((h) => h.name)).toEqual(withoutConfidence.map((h) => h.name));
+    expect(explicitNeutralConfidence.map((h) => h.score)).toEqual(withoutConfidence.map((h) => h.score));
+  });
+
+  test("confidence mode matrix orders boosts deterministically (off > blend > multiply)", () => {
+    const query = "database outage recovery";
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+
+    installGraphWithMutator((graph) => ({
+      ...graph,
+      files: graph.files.map((file) => {
+        if (!file.path.endsWith("database-runbook.md")) return file;
+        return {
+          ...file,
+          confidence: 0.25,
+          relations: file.relations.map((rel) => ({ ...rel, confidence: 0.25 })),
+        };
+      }),
+    }));
+
+    const offContext = loadGraphBoostContext(stashDir, query, configWithGraphBoost({ confidenceMode: "off" }));
+    const blendContext = loadGraphBoostContext(
+      stashDir,
+      query,
+      configWithGraphBoost({ confidenceMode: "blend", confidenceWeight: 0.2 }),
+    );
+    const multiplyContext = loadGraphBoostContext(
+      stashDir,
+      query,
+      configWithGraphBoost({ confidenceMode: "multiply" }),
+    );
+
+    expect(offContext).not.toBeNull();
+    expect(blendContext).not.toBeNull();
+    expect(multiplyContext).not.toBeNull();
+    if (!offContext || !blendContext || !multiplyContext) throw new Error("expected graph boost contexts");
+
+    const offBoost = computeGraphBoost(offContext, runbookPath);
+    const blendBoost = computeGraphBoost(blendContext, runbookPath);
+    const multiplyBoost = computeGraphBoost(multiplyContext, runbookPath);
+
+    expect(offBoost).toBeGreaterThan(blendBoost);
+    expect(blendBoost).toBeGreaterThan(multiplyBoost);
+  });
+});
+
+// ── Gap 6: listRelatedPathsForFile SQL-backed correctness ───────────────────
+
+describe("listRelatedPathsForFile (SQL-backed)", () => {
+  test("orders neighbors by sharedEntities DESC and resolves canonical refs", () => {
+    installGraph();
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const related = listRelatedPathsForFile(stashDir, runbookPath, 10, db);
+      expect(related.length).toBeGreaterThan(0);
+      // Top neighbor must be the incident memory (3 shared entities).
+      const top = related[0];
+      expect(top?.path).toBe(path.join(stashDir, "memories", "incident-2024-shard.md"));
+      expect(top?.type).toBe("memory");
+      expect(top?.ref).toBe("memory:incident-2024-shard");
+      // Shared entities are sorted alphabetically by the helper.
+      expect(top?.sharedEntities).toEqual(["database", "outage", "recovery"]);
+      // Each consecutive neighbor must have a sharedEntities count ≤ the
+      // previous one (descending).
+      for (let i = 1; i < related.length; i += 1) {
+        const prev = related[i - 1]?.sharedEntities.length ?? 0;
+        const curr = related[i]?.sharedEntities.length ?? 0;
+        expect(curr).toBeLessThanOrEqual(prev);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("limit truncates the candidate list", () => {
+    installGraph();
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const unlimited = listRelatedPathsForFile(stashDir, runbookPath, 10, db);
+      // The fixture only has one real neighbor for the runbook — pad with a
+      // limit=1 call to assert truncation works deterministically even when
+      // the candidate set fits.
+      const limited = listRelatedPathsForFile(stashDir, runbookPath, 1, db);
+      expect(limited.length).toBe(Math.min(1, unlimited.length));
+      if (unlimited.length > 0) {
+        expect(limited[0]?.path).toBe(unlimited[0]?.path);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("entry with no shared entities returns no neighbors (not an error)", () => {
+    installGraph();
+    // incident-checklist's only graph entity is "playbook"; nothing else in
+    // the corpus references "playbook", so the JOIN yields zero candidate
+    // rows. The function must return [] cleanly rather than throwing.
+    const checklistPath = path.join(stashDir, "knowledge", "incident-checklist.md");
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const related = listRelatedPathsForFile(stashDir, checklistPath, 5, db);
+      expect(related).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

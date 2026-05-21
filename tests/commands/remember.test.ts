@@ -35,6 +35,9 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
 function runCli(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
   const stashDir = options.stashDir ?? makeTempDir("akm-remember-stash-");
   const xdgCache = makeTempDir("akm-remember-cache-");
+  const xdgConfig = makeTempDir("akm-remember-config-");
+  const xdgData = makeTempDir("akm-remember-data-");
+  const xdgState = makeTempDir("akm-remember-state-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -44,6 +47,9 @@ function runCli(args: string[], options: { stashDir?: string; configDir: string;
       AKM_STASH_DIR: stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: xdgCache,
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   return { stashDir, result };
@@ -109,5 +115,74 @@ describe("remember --target", () => {
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("source read-only is not writable");
+  });
+});
+
+describe("remember --target", () => {
+  test("default stash is used when --target is omitted", () => {
+    const configDir = makeTempDir("akm-remember-config-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+
+    const { stashDir, result } = runCli(["remember", "Memory without target flag"], { configDir });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+    expect(json.ok).toBe(true);
+    expect(json.path.startsWith(stashDir)).toBe(true);
+  });
+
+  test("--target routes memory to the named writable secondary stash", () => {
+    const configDir = makeTempDir("akm-remember-config-");
+    const secondaryDir = makeTempDir("akm-remember-secondary-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "secondary", path: secondaryDir, writable: true }],
+    });
+
+    const { stashDir, result } = runCli(["remember", "Pinned note for secondary stash", "--target", "secondary"], {
+      configDir,
+    });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+    expect(json.ok).toBe(true);
+    expect(json.ref).toBe("memory:pinned-note-for-secondary-stash");
+
+    // Must land in the explicit secondary stash, NOT the working stash.
+    const expectedPath = path.join(secondaryDir, "memories", "pinned-note-for-secondary-stash.md");
+    expect(json.path).toBe(expectedPath);
+    expect(fs.existsSync(expectedPath)).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "memories", "pinned-note-for-secondary-stash.md"))).toBe(false);
+  });
+
+  test("--target with an unknown source name throws a usage error", () => {
+    const configDir = makeTempDir("akm-remember-config-");
+    const targetDir = makeTempDir("akm-remember-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
+    });
+
+    const { result } = runCli(["remember", "won't be written", "--target", "ghost-stash"], { configDir });
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain('No source named "ghost-stash" is configured');
+    expect(json.error).toContain("--target must reference a source name");
+  });
+
+  test("--target on a non-writable source throws a config error", () => {
+    const configDir = makeTempDir("akm-remember-config-");
+    const targetDir = makeTempDir("akm-remember-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "frozen-stash", path: targetDir, writable: false }],
+    });
+
+    const { result } = runCli(["remember", "won't be written", "--target", "frozen-stash"], { configDir });
+    expect(result.status).not.toBe(0);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("source frozen-stash is not writable");
   });
 });

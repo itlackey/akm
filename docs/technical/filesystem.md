@@ -5,7 +5,7 @@ Quick reference for where akm stores source data, config, and cache state.
 ## Working Stash
 
 The working stash is the user's primary writable filesystem source, created by
-`akm init`. It's just a filesystem source — the same path can be referenced by
+`akm setup`. It's just a filesystem source — the same path can be referenced by
 `config.stashDir` and as a `sources[]` entry of kind `filesystem`.
 
 | Env / Default | Path |
@@ -28,25 +28,39 @@ Canonical built-in type directories come from `TYPE_DIRS` in
   memories/
   vaults/
   wikis/
+  lessons/
 ```
 
 Directory names still act as strong classification hints, but scripts and
 markdown assets can also be recognized outside these folders.
 
-## Cache
+## Data and Cache (v0.8.0+)
 
-akm keeps operational state under the cache directory:
+akm uses four XDG-compliant directories. Durable databases live in `$DATA`
+(`~/.local/share/akm`); regenerable data lives in `$CACHE` (`~/.cache/akm`).
 
 | Purpose | Path |
 | --- | --- |
-| index DB | `$XDG_CACHE_HOME/akm/index.db` |
-| workflow DB | `$XDG_CACHE_HOME/akm/workflow.db` |
+| index DB | `$XDG_DATA_HOME/akm/index.db` (`~/.local/share/akm/index.db`) |
+| workflow DB | `$XDG_DATA_HOME/akm/workflow.db` (`~/.local/share/akm/workflow.db`) |
+| state DB (events, proposals, task history) | `$XDG_DATA_HOME/akm/state.db` (`~/.local/share/akm/state.db`) |
+| lock file | `$XDG_DATA_HOME/akm/akm.lock` (`~/.local/share/akm/akm.lock`) |
+| config backups | `$XDG_DATA_HOME/akm/config-backups/` |
 | semantic status | `$XDG_CACHE_HOME/akm/semantic-status.json` |
 | registry cache | `$XDG_CACHE_HOME/akm/registry/` |
-| registry-index cache | `$XDG_CACHE_HOME/akm/registry-index/` |
+| registry-index cache | `registry_index_cache` table in `$XDG_DATA_HOME/akm/index.db` |
+| task run logs | `$XDG_CACHE_HOME/akm/tasks/logs/` |
 | binaries | `$XDG_CACHE_HOME/akm/bin/` |
 
+Override env vars: `AKM_DATA_DIR` (for `$DATA`), `AKM_CACHE_DIR` (for `$CACHE`),
+`AKM_STATE_DIR` (for task log state at `~/.local/state/akm`).
+
 `bin/` is cache-managed, not stash-local.
+
+> **Upgrading from v0.7?** Run `bun scripts/migrate-storage.ts --yes` to move
+> `index.db` and `workflow.db` from `$CONFIG` to `$DATA`. See
+> [docs/migration/v0.7-to-v0.8.md](../migration/v0.7-to-v0.8.md) for the full
+> guide.
 
 ## Config
 
@@ -59,15 +73,11 @@ Override with `AKM_CONFIG_DIR`.
 
 ## Legacy `.stash.json`
 
-`.stash.json` remains supported for backward compatibility with older curated
-stashes in 0.7.x, but in this pre-release line it is a deprecated legacy
-authoring path and will be removed in v0.8.0. Prefer frontmatter for markdown
-assets and structured script header comments for descriptions, parameters, and
-execution hints.
-
-Use `.stash.json` only when you are maintaining an older stash that already
-depends on directory-level metadata sidecars and you are migrating off it
-before v0.8.0.
+`.stash.json` support was removed in v0.8.0. Do not create new stashes with it.
+If you are upgrading from v0.7, migrate any existing `.stash.json` sidecars to
+inline metadata before indexing. Prefer frontmatter for markdown assets and
+structured script header comments for descriptions, parameters, and execution
+hints.
 
 ### Supported legacy entry fields
 
@@ -97,6 +107,7 @@ Built-in `type` values are:
 - `memory`
 - `vault`
 - `wiki`
+- `lesson`
 
 ### Legacy example
 

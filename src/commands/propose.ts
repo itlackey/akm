@@ -10,24 +10,37 @@
  * `akm reflect`. `propose_invoked` is emitted at command entry.
  */
 
+import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
+import {
+  type CreateProposalInput,
+  createProposal,
+  isProposalSkipped,
+  type Proposal,
+  type ProposalsContext,
+} from "../core/proposals";
 import {
   type AgentConfig,
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
-  parseAgentConfig,
   type RunAgentOptions,
-  requireAgentProfile,
   runAgent,
 } from "../integrations/agent";
+import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { runAgentSdk } from "../integrations/agent/sdk-runner";
+import {
+  baseFailureFields,
+  enoentHintMessage,
+  isEnoentFailure,
+  loadAgentConfigFromDisk,
+  resolveAgentProfile,
+} from "./agent-support";
 
 export interface AkmProposeOptions {
   type: string;
@@ -40,6 +53,12 @@ export interface AkmProposeOptions {
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   agentConfig?: AgentConfig;
   ctx?: ProposalsContext;
+  /**
+   * Named process to use for per-process agent config lookup. Defaults to
+   * `"propose"`. When an explicit `--profile` flag is given, the process
+   * lookup is skipped and the flag value wins.
+   */
+  agentProcess?: string;
 }
 
 export interface AkmProposeFailure {
@@ -65,34 +84,16 @@ export interface AkmProposeSuccess {
 
 export type AkmProposeResult = AkmProposeSuccess | AkmProposeFailure;
 
-function loadAgentConfigFromDisk(): AgentConfig | undefined {
-  const config = loadConfig();
-  return parseAgentConfig((config as unknown as { agent?: unknown }).agent);
-}
-
-function resolveProfile(options: AkmProposeOptions): AgentProfile {
-  if (options.agentProfile) return options.agentProfile;
-  const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-  return requireAgentProfile(agent, options.profile);
-}
-
 function failureEnvelope(
   result: AgentRunResult,
   type: string,
   name: string,
   fallbackReason: AgentFailureReason = "non_zero_exit",
 ): AkmProposeFailure {
-  const reason = result.reason ?? fallbackReason;
   return {
-    schemaVersion: 1,
-    ok: false,
-    reason,
-    error: result.error ?? `agent failure (${reason})`,
+    ...baseFailureFields(result, fallbackReason),
     type,
     name,
-    exitCode: result.exitCode,
-    ...(result.stdout ? { stdout: result.stdout } : {}),
-    ...(result.stderr ? { stderr: result.stderr } : {}),
   };
 }
 
@@ -128,9 +129,29 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   });
 
   // 2. Resolve profile.
+  // When an explicit --profile flag is given, honour it directly (existing
+  // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
+  // agent config (agent.processes["propose"]) is picked up automatically.
   let profile: AgentProfile;
+  let resolvedTimeoutMs: number | null | undefined = options.timeoutMs;
   try {
-    profile = resolveProfile(options);
+    if (options.agentProfile) {
+      // Test seam: injected profile bypasses all config.
+      profile = options.agentProfile;
+    } else if (options.profile) {
+      // Explicit --profile flag wins over process config.
+      profile = resolveAgentProfile(options);
+    } else {
+      // Use per-process config resolution (falls back to agent.default).
+      const agent = options.agentConfig ?? loadAgentConfigFromDisk();
+      const processName = options.agentProcess ?? "propose";
+      const resolved = resolveProcessAgentProfile(processName, agent);
+      profile = resolved.profile;
+      // Only apply process-resolved timeoutMs when caller didn't supply one.
+      if (resolvedTimeoutMs === undefined) {
+        resolvedTimeoutMs = resolved.timeoutMs;
+      }
+    }
   } catch (err) {
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
@@ -159,22 +180,41 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 4. Spawn the agent.
   // Real agent runs use interactive mode so file tools can write the draft.
   // Injected/custom spawns still need captured stdout for JSON payload tests.
-  const runOptions: RunAgentOptions = {
-    stdio: options.runAgentOptions?.spawn ? "captured" : "interactive",
-    parseOutput: "text",
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options.runAgentOptions ?? {}),
-  };
-  const result = await runAgent(profile, prompt, runOptions);
+  // Use callAi for the unified AI dispatch path (agent CLI preferred, LLM HTTP fallback).
+  const useCustomSpawn = Boolean(options.runAgentOptions?.spawn);
+  let result: AgentRunResult;
+  if (useCustomSpawn) {
+    // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
+    const runOptions: RunAgentOptions = {
+      stdio: "captured",
+      parseOutput: "text",
+      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+      ...(options.runAgentOptions ?? {}),
+    };
+    result = await runAgent(profile, prompt, runOptions);
+  } else {
+    // Production path: dispatch directly to the appropriate runner.
+    const runOptions: RunAgentOptions = {
+      stdio: resolvedDraftPath ? "interactive" : "captured",
+      parseOutput: "text",
+      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+    };
+    result = profile.sdkMode
+      ? await runAgentSdk(profile, prompt ?? "", runOptions)
+      : await runAgent(profile, prompt, runOptions);
+  }
 
   if (!result.ok) {
+    // B3: ENOENT / not-found gives an actionable hint.
+    if (isEnoentFailure(result)) {
+      return { ...failureEnvelope(result, options.type, options.name), error: enoentHintMessage(profile.bin) };
+    }
     return failureEnvelope(result, options.type, options.name);
   }
 
   // 5. Resolve the proposal content.
   // Path A: opencode wrote the draft file — read it directly (no stdout parse).
   // Path B: fallback to stdout JSON parse for non-file-writing agents.
-  const fs = await import("node:fs");
   let payload: ReturnType<typeof parseAgentProposalPayload>;
 
   if (fs.existsSync(resolvedDraftPath)) {
@@ -185,6 +225,22 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       content: draftContent,
     };
   } else {
+    // B1: When interactive mode was used and stdout is empty, the agent did not
+    // write the draft file and stdout was not captured — surface an actionable error.
+    const stdioWasInteractive = !useCustomSpawn;
+    if (stdioWasInteractive && (result.stdout ?? "") === "") {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error:
+          "Agent did not write draft file and stdout was not captured (interactive mode). Check that the agent CLI understood the file-write instruction, or configure a headless profile with stdio: 'captured'.",
+        type: options.type,
+        name: options.name,
+        exitCode: result.exitCode,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
+    }
     try {
       payload = parseAgentProposalPayload(result.stdout ?? "");
     } catch (err) {
@@ -244,13 +300,23 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     ref,
     source: "propose",
     sourceRun: `propose-${Date.now()}`,
+    // User-initiated proposals always bypass dedup/cooldown guards — the
+    // operator is explicitly asking for a new proposal.
+    force: true,
     payload: {
       content: payload.content,
       ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
     },
   };
-  const proposal = createProposal(stash, createInput, options.ctx);
+  const proposalResult = createProposal(stash, createInput, options.ctx);
 
+  // With force:true, the result is always a Proposal (never skipped).
+  if (isProposalSkipped(proposalResult)) {
+    // Should never happen when force:true, but be defensive.
+    throw new Error(`Unexpected skip in propose command: ${proposalResult.message}`);
+  }
+
+  const proposal: Proposal = proposalResult;
   return {
     schemaVersion: 1,
     ok: true,

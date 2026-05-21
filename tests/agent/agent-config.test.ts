@@ -26,10 +26,18 @@ const warnings: string[] = [];
 //      still observe what was emitted.
 let mockedQuiet = false;
 let mockedVerbose = false;
+let mockedLogFile: string | undefined;
 mock.module("../../src/core/warn", () => ({
+  info: (...args: unknown[]) => {
+    if (!mockedQuiet) console.warn(...args);
+  },
   warn: (...args: unknown[]) => {
     warnings.push(args.join(" "));
     if (!mockedQuiet) console.warn(...args);
+  },
+  error: (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+    if (!mockedQuiet) console.error(...args);
   },
   warnVerbose: (...args: unknown[]) => {
     if (!mockedVerbose) return;
@@ -55,6 +63,13 @@ mock.module("../../src/core/warn", () => ({
     if (env === "0" || env === "false" || env === "no" || env === "off") return false;
     return mockedVerbose;
   },
+  setLogFile: (value: string) => {
+    mockedLogFile = value;
+  },
+  clearLogFile: () => {
+    mockedLogFile = undefined;
+  },
+  getLogFile: () => mockedLogFile,
 }));
 
 beforeEach(() => {
@@ -174,6 +189,14 @@ describe("built-in profile resolution", () => {
     expect(ok?.bin).toBe("rover-cli");
     expect(ok?.args).toEqual(["--silent"]);
     expect(ok?.stdio).toBe("captured");
+  });
+
+  test("user-defined sdkMode profile can resolve without bin", async () => {
+    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
+    const profile = resolveAgentProfile("custom", { sdkMode: true, model: "gpt-4o" });
+    expect(profile?.name).toBe("custom");
+    expect(profile?.sdkMode).toBe(true);
+    expect(profile?.model).toBe("gpt-4o");
   });
 
   test("envPassthrough merges base + override", async () => {

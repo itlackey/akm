@@ -145,6 +145,30 @@ function isInsideGitRepo(dir: string): boolean {
   return false;
 }
 
+/**
+ * Recursively yield every `.md` file under `root`.
+ *
+ * Shared by graph-extraction and memory-inference so the generator logic
+ * lives in exactly one place. Silently skips directories that cannot be
+ * read (e.g. permission errors).
+ */
+export function* walkMarkdownFiles(root: string): Generator<string> {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkMarkdownFiles(full);
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+      yield full;
+    }
+  }
+}
+
 /** Manual walk for non-git directories. */
 function walkStashManual(stashRoot: string): FileContext[] {
   const results: FileContext[] = [];

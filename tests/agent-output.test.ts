@@ -27,6 +27,8 @@ function writeConfig(configDir: string, config: Record<string, unknown>): void {
 function runCli(stashDir: string, args: string[], config?: Record<string, unknown>): string {
   const xdgCache = makeTempDir("akm-agent-cache-");
   const xdgConfig = makeTempDir("akm-agent-config-");
+  const xdgData = makeTempDir("akm-agent-data-");
+  const xdgState = makeTempDir("akm-agent-state-");
   if (config) writeConfig(xdgConfig, config);
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -36,6 +38,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   if (result.status !== 0) {

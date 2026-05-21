@@ -30,17 +30,23 @@
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
+import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, SourceConfigEntry } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
+import { isProcessEnabled } from "../llm/feature-gate";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { compressMemoryToDerivedMemory, type DerivedMemoryDraft } from "../llm/memory-infer";
+import type { DerivedMemoryDraft } from "../llm/memory-infer";
+import * as memoryInfer from "../llm/memory-infer";
+import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
+import { walkMarkdownFiles } from "./walker";
 
 /**
  * Frontmatter keys this pass cares about. Constants so a future rename only
@@ -49,6 +55,7 @@ import type { SearchSource } from "./search-source";
 const FM_INFERRED = "inferred";
 const FM_INFERENCE_PROCESSED = "inferenceProcessed";
 const FM_SOURCE = "source";
+const FM_CAPTURE_MODE = "captureMode";
 
 /** Telemetry returned to the caller. Useful for tests + future progress events. */
 export interface MemoryInferenceResult {
@@ -60,6 +67,10 @@ export interface MemoryInferenceResult {
   writtenFacts: number;
   /** Parents skipped because the LLM returned no usable derived memory (left unmarked → retried next run). */
   skippedNoFacts: number;
+}
+
+export interface MemoryInferencePassOptions {
+  candidateRefs?: ReadonlySet<string>;
 }
 
 interface MemoryRecord {
@@ -95,6 +106,16 @@ export async function runMemoryInferencePass(
   config: AkmConfig,
   sources: SearchSource[],
   signal?: AbortSignal,
+  db?: Database,
+  reEnrich?: boolean,
+  onProgress?: (event: {
+    processed: number;
+    total: number;
+    writtenFacts: number;
+    skippedNoFacts: number;
+    currentRef?: string;
+  }) => void,
+  options: MemoryInferencePassOptions = {},
 ): Promise<MemoryInferenceResult> {
   const result: MemoryInferenceResult = {
     considered: 0,
@@ -103,9 +124,10 @@ export async function runMemoryInferencePass(
     skippedNoFacts: 0,
   };
 
-  // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
-  // explicit `false` disables the pass entirely.
-  if (config.llm?.features?.memory_inference === false) return result;
+  // Gate 1 — v2-aware feature gate (§14). Uses isProcessEnabled so that both
+  // v1 (llm.features.memory_inference) and v2 (features.index.memory_inference)
+  // configs are honoured. Defaults to enabled when neither key is present.
+  if (!isProcessEnabled("index", "memory_inference", config)) return result;
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
@@ -118,25 +140,89 @@ export async function runMemoryInferencePass(
   const primary = sources[0];
   if (!primary) return result;
 
-  const pending = collectPendingMemories(primary.path);
+  const pending = collectPendingMemories(primary.path).filter(
+    (record) => !options.candidateRefs || options.candidateRefs.has(record.ref),
+  );
   result.considered = pending.length;
   if (pending.length === 0) return result;
 
-  for (const record of pending) {
-    if (signal?.aborted) return result;
-    const derived = await compressMemoryToDerivedMemory(llmConfig, record.body, signal);
-    if (!derived) {
+  let processed = 0;
+  const total = pending.length;
+  onProgress?.({ processed, total, writtenFacts: 0, skippedNoFacts: 0 });
+
+  const perRecordResults = await concurrentMap(
+    pending,
+    async (record) => {
+      if (signal?.aborted) return undefined;
+
+      // Incremental cache: skip LLM call when body hash is unchanged and
+      // --re-enrich was not requested. The cache ref is the absolute file path.
+      const validate = (raw: unknown): DerivedMemoryDraft | undefined => {
+        if (!raw || typeof raw !== "object") return undefined;
+        const parsed = raw as Record<string, unknown>;
+        const title = typeof parsed.title === "string" ? parsed.title : "";
+        const description = typeof parsed.description === "string" ? parsed.description : "";
+        const content = typeof parsed.content === "string" ? parsed.content : "";
+        const tags = Array.isArray(parsed.tags) ? parsed.tags.filter((t): t is string => typeof t === "string") : [];
+        const searchHints = Array.isArray(parsed.searchHints)
+          ? parsed.searchHints.filter((h): h is string => typeof h === "string")
+          : [];
+        if (title && description && content && tags.length > 0 && searchHints.length > 0) {
+          return { title, description, tags, searchHints, content };
+        }
+        return undefined;
+      };
+
+      const derived = db
+        ? await withLlmCache<DerivedMemoryDraft>(
+            db,
+            record.filePath,
+            record.body,
+            reEnrich ?? false,
+            () =>
+              memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
+                warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+              }),
+            validate,
+          )
+        : await memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
+            warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+          });
+
+      if (!derived) {
+        return { skipped: true } as const;
+      }
+      const written = await writeDerivedMemory(record, derived);
+      if (written > 0) {
+        markParentProcessed(record);
+        return { skipped: false, splitParent: true, written } as const;
+      }
+      return { skipped: false, splitParent: false, written: 0 } as const;
+    },
+    // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
+    // in config.json for local model servers (LM Studio, Ollama).
+    llmConfig.concurrency ?? 1,
+  );
+
+  for (let i = 0; i < perRecordResults.length; i++) {
+    const res = perRecordResults[i];
+    if (!res) continue;
+    if (res.skipped) {
       result.skippedNoFacts += 1;
       // Intentionally NOT marked processed — a transient LLM failure should
       // be retried on the next index run.
-      continue;
-    }
-    const written = await writeDerivedMemory(record, derived);
-    if (written > 0) {
-      markParentProcessed(record);
+    } else if (res.splitParent) {
       result.splitParents += 1;
-      result.writtenFacts += written;
+      result.writtenFacts += res.written;
     }
+    processed++;
+    onProgress?.({
+      processed,
+      total,
+      writtenFacts: result.writtenFacts,
+      skippedNoFacts: result.skippedNoFacts,
+      currentRef: pending[i]?.ref,
+    });
   }
 
   return result;
@@ -162,7 +248,7 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    if (!isPendingMemory(parsed.data)) continue;
+    if (!isPendingMemory(parsed.data, filePath)) continue;
 
     const relName = toMemoryName(memoriesDir, filePath);
     if (!relName) continue;
@@ -183,30 +269,29 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
  * Predicate: true when the parsed frontmatter indicates the memory has not
  * yet been split AND is not itself an inferred child.
  *
+ * Also guards against `.derived` files whose `inferred:` frontmatter key has
+ * been dropped by a manual edit or schema-repair rewrite. The file name suffix
+ * is structural and immutable; frontmatter flags are mutable. A file whose
+ * path contains `.derived` is always treated as a derived child regardless of
+ * its frontmatter state — this prevents `<name>.derived.derived.md` chains.
+ *
+ * @param frontmatter - Parsed YAML frontmatter from the memory file.
+ * @param filePath    - Optional absolute path to the memory file. When
+ *                      supplied, the name-based guard is applied.
+ *
  * Exported for direct unit testing — keeping the predicate in one place
  * avoids drift between the walker, tests, and any future consumers.
  */
-export function isPendingMemory(frontmatter: Record<string, unknown>): boolean {
+export function isPendingMemory(frontmatter: Record<string, unknown>, filePath?: string): boolean {
+  // Name-based guard: a `.derived` suffix in the path means this file is a
+  // derived child regardless of what its frontmatter currently says.
+  if (filePath !== undefined) {
+    const base = path.basename(filePath, ".md");
+    if (base.endsWith(".derived")) return false;
+  }
   if (frontmatter[FM_INFERRED] === true) return false;
   if (frontmatter[FM_INFERENCE_PROCESSED] === true) return false;
   return true;
-}
-
-function* walkMarkdownFiles(root: string): Generator<string> {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const full = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkMarkdownFiles(full);
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      yield full;
-    }
-  }
 }
 
 function toMemoryName(memoriesDir: string, filePath: string): string | undefined {
@@ -255,6 +340,7 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): string {
   const fm: Record<string, unknown> = {
     [FM_INFERRED]: true,
+    [FM_CAPTURE_MODE]: "background",
     [FM_SOURCE]: parent.ref,
     description: derived.description,
     tags: derived.tags,

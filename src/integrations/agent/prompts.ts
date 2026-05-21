@@ -24,12 +24,21 @@
  */
 
 import { TYPE_DIRS } from "../../core/asset-spec";
+import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 
 /** Agent-returned proposal payload (after JSON parse). */
 export interface AgentProposalPayload {
   ref: string;
   content: string;
   frontmatter?: Record<string, unknown>;
+  /**
+   * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
+   * 6A). When provided by the agent (or LLM via structured output) and at or
+   * above the active threshold, `akm improve` may auto-accept the proposal
+   * without reviewer intervention. Out-of-range / non-finite values are
+   * clamped or dropped downstream in `createProposal`.
+   */
+  confidence?: number;
 }
 
 /**
@@ -39,7 +48,7 @@ export interface AgentProposalPayload {
  */
 const TYPE_HINTS: Record<string, string> = {
   lesson:
-    "lesson assets MUST start with frontmatter containing `description` and `when_to_use` keys (both non-empty). Body should be 1–3 short paragraphs of practical guidance.",
+    "lesson assets MUST start with frontmatter containing `description` and `when_to_use` keys (both non-empty). Body: 1–3 short paragraphs of practical guidance. A lesson is NOT a restatement of the source asset — it answers: When should I reach for this? What goes wrong without it? What did real use reveal that the asset itself doesn't say?",
   skill:
     "skill assets are stored as `skills/<name>/SKILL.md`. Frontmatter typically includes `name`, `description`, and `when_to_use`.",
   command:
@@ -92,6 +101,19 @@ function fileWriteContract(draftFilePath: string): string {
   ].join("\n");
 }
 
+/** A previously-rejected proposal injected as verbal-RL context (Reflexion pattern). */
+export interface RejectedProposalContext {
+  /** Asset ref the rejected proposal targeted. */
+  ref: string;
+  /** Human-readable rejection reason supplied at review time. */
+  reason: string;
+  /**
+   * Truncated preview of the rejected content (first 500 chars). Helps the
+   * agent understand what shape was already tried and refused.
+   */
+  contentPreview?: string;
+}
+
 export interface ReflectPromptInput {
   ref?: string;
   type?: string;
@@ -102,6 +124,8 @@ export interface ReflectPromptInput {
   feedback?: string[];
   /** Optional schema/lint hints (e.g. lesson-lint findings). */
   schemaHints?: string[];
+  /** Related lesson content that may justify consolidating durable guidance. */
+  relatedLessons?: Array<{ ref: string; content: string }>;
   /** Optional operator task/focus hint. */
   task?: string;
   /**
@@ -110,6 +134,24 @@ export interface ReflectPromptInput {
    * When absent, the agent returns a JSON payload via stdout (legacy path).
    */
   draftFilePath?: string;
+  /**
+   * Error patterns from earlier assets in the same improve run. When non-empty,
+   * a warning section is appended to the prompt so the agent avoids repeating
+   * the same mistakes.
+   */
+  avoidPatterns?: string[];
+  /**
+   * Last 1–3 archived rejected proposals for this ref. Injected as
+   * Reflexion-style verbal-RL context so the agent does not regenerate
+   * proposals that have already been reviewed and refused.
+   */
+  rejectedProposals?: RejectedProposalContext[];
+  /**
+   * Prior draft content from the previous refinement iteration (R-1 / #372).
+   * When set, the agent is asked to critique the draft and produce a better
+   * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
+   */
+  priorDraft?: string;
 }
 
 /**
@@ -121,9 +163,15 @@ export interface ReflectPromptInput {
 export function buildReflectPrompt(input: ReflectPromptInput): string {
   const sections: string[] = [];
   if (input.ref && input.type && input.name) {
-    sections.push(
-      `You are reviewing an akm stash asset (${input.type}) called "${input.name}" and proposing an improved version.`,
-    );
+    // Change 2 — type-conditioned goal framing
+    const isLesson = input.type === "lesson";
+    const isSkill = input.type === "skill";
+    const goalSentence = isLesson
+      ? `Your task is to distill what usage signals reveal about this ${input.type} asset — when to reach for it, what goes wrong without it, and what real use has revealed that the asset itself does not say. Do not reproduce the source content; your proposal must add information the source does not contain.`
+      : isSkill
+        ? "Your task is to review this skill asset, identify what the feedback and related distilled lessons show is broken, missing, unclear, or durable enough to promote into long-term documentation, and produce a single improved proposal. If the strongest evidence points to companion reference material rather than the main SKILL.md, you may instead propose a skill-adjacent knowledge doc such as `knowledge:skills/<skill>/references/<topic>`."
+        : `Your task is to review this ${input.type} asset, identify what the feedback signals as broken, missing, or unclear, and produce an improved version. Do not reproduce the source content unchanged; your proposal must correct or add something the source lacks.`;
+    sections.push(goalSentence);
     sections.push(`Target ref: ${input.ref}`);
     sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
   } else {
@@ -136,10 +184,40 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
     sections.push(`Task / focus: ${input.task.trim()}`);
   }
 
+  // Change 3 & 4 — feedback moved before asset content; missing else branch added
+  if (input.feedback && input.feedback.length > 0) {
+    sections.push("Recent feedback / signals:");
+    for (const line of input.feedback) sections.push(`- ${line}`);
+  } else if (!input.ref) {
+    sections.push("Recent feedback / signals:");
+    sections.push("- (no feedback events recorded)");
+  } else if (input.type === "skill" && input.relatedLessons && input.relatedLessons.length > 0) {
+    sections.push(
+      "No direct feedback events were recorded. Limit substantive changes to what is justified by the related distilled lessons below; do not speculate beyond that evidence.",
+    );
+  } else {
+    // ref is set but no feedback — explicitly constrain scope to schema compliance
+    sections.push(
+      "No usage feedback recorded. Limit your proposal to schema and structural improvements only: missing required frontmatter fields, unclear `when_to_use`, ambiguous description, or broken formatting. Do not speculate about runtime weaknesses you have not observed.",
+    );
+  }
+
   if (input.assetContent?.trim()) {
-    sections.push("Current asset content (verbatim):");
+    // Cap at 12 000 chars to stay well under OS ARG_MAX when the prompt is
+    // passed as a CLI argument to opencode/claude. Large assets (wiki snapshots,
+    // long runbooks) would otherwise trigger E2BIG on posix_spawn.
+    const REFLECT_CONTENT_CAP = 12_000;
+    const body = input.assetContent.trimEnd();
+    const truncated = body.length > REFLECT_CONTENT_CAP;
+    sections.push(
+      truncated
+        ? `Current asset content (first ${REFLECT_CONTENT_CAP} chars — full asset is ${body.length} chars):`
+        : "Current asset content (verbatim):",
+    );
     sections.push("```");
-    sections.push(input.assetContent.trimEnd());
+    sections.push(
+      truncated ? `${body.slice(0, REFLECT_CONTENT_CAP)}\n... [truncated — focus on the visible portion]` : body,
+    );
     sections.push("```");
   } else if (input.ref) {
     sections.push("(No existing content — propose a fresh asset that fits the ref.)");
@@ -147,20 +225,99 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
     sections.push("(No existing asset content was supplied.)");
   }
 
-  if (input.feedback && input.feedback.length > 0) {
-    sections.push("Recent feedback / signals:");
-    for (const line of input.feedback) sections.push(`- ${line}`);
-  } else if (!input.ref) {
-    sections.push("Recent feedback / signals:");
-    sections.push("- (no feedback events recorded)");
-  }
-
   if (input.schemaHints && input.schemaHints.length > 0) {
     sections.push("Schema / lint hints to address:");
     for (const line of input.schemaHints) sections.push(`- ${line}`);
   }
 
-  sections.push("Produce a single proposal that addresses the feedback and respects the asset-type contract.");
+  if (input.relatedLessons && input.relatedLessons.length > 0) {
+    sections.push("Related distilled lessons to evaluate for consolidation:");
+    for (const lesson of input.relatedLessons) {
+      sections.push(`Lesson ref: ${lesson.ref}`);
+      sections.push("```");
+      sections.push(lesson.content.trimEnd());
+      sections.push("```");
+    }
+    sections.push(
+      "Evaluate whether these lessons contain strong evidence of factual, repeatable guidance that should be promoted into long-term skill documentation.",
+    );
+    sections.push(
+      "Promote only guidance that is durable, generally applicable, and supported by repeated evidence. Do not copy anecdotal details, one-off incidents, or duplicate wording verbatim.",
+    );
+    sections.push(
+      "If the guidance belongs in the main skill instructions, update the skill proposal. If it belongs in a companion reference document, return a `knowledge:skills/<skill>/references/<topic>` proposal instead.",
+    );
+  }
+
+  if (input.rejectedProposals && input.rejectedProposals.length > 0) {
+    const lines: string[] = ["## Previously Rejected Proposals"];
+    lines.push(
+      "The following proposals for this ref were already reviewed and rejected. " +
+        "Do NOT reproduce the same content or the same structural shape. " +
+        "Your new proposal must meaningfully differ from each of these in its approach, framing, or evidence used.",
+    );
+    for (const rp of input.rejectedProposals) {
+      lines.push(`\nRef: ${rp.ref}`);
+      lines.push(`Rejection reason: ${rp.reason}`);
+      if (rp.contentPreview) {
+        lines.push("Rejected content preview:");
+        lines.push("```");
+        lines.push(rp.contentPreview);
+        lines.push("```");
+      }
+    }
+    sections.push(lines.join("\n"));
+  }
+
+  if (input.avoidPatterns && input.avoidPatterns.length > 0) {
+    sections.push(
+      `## Avoid These Patterns\nPrevious assets in this run produced these errors — do not repeat them:\n${input.avoidPatterns.map((e) => `- ${e}`).join("\n")}`,
+    );
+  }
+
+  // R-1 / #372: Self-Refine (arXiv:2303.17651) — inject prior draft as critique target.
+  // On refinement iterations (iter > 0), the agent is shown its previous proposal
+  // and asked to self-critique and improve it rather than starting from scratch.
+  if (input.priorDraft?.trim()) {
+    sections.push(
+      "## Self-Refine: Critique and Improve\n" +
+        "The following is your previous draft proposal. " +
+        "Identify specific weaknesses: missing evidence, vague wording, incomplete frontmatter, " +
+        "or claims that duplicate existing content without adding new signal. " +
+        "Then produce an improved version that addresses those weaknesses. " +
+        "The revised proposal must be meaningfully better than the draft below — " +
+        "do not return the same content unchanged.\n\n" +
+        "Previous draft:\n```\n" +
+        input.priorDraft.trimEnd() +
+        "\n```",
+    );
+  }
+
+  sections.push(
+    "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the proposal's frontmatter is missing `when_to_use`, you MUST generate one — a one-line trigger sentence describing exactly when a user should reach for this asset.",
+  );
+
+  // Content-preservation safety rails (#reflect-pipeline-fixes).
+  // These rules counter the observed failure modes where reflect rewrites
+  // asset content into shorter prose, drops concrete structure, or strips
+  // load-bearing frontmatter. Loud and explicit so small models follow.
+  if (input.ref && input.assetContent?.trim()) {
+    sections.push(
+      [
+        "## Content preservation rules (MUST follow)",
+        "1. PRESERVE ALL concrete content: code blocks, fenced snippets, CLI commands, numbered/bulleted checklists, tables, YAML/JSON examples, file paths, configuration keys, environment variable names, and CSS/HTML selectors. These are load-bearing — do NOT replace them with prose summaries.",
+        "2. PRESERVE the source asset's frontmatter. The post-processor reassembles the final asset from the original frontmatter plus your body. Do NOT emit `---` frontmatter delimiters at the top of `content` — start `content` with the markdown body (e.g. `# Heading` or the first paragraph). If you include frontmatter anyway, identity fields (`name`, `ref`, `id`, `slug`, `type`) will be reset to the original values.",
+        "3. DO NOT shrink the asset dramatically. The improved body must be at least 50% of the source body length. If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. `<!-- removed obsolete section X because ... -->`).",
+        "4. DO NOT pad the asset with speculative material. The improved body must be at most 200% of the source body length unless the feedback explicitly requests added sections.",
+        "5. Improve clarity of surrounding prose, fix structural issues, add missing required frontmatter fields. Do NOT rewrite a runbook into an essay.",
+      ].join("\n"),
+    );
+  }
+  if (!input.draftFilePath && input.ref) {
+    // Reinforce that the `ref` field is mandatory and must exactly match the target.
+    // Small models frequently omit `ref` from the response JSON, causing parse errors.
+    sections.push(`IMPORTANT: The JSON "ref" field is REQUIRED. It MUST be exactly: "${input.ref}"`);
+  }
   sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }
@@ -198,6 +355,54 @@ export function buildProposePrompt(input: ProposePromptInput): string {
   return sections.join("\n\n");
 }
 
+export interface SchemaRepairPromptInput {
+  ref: string;
+  type: string;
+  name: string;
+  /** Validation failure reason (e.g. "missing description"). */
+  reason: string;
+  /** Current verbatim file content of the failing asset. */
+  assetContent: string;
+  /**
+   * When provided, the agent writes directly to this file path using its
+   * file-editing tools. When absent, the agent returns a JSON payload via
+   * stdout (same contract as reflect/propose).
+   */
+  draftFilePath?: string;
+}
+
+/**
+ * Build the prompt for the schema repair pass in `akm improve`. Asks the
+ * agent to add the minimal required frontmatter to an asset that failed
+ * validation — without rewriting the body.
+ */
+export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string {
+  const sections: string[] = [];
+  sections.push(
+    `This ${input.type} asset failed schema validation with the error: "${input.reason}". ` +
+      `Your task is to fix the schema issue by adding or correcting the missing/invalid field(s) ` +
+      `while preserving all existing content.`,
+  );
+  sections.push(`Target ref: ${input.ref}`);
+  sections.push(`Schema requirements for ${input.type} assets: ${hintForType(input.type)}`);
+  const CONTENT_CAP = 3000;
+  const body = input.assetContent.trimEnd();
+  const truncated = body.length > CONTENT_CAP;
+  sections.push("Current asset content (first 3000 chars — sufficient to generate missing frontmatter):");
+  sections.push("```");
+  sections.push(truncated ? `${body.slice(0, CONTENT_CAP)}\n... [truncated]` : body);
+  sections.push("```");
+  sections.push(
+    "Produce the minimal fix: add ONLY the missing required frontmatter field(s). " +
+      "Do not rewrite the body unless it is empty. " +
+      "If `description` is missing, generate a concise one-sentence description from the content. " +
+      "If `when_to_use` is missing, generate a one-line trigger sentence. " +
+      "Preserve all existing frontmatter keys and the full body verbatim.",
+  );
+  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
+  return sections.join("\n\n");
+}
+
 /**
  * Parse agent stdout into a proposal payload. The agent contract requires a
  * single JSON object; anything else is reported as a parse error so callers
@@ -208,7 +413,8 @@ export function buildProposePrompt(input: ProposePromptInput): string {
  *  2. Prose preamble / postamble around the JSON object (handled by `extractEmbeddedJson`).
  */
 export function parseAgentProposalPayload(stdout: string): AgentProposalPayload {
-  const trimmed = stripJsonFences(stdout).trim();
+  // Strip <think> blocks and fences, then attempt full parse with embedded fallback.
+  const trimmed = stripCodeFences(stripThinkBlocks(stdout)).trim();
   if (!trimmed) throw new Error("agent produced empty output");
 
   let parsed: Record<string, unknown>;
@@ -218,7 +424,7 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
     // Agent output contains prose before/after the JSON object (e.g. a local
     // LLM that narrates before responding). Try extracting the first balanced
     // top-level `{…}` from the text rather than failing immediately.
-    const embedded = extractEmbeddedJson(trimmed);
+    const embedded = parseEmbeddedJsonResponse<Record<string, unknown>>(trimmed);
     if (!embedded) throw directErr;
     parsed = embedded;
   }
@@ -236,64 +442,23 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
   if (parsed.frontmatter && typeof parsed.frontmatter === "object" && !Array.isArray(parsed.frontmatter)) {
     out.frontmatter = parsed.frontmatter as Record<string, unknown>;
   }
+  // Phase 6A: extract optional `confidence` (number in [0, 1]). Clamp gently
+  // rather than reject — a model that returns 1.0 or 0 with extra precision
+  // (e.g. 1.0000001) should still surface a usable score. Anything that isn't
+  // a finite number is dropped so downstream `createProposal` can rely on the
+  // shape invariant.
+  if (typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)) {
+    const clamped = Math.max(0, Math.min(1, parsed.confidence));
+    out.confidence = clamped;
+  }
   return out;
 }
 
 /**
- * Extract the first balanced top-level `{…}` object from `text`. Used as a
- * fallback when direct `JSON.parse` fails due to surrounding prose. Kept
- * local to `agent/` (mirrors `parseEmbeddedJsonResponse` in `src/llm/client.ts`
- * without importing across the one-way boundary — v1 spec §9.7).
- */
-function extractEmbeddedJson(text: string): Record<string, unknown> | undefined {
-  for (let start = 0; start < text.length; start++) {
-    if (text[start] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (ch === "\\") {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-      if (ch === "{") depth++;
-      if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>;
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-/**
  * Strip `\`\`\`json … \`\`\`` fences and `<think>…</think>` reasoning blocks
- * from agent output. Mirrors `client.ts` but kept local to `agent/` per v1
- * spec §9.7 (one-way boundary — `agent/` does not import from `llm/`).
+ * from agent output. Thin wrapper around `core/parse` helpers, kept exported
+ * for backward compatibility (re-exported from `integrations/agent/index.ts`).
  */
 export function stripJsonFences(text: string): string {
-  const stripped = text
-    .trim()
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .trim();
-  const fenced = stripped.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/);
-  if (fenced) return fenced[1] ?? stripped;
-  return stripped;
+  return stripCodeFences(stripThinkBlocks(text));
 }

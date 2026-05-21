@@ -11,7 +11,10 @@
  * `deriveCurateFallbackQueries`) by importing them directly.
  */
 
-import { UsageError } from "../core/errors";
+import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
+import { appendEvent } from "../core/events";
+import { closeDatabase, openExistingDatabase } from "../indexer/db";
+import { insertUsageEvent } from "../indexer/usage-events";
 import { truncateDescription } from "../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../sources/types";
 import { akmSearch, parseSearchSource } from "./search";
@@ -88,6 +91,38 @@ export const MIN_CURATE_SEARCH_LIMIT = 12;
 const DEFAULT_CURATE_LIMIT = 4;
 
 /**
+ * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
+ * Never blocks the caller; errors are silently ignored.
+ */
+function logCurateEvent(query: string, result: CurateResponse): void {
+  const itemRefs = result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`));
+  appendEvent({
+    eventType: "curate",
+    metadata: { query, itemCount: result.items.length, itemRefs },
+  });
+
+  try {
+    const db = openExistingDatabase();
+    try {
+      insertUsageEvent(db, {
+        event_type: "curate",
+        query,
+        metadata: JSON.stringify({
+          itemCount: result.items.length,
+          itemRefs,
+        }),
+        source: "user",
+      });
+    } finally {
+      closeDatabase(db);
+    }
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    /* ignore logging failures */
+  }
+}
+
+/**
  * Public curate entry point. Performs the search itself when
  * `options.searchResponse` is not supplied.
  */
@@ -111,7 +146,9 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       limit: Math.max(limit * CURATE_SEARCH_LIMIT_MULTIPLIER, MIN_CURATE_SEARCH_LIMIT),
       source,
     }));
-  return curateSearchResults(options.query, searchResponse, limit, options.type);
+  const result = await curateSearchResults(options.query, searchResponse, limit, options.type);
+  logCurateEvent(options.query, result);
+  return result;
 }
 
 export async function curateSearchResults(
@@ -342,7 +379,7 @@ export async function searchForCuration(input: {
   limit: number;
   source: ReturnType<typeof parseSearchSource>;
 }): Promise<SearchResponse> {
-  const initial = await akmSearch(input);
+  const initial = await akmSearch({ ...input, skipLogging: true });
   if (hasSearchResults(initial)) return initial;
 
   const fallbackQueries = deriveCurateFallbackQueries(input.query);
@@ -355,6 +392,7 @@ export async function searchForCuration(input: {
         type: input.type,
         limit: input.limit,
         source: input.source,
+        skipLogging: true,
       }),
     ),
   );

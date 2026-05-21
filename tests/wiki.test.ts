@@ -70,6 +70,9 @@ async function runCliAsync(args: string[], options: { stashDir: string; configDi
       AKM_STASH_DIR: options.stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: makeStash("akm-wiki-cache-"),
+      XDG_CONFIG_HOME: makeStash("akm-wiki-config-"),
+      XDG_DATA_HOME: makeStash("akm-wiki-data-"),
+      XDG_STATE_HOME: makeStash("akm-wiki-state-"),
     },
   });
   let stdout = "";
@@ -437,6 +440,61 @@ describe("stashRaw", () => {
     );
   });
 
+  test("wiki stash --target <name> writes raw file into the named source's wiki directory", async () => {
+    // Primary stash — used as AKM_STASH_DIR; has no wiki named "notes".
+    const primaryStash = makeStash("akm-wiki-stash-primary-");
+    // Secondary stash — the target of --target.
+    const secondaryStash = makeStash("akm-wiki-stash-secondary-");
+    createWiki(secondaryStash, "notes");
+
+    const configDir = makeStash("akm-wiki-config-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      stashDir: primaryStash,
+      sources: [{ type: "filesystem", name: "my-other-stash", path: secondaryStash, writable: true }],
+    });
+
+    // Write a small markdown file to stash via stdin-style file.
+    const contentFile = path.join(makeStash("akm-wiki-tmp-"), "article.md");
+    fs.writeFileSync(contentFile, "# Hello\n\nWorld.\n", "utf8");
+
+    const result = await runCliAsync(["wiki", "stash", "notes", contentFile, "--target", "my-other-stash"], {
+      stashDir: primaryStash,
+      configDir,
+    });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string; slug: string };
+    expect(json.ok).toBe(true);
+    // The ref should point to the secondary stash's wiki.
+    expect(json.ref).toBe("wiki:notes/raw/article");
+    // The raw file must live inside the secondary stash, not the primary.
+    expect(json.path.startsWith(secondaryStash)).toBe(true);
+    expect(fs.existsSync(json.path)).toBe(true);
+    const body = fs.readFileSync(json.path, "utf8");
+    expect(body).toContain("Hello");
+    // Must NOT exist in the primary stash.
+    const primaryRawDir = path.join(primaryStash, WIKIS_SUBDIR, "notes", "raw");
+    expect(fs.existsSync(primaryRawDir)).toBe(false);
+  });
+
+  test("wiki stash --target <name> fails when source name is unknown", async () => {
+    const stash = makeStash("akm-wiki-stash-err-");
+    createWiki(stash, "research");
+    const configDir = makeStash("akm-wiki-config-err-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+
+    const contentFile = path.join(makeStash("akm-wiki-tmp-err-"), "a.md");
+    fs.writeFileSync(contentFile, "# A\n", "utf8");
+
+    const result = await runCliAsync(["wiki", "stash", "research", contentFile, "--target", "nonexistent-source"], {
+      stashDir: stash,
+      configDir,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toMatch(/nonexistent-source/);
+  });
+
   test("wiki stash accepts a URL and writes converted markdown to raw/", async () => {
     const stash = makeStash();
     createWiki(stash, "research");
@@ -601,9 +659,15 @@ describe("searchInWiki", () => {
     const stash = makeStash();
     const origStash = process.env.AKM_STASH_DIR;
     const origHome = process.env.XDG_CONFIG_HOME;
+    const origData = process.env.XDG_DATA_HOME;
+    const origState = process.env.XDG_STATE_HOME;
     process.env.AKM_STASH_DIR = stash;
     process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-home-"));
+    process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-data-"));
+    process.env.XDG_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-state-"));
     tempDirs.push(process.env.XDG_CONFIG_HOME);
+    tempDirs.push(process.env.XDG_DATA_HOME);
+    tempDirs.push(process.env.XDG_STATE_HOME);
     try {
       createWiki(stash, "alpha");
       createWiki(stash, "beta");
@@ -622,6 +686,10 @@ describe("searchInWiki", () => {
       else process.env.AKM_STASH_DIR = origStash;
       if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = origHome;
+      if (origData === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = origData;
+      if (origState === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = origState;
     }
   });
 
@@ -630,9 +698,15 @@ describe("searchInWiki", () => {
     const externalWiki = makeStash("akm-external-search-");
     const origStash = process.env.AKM_STASH_DIR;
     const origHome = process.env.XDG_CONFIG_HOME;
+    const origData = process.env.XDG_DATA_HOME;
+    const origState = process.env.XDG_STATE_HOME;
     process.env.AKM_STASH_DIR = stash;
     process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-external-search-home-"));
+    process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-external-search-data-"));
+    process.env.XDG_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-external-search-state-"));
     tempDirs.push(process.env.XDG_CONFIG_HOME);
+    tempDirs.push(process.env.XDG_DATA_HOME);
+    tempDirs.push(process.env.XDG_STATE_HOME);
     try {
       writePage(externalWiki, "attention.md", "---\ndescription: External attention page\n---\n# Attention\n");
       saveConfig({
@@ -652,6 +726,10 @@ describe("searchInWiki", () => {
       else process.env.AKM_STASH_DIR = origStash;
       if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = origHome;
+      if (origData === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = origData;
+      if (origState === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = origState;
     }
   });
 
@@ -659,9 +737,15 @@ describe("searchInWiki", () => {
     const stash = makeStash();
     const origStash = process.env.AKM_STASH_DIR;
     const origHome = process.env.XDG_CONFIG_HOME;
+    const origData = process.env.XDG_DATA_HOME;
+    const origState = process.env.XDG_STATE_HOME;
     process.env.AKM_STASH_DIR = stash;
     process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-raw-home-"));
+    process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-raw-data-"));
+    process.env.XDG_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-raw-state-"));
     tempDirs.push(process.env.XDG_CONFIG_HOME);
+    tempDirs.push(process.env.XDG_DATA_HOME);
+    tempDirs.push(process.env.XDG_STATE_HOME);
     try {
       createWiki(stash, "alpha");
       stashRaw({
@@ -684,6 +768,10 @@ describe("searchInWiki", () => {
       else process.env.AKM_STASH_DIR = origStash;
       if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = origHome;
+      if (origData === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = origData;
+      if (origState === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = origState;
     }
   });
 });

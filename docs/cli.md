@@ -6,9 +6,9 @@ brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
 > **Status legend.** Every command on this page runs today on the
-> current pre-release build. Commands shipped after 0.6.0 — `agent`,
-> `reflect`, `propose`, `proposal`, `distill`, and the `feedback --reason`
-> extension — carry an **Available since 0.7.0** marker so you can tell at
+> current pre-release build. Commands shipped in 0.8.0 — `health`, `agent`,
+> `improve`, `propose`, `proposals`, `accept`, `reject`, and the `feedback --reason`
+> extension — carry an **Available since 0.8.0** marker so you can tell at
 > a glance which surface arrived in that release. The locked v1.0 surface
 > is declared in
 > [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
@@ -79,13 +79,15 @@ code to detect failure. Scripts can rely on the exit code alone.
 
 ### init
 
+> **Note:** `akm setup` is the recommended entry point — it runs the same directory initialization plus guides you through AI connection configuration. `akm init` remains available as a low-level building block.
+
 Create the stash directory structure and persist the working stash path in
 config.
 
 ```sh
-akm init                         # Initialize at the default location
-akm init --dir ~/custom-stash    # Initialize at a custom location
-akm init --stashDir ~/custom-stash # Legacy alias for --dir
+akm setup                        # Interactive setup wizard (creates stash + configures connections)
+akm setup --dir ~/custom-stash   # Initialize at a custom location
+akm setup --yes                  # Non-interactive, accepts all defaults
 ```
 
 Creates one subdirectory per asset type under the stash path — currently
@@ -101,20 +103,37 @@ Run the interactive first-run wizard.
 akm setup
 ```
 
-The wizard lets you choose a stash directory, configure embedding and LLM
-providers, review semantic-search assets, review registries, and add stash
-sources. When you save, akm writes the config file, initializes the stash
-directory, and builds the search index.
+The setup wizard configures AKM in two steps:
+
+**Step 1 — Small model connection** (for background processing)
+Configures the OpenAI-compatible endpoint and model used for `akm index`
+metadata enhancement, `akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
+OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
+
+**Step 2 — Agent connection** (for agentic commands)
+Configures how `akm improve`, `akm propose`, and `akm tasks run` dispatch AI sessions.
+Options:
+- **Same connection** — reuse the Step 1 endpoint with a (optionally different) model
+- **New connection** — separate endpoint, model, and API key
+- **Installed CLI agent** — use an installed agent binary (opencode, claude, codex, etc.)
+- **None** — agentic commands disabled with a clear warning
+
+A feature capability summary is shown at the end of setup.
+
+The wizard also lets you choose a stash directory, review registries, and add stash
+sources. When you save, akm writes the config file, initializes the stash directory,
+and builds the search index.
 
 ### index
 
 Build or refresh the search index.
 
 ```sh
-akm index            # Incremental (only changed directories; no LLM enrichment)
-akm index --full     # Full rebuild; no LLM enrichment
-akm index --enrich   # Enable index-time LLM passes (memory/graph/enrichment)
+akm index            # Incremental (only changed directories)
+akm index --full     # Full rebuild
 akm index --verbose  # Print phase progress to stderr
+akm index --clean    # Normal index + remove stale entries from the DB
+akm index --clean --dry-run # Report stale entries without deleting
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -124,11 +143,19 @@ semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
 
-By default, `akm index` does not run any index-time LLM passes even when
-`akm.llm` is configured. Pass `--enrich` to enable memory inference, graph
-extraction, and metadata enrichment for that run. In text mode, the default
-CLI UI shows a spinner with processed-versus-total source counts; structured
-output modes (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
+**`--clean` flag:** After indexing completes, verifies every indexed entry's source
+file still exists on disk. Removes any entries whose file is missing (for local
+stash sources only; remote entries are skipped). Returns a `clean` block in the
+JSON result with `checked`, `removed`, `removedRefs` arrays, and `dryRun` flag.
+Use `--clean` to resolve the edge case where a deleted file in an unchanged
+directory lingers in the index across incremental runs. With `--dry-run`, reports
+which entries would be removed without modifying the database.
+
+`akm index` always rebuilds the search index and keeps metadata in the index.
+When `akm.llm` is configured and the per-pass gate allows it, metadata
+enhancement runs during indexing. In text mode, the default CLI UI shows a
+spinner with processed-versus-total source counts; structured output modes
+(`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 
 ### info
 
@@ -158,6 +185,141 @@ Returns a JSON object with:
 - `"disabled"` — semantic search is turned off in config
 
 Use `akm info` to verify that semantic search is working after setup.
+
+### health
+
+**Status: Available since 0.8.0.**
+Check akm runtime health, durable state, and recent improve-loop telemetry.
+
+```sh
+akm health
+akm health --since 24h
+akm health --since 7d --format text
+akm health --since 2026-05-01T00:00:00Z
+```
+
+| Flag | Description |
+| --- | --- |
+| `--since` | Rolling window start for task-history, improve, and advisory metrics. Accepts ISO 8601, `YYYY-MM-DD`, epoch milliseconds, or shorthand like `24h` / `7d`. Default: last 24 hours. |
+
+The command reads `state.db`, verifies that the required tables exist, performs a
+write-read probe against the events stream, inspects `task_history`, checks the
+default agent profile, and summarizes recent `improve_*` events.
+
+Primary result fields:
+
+| Field | Description |
+| --- | --- |
+| `status` | Overall health verdict: `pass`, `warn`, or `fail` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `task-log-backing`, `active-runs`, and `agent-profile` |
+| `advisories` | Non-fatal warnings such as semantic-search runtime status and repeated external session-log failures |
+| `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
+| `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
+| `sessionLogAdvisories` | Repeated session-log topics detected from external agent logs |
+
+The `improve` section includes counts for planned refs, reflect/distill actions,
+memory-prune actions, memory-inference writes, graph-extraction refreshes,
+dead-URL detections, and skip reasons observed in the selected time window.
+
+### graph
+
+Inspect and export the indexed graph data stored in `index.db`.
+
+```sh
+akm graph                            # Alias for `akm graph summary`
+akm graph summary
+akm graph entities --limit 25
+akm graph relations --limit 25
+akm graph entity "React Router"
+akm graph related knowledge:react-router
+akm graph orphans --limit 20
+akm graph export --out ./graph.json
+akm graph export --out ./graph.jsonl --format jsonl
+akm graph update                        # Re-extract all eligible files
+akm graph update memory:foo             # Re-extract only this ref
+akm graph update memory:foo skill:bar   # Re-extract multiple refs
+akm graph update --source my-stash      # Target a specific stash source
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `summary` | Show graph counts and optional quality telemetry (`consideredFiles`, `extractedFiles`, `extractionCoverage`, `density`) |
+| `entities` | List deduplicated entities with per-file occurrence counts and best confidence |
+| `entity <name>` | Show every asset that contains the given entity, ordered by per-asset confidence. Inverts the `entities` view |
+| `relations` | List deduplicated relations with occurrence counts and best confidence |
+| `related <ref>` | Show assets related to `<ref>` via shared graph entities (asset neighbors) |
+| `orphans` | List assets with zero extracted graph entities — useful for quality triage |
+| `export` | Write the graph to disk as `json` or `jsonl` |
+| `update [refs...]` | Re-run graph extraction outside the improve loop, optionally scoped to specific refs. Unknown refs emit a warning and are skipped. |
+
+`akm graph related <ref>` returns the closest graph neighbors of an asset:
+each hit lists the asset's `type`, label, the `shared` entities, and the
+`relationCount` connecting them. The text formatter also appends a `Next:` hint
+pointing at the top hit so agents know which ref to load next.
+
+`akm graph entity <name>` lists assets that mention an entity, ordered by
+extraction confidence — useful when you have an entity name from
+`akm graph entities` and want to inspect every source that surfaced it.
+
+`akm graph orphans` lists assets that produced zero entities during the
+extraction pass. These are good candidates for re-extraction, content
+improvement, or pruning.
+
+**`akm graph update` [refs...]:** Re-extract graph entities from eligible files.
+When refs are provided, only those assets are re-extracted (incremental scoped
+pass). When no refs are given, performs a full re-extraction over all eligible
+files. Unknown refs (not currently in the index) emit a warning and are skipped
+without error. Returns a `graph-update` shaped result with `filesExtracted`,
+`entitiesUpserted`, `relationsUpserted`, `durationMs`, and `scoped` (true if
+specific refs were targeted).
+
+Common flags:
+
+| Flag | Description |
+| --- | --- |
+| `--source <name\|path>` | Select which configured source stash to inspect (defaults to primary source) |
+| `--limit <n>` | Cap rows returned by `entities`, `entity`, `relations`, `related`, `orphans` |
+| `--out <path>` | Required for `export`; output file path |
+| `--format json\|jsonl` | Export format for `export` (default `json`) |
+
+If no graph artifact exists yet, run the flow that refreshes graph extraction for your stash.
+
+Graph data is automatically re-extracted on the first `akm improve` cycle after
+a `DB_VERSION` upgrade. In v0.8.0 the graph schema was redesigned (entry-id
+primary key with FK cascade to `entries(id)`); upgrading from a 0.7.x install
+drops the graph tables and repopulates them on next improve. See
+[docs/migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
+
+Search ranking can optionally use graph-derived confidence-weighted boosts.
+Tune `search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight`
+in [`docs/configuration.md#graph-boost-search-tuning`](configuration.md#graph-boost-search-tuning).
+
+### db
+
+Inspect the AKM SQLite data directory.
+
+```sh
+akm db backups        # List pre-upgrade snapshots, newest first
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `backups` | List pre-upgrade snapshots written by AKM under `<dataDir>/backups/`. Returns a JSON list with `path`, `name`, `createdAt`, `sizeBytes`, and `sourceVersion` per entry. |
+
+Pre-upgrade snapshots are created automatically whenever the binary detects an
+on-disk `DB_VERSION` that differs from its own — that's the same moment the
+destructive `handleVersionUpgrade()` codepath drops every table to rebuild. The
+snapshot is a recursive `fs.cpSync` of the data directory; restoration is
+intentionally manual for the MVP: stop akm, then run
+`scripts/migrations/restore-data-dir.sh <backup-dir> <live-data-dir>` to roll
+back the data dir wholesale, or use the targeted helper scripts in
+`scripts/migrations/` to scavenge specific tables. See
+[`docs/configuration.md`](configuration.md) for the `AKM_DB_BACKUP` and
+`AKM_DB_BACKUP_RETAIN` environment variables.
 
 ### search
 
@@ -502,8 +664,36 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
 | `--trust` | Bypass install-audit blocking for this add invocation only |
+| `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous vault key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) vault keys that can hijack process execution. Use only after reviewing the stash manually |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
+
+#### Dangerous vault key audit
+
+When `akm add` installs a stash that contains vault files, it scans every
+vault file for environment variable names that can be used for
+process-execution hijacking. The flagged key names are: `LD_PRELOAD`,
+`LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `DYLD_INSERT_LIBRARIES`,
+`DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`, `BASH_ENV`, `ENV`,
+`PROMPT_COMMAND`, `PS1`, `PS2`, `NODE_OPTIONS`, `NODE_PATH`,
+`PYTHONSTARTUP`, `PYTHONPATH`, `PYTHONINSPECT`, `RUBYLIB`, `RUBYOPT`,
+`PERL5LIB`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, and
+`_JAVA_OPTIONS` (23 keys total).
+
+When dangerous keys are found, `akm add` pauses and prompts for
+confirmation (default: No). In non-interactive mode (CI, scripts) the
+install fails with exit 2 unless `--allow-insecure` is passed.
+
+```sh
+# Interactive: prompts before continuing
+akm add github:owner/repo-with-sensitive-vault
+
+# Non-interactive: fails unless bypassed
+akm add github:owner/repo-with-sensitive-vault --allow-insecure
+```
+
+Stash publishers: see the [Stash Maker's Guide](stash-makers.md#vault-security)
+for guidance on vault files that legitimately need these keys.
 
 #### Website sources
 
@@ -634,7 +824,7 @@ akm clone "/path/to/stash//skill:code-review" --dest ./project/.claude
 
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
-running `akm init` first.
+running `akm setup` first.
 
 ### save
 
@@ -685,7 +875,7 @@ your config file (`~/.config/akm/config.json` or the path shown by
 When `writable: true` is set and the primary stash has a git remote configured,
 `akm save` will stage, commit, and push.
 
-When `akm init` successfully initializes the default stash as a local git repo
+When `akm setup` successfully initializes the default stash as a local git repo
 (requires `git` to be installed), `akm save` will commit there safely without
 pushing. If git is unavailable, the stash will not be a git repo and save will
 return a skipped result.
@@ -727,6 +917,12 @@ akm remember "Long meeting notes..." --enrich
 # Multi-tenant / multi-agent scope (0.7.0+):
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
+
+# Route the write to a specific writable stash (0.8.0+):
+akm remember "Deployment needs VPN access" --target team-stash
+
+# Save into a wiki directory instead of memories/ (0.8.0+):
+akm remember "Deployment needs VPN access" --wiki architecture
 ```
 
 | Flag | Description |
@@ -744,15 +940,17 @@ akm remember "Use staging cluster for blue-green" \
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
+| `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/`) instead of `memories/`. The wiki must already exist (created with `akm wiki create`). |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
 
 **Zero-flag form** (`akm remember "body"`) writes a bare memory with no
-frontmatter — existing agent scripts keep working unchanged. Any use of
-`--tag` / `--expires` / `--source` / `--auto` / `--enrich` triggers a
-required-field check: if `tags` cannot be derived, the command rejects
-*before* writing the file, so you never end up with an orphan.
+frontmatter — existing agent scripts keep working unchanged. `--tag` /
+`--expires` / `--source` still trigger the required-field check: if `tags`
+cannot be derived, the command rejects *before* writing the file, so you
+never end up with an orphan. `--auto` and `--enrich` are fail-soft metadata
+helpers: if they derive nothing, the memory still writes successfully.
 
 **Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
 of the tag-required check. They write the four canonical top-level
@@ -780,6 +978,13 @@ akm import ./docs/auth-flow.md
 akm import ./notes/release.txt --name release-checklist
 akm import - --name scratch-notes < notes.md
 akm import https://example.com/docs/auth
+
+# Route the write to a specific writable stash (0.8.0+):
+akm import ./docs/auth-flow.md --target team-stash
+
+# Save into a wiki directory instead of knowledge/ (0.8.0+):
+akm import ./docs/auth-flow.md --wiki architecture
+akm import https://example.com/docs/auth --wiki research
 ```
 
 | Flag | Description |
@@ -787,6 +992,7 @@ akm import https://example.com/docs/auth
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
+| `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do
 not register a persistent website source. The default knowledge name comes from
@@ -814,9 +1020,44 @@ akm feedback skill:code-review --positive --note "Worked perfectly for PR review
 | `--positive` | Record positive feedback (use when an asset was helpful) |
 | `--negative` | Record negative feedback (use when an asset was not useful) |
 | `--note` | Optional text note to attach to the feedback event |
+| `--applied-to <ref>` | Credit a `lesson:<name>` that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). Silently ignored on non-lesson targets. |
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
+
+The `--applied-to` flag drives the lesson-strength ranking signal: lessons that
+have demonstrably helped resolve tasks receive a small additive ranking boost
+(capped at +0.3) so they float to the top of search. Pair with `akm lessons
+coverage` to find tags that don't yet have a crystallized lesson.
+
+### lessons
+
+**Status: Available since 0.8.0.**
+Lesson-asset tooling. Currently exposes a single subcommand for tag-coverage
+analysis.
+
+#### lessons coverage
+
+```sh
+akm lessons coverage
+akm lessons coverage --format text
+```
+
+Reports tags that exist on indexed assets but are NOT yet covered by any
+lesson. Useful for spotting topics where the stash has skills/commands/scripts
+but no crystallized lesson — a signal that the team has tacit knowledge worth
+distilling.
+
+Default output is JSON:
+
+```json
+{
+  "ok": true,
+  "uncoveredTags": ["auth", "networking", "observability"],
+  "lessonTagCount": 12,
+  "totalTagCount": 47
+}
+```
 
 ### history
 
@@ -881,7 +1122,7 @@ erroring.
 ### events
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends
-a JSON line to `<cacheDir>/events.jsonl`; `akm events list` reads it and
+an event row to `<dataDir>/state.db`; `akm events list` reads it and
 `akm events tail` follows it via polling.
 
 ```sh
@@ -889,21 +1130,21 @@ akm events list                                   # All events, oldest first
 akm events list --type feedback                   # Filter by event type
 akm events list --ref skill:deploy                # Filter by asset ref
 akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
-akm events list --since '@offset:12345'           # Resume from a byte cursor
+akm events list --since '@offset:12345'           # Resume from a row-id cursor
 akm events tail --max-events 10                   # Follow until 10 events
 akm events tail --format jsonl                    # Stream as JSONL
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
-| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `reflect_invoked`, `propose_invoked`, `distill_invoked`. |
+| `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<id>` for a durable row-id cursor that survives across processes. |
+| `--type` | Filter by event type. Common values include `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `propose_invoked`, `reflect_invoked`, `distill_invoked`, `select`, and `improve_skipped`. |
 | `--ref` | Filter by asset ref (`[origin//]type:name`). |
 | `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
 | `--max-events` | (`tail` only) Stop after this many events. |
 | `--max-duration-ms` | (`tail` only) Stop after this many ms. |
 
-The list/tail envelope echoes a `nextOffset` byte cursor — persist it and
+The list/tail envelope echoes a `nextOffset` row-id cursor — persist it and
 pass it back as `--since '@offset:<nextOffset>'` to resume from exactly
 where you stopped, with no duplicates and no losses, even across process
 boundaries.
@@ -912,19 +1153,17 @@ Streaming output (`--format jsonl` / `--format text`) emits each event as
 a single line on stdout, then a trailer:
 
 - `--format jsonl` ends with a final discriminated row on stdout:
-  `{"_kind":"trailer","schemaVersion":1,"nextOffset":<bytes>,"totalCount":<n>,"reason":"signal|maxEvents|maxDuration"}`.
+  `{"_kind":"trailer","schemaVersion":1,"nextOffset":<id>,"totalCount":<n>,"reason":"signal|maxEvents|maxDuration"}`.
 - `--format text` writes the trailer to stderr to keep stdout pristine for
   line-oriented parsers: `[events-tail] reason=<r> nextOffset=<n> total=<t>`.
 
 #### Environment isolation
 
-`events.jsonl` lives at `<cacheDir>/events.jsonl`, where `<cacheDir>` is
-derived from `XDG_CACHE_HOME` at the time of each call. Two processes with
-different inherited `XDG_CACHE_HOME` values write to different files; if
-the events stream is being used as a shared bus between cooperating
-processes, set `XDG_CACHE_HOME` consistently across them. This is the same
-env-isolation behaviour the rest of akm uses for config, caches, and
-indexes.
+The events stream lives in `<dataDir>/state.db`, where `<dataDir>` is derived
+from `XDG_DATA_HOME` (or `AKM_DATA_DIR`) at the time of each call. Two
+processes with different inherited data-dir env values write to different
+databases; if the events stream is being used as a shared bus between
+cooperating processes, set those env vars consistently across them.
 
 ### registry
 
@@ -1054,9 +1293,8 @@ appear in structured output**. `list` and `show` key metadata only; `path` and
 akm vault list
 akm vault path vault:prod
 akm vault create prod
-akm vault set vault:prod DATABASE_URL https://db.example.com
-akm vault set vault:prod DATABASE_URL=https://db.example.com
-akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+printf '%s' "$SECRET" | akm vault set vault:prod DATABASE_URL
+AKM_VALUE="$SECRET" akm vault set vault:prod API_KEY --from-env AKM_VALUE
 akm vault unset vault:prod DATABASE_URL
 source "$(akm vault path vault:prod)"
 akm vault run vault:prod -- env
@@ -1071,7 +1309,7 @@ Subcommands:
 | `path <ref>` | Print the absolute vault file path for direct shell loading |
 | `run <ref[/KEY]> -- <command>` | Run one command with a whole vault or single key injected into the subprocess env |
 | `create <name>` | Create an empty `.env` vault (mode 0600). No-op if it already exists |
-| `set <ref> <KEY> <VALUE>` | Set a key in the vault |
+| `set <ref> <KEY>` | Set a key — reads value from stdin by default, or use `--from-env` |
 | `unset <ref> <KEY>` | Remove a key from the vault |
 
 #### vault list
@@ -1081,8 +1319,9 @@ akm vault list
 ```
 
 `vault list` returns one entry per vault across all configured stashes. The
-structured shape is `vaults: [{ ref, path, keys }]` and values are never
-included.
+structured shape is `vaults: [{ ref, keys }]` and values are never
+included. The absolute `path` field is omitted from JSON output — use
+`akm vault path vault:<name>` when you need the filesystem path.
 
 Text output uses Markdown sections so the result is readable in terminals and
 copy-paste friendly in agent transcripts:
@@ -1116,17 +1355,24 @@ akm vault create prod
 Creates `vaults/prod.env` with mode 0600. If the vault already exists, the
 command exits 0 and reports `created: false` — it never overwrites.
 
+| Flag | Description |
+| --- | --- |
+| `--sensitive` | Hide vault from `vault list` output (does not affect direct access via `vault path` or `vault run`) |
+
 #### vault set
 
 ```sh
-akm vault set vault:prod DATABASE_URL https://db.example.com
-akm vault set vault:prod DATABASE_URL=https://db.example.com
-akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+# Default: read value from stdin (never crosses argv — no /proc/cmdline exposure)
+printf '%s' "$SECRET" | akm vault set vault:prod DATABASE_URL
+printf '%s' "$SECRET" | akm vault set vault:prod API_KEY --comment "Rotate every 90 days"
+
+# From an environment variable
+AKM_VALUE="$SECRET" akm vault set vault:prod API_KEY --from-env AKM_VALUE
 ```
 
-Both the three-positional form (`<ref> <KEY> <VALUE>`) and the combined
-`KEY=VALUE` form are accepted. The `=` split happens on the first `=` so
-values may themselves contain `=`.
+Values are **never accepted via positional arguments or `KEY=VALUE` form** — both
+were removed to eliminate `/proc/cmdline` secret exposure. The value is always
+read from stdin (default) or from a named environment variable (`--from-env`).
 
 `--comment "<text>"` attaches a `# <text>` comment line immediately above the
 key in the `.env` file. If the key already exists and is being updated, the
@@ -1135,6 +1381,16 @@ preceding comment is also updated. Existing unrelated comments are preserved.
 | Flag | Description |
 | --- | --- |
 | `--comment` | Attach a comment line above the key |
+| `--from-env <VAR>` | Read value from the named environment variable instead of stdin |
+
+> **Stdin cap:** stdin reads are limited to 1 MB. Values larger than 1 MB are
+> rejected with a `UsageError` (exit 2).
+
+> **Write lock:** `vault set` acquires an exclusive lock file (`<vault>.lock`)
+> around the read-modify-write cycle. If two `vault set` processes run
+> concurrently in CI, one waits up to 5 s for the other to finish rather than
+> silently dropping keys. A lock that cannot be acquired within 5 s raises an
+> error.
 
 #### vault unset
 
@@ -1142,8 +1398,9 @@ preceding comment is also updated. Existing unrelated comments are preserved.
 akm vault unset vault:prod DATABASE_URL
 ```
 
-Removes the key and its associated comment from the vault. Exits 0 whether or
-not the key existed.
+Removes the key and its associated `# comment` line immediately above it from
+the vault. Exits 0 whether or not the key existed. The same write lock used by
+`vault set` is held for the duration of the removal.
 
 #### vault run
 
@@ -1159,6 +1416,14 @@ structured output**; they are passed directly to the child process environment.
 Use `akm vault run vault:<name> -- <command>` when a command needs the full
 vault, or `akm vault run vault:<name>/<KEY> -- <command>` when you want to
 scope env injection to one variable.
+
+> **Prefer single-key injection** when the command only needs one secret:
+> `akm vault run vault:prod/API_KEY -- curl ...`
+> This avoids exposing unrelated secrets to the subprocess environment.
+
+> Secrets injected via `vault run` live in the child process environment for its
+> entire lifetime and are visible to all subprocesses it spawns. Avoid
+> `vault run` for long-lived daemon or server processes.
 
 ### wiki
 
@@ -1245,6 +1510,7 @@ Finding kinds:
 ```sh
 akm wiki stash research ./paper.md
 akm wiki stash research ./paper.md --as my-paper
+akm wiki stash research ./paper.md --target my-stash  # Route write to a named writable stash source
 echo "..." | akm wiki stash research -
 akm wiki stash research https://example.com/papers/attention
 ```
@@ -1292,24 +1558,44 @@ source <(akm completions)
 
 ---
 
-## Agent reflection and proposal queue (0.7.0+)
+## Improvement Flow (0.8.0+)
 
-The commands below shipped in 0.7.0 and form part of the locked v1.0
-surface declared by the v1 architecture spec
-([`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-§9.4, §11–§14). They run today on the current pre-release build; the
-shape and flag set documented here is the locked v1 contract. The
-`agent` subcommand itself remains the one piece of this group that is
-still on the roadmap — see its subsection below.
+These commands define the v0.8.0 self-improvement surface. This is a hard
+break from the older `reflect` / `proposal` / `distill` public UX.
 
-### agent (Planned for v1)
+### agent
 
-**Status: Planned for v1.**
-Dispatch a configured external agent profile.
+**Status: Available since 0.8.0.**
+Dispatch a configured external agent profile, optionally embodying a stash agent asset.
 
 ```sh
-akm agent <profile> [args...]
+akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>] [--command <ref>] [--workflow <ref>] [--timeout-ms <ms>]
 ```
+
+| Argument / Flag | Description |
+| --- | --- |
+| `<profile>` | Agent profile / platform to use (`opencode`, `claude`, `codex`, `gemini`, `aider`, or any custom profile name from config) |
+| `<agent-ref>` | Optional agent asset ref (e.g. `agent:code-reviewer`). Loads system prompt, model, and tool policy from the stash asset. |
+| `--prompt <text>` | Task prompt to pass to the agent |
+| `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
+| `--command <ref>` | Load prompt from a `command:` asset |
+| `--workflow <ref>` | Load prompt from a `workflow:` asset |
+| `--timeout-ms <ms>` | Override the agent CLI timeout in milliseconds |
+
+When `<agent-ref>` is provided, akm loads the stash agent asset and extracts
+its system prompt, `modelHint`, and `toolPolicy`. The `--model` flag wins
+over any model specified in the asset.
+
+**Platform-specific dispatch:** akm uses a platform builder to construct the
+CLI argv for each profile. `opencode` profiles emit:
+`opencode run [--system-prompt "..."] [--model opencode/claude-opus-4-7] "<prompt>"`.
+`claude` profiles emit:
+`claude [--system-prompt "..."] [--model claude-opus-4-7] [--allowedTools ...] --print "<prompt>"`.
+Custom profiles may set `commandBuilder` in config to map to a known builder.
+
+Without any `--prompt`, `<agent-ref>`, or `--model`, the agent is launched
+interactively (no injected prompt, no platform-specific flags beyond the
+profile's base args) — the same behaviour as before 0.8.0.
 
 Profiles ship for `opencode`, `claude`, `codex`, `gemini`, and `aider` and
 can be extended via `agent.profiles[<name>]` in config (see
@@ -1317,121 +1603,213 @@ can be extended via `agent.profiles[<name>]` in config (see
 shared spawn wrapper described in v1 spec §12.2 — captured or interactive
 stdio, hard timeout, structured failure reasons.
 
+```sh
+# Interactive launch (unchanged from pre-0.8.0):
+akm agent opencode
+
+# Dispatch with a prompt only:
+akm agent claude --prompt "summarize recent changes"
+
+# Embody a stash agent asset:
+akm agent opencode agent:code-reviewer --prompt "review src/"
+
+# Model override with alias:
+akm agent claude agent:planner --model sonnet --prompt "plan the sprint"
+
+# Exact model ID override:
+akm agent opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
+```
+
 Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason? }`. On
 failure, `reason` is one of `timeout | spawn_failed | non_zero_exit |
 parse_error`.
 
-### reflect
+### improve
 
-**Status: Available since 0.7.0.**
-Produce reflection proposals for an existing asset. Proposals land in the
-durable proposal queue and never mutate live stash content.
+**Status: Available since 0.8.0.**
+Improve existing assets and write the results to the proposal queue.
 
 ```sh
-akm reflect <ref>
-akm reflect [ref] --task "tighten the description"
-akm reflect --profile claude
+akm improve
+akm improve memory
+akm improve skill:code-review
+akm improve workflow:release-checklist --task "reduce duplication"
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--task` | Optional task hint passed into the reflection prompt |
-| `--profile` | Override the default agent profile from `agent.default` |
-| `--timeout-ms` | Override `agent.timeoutMs` for this call |
+| `--task` | Optional extra guidance for this improvement pass |
+| `--dry-run` | Show planned refs without generating proposals |
+| `--target` | Override the write target used later by `accept` |
+| `--auto-accept[=<value>]` | Confidence threshold (0-100) for auto-accepting proposals. Default ON at 90 when the flag is absent. Bare `--auto-accept` = 90. `--auto-accept=<N>` sets the threshold to integer N (0-100). `--auto-accept=safe` is a permanent alias for 90. `--auto-accept=false` disables auto-accept and restores the interactive prompt on the HTTP consolidation path. |
+| `--limit <n>` | Maximum number of assets to process |
+| `--timeout-ms <ms>` | Wall-clock budget for the run |
+| `--ignore-cooldown` | Disable all cooldown checks for this run |
+| `--reflect-cooldown-days <n>` | Override reflect cooldown (non-negative integer) |
+| `--distill-cooldown-days <n>` | Override distill cooldown (non-negative integer) |
+| `--consolidate-cooldown-days <n>` | Override consolidate cooldown (non-negative integer) |
+| `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
+| `--require-feedback-signal` | Only process assets with recent feedback signals |
+| `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 5) |
 
-Emits the `reflect_invoked` usage event. Returns the `id` of the new
-proposal row. Validation/timeout/parse errors return non-zero with a
-`ConfigError` or `UsageError` envelope.
+`akm improve` is the public entrypoint for whole-stash, type-scoped, and
+ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
+flow that used to be split across multiple commands.
+
+The maintenance pass run by `improve` also expires stale proposals: any pending
+proposal older than `improve.archiveRetentionDays` (default 30) is moved to the
+archive with the reason `expired: no action within retention window` and a
+`proposal_expired` event is emitted. Set `archiveRetentionDays` to 0 to disable
+expiration entirely. The total expired count surfaces in the improve result as
+`proposalsExpired`.
+
+When auto-accept is enabled, the threshold from `--auto-accept` is compared
+against each proposal's `confidence` score (set by reflect/propose). Proposals
+with `confidence × 100 >= threshold` are promoted into the stash automatically.
+Reflect emits `confidence` as part of its JSON response schema; agents and
+custom runners should populate it (0..1) so auto-accept has signal to act on.
+
+Selection behavior defaults to recent feedback signals first, with a
+zero-feedback retrieval fallback for high-traffic refs. Use
+`--require-feedback-signal` to disable retrieval fallback for the run.
+
+When reinforced facts need promotion, `knowledge` is the higher-authority
+destination than `memory`. The deterministic search ranking also prefers
+`knowledge` over `memory` hits, including inferred `.derived` memories, when
+the evidence is otherwise comparable.
 
 ### propose
 
-**Status: Available since 0.7.0.**
+**Status: Available since 0.8.0.**
 Generate a brand-new asset proposal from a description. Output is always a
 proposal — never a direct write.
 
 ```sh
 akm propose <type> <name> --task "..."
+akm propose <type> <name> --file ./prompt.md
 akm propose skill code-review --task "PR-style review skill"
-akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
+akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--task` | Required. Free-form description of what the asset should do |
+| `--task` | Inline task text |
+| `--file` | Read task text from a UTF-8 file |
 | `--profile` | Override the default agent profile |
 | `--timeout-ms` | Override `agent.timeoutMs` for this call |
 
-Emits `propose_invoked`. Returns the new proposal id. Same failure model as
-`reflect`.
+Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
-### proposal
+**Per-task `timeoutMs` in task markdown files:** task markdown frontmatter may
+set `timeoutMs` to override the global `config.agent.timeoutMs` for that task
+only. Set `timeoutMs: null` to disable the kill timer entirely (useful for
+long-running local-model tasks), or a positive integer (milliseconds) to apply
+a task-specific limit.
 
-**Status: Available since 0.7.0.**
-Review and operate the proposal queue. Five subcommands.
+### proposals
 
-```sh
-akm proposal list
-akm proposal list --status pending|accepted|rejected
-akm proposal show <id>
-akm proposal diff <id>
-akm proposal accept <id>
-akm proposal reject <id> --reason "..."
-```
-
-| Subcommand | Description |
-| --- | --- |
-| `list` | List proposals, optionally filtered by status |
-| `show <id>` | Render the proposal body and metadata |
-| `diff <id>` | Show the proposed delta vs. the live ref (or vs. empty) |
-| `accept <id>` | Validate and promote via `writeAssetToSource` |
-| `reject <id>` | Archive with a reason; body is preserved |
-
-#### proposal list flags
-
-| Flag | Description |
-| --- | --- |
-| `--status` | Filter by status (`pending`, `accepted`, or `rejected`) |
-| `--ref` | Filter by asset ref (`[origin//]type:name`) |
-| `--include-archive` | Include accepted/rejected proposals from the archive (default: `false`, pending only) |
-
-#### proposal accept / diff flags
-
-| Flag | Description |
-| --- | --- |
-| `--target <name>` | Override the write destination by source name. Same semantics as `akm import --target`: `--target` → `defaultWriteTarget` → `stashDir`. Applies to both `accept` and `diff` so previews match the target you would actually promote to. |
-
-`accept` runs full validation (frontmatter, type-renderer, ref grammar,
-write-source policy) **before** promoting. Failures keep the proposal in
-`pending` and emit a structured `warnings` array. Successful promotion
-emits the `promoted` event; reject emits `rejected`.
-
-### distill
-
-**Status: Available since 0.7.0.**
-Bounded in-tree LLM call that summarises feedback events for a ref into a
-`lesson` proposal. Gated behind `llm.features.feedback_distillation`.
+**Status: Available since 0.8.0.**
+List proposal queue entries.
 
 ```sh
-akm distill <ref>
-akm distill skill:deploy --source-run run-42
-akm distill skill:deploy --exclude-feedback-from "memory:retro,lesson:flaky-tests"
+akm proposals
+akm proposals --status pending|accepted|rejected|reverted
+akm proposals --ref skill:deploy
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--source-run <id>` | Optional run id propagated onto the queued proposal for traceability |
-| `--exclude-feedback-from <refs>` | Comma-separated asset refs whose feedback events are filtered out before the LLM input is built. Falls back to the `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM` env var when the flag is omitted; the flag wins when both are set. |
+| `--status` | Filter by `pending`, `accepted`, `rejected`, or `reverted` |
+| `--ref` | Filter by exact asset ref |
+| `--type` | Reserved type filter |
 
-If `llm.features.feedback_distillation` is `false` (the default), the
-command exits 0 with `outcome: "skipped"` when the feature gate is false.
-On a successful call, the response is written to the proposal queue as a
-`lesson` (see v1 spec §13). The live stash is never mutated. Emits
-`distill_invoked`.
+Each proposal record carries an optional `confidence` field (0..1) emitted by
+reflect/propose runs. The `--auto-accept` flag on `improve` uses this score to
+auto-promote high-confidence proposals — see the `improve` section above. After
+promotion, accepted proposals that overwrote an existing asset also carry a
+`backup` field pointing to the captured prior content, which `akm revert` uses.
+
+### accept
+
+**Status: Available since 0.8.0.**
+Accept a proposal and promote it into the stash. Accepts a full UUID, an
+8-character UUID prefix, or an asset ref.
+
+```sh
+akm accept <id>
+akm accept 7c115132                           # 8-char UUID prefix
+akm accept skill:akm-dream                   # Asset ref
+akm accept <id> --target team-stash
+```
+
+### reject
+
+**Status: Available since 0.8.0.**
+Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
+UUID prefix, or an asset ref.
+
+```sh
+akm reject <id> --reason "duplicates existing workflow"
+akm reject 7c115132 --reason "not ready"      # 8-char UUID prefix
+akm reject skill:my-skill --reason "not ready" # Asset ref
+```
+
+### show proposal
+
+Inspect a queued proposal.
+
+```sh
+akm show proposal <id>
+```
+
+### revert
+
+**Status: Available since 0.8.0.**
+Revert an accepted proposal by restoring the prior asset content from the
+backup captured at promotion time. Only works on proposals that overwrote an
+existing asset; new-asset proposals leave no backup. Sets the proposal's status
+to `reverted` and appends a `proposal_reverted` event to the audit log.
+
+```sh
+akm revert <id>
+akm revert skill:akm-dream                   # Asset ref
+akm revert <id> --target team-stash
+```
+
+| Flag | Description |
+| --- | --- |
+| `--target <name>` | Override the write destination by source name |
+
+Accepts the full proposal UUID or the asset ref. UUID prefixes are **not**
+supported for reverting (archived proposals require the full identifier). Errors
+with exit code 2 if the proposal is not in `accepted` status, has no captured
+backup, or cannot be found.
+
+### diff proposal
+
+Preview the proposed change against the live asset. The `proposal` subject
+positional is optional — `akm diff` accepts a full UUID, an 8-character UUID
+prefix, or an asset ref directly.
+
+```sh
+akm diff proposal <id>
+akm diff <id>
+akm diff skill:akm-dream                      # Asset ref form
+akm diff 7c115132                             # 8-char UUID prefix
+akm diff proposal <id> --target team-stash
+```
+
+| Flag | Description |
+| --- | --- |
+| `--target <name>` | Override the write destination by source name for `accept` and `diff proposal` |
+
+`accept` runs full validation before promoting. `reject` requires `--reason`.
 
 ### feedback (`--reason` extension)
 
-**Status: Available since 0.7.0.**
+**Status: Available since 0.8.0.**
 Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
 and gains an optional `--reason <slug>` flag whose value is forwarded into
-`distill_invoked` payloads. Backwards compatible: scripts without `--reason`
+feedback metadata and consumed by improve/distill proposal prompts.
+Backwards compatible: scripts without `--reason`
 behave exactly as today.

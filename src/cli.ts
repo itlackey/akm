@@ -4,50 +4,106 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
+import {
+  getStringArg,
+  hasSubcommand,
+  parseAutoAcceptFlag,
+  parseNonNegativeIntFlag,
+  parsePositiveIntFlag,
+} from "./cli/parse-args";
+import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
-import { akmDistill } from "./commands/distill";
+import { akmDbBackups } from "./commands/db-cli";
 import { akmEventsList, akmEventsTail } from "./commands/events";
+import {
+  akmGraphEntities,
+  akmGraphEntity,
+  akmGraphExport,
+  akmGraphOrphans,
+  akmGraphRelated,
+  akmGraphRelations,
+  akmGraphSummary,
+  akmGraphUpdate,
+} from "./commands/graph";
+import { akmHealth } from "./commands/health";
 import { akmHistory } from "./commands/history";
+import { akmImprove } from "./commands/improve";
+import { buildImproveRunId, relativeImproveResultPath, writeImproveResultFile } from "./commands/improve-result-file";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
+import { inferAssetName, readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
+import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
+
+/**
+ * Resolve the event source from the environment. When `AKM_EVENT_SOURCE` is
+ * set (e.g. by `akm improve` for agent subprocesses), events are tagged so
+ * they can be filtered out of user-facing history.
+ */
+function resolveEventSource(): "user" | "improve" | undefined {
+  const raw = process.env.AKM_EVENT_SOURCE;
+  if (raw === "improve") return "improve";
+  if (raw === "user") return "user";
+  return undefined;
+}
+
 import {
   akmProposalAccept,
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
+  akmProposalRevert,
   akmProposalShow,
 } from "./commands/proposal";
 import { akmPropose } from "./commands/propose";
-import { akmReflect } from "./commands/reflect";
 import { searchRegistry } from "./commands/registry-search";
 import {
   buildMemoryFrontmatter,
   parseDuration,
   readMemoryContent,
+  resolveRememberContentArg,
   runAutoHeuristics,
   runLlmEnrich,
 } from "./commands/remember";
-import { akmSearch, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
+import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
 import { checkForUpdate, performUpgrade } from "./commands/self-update";
-import { akmShowUnified } from "./commands/show";
+import { akmShowUnified, normalizeShowArgv } from "./commands/show";
 import { akmAdd } from "./commands/source-add";
 import { akmClone } from "./commands/source-clone";
 import { addStash } from "./commands/source-manage";
+import {
+  akmTasksAdd,
+  akmTasksDoctor,
+  akmTasksHistory,
+  akmTasksList,
+  akmTasksRemove,
+  akmTasksRun,
+  akmTasksSetEnabled,
+  akmTasksShow,
+  akmTasksSync,
+  parseTaskRef,
+} from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
-import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
+import { isHttpUrl, isWithin, resolveStashDir, writeFileAtomic } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
-import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./core/config";
+import {
+  DEFAULT_CONFIG,
+  FEEDBACK_FAILURE_MODES,
+  loadConfig,
+  loadUserConfig,
+  resolveConfiguredSources,
+  saveConfig,
+} from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
-import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
-import { setQuiet, setVerbose, warn } from "./core/warn";
-import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
-import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
+import { parseFrontmatter, parseFrontmatterBlock } from "./core/frontmatter";
+import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
+import { clearLogFile, info, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
+import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
@@ -68,7 +124,6 @@ import { resolveSourcesForOrigin } from "./registry/origin-resolve";
 import { saveGitStash } from "./sources/providers/git";
 import { resolveAssetPath } from "./sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/types";
-import { fetchWebsiteMarkdownSnapshot } from "./sources/website-ingest";
 import { pkgVersion } from "./version";
 import {
   createWorkflowAsset,
@@ -91,12 +146,20 @@ import {
   startWorkflowRun,
 } from "./workflows/runs";
 
-const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 const SKILLS_SH_NAME = "skills.sh";
 const SKILLS_SH_URL = "https://skills.sh";
 const SKILLS_SH_PROVIDER = "skills-sh";
 
 import { stringify as yamlStringify } from "yaml";
+
+function applyEarlyStderrFlags(argv: string[]): void {
+  if (argv.includes("--quiet") || argv.includes("-q")) {
+    setQuiet(true);
+  }
+  if (argv.includes("--verbose")) {
+    setVerbose(true);
+  }
+}
 
 /**
  * Collect all occurrences of a repeatable flag from process.argv.
@@ -119,6 +182,55 @@ function parseAllFlagValues(flag: string): string[] {
     }
   }
   return values;
+}
+
+function resolveHelpMigrateVersionArg(version: string | undefined): string | undefined {
+  if (version === undefined) return undefined;
+
+  const parsedFormat = parseFlagValue(process.argv, "--format");
+  if (
+    parsedFormat !== undefined &&
+    version === parsedFormat &&
+    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedFormat, "--format")
+  ) {
+    return undefined;
+  }
+
+  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  if (
+    parsedDetail !== undefined &&
+    version === parsedDetail &&
+    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedDetail, "--detail")
+  ) {
+    return undefined;
+  }
+
+  return version;
+}
+
+function wasHelpMigrateFlagValueConsumedAsVersion(
+  version: string,
+  flagValue: string,
+  flagName: "--format" | "--detail",
+): boolean {
+  const argv = process.argv.slice(2);
+  const helpIndex = argv.indexOf("help");
+  const tokens = helpIndex >= 0 ? argv.slice(helpIndex + 1) : argv;
+  const migrateIndex = tokens.indexOf("migrate");
+  const relevant = migrateIndex >= 0 ? tokens.slice(migrateIndex + 1) : tokens;
+
+  let flagIndex = -1;
+  for (let i = 0; i < relevant.length; i += 1) {
+    const token = relevant[i];
+    if (token === flagName || token === `${flagName}=${flagValue}`) {
+      flagIndex = i;
+      break;
+    }
+  }
+
+  if (flagIndex === -1) return false;
+  if (relevant.slice(0, flagIndex).includes(version)) return false;
+  return relevant[flagIndex] === flagName ? relevant[flagIndex + 1] === version : true;
 }
 
 function output(command: string, result: unknown): void {
@@ -156,12 +268,55 @@ const setupCommand = defineCommand({
   meta: {
     name: "setup",
     description:
-      "Interactive configuration wizard: detects services and walks you through embeddings, LLM, registries, sources, and agent profiles. Writes config once at the end.",
+      "Interactive configuration wizard. Configures embeddings/LLM connections (for indexing/enrichment), agent profiles (CLI agent, embedded SDK, or none), sources, and registries. Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
   },
-  async run() {
+  args: {
+    config: {
+      type: "string",
+      description: 'Config JSON to apply non-interactively, e.g. \'{"llm":{"endpoint":"...","model":"..."}}\'',
+    },
+    yes: {
+      type: "boolean",
+      default: false,
+      description: "Accept all defaults, skip all prompts. Idempotent — safe to run in CI.",
+    },
+    dir: {
+      type: "string",
+      description: "Stash directory path (overrides stashDir in config or --config JSON)",
+    },
+    probe: {
+      type: "boolean",
+      default: false,
+      description: "Probe LLM/embedding endpoints after writing config to verify connectivity",
+    },
+  },
+  async run({ args }) {
     await runWithJsonErrors(async () => {
-      const { runSetupWizard } = await import("./setup/setup");
-      await runSetupWizard();
+      const noInit = getHyphenatedBoolean(args, "no-init");
+      if (args.config) {
+        // Non-interactive config mode
+        const { runSetupFromConfig } = await import("./setup/setup");
+        const result = await runSetupFromConfig({
+          configJson: args.config,
+          dir: args.dir,
+          noInit,
+          probe: args.probe,
+        });
+        output("setup", result);
+      } else if (args.yes) {
+        // Defaults mode — no prompts
+        const { runSetupWithDefaults } = await import("./setup/setup");
+        const result = await runSetupWithDefaults({
+          dir: args.dir,
+          noInit,
+          probe: args.probe,
+        });
+        output("setup", result);
+      } else {
+        // Interactive wizard
+        const { runSetupWizard } = await import("./setup/setup");
+        await runSetupWizard({ dir: args.dir, noInit });
+      }
     });
   },
 });
@@ -189,16 +344,42 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
-    enrich: { type: "boolean", description: "Enable LLM inference and enrichment passes", default: false },
     verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
+    clean: {
+      type: "boolean",
+      description: "After indexing, remove any entries whose source file no longer exists on disk.",
+      default: false,
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "When combined with --clean, report stale entries without deleting them.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (getHyphenatedBoolean(args, "enrich") || parseFlagValue(process.argv, "--enrich") !== undefined) {
+        throw new UsageError(
+          "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
+        );
+      }
+      if (getHyphenatedBoolean(args, "re-enrich") || parseFlagValue(process.argv, "--re-enrich") !== undefined) {
+        throw new UsageError(
+          "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
+        );
+      }
       const outputMode = getOutputMode();
       const controller = new AbortController();
       const abort = (): void => controller.abort(new Error("index interrupted"));
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
+      const indexLogFile = path.join(
+        getCacheDir(),
+        "logs",
+        "index",
+        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+      );
+      setLogFile(indexLogFile);
       const spin = !args.verbose && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
@@ -207,12 +388,13 @@ const indexCommand = defineCommand({
       try {
         const result = await akmIndex({
           full: args.full,
-          enrich: args.enrich,
-          onProgress: ({ message, processed, total }) => {
+          clean: args.clean,
+          dryRun: args["dry-run"],
+          onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
             if (args.verbose) {
-              console.error(`[index] ${progressPrefix}${message}`);
+              info(`[index:${phase}] ${progressPrefix}${message}`);
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
               spin.start(`${progressPrefix}${message}`);
@@ -230,6 +412,7 @@ const indexCommand = defineCommand({
         }
         throw error;
       } finally {
+        clearLogFile();
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
       }
@@ -243,6 +426,207 @@ const infoCommand = defineCommand({
     return runWithJsonErrors(() => {
       const result = assembleInfo();
       output("info", result);
+    });
+  },
+});
+
+const healthCommand = defineCommand({
+  meta: { name: "health", description: "Check akm runtime health, artifacts, and improve metrics" },
+  args: {
+    since: {
+      type: "string",
+      description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmHealth({ since: args.since });
+      output("health", result);
+    });
+  },
+});
+
+const graphCommand = defineCommand({
+  meta: { name: "graph", description: "Inspect the indexed entity graph stored in SQLite" },
+  subCommands: {
+    summary: defineCommand({
+      meta: { name: "summary", description: "Show entity-graph counts and quality telemetry" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output("graph-summary", akmGraphSummary({ source: args.source }));
+        });
+      },
+    }),
+    entities: defineCommand({
+      meta: { name: "entities", description: "List entities with per-file occurrence counts" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum entities to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-entities",
+            akmGraphEntities({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
+          );
+        });
+      },
+    }),
+    relations: defineCommand({
+      meta: { name: "relations", description: "List relations with occurrence counts" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum relations to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-relations",
+            akmGraphRelations({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
+          );
+        });
+      },
+    }),
+    related: defineCommand({
+      meta: { name: "related", description: "Show graph-related neighboring assets for a ref" },
+      args: {
+        ref: { type: "positional", description: "Asset ref", required: true },
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum related assets to return" },
+      },
+      async run({ args }) {
+        return runWithJsonErrors(async () => {
+          output(
+            "graph-related",
+            await akmGraphRelated({
+              ref: args.ref ?? "",
+              source: args.source,
+              limit: parsePositiveIntFlag(args.limit ?? undefined),
+            }),
+          );
+        });
+      },
+    }),
+    entity: defineCommand({
+      meta: { name: "entity", description: "List assets that contain the given entity" },
+      args: {
+        name: { type: "positional", description: "Entity name", required: true },
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum matches to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-entity",
+            akmGraphEntity({
+              name: args.name ?? "",
+              source: args.source,
+              limit: parsePositiveIntFlag(args.limit ?? undefined),
+            }),
+          );
+        });
+      },
+    }),
+    orphans: defineCommand({
+      meta: { name: "orphans", description: "List assets with no extracted graph entities" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum orphans to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-orphans",
+            akmGraphOrphans({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
+          );
+        });
+      },
+    }),
+    export: defineCommand({
+      meta: { name: "export", description: "Export graph artifact as JSON or JSONL" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        out: { type: "string", description: "Output path" },
+        format: { type: "string", description: "Export format (json|jsonl)", default: "json" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-export",
+            akmGraphExport({
+              source: args.source,
+              out: args.out ?? "",
+              format: args.format,
+            }),
+          );
+        });
+      },
+    }),
+    update: defineCommand({
+      meta: { name: "update", description: "Re-run graph extraction, optionally scoped to specific asset refs" },
+      args: {
+        refs: {
+          type: "positional",
+          description: "Zero or more asset refs to scope extraction (omit for a full re-extract)",
+          required: false,
+          default: "",
+        },
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+      },
+      async run({ args }) {
+        return runWithJsonErrors(async () => {
+          // `refs` is a single positional; collect remaining argv tokens as well.
+          const rawRefs = [args.refs, ...(Array.isArray(args._) ? (args._ as string[]) : [])].filter(
+            (r): r is string => typeof r === "string" && r.trim().length > 0,
+          );
+          output(
+            "graph-update",
+            await akmGraphUpdate({ refs: rawRefs.length > 0 ? rawRefs : undefined, source: args.source }),
+          );
+        });
+      },
+    }),
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      if (hasSubcommand(args, GRAPH_SUBCOMMAND_SET)) return;
+      output("graph-summary", akmGraphSummary());
+    });
+  },
+});
+
+// MVP DB administration. Currently only `akm db backups`; restore is manual —
+// stop akm and run `scripts/migrations/restore-data-dir.sh <backup>`.
+const DB_SUBCOMMAND_SET = new Set(["backups"]);
+
+const dbCommand = defineCommand({
+  meta: {
+    name: "db",
+    description:
+      "Inspect the AKM SQLite data directory. Currently exposes `backups`; to restore from a snapshot, stop akm and run scripts/migrations/restore-data-dir.sh against the chosen backup.",
+  },
+  subCommands: {
+    backups: defineCommand({
+      meta: {
+        name: "backups",
+        description:
+          "List pre-upgrade snapshots of the data directory (newest first). Backups are created automatically before destructive DB version upgrades unless AKM_DB_BACKUP=0.",
+      },
+      run() {
+        return runWithJsonErrors(() => {
+          output("db-backups", akmDbBackups());
+        });
+      },
+    }),
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      if (hasSubcommand(args, DB_SUBCOMMAND_SET)) return;
+      // Default action: list backups.
+      output("db-backups", akmDbBackups());
     });
   },
 });
@@ -268,29 +652,44 @@ const searchCommand = defineCommand({
       description: 'Include entries with quality:"proposed" in the result set. Excluded by default (v1 spec §4.2).',
       default: false,
     },
+    belief: {
+      type: "string",
+      description:
+        "Memory belief filter: all|current|historical. current keeps active memory beliefs; historical keeps contradicted/superseded/archived memory beliefs.",
+      default: "all",
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      // An empty query enumerates all indexed assets (list mode).
-      // The guard that rejected empty queries was removed; akmSearch handles
-      // empty strings end-to-end via getAllEntries (DB path) and the
-      // substring-search fallback's query-less branch.
       const query = (args.query ?? "").trim();
-      const type = args.type as string | undefined;
-      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
+      if (!query) {
+        throw new UsageError(
+          'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
+          "MISSING_REQUIRED_ARGUMENT",
+          'Pass a query like `akm search "docker"` or `akm search "code review" --type skill`.',
+        );
       }
-      const limit = limitRaw;
+      const type = args.type as string | undefined;
+      const limit = parsePositiveIntFlag(args.limit ?? undefined);
       const source = parseSearchSource(args.source);
       // Repeatable; citty exposes only the last `--filter` value, so read all
       // occurrences directly from argv (same pattern as `--tag`).
       const filterTokens = parseAllFlagValues("--filter");
       const filters = parseScopeFilterFlags(filterTokens, "--filter");
       const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
-      const result = await akmSearch({ query, type, limit, source, filters, includeProposed });
+      const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
+      const result = await akmSearch({
+        query,
+        type,
+        limit,
+        source,
+        filters,
+        includeProposed,
+        belief,
+        eventSource: resolveEventSource(),
+      });
       output("search", result);
     });
   },
@@ -321,11 +720,8 @@ const curateCommand = defineCommand({
         );
       }
       const type = args.type as string | undefined;
-      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
-      }
-      const limit = limitRaw && limitRaw > 0 ? limitRaw : 4;
+      const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
+      const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
       const source = parseSearchSource(args.source ?? "stash");
       const curated = await akmCurate({ query: args.query, type, limit, source });
       output("curate", curated);
@@ -365,7 +761,8 @@ const addCommand = defineCommand({
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
     "allow-insecure": {
       type: "boolean",
-      description: "Allow a plain HTTP source URL (otherwise rejected for non-localhost hosts)",
+      description:
+        "Allow a plain HTTP source URL and skip confirmation for dangerous vault keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the stash.",
       default: false,
     },
   },
@@ -373,6 +770,7 @@ const addCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const ref = args.ref.trim();
       const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
+      const allowDangerousKeys = allowInsecure;
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
@@ -466,6 +864,134 @@ const addCommand = defineCommand({
           writable: args.writable === true,
         },
       });
+
+      // ── Post-install vault key audit ────────────────────────────────────────
+      // Resolve the stash root from the install result and scan any vault files
+      // for dangerous env var keys.  When findings are present the install is
+      // gated: TTY → interactive confirmation prompt; non-TTY without
+      // --allow-insecure → hard failure (exit 1).  Pass
+      // --allow-insecure to skip the prompt non-interactively.
+      try {
+        const installedStashRoot =
+          result.installed?.stashRoot ??
+          (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
+        if (installedStashRoot) {
+          const { checkVaultForDangerousKeys } = await import("./commands/lint/vault-key-rules.js");
+          const vaultsDir = path.join(installedStashRoot, "vaults");
+          if (fs.existsSync(vaultsDir)) {
+            const envFiles = fs.readdirSync(vaultsDir).filter((f: string) => f.endsWith(".env"));
+
+            // Collect all dangerous-key findings across every vault file.
+            const allFindings: Array<{ vaultRef: string; keyName: string; relPath: string }> = [];
+            for (const envFile of envFiles) {
+              const vaultPath = path.join(vaultsDir, envFile);
+              const baseName = path.basename(envFile, ".env");
+              const vaultRef = baseName === "" ? "vault:default" : `vault:${baseName}`;
+              const relPath = path.join("vaults", envFile);
+              const findings = checkVaultForDangerousKeys(vaultPath, relPath, vaultRef);
+              for (const finding of findings) {
+                // Extract the key name from the detail string for the summary line.
+                const keyMatch = finding.detail.match(/Vault key `([^`]+)`/);
+                const keyName = keyMatch ? keyMatch[1] : finding.file;
+                allFindings.push({ vaultRef, keyName, relPath });
+              }
+            }
+
+            if (allFindings.length > 0) {
+              if (allowDangerousKeys) {
+                // Operator has explicitly accepted the risk — warn and continue.
+                for (const f of allFindings) {
+                  warn(
+                    `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-insecure was set.`,
+                  );
+                }
+              } else if (process.stdin.isTTY) {
+                // Interactive path: show findings and ask the user to confirm.
+                // Guard on stdin (not stdout) because p.confirm() reads from stdin;
+                // stdout may be a TTY while stdin is piped, which would cause a hang.
+                const stashLabel = ref;
+                const groupedByVault = new Map<string, string[]>();
+                for (const f of allFindings) {
+                  const existing = groupedByVault.get(f.vaultRef) ?? [];
+                  existing.push(f.keyName);
+                  groupedByVault.set(f.vaultRef, existing);
+                }
+                for (const [vaultRef, keys] of groupedByVault) {
+                  warn(`[warn] Vault "${vaultRef}" in stash "${stashLabel}" contains potentially dangerous keys:`);
+                  for (const key of keys) {
+                    warn(`  - ${key}: can hijack process execution via \`akm vault run\``);
+                  }
+                }
+                const confirmed = await p.confirm({
+                  message: "Install anyway?",
+                  initialValue: false,
+                });
+                if (p.isCancel(confirmed) || confirmed !== true) {
+                  // Roll back the install before aborting.
+                  // Use the canonical installed id (most reliably resolved by akmRemove) rather
+                  // than the raw user-supplied ref which may not match after URL normalisation.
+                  const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
+                  let rollbackWarning: string | undefined;
+                  try {
+                    await akmRemove({ target: rollbackTarget });
+                  } catch (_rollbackErr) {
+                    rollbackWarning =
+                      `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
+                      `Remove it manually with: akm remove ${rollbackTarget}`;
+                  }
+                  console.error(
+                    JSON.stringify(
+                      {
+                        ok: false,
+                        error:
+                          "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-insecure to bypass.",
+                        code: "DANGEROUS_VAULT_KEY",
+                        ...(rollbackWarning ? { rollbackWarning } : {}),
+                      },
+                      null,
+                      2,
+                    ),
+                  );
+                  process.exit(1);
+                }
+              } else {
+                // Non-interactive path without bypass flag: fail hard.
+                // Roll back the install before exiting.
+                // Use the canonical installed id (most reliably resolved by akmRemove) rather
+                // than the raw user-supplied ref which may not match after URL normalisation.
+                const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
+                let rollbackWarning: string | undefined;
+                try {
+                  await akmRemove({ target: rollbackTarget });
+                } catch (_rollbackErr) {
+                  rollbackWarning =
+                    `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
+                    `Remove it manually with: akm remove ${rollbackTarget}`;
+                }
+                const keyList = allFindings.map((f) => `  - ${f.keyName} (${f.vaultRef})`).join("\n");
+                console.error(
+                  JSON.stringify(
+                    {
+                      ok: false,
+                      error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the vault.`,
+                      code: "DANGEROUS_VAULT_KEY",
+                      ...(rollbackWarning ? { rollbackWarning } : {}),
+                    },
+                    null,
+                    2,
+                  ),
+                );
+                process.exit(1);
+              }
+            }
+          }
+        }
+      } catch (auditErr) {
+        // Only swallow errors that are NOT our intentional process.exit calls.
+        if (auditErr instanceof Error && auditErr.message === "process.exit called") throw auditErr;
+        // Vault key audit is best-effort; never fail the install on unexpected audit errors.
+      }
+
       output("add", result);
     });
   },
@@ -626,14 +1152,17 @@ const showCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      try {
-        parseAssetRef(args.ref);
-      } catch (error) {
-        if (error instanceof UsageError && error.code === "MISSING_REQUIRED_ARGUMENT") {
-          throw new UsageError(error.message, "INVALID_FLAG_VALUE", error.hint());
+      const subcommand = Array.isArray(args._) ? args._[0] : undefined;
+      if (subcommand === "proposal") {
+        const proposalId = Array.isArray(args._) ? args._[1] : undefined;
+        if (typeof proposalId !== "string" || !proposalId.trim()) {
+          throw new UsageError("Usage: akm show proposal <id>", "MISSING_REQUIRED_ARGUMENT");
         }
-        throw error;
+        const result = akmProposalShow({ id: proposalId.trim() });
+        output("proposal-show", result);
+        return;
       }
+      parseAssetRef(args.ref);
       // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
       // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
       // by `normalizeShowArgv` before citty parses argv. We read those values
@@ -673,7 +1202,13 @@ const showCommand = defineCommand({
       // every occurrence directly from argv (same pattern as `--filter`).
       const scopeTokens = parseAllFlagValues("--scope");
       const scope = parseScopeFilterFlags(scopeTokens, "--scope");
-      const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail, scope });
+      const result = await akmShowUnified({
+        ref: args.ref,
+        view,
+        detail: showDetail,
+        scope,
+        eventSource: resolveEventSource(),
+      });
       output("show", result);
     });
   },
@@ -722,6 +1257,14 @@ const configCommand = defineCommand({
         });
       },
     }),
+    show: defineCommand({
+      meta: { name: "show", description: "Alias for `akm config list` — list current configuration" },
+      run() {
+        return runWithJsonErrors(() => {
+          output("config", listConfig(loadConfig()));
+        });
+      },
+    }),
     get: defineCommand({
       meta: { name: "get", description: "Get a configuration value by key" },
       args: {
@@ -763,7 +1306,7 @@ const configCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      if (hasConfigSubcommand(args)) return;
+      if (hasSubcommand(args, CONFIG_SUBCOMMAND_SET)) return;
       if (args.list) {
         output("config", listConfig(loadConfig()));
         return;
@@ -993,10 +1536,7 @@ const registryCommand = defineCommand({
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
-          const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-          if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-            throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
-          }
+          const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
           const result = await searchRegistry(args.query, { limit: limitRaw, includeAssets: args.assets });
           output("registry-search", result);
         });
@@ -1070,7 +1610,7 @@ const feedbackCommand = defineCommand({
       "Record positive or negative feedback for any indexed stash asset.\n\n" +
       "Positive feedback boosts an asset's EMA utility score, making it rank higher\n" +
       "in future searches without requiring a full reindex.\n\n" +
-      "Negative feedback records a negative signal in usage_events and events.jsonl.\n" +
+      "Negative feedback records a negative signal in usage_events and state.db events.\n" +
       "It does NOT immediately lower the asset's ranking — the EMA utility score is\n" +
       "updated the next time `akm index` runs (incremental or full). Run `akm index`\n" +
       "after recording negative feedback to have it reflected in search results.",
@@ -1088,10 +1628,28 @@ const feedbackCommand = defineCommand({
         "Reindexing is required for the signal to affect search results.",
       default: false,
     },
-    note: { type: "string", description: "Optional note to attach to the feedback" },
+    reason: {
+      type: "string",
+      description: "Reason for the feedback (required for negative feedback by default; used by distillation)",
+    },
+    note: { type: "string", description: "Alias for --reason (backward-compatible, prefer --reason)" },
+    "failure-mode": {
+      type: "string",
+      description:
+        `Structured failure-mode taxonomy for negative feedback (F-3 / #384). ` +
+        `Accepted values: ${FEEDBACK_FAILURE_MODES.join(", ")}. ` +
+        "Stored alongside --reason in event metadata for aggregation by the distill pipeline.",
+    },
     tag: {
       type: "string",
       description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
+    },
+    "applied-to": {
+      type: "string",
+      description:
+        "Credit a lesson that helped resolve this task. Accepts a `lesson:<name>` ref. " +
+        "When combined with --positive, appends this feedback ref to the target lesson's " +
+        "`lessonStrength[]` frontmatter array (dedup, idempotent). Ignored on non-lesson targets.",
     },
   },
   run({ args }) {
@@ -1112,11 +1670,52 @@ const feedbackCommand = defineCommand({
         throw new UsageError("Specify --positive or --negative.");
       }
       const signal = args.positive ? "positive" : "negative";
+      const reason = (args.reason as string | undefined) ?? (args.note as string | undefined);
+
+      // F-3 / #384: Validate --failure-mode against the curated enum.
+      const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
+      if (failureMode) {
+        if (args.positive) {
+          throw new UsageError(
+            "--failure-mode is only valid for negative feedback.",
+            "INVALID_FLAG_VALUE",
+            "Remove --failure-mode or switch to --negative.",
+          );
+        }
+        const cfg = loadConfig();
+        const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
+        if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
+          throw new UsageError(
+            `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
+            "INVALID_FLAG_VALUE",
+            `Use one of: ${allowedModes.join(", ")}`,
+          );
+        }
+      }
+
+      if (args.negative === true && !reason?.trim()) {
+        // F-3 / #384: Default requireReason is now true. Load config to allow
+        // operators to opt out via feedback.requireReason: false in akm.json.
+        const cfg = loadConfig();
+        const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
+        if (requireReason) {
+          throw new UsageError(
+            "Negative feedback requires --reason (structured failure signals are needed for distillation). " +
+              "Use --failure-mode for a curated taxonomy or --reason for free text. " +
+              "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
+            "MISSING_REQUIRED_ARGUMENT",
+            `Hint: akm feedback ${ref} --negative --reason "..." [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
+          );
+        } else {
+          warn("Warning: negative feedback without --reason provides less distillation signal.");
+        }
+      }
       const rawTags = parseAllFlagValues("--tag");
       const validatedTags = validateFeedbackTags(rawTags);
       const metadataObj = {
         signal,
-        ...(args.note ? { note: args.note } : {}),
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        ...(failureMode ? { failureMode } : {}),
         ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
       };
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
@@ -1127,6 +1726,7 @@ const feedbackCommand = defineCommand({
         await ensureIndex(sources[0].path);
       }
 
+      let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
       const db = openExistingDatabase();
       try {
         const entryId = findEntryIdByRef(db, ref);
@@ -1148,6 +1748,28 @@ const feedbackCommand = defineCommand({
           signal,
           metadata: metadataStr,
         });
+
+        // Apply feedback-derived utility score adjustment immediately so that
+        // positive/negative signals influence search ranking without requiring
+        // a full reindex. We query the total accumulated feedback counts from
+        // usage_events so the delta reflects the entire signal history.
+        // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
+        try {
+          const counts = db
+            .prepare(
+              `SELECT
+                 SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+                 SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
+               FROM usage_events
+               WHERE event_type = 'feedback' AND entry_id = ?`,
+            )
+            .get(entryId) as { pos: number | null; neg: number | null } | undefined;
+          const pos = counts?.pos ?? 0;
+          const neg = counts?.neg ?? 0;
+          utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
+        } catch {
+          // best-effort — feedback recording succeeds even if utility update fails
+        }
       } finally {
         closeDatabase(db);
       }
@@ -1157,10 +1779,147 @@ const feedbackCommand = defineCommand({
         ref,
         metadata: metadataObj,
       });
-      output("feedback", { ok: true, ref, signal, note: args.note ?? null, tags: validatedTags });
+
+      // F-5 / #386: When a high-utility asset crosses below the review threshold,
+      // auto-create a review-needed escalation proposal so a human can confirm
+      // whether the negative feedback is valid before the asset falls out of
+      // the improve loop. Best-effort — failure is logged but does not fail the
+      // feedback command.
+      // Emit a structured event rather than a proposal so the review-needed
+      // signal is queryable via `akm events list --type improve_review_needed`
+      // without risking accidental asset overwrite if the proposal is accepted.
+      if (utilityResult?.crossedReviewThreshold) {
+        try {
+          appendEvent({
+            eventType: "improve_review_needed",
+            ref,
+            metadata: {
+              previousUtility: utilityResult.previousUtility,
+              nextUtility: utilityResult.nextUtility,
+              reason: reason?.trim() ?? null,
+              failureMode: failureMode ?? null,
+            },
+          });
+        } catch (escalationErr) {
+          warn(
+            `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
+          );
+        }
+      }
+
+      // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
+      // target is a `lesson:<name>` ref and the signal is positive, append
+      // the feedback ref to the target lesson's `lessonStrength[]`
+      // frontmatter array (dedup, idempotent). Non-lesson targets are
+      // ignored. Failures here are warnings — feedback recording is the
+      // primary contract and must not regress on lesson-write errors.
+      const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();
+      let appliedToResult: { lessonRef: string; strength: number } | null = null;
+      if (appliedToRaw && signal === "positive") {
+        try {
+          const parsedApplied = parseAssetRef(appliedToRaw);
+          if (parsedApplied.type === "lesson") {
+            const updated = appendLessonStrength(parsedApplied.type, parsedApplied.name, ref);
+            if (updated) {
+              appliedToResult = { lessonRef: appliedToRaw, strength: updated.strength };
+            }
+          }
+        } catch (err) {
+          warn(
+            `[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else if (appliedToRaw && signal !== "positive") {
+        warn(
+          "[feedback] --applied-to is ignored without --positive; lesson credit is only recorded on positive signals.",
+        );
+      }
+
+      output("feedback", {
+        ok: true,
+        ref,
+        signal,
+        reason: reason?.trim() ?? null,
+        failureMode: failureMode ?? null,
+        tags: validatedTags,
+        ...(appliedToResult
+          ? { appliedTo: { ref: appliedToResult.lessonRef, lessonStrength: appliedToResult.strength } }
+          : {}),
+      });
     });
   },
 });
+
+/**
+ * Phase 7A: append a feedback ref to a lesson's `lessonStrength[]`
+ * frontmatter array. Returns `{ strength }` (post-update count) on success,
+ * or `null` when the lesson cannot be located. Idempotent: if the ref is
+ * already credited, no write occurs.
+ *
+ * The function looks up the lesson's file via the indexer DB so the write
+ * targets the canonical on-disk location. Frontmatter is rewritten in
+ * place (no asset-spec round-trip) because we're modifying a single key on
+ * an existing asset — the same pattern memory-inference uses for
+ * `inferenceProcessed`.
+ */
+function appendLessonStrength(type: string, name: string, feedbackRef: string): { strength: number } | null {
+  const ref = `${type}:${name}`;
+  let filePath: string | undefined;
+  const db = openExistingDatabase();
+  try {
+    const entryId = findEntryIdByRef(db, ref);
+    if (entryId === undefined) {
+      warn(`[feedback] --applied-to: lesson ${ref} is not in the index.`);
+      return null;
+    }
+    const row = db.prepare("SELECT file_path FROM entries WHERE id = ?").get(entryId) as
+      | { file_path: string }
+      | undefined;
+    if (!row?.file_path) {
+      warn(`[feedback] --applied-to: cannot resolve file path for ${ref}.`);
+      return null;
+    }
+    filePath = row.file_path;
+  } finally {
+    closeDatabase(db);
+  }
+
+  if (!filePath || !fs.existsSync(filePath)) {
+    warn(`[feedback] --applied-to: lesson file missing on disk for ${ref}.`);
+    return null;
+  }
+
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const data = { ...parsed.data };
+  const existing = data.lessonStrength;
+  const strengthList: string[] = Array.isArray(existing)
+    ? existing.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim())
+    : typeof existing === "string" && existing.trim().length > 0
+      ? [existing.trim()]
+      : [];
+  if (strengthList.includes(feedbackRef)) {
+    // Already credited — idempotent no-op.
+    return { strength: strengthList.length };
+  }
+  strengthList.push(feedbackRef);
+  data.lessonStrength = strengthList;
+
+  const yaml = yamlStringify(data).trimEnd();
+  const block = parseFrontmatterBlock(raw);
+  const body = block?.content ?? raw;
+  const next = `---\n${yaml}\n---\n${body.startsWith("\n") ? "" : "\n"}${body}`;
+  try {
+    // Preserve the existing file's permission bits (markdown assets are
+    // typically 0o644); writeFileAtomic defaults to 0o600 otherwise.
+    const mode = fs.statSync(filePath).mode & 0o777;
+    writeFileAtomic(filePath, next, mode);
+  } catch (err) {
+    warn(`[feedback] --applied-to: failed to write ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return { strength: strengthList.length };
+}
 
 const historyCommand = defineCommand({
   meta: {
@@ -1169,146 +1928,56 @@ const historyCommand = defineCommand({
       "Show mutation/usage history for a single asset (--ref) or stash-wide.\n\n" +
       "Event sources:\n" +
       "  usage_events (default): search, show, and feedback events from the local index.\n" +
-      "  events.jsonl (--include-proposals): proposal lifecycle events (promoted, rejected)\n" +
-      "    emitted by `akm proposal accept` / `akm proposal reject`.\n\n" +
+      "  state.db events (--include-proposals): proposal lifecycle events (promoted, rejected)\n" +
+      "    emitted by `akm accept` / `akm reject`.\n\n" +
       "Results from all active sources are merged and sorted chronologically.",
   },
   args: {
     ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    source: {
+      type: "string",
+      description: 'Filter by event source: "user" (default) or "improve" (akm improve operations).',
+    },
     "include-proposals": {
       type: "boolean",
       description:
-        "Also include proposal lifecycle events (promoted, rejected) from events.jsonl. " +
+        "Also include proposal lifecycle events (promoted, rejected) from state.db events. " +
         "Default: false (usage_events only).",
+      default: false,
+    },
+    "accept-rate-by-source": {
+      type: "boolean",
+      description:
+        "Compute accept-rate-per-source metrics from the proposal store and include them in the output (F-4 / #385). " +
+        "Useful for measuring which generators (reflect, distill, …) produce the most accepted proposals.",
       default: false,
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      const sourceFlag = args.source as "user" | "improve" | undefined;
+      if (sourceFlag !== undefined && sourceFlag !== "user" && sourceFlag !== "improve") {
+        throw new UsageError(
+          `Invalid --source value: "${args.source}". Must be "user" or "improve".`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const sources = resolveSourceEntries();
+      const stashDir = sources[0]?.path;
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
+        source: sourceFlag,
         includeProposals: args["include-proposals"],
+        acceptRateBySource: args["accept-rate-by-source"] as boolean | undefined,
+        stashDir,
       });
       output("history", result);
     });
   },
 });
-
-function normalizeMarkdownAssetName(name: string | undefined, fallback: string): string {
-  const trimmed = (name ?? fallback)
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "")
-    .replace(/\.md$/i, "");
-  if (!trimmed) throw new UsageError("Asset name cannot be empty.");
-  const segments = trimmed.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new UsageError("Asset name must be a relative path without '.' or '..' segments.");
-  }
-  return trimmed;
-}
-
-function slugifyAssetName(value: string, fallbackPrefix: string): string {
-  const slug = value
-    .toLowerCase()
-    .replace(/^[#>\-\s]+/, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, MAX_CAPTURED_ASSET_SLUG_LENGTH);
-  return slug || `${fallbackPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function inferAssetName(content: string, fallbackPrefix: string, preferred?: string): string {
-  const firstNonEmptyLine = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  const basis = preferred?.trim() || firstNonEmptyLine || fallbackPrefix;
-  return slugifyAssetName(basis, fallbackPrefix);
-}
-
-function readKnowledgeContent(source: string): { content: string; preferredName?: string } {
-  if (source === "-") {
-    const content = tryReadStdinText();
-    if (!content?.trim()) {
-      throw new UsageError("No stdin content received. Pipe a document into stdin or pass a file path.");
-    }
-    return { content };
-  }
-
-  const resolvedSource = path.resolve(source);
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(resolvedSource);
-  } catch {
-    throw new UsageError(`Knowledge source not found: "${source}". Pass a readable file path or "-" for stdin.`);
-  }
-  if (!stat.isFile()) {
-    throw new UsageError(`Knowledge source must be a file: "${source}".`);
-  }
-  return {
-    content: fs.readFileSync(resolvedSource, "utf8"),
-    preferredName: path.basename(resolvedSource, path.extname(resolvedSource)),
-  };
-}
-
-async function readKnowledgeInput(source: string): Promise<{ content: string; preferredName?: string }> {
-  if (!isHttpUrl(source)) return readKnowledgeContent(source);
-  const snapshot = await fetchWebsiteMarkdownSnapshot(source);
-  return { content: snapshot.content, preferredName: snapshot.preferredName };
-}
-
-async function writeMarkdownAsset(options: {
-  type: "knowledge" | "memory";
-  content: string;
-  name?: string;
-  fallbackPrefix: string;
-  preferredName?: string;
-  force?: boolean;
-  /** Optional explicit `--target` override naming a configured source. */
-  target?: string;
-}): Promise<{ ref: string; path: string; stashDir: string }> {
-  // Resolve write target via the v1 precedence chain (`--target` →
-  // `defaultWriteTarget` → working stash). Per spec §10 step 5, this is the
-  // single dispatch point — `core/write-source.ts` owns all kind-branching.
-  const cfg = loadConfig();
-  const { source, config } = resolveWriteTarget(cfg, options.target);
-
-  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
-  const normalizedName = normalizeMarkdownAssetName(
-    options.name,
-    inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
-  );
-  // Pre-flight: existence + force semantics. The helper itself overwrites
-  // unconditionally; the CLI surfaces a friendlier UsageError before any
-  // disk activity when --force is absent.
-  const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
-  if (!isWithin(assetPath, typeRoot)) {
-    throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
-  }
-  if (fs.existsSync(assetPath) && !options.force) {
-    throw new UsageError(
-      `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-  }
-
-  // Delegate the actual write (and optional git commit/push) to the helper.
-  const result = await writeAssetToSource(
-    source,
-    config,
-    { type: options.type, name: normalizedName },
-    options.content,
-  );
-  return {
-    ref: result.ref,
-    path: result.path,
-    stashDir: source.path,
-  };
-}
 
 const workflowStartCommand = defineCommand({
   meta: {
@@ -1336,16 +2005,23 @@ const workflowNextCommand = defineCommand({
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
+    "dry-run": { type: "boolean", description: "Not supported — rejected with an error", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (getHyphenatedBoolean(args, "dry-run")) {
+        throw new UsageError(
+          "`akm workflow next` does not support --dry-run. Remove the flag to start or resume a run.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
       const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
       // If the target looks like a UUID-style run id (no `:` and matches the
       // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
       // error before parseAssetRef gets to throw an unhelpful ref-parse error.
       if (looksLikeWorkflowRunId(args.target)) {
         const { hasWorkflowRun } = await import("./workflows/runs.js");
-        if (!hasWorkflowRun(args.target)) {
+        if (!(await hasWorkflowRun(args.target))) {
           throw new NotFoundError(
             `Workflow run "${args.target}" not found.`,
             "WORKFLOW_NOT_FOUND",
@@ -1392,7 +2068,7 @@ const workflowCompleteCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = completeWorkflowStep({
+      const result = await completeWorkflowStep({
         runId: args.runId,
         stepId: args.step,
         status: parseWorkflowStepState(args.state),
@@ -1413,7 +2089,7 @@ const workflowStatusCommand = defineCommand({
     target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       const target = args.target;
       // Check if target looks like a workflow ref
       const parsed = (() => {
@@ -1425,16 +2101,16 @@ const workflowStatusCommand = defineCommand({
       })();
       if (parsed?.type === "workflow") {
         const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
-        const { runs } = listWorkflowRuns({ workflowRef: ref });
+        const { runs } = await listWorkflowRuns({ workflowRef: ref });
         if (runs.length === 0) {
           throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
         }
         const mostRecent = runs[0];
         if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
-        const result = getWorkflowStatus(mostRecent.id);
+        const result = await getWorkflowStatus(mostRecent.id);
         output("workflow-status", result);
       } else {
-        const result = getWorkflowStatus(target);
+        const result = await getWorkflowStatus(target);
         output("workflow-status", result);
       }
     });
@@ -1451,8 +2127,8 @@ const workflowListCommand = defineCommand({
     active: { type: "boolean", description: "Only show active runs", default: false },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = listWorkflowRuns({ workflowRef: args.ref, activeOnly: args.active });
+    return runWithJsonErrors(async () => {
+      const result = await listWorkflowRuns({ workflowRef: args.ref, activeOnly: args.active });
       output("workflow-list", result);
     });
   },
@@ -1572,8 +2248,8 @@ const workflowResumeCommand = defineCommand({
     runId: { type: "positional", description: "Workflow run id", required: true },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = resumeWorkflowRun(args.runId);
+    return runWithJsonErrors(async () => {
+      const result = await resumeWorkflowRun(args.runId);
       output("workflow-resume", result);
     });
   },
@@ -1596,9 +2272,9 @@ const workflowCommand = defineCommand({
     validate: workflowValidateCommand,
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       if (hasWorkflowSubcommand(args)) return;
-      output("workflow-list", listWorkflowRuns({ activeOnly: true }));
+      output("workflow-list", await listWorkflowRuns({ activeOnly: true }));
     });
   },
 });
@@ -1670,6 +2346,10 @@ const rememberCommand = defineCommand({
       type: "string",
       description: "Scope this memory to a channel name (persisted as `scope_channel` frontmatter)",
     },
+    showSimilar: {
+      type: "boolean",
+      description: "Return top-3 similar existing memories in output (opt-in)",
+    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1690,16 +2370,26 @@ const rememberCommand = defineCommand({
       if (typeof args.channel === "string" && args.channel.trim()) scopeFields.channel = args.channel.trim();
       const hasScope = Object.keys(scopeFields).length > 0;
 
-      const hasTagRequiringArgs =
-        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.enrich;
+      const hasTagRequiringArgs = rawTags.length > 0 || !!args.expires || !!args.source || !!args.description;
       const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto;
 
       if (!hasStructuredArgs) {
+        // Phase 1B / Rec 7: even the zero-flag hot-path emits
+        // `captureMode: hot` + `beliefState: asserted` so user-supplied
+        // memories outrank background-derived ones during ranking.
+        const frontmatterBlock = buildMemoryFrontmatter({
+          captureMode: "hot",
+          beliefState: "asserted",
+        });
+        const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
+        // Derive the asset slug from the body (not the frontmatter block);
+        // otherwise inferAssetName would key off the leading `---` delimiter.
         const result = await writeMarkdownAsset({
           type: "memory",
-          content: body,
+          content: contentWithFrontmatter,
           name: args.name,
           fallbackPrefix: "memory",
+          preferredName: inferAssetName(body, "memory"),
           force: args.force,
           target: args.target,
         });
@@ -1708,7 +2398,12 @@ const rememberCommand = defineCommand({
           ref: result.ref,
           metadata: { path: result.path, force: args.force === true },
         });
-        output("remember", { ok: true, ...result });
+        if (args.showSimilar) {
+          const similar = await fetchSimilarMemories(body.slice(0, 500), result.ref);
+          output("remember", { ok: true, ...result, similar });
+        } else {
+          output("remember", { ok: true, ...result });
+        }
         return;
       }
 
@@ -1769,6 +2464,10 @@ const rememberCommand = defineCommand({
       }
 
       // ── Build frontmatter and write ───────────────────────────────────────
+      // Phase 1B / Rec 7: the hot-path CLI write always marks the memory as
+      // `captureMode: hot` and `beliefState: asserted`. Ranking applies a
+      // hot-capture boost so user-supplied memories outrank otherwise-equal
+      // background-derived ones.
       const frontmatterBlock = buildMemoryFrontmatter({
         description,
         tags,
@@ -1776,6 +2475,8 @@ const rememberCommand = defineCommand({
         observed_at,
         expires,
         subjective,
+        captureMode: "hot",
+        beliefState: "asserted",
         ...(hasScope ? { scope: scopeFields } : {}),
       });
 
@@ -1801,66 +2502,35 @@ const rememberCommand = defineCommand({
           ...(hasScope ? { scope: scopeFields } : {}),
         },
       });
-      output("remember", { ok: true, ...result });
+      if (args.showSimilar) {
+        const similar = await fetchSimilarMemories((body ?? args.content ?? "").slice(0, 500), result.ref);
+        output("remember", { ok: true, ...result, similar });
+      } else {
+        output("remember", { ok: true, ...result });
+      }
     });
   },
 });
 
-function resolveRememberContentArg(content: string | undefined): string | undefined {
-  if (content === undefined) return undefined;
-
-  const parsedFormat = parseFlagValue(process.argv, "--format");
-  if (
-    parsedFormat !== undefined &&
-    content === parsedFormat &&
-    wasRememberFlagValueConsumedAsContent(content, parsedFormat, "--format")
-  ) {
-    return undefined;
+/**
+ * Best-effort top-3 similar memory search for `--show-similar`.
+ * Scoped to memory: type; excludes the just-written ref.
+ */
+async function fetchSimilarMemories(
+  query: string,
+  excludeRef: string,
+): Promise<Array<{ ref: string; title?: string }>> {
+  try {
+    const result = await akmSearch({ query, type: "memory", limit: 4 });
+    return (result.hits ?? [])
+      .filter(
+        (h): h is import("./sources/types").SourceSearchHit => "ref" in h && (h as { ref: string }).ref !== excludeRef,
+      )
+      .slice(0, 3)
+      .map((h) => ({ ref: h.ref, ...(h.name ? { title: h.name } : {}) }));
+  } catch {
+    return [];
   }
-
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
-  if (
-    parsedDetail !== undefined &&
-    content === parsedDetail &&
-    wasRememberFlagValueConsumedAsContent(content, parsedDetail, "--detail")
-  ) {
-    return undefined;
-  }
-
-  return content;
-}
-
-function wasRememberFlagValueConsumedAsContent(
-  content: string,
-  flagValue: string,
-  flagName: "--format" | "--detail",
-): boolean {
-  const argv = process.argv.slice(2);
-  const rememberIndex = argv.indexOf("remember");
-  const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
-
-  let flagIndex = -1;
-  let flagConsumesNextToken = false;
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (token === flagName) {
-      flagIndex = i;
-      flagConsumesNextToken = true;
-      break;
-    }
-    if (token === `${flagName}=${flagValue}`) {
-      flagIndex = i;
-      break;
-    }
-  }
-
-  if (flagIndex === -1) return false;
-  if (tokens.slice(0, flagIndex).includes(content)) return false;
-
-  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
-  if (tokens.slice(firstTokenAfterFlag).includes(content)) return false;
-
-  return true;
 }
 
 const importKnowledgeCommand = defineCommand({
@@ -1959,14 +2629,15 @@ const helpCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          if (!args.version || !String(args.version).trim()) {
+          const version = resolveHelpMigrateVersionArg(typeof args.version === "string" ? args.version : undefined);
+          if (!version?.trim()) {
             throw new UsageError(
               "Usage: akm help migrate <version>.",
               "MISSING_REQUIRED_ARGUMENT",
               "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
             );
           }
-          process.stdout.write(renderMigrationHelp(args.version));
+          process.stdout.write(renderMigrationHelp(version));
         });
       },
     }),
@@ -1997,8 +2668,8 @@ const completionsCommand = defineCommand({
     const script = generateBashCompletions(main);
     if (args.install) {
       const dest = installBashCompletions(script);
-      console.error(`Completions installed to ${dest}`);
-      console.error(`Restart your shell or run:  source ${dest}`);
+      info(`Completions installed to ${dest}`);
+      info(`Restart your shell or run:  source ${dest}`);
     } else {
       process.stdout.write(script);
     }
@@ -2114,6 +2785,13 @@ function resolveVaultPath(ref: string): {
   const source = findVaultSource(parsed.origin);
   const typeRoot = path.join(source.path, "vaults");
   const absPath = resolveAssetPathFromName("vault", typeRoot, parsed.name);
+  // Defense-in-depth: ensure the resolved path stays inside the vaults directory.
+  // validateName already rejects traversal patterns like "../../foo", but an
+  // absolute-path override or symlink-based attack could still escape without
+  // this second check.
+  if (!isWithin(absPath, typeRoot)) {
+    throw new UsageError(`Vault name "${parsed.name}" escapes the vault directory.`);
+  }
   return { name: parsed.name, absPath, source, parsedRef: parsed };
 }
 
@@ -2142,6 +2820,9 @@ function listVaultsRecursive(
         if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
         const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
         if (!canonical) continue;
+        // Skip sensitive vaults: presence of a sibling .sensitive marker file suppresses listing.
+        const markerPath = full.replace(/\.env$/, ".sensitive");
+        if (fs.existsSync(markerPath)) continue;
         const { keys } = listKeysFn(full);
         result.push({ ref: makeVaultRef(canonical, source), path: full, keys });
       }
@@ -2167,6 +2848,9 @@ function splitVaultRunTarget(target: string): { ref: string; key?: string } {
   if (!key) {
     throw new UsageError("Expected vault run target in the form <ref> or <ref/KEY>.");
   }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new UsageError(`"${key}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
+  }
   const resolved = resolveVaultPath(refPart);
   if (!fs.existsSync(resolved.absPath)) {
     throw new NotFoundError(`Vault not found: ${makeVaultRef(resolved.name, resolved.source)}`);
@@ -2189,13 +2873,24 @@ const vaultCreateCommand = defineCommand({
   meta: { name: "create", description: "Create an empty vault file (no-op if it already exists)" },
   args: {
     name: { type: "positional", description: "Vault name (e.g. prod) — file becomes <name>.env", required: true },
+    sensitive: {
+      type: "boolean",
+      description: "Exclude this vault from vault list output and the search index",
+      default: false,
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { createVault } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.name);
       createVault(absPath);
-      output("vault-create", { ref: makeVaultRef(name, source), path: absPath });
+      if (args.sensitive) {
+        const markerPath = absPath.replace(/\.env$/, ".sensitive");
+        if (!fs.existsSync(markerPath)) {
+          fs.writeFileSync(markerPath, "", { mode: 0o600 });
+        }
+      }
+      output("vault-create", { ref: makeVaultRef(name, source) });
     });
   },
 });
@@ -2204,37 +2899,53 @@ const vaultSetCommand = defineCommand({
   meta: {
     name: "set",
     description:
-      'Set a key in a vault. Value is written to disk and never echoed back. Accepts KEY=VALUE combined form or separate KEY VALUE args. Optionally attach a comment with --comment "description".',
+      'Set a key in a vault. Value is read from stdin by default (never via argv, avoiding /proc/cmdline exposure). Use --from-env <VAR> to read from an environment variable instead. Optionally attach a comment with --comment "description".',
   },
   args: {
     ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
-    key: { type: "positional", description: "Key name (e.g. DB_URL) or KEY=VALUE combined form", required: true },
-    value: {
-      type: "positional",
-      description: "Value to store (omit when using KEY=VALUE combined form)",
-      required: false,
-    },
+    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
     comment: { type: "string", description: "Optional comment written above the key line", required: false },
+    "from-env": {
+      type: "string",
+      description: "Read value from the named environment variable instead of stdin",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { setKey } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.ref);
 
-      let realKey: string;
-      let realValue: string;
+      const fromEnv = getHyphenatedArg<string>(args, "from-env");
 
-      if ((args.value === undefined || args.value === "") && args.key.includes("=")) {
-        const eqIdx = args.key.indexOf("=");
-        realKey = args.key.slice(0, eqIdx);
-        realValue = args.key.slice(eqIdx + 1);
+      let realValue: string;
+      if (fromEnv !== undefined) {
+        const envVal = process.env[fromEnv];
+        if (envVal === undefined) {
+          throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
+        }
+        realValue = envVal;
       } else {
-        realKey = args.key;
-        realValue = args.value ?? "";
+        // Print a prompt when stdin is attached to a terminal so an
+        // interactive invocation doesn't silently hang with no indication
+        // that input is being awaited.
+        if (process.stdin.isTTY) {
+          process.stderr.write(`Enter value for "${args.key}" (Ctrl-D when done):\n`);
+        }
+        const MAX_VAULT_VALUE_BYTES = 1024 * 1024; // 1 MB
+        let totalBytes = 0;
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of Bun.stdin.stream()) {
+          totalBytes += chunk.byteLength;
+          if (totalBytes > MAX_VAULT_VALUE_BYTES) {
+            throw new UsageError("Vault value exceeds 1 MB limit. Values must be provided via stdin.");
+          }
+          chunks.push(chunk);
+        }
+        realValue = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
       }
 
-      setKey(absPath, realKey, realValue, args.comment);
-      output("vault-set", { ref: makeVaultRef(name, source), key: realKey, path: absPath });
+      setKey(absPath, args.key, realValue, args.comment);
+      output("vault-set", { ref: makeVaultRef(name, source), key: args.key });
     });
   },
 });
@@ -2253,7 +2964,7 @@ const vaultUnsetCommand = defineCommand({
         throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
       }
       const removed = unsetKey(absPath, args.key);
-      output("vault-unset", { ref: makeVaultRef(name, source), key: args.key, removed, path: absPath });
+      output("vault-unset", { ref: makeVaultRef(name, source), key: args.key, removed });
     });
   },
 });
@@ -2315,6 +3026,16 @@ const vaultRunCommand = defineCommand({
         }
       }
 
+      // Emit vault access event (keys only, no values) for audit trail.
+      // Best-effort: never block vault run on event write failure.
+      appendEvent({
+        eventType: "vault_access",
+        ref: makeVaultRef(name, source),
+        metadata: {
+          keys: key ? [key] : Object.keys(envValues),
+        },
+      });
+
       const result = spawnSync(command[0] as string, command.slice(1), {
         stdio: "inherit",
         env: mergedEnv,
@@ -2341,7 +3062,7 @@ const vaultCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (hasVaultSubcommand(args)) return;
+      if (hasSubcommand(args, VAULT_SUBCOMMAND_SET)) return;
       // Default action: list all vaults
       const { listKeys } = await import("./commands/vault.js");
       output("vault-list", { vaults: listVaultsRecursive(listKeys) });
@@ -2518,12 +3239,47 @@ const wikiStashCommand = defineCommand({
     name: { type: "positional", description: "Wiki name", required: true },
     source: { type: "positional", description: "Source file path, URL, or '-' to read from stdin", required: true },
     as: { type: "string", description: "Preferred slug base (defaults to source filename or first-line slug)" },
+    target: {
+      type: "string",
+      description:
+        "Name of a writable stash source to write into instead of the default stash. Must match a configured source name (run `akm list` to see sources).",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { stashRaw } = await import("./wiki/wiki.js");
-      const { content, preferredName } = await readKnowledgeInput(args.source);
-      const stashDir = resolveStashDir();
+      const { content, preferredName } = await (async () => {
+        if (!isHttpUrl(args.source)) return readKnowledgeInput(args.source);
+        const { fetchWebsiteMarkdownSnapshot } = await import("./sources/website-ingest");
+        const snapshot = await fetchWebsiteMarkdownSnapshot(args.source);
+        return { content: snapshot.content, preferredName: args.as ?? snapshot.preferredName };
+      })();
+
+      let stashDir: string;
+      if (args.target) {
+        // Resolve the named source to its filesystem path.
+        const cfg = loadConfig();
+        const sources = resolveConfiguredSources(cfg);
+        const match = sources.find((s) => s.name === args.target);
+        if (!match) {
+          throw new UsageError(
+            `--target must reference a configured source name. No source named "${args.target}" found. Run \`akm list\` to see available sources.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        const spec = match.source;
+        if (spec.type !== "filesystem" && spec.type !== "local") {
+          throw new ConfigError(
+            `Source "${args.target}" is not a filesystem source and cannot be used as a wiki stash target.`,
+            "INVALID_CONFIG_FILE",
+            `Use a source with type "filesystem" or "local", or omit --target to use the default stash.`,
+          );
+        }
+        stashDir = spec.path;
+      } else {
+        stashDir = resolveStashDir();
+      }
+
       const result = stashRaw({
         stashDir,
         wikiName: args.name,
@@ -2595,7 +3351,7 @@ const wikiCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (hasWikiSubcommand(args)) return;
+      if (hasSubcommand(args, WIKI_SUBCOMMAND_SET)) return;
       // Default action: list wikis
       const { listWikis } = await import("./wiki/wiki.js");
       output("wiki-list", { wikis: listWikis(resolveStashDir()) });
@@ -2604,16 +3360,16 @@ const wikiCommand = defineCommand({
 });
 
 // ── `akm events` ────────────────────────────────────────────────────────────
-// Append-only events stream surface (#204). `list` reads `events.jsonl`
-// with optional --since/--type/--ref filters; `tail` follows the file via
+// Append-only events stream surface (#204). `list` reads state.db events
+// with optional --since/--type/--ref filters; `tail` follows the table via
 // a polling loop and prints each event as a single JSONL line.
 
 const eventsListCommand = defineCommand({
-  meta: { name: "list", description: "List events from the append-only events.jsonl stream" },
+  meta: { name: "list", description: "List events from the append-only state.db events stream" },
   args: {
     since: {
       type: "string",
-      description: "ISO timestamp / epoch ms, OR `@offset:<bytes>` for a durable byte-cursor (resume across processes)",
+      description: "ISO timestamp / epoch ms, OR `@offset:<id>` for a durable row-id cursor (resume across processes)",
     },
     type: { type: "string", description: "Filter by event type (add, remove, remember, feedback, ...)" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
@@ -2643,11 +3399,11 @@ const eventsListCommand = defineCommand({
 });
 
 const eventsTailCommand = defineCommand({
-  meta: { name: "tail", description: "Follow the append-only events.jsonl stream (polling)" },
+  meta: { name: "tail", description: "Follow the append-only state.db events stream (polling)" },
   args: {
     since: {
       type: "string",
-      description: "ISO timestamp / epoch ms, OR `@offset:<bytes>` for a durable byte-cursor (resume across processes)",
+      description: "ISO timestamp / epoch ms, OR `@offset:<id>` for a durable row-id cursor (resume across processes)",
     },
     type: { type: "string", description: "Filter by event type" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
@@ -2665,9 +3421,12 @@ const eventsTailCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const intervalMs = parsePositiveInt(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
-      const maxDurationMs = parsePositiveInt(getHyphenatedArg<string>(args, "max-duration-ms"), "--max-duration-ms");
-      const maxEvents = parsePositiveInt(getHyphenatedArg<string>(args, "max-events"), "--max-events");
+      const intervalMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
+      const maxDurationMs = parsePositiveIntFlag(
+        getHyphenatedArg<string>(args, "max-duration-ms"),
+        "--max-duration-ms",
+      );
+      const maxEvents = parsePositiveIntFlag(getHyphenatedArg<string>(args, "max-events"), "--max-events");
       const mode = getOutputMode();
       // In streaming text mode we want each event to print as soon as it
       // arrives. The polling loop emits via `onEvent`; the final result is
@@ -2721,21 +3480,10 @@ const eventsTailCommand = defineCommand({
   },
 });
 
-function parsePositiveInt(raw: string | undefined, flag: string): number | undefined {
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const value = Number.parseInt(trimmed, 10);
-  if (Number.isNaN(value) || value <= 0) {
-    throw new UsageError(`Invalid ${flag} value: "${raw}". Must be a positive integer.`, "INVALID_FLAG_VALUE");
-  }
-  return value;
-}
-
 const eventsCommand = defineCommand({
   meta: {
     name: "events",
-    description: "Read or follow the append-only events.jsonl stream (mutations, feedback, indexing)",
+    description: "Read or follow the append-only state.db events stream (mutations, feedback, indexing)",
   },
   subCommands: {
     list: eventsListCommand,
@@ -2743,18 +3491,94 @@ const eventsCommand = defineCommand({
   },
 });
 
+// ── lessons subcommands (Phase 7A / Advantage D4c) ──────────────────────────
+
+const lessonsCoverageCommand = defineCommand({
+  meta: {
+    name: "coverage",
+    description:
+      "Report tags that exist on indexed assets but are NOT yet covered by any lesson.\n\n" +
+      "Useful for spotting topics where the stash has skills/commands/scripts but no\n" +
+      "crystallized lesson — a signal that the team has tacit knowledge worth distilling.\n\n" +
+      "Default output is JSON: { uncoveredTags: string[], lessonTagCount: number, totalTagCount: number }.\n" +
+      "Pass --format text for a plain-text bulleted list.",
+  },
+  args: {},
+  run() {
+    return runWithJsonErrors(() => {
+      const db = openExistingDatabase();
+      try {
+        const allTagSet = collectTagSetFromEntries(db, undefined);
+        const lessonTagSet = collectTagSetFromEntries(db, "lesson");
+        const uncovered: string[] = [];
+        for (const tag of allTagSet) {
+          if (!lessonTagSet.has(tag)) uncovered.push(tag);
+        }
+        uncovered.sort((a, b) => a.localeCompare(b));
+        output("lessons-coverage", {
+          ok: true,
+          uncoveredTags: uncovered,
+          lessonTagCount: lessonTagSet.size,
+          totalTagCount: allTagSet.size,
+        });
+      } finally {
+        closeDatabase(db);
+      }
+    });
+  },
+});
+
+/**
+ * Walk indexed entries and collect a deduplicated set of tags. When
+ * `entryType` is provided, only entries of that type contribute tags.
+ *
+ * Pure read; never mutates the DB. Used by `akm lessons coverage` (Phase 7A)
+ * to compute the diff between all-asset tags and lesson tags.
+ */
+function collectTagSetFromEntries(db: import("bun:sqlite").Database, entryType: string | undefined): Set<string> {
+  const tags = new Set<string>();
+  const stmt = entryType
+    ? db.prepare("SELECT entry_json FROM entries WHERE entry_type = ?")
+    : db.prepare("SELECT entry_json FROM entries");
+  const rows = (entryType ? stmt.all(entryType) : stmt.all()) as Array<{ entry_json: string }>;
+  for (const row of rows) {
+    let parsed: { tags?: unknown };
+    try {
+      parsed = JSON.parse(row.entry_json) as { tags?: unknown };
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed.tags)) continue;
+    for (const tag of parsed.tags) {
+      if (typeof tag === "string" && tag.trim().length > 0) {
+        tags.add(tag.trim().toLowerCase());
+      }
+    }
+  }
+  return tags;
+}
+
+const lessonsCommand = defineCommand({
+  meta: {
+    name: "lessons",
+    description: "Lesson-asset tooling: tag-coverage gaps, strength queries.",
+  },
+  subCommands: {
+    coverage: lessonsCoverageCommand,
+  },
+});
+
 // ── proposal substrate (#225) ────────────────────────────────────────────────
 
-const proposalListCommand = defineCommand({
-  meta: { name: "list", description: "List pending proposals (use --include-archive to see decided ones)" },
+const proposalsCommand = defineCommand({
+  meta: { name: "proposals", description: "List proposal queue entries" },
   args: {
-    status: { type: "string", description: "Filter by status (pending|accepted|rejected)" },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
-    "include-archive": {
-      type: "boolean",
-      description: "Include accepted/rejected proposals from the archive",
-      default: false,
+    status: {
+      type: "string",
+      description: "Filter by status (pending|accepted|rejected|reverted)",
     },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    type: { type: "string", description: "Filter by asset type" },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2762,58 +3586,192 @@ const proposalListCommand = defineCommand({
       const result = akmProposalList({
         status,
         ref: args.ref,
-        includeArchive: getHyphenatedBoolean(args, "include-archive"),
+        includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
       });
       output("proposal-list", result);
     });
   },
 });
 
-const proposalShowCommand = defineCommand({
-  meta: { name: "show", description: "Show a proposal's metadata, payload, and validation report" },
+const acceptCommand = defineCommand({
+  meta: { name: "accept", description: "Accept a proposal and promote it into the stash" },
   args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = akmProposalShow({ id: args.id });
-      output("proposal-show", result);
-    });
-  },
-});
-
-const proposalAcceptCommand = defineCommand({
-  meta: { name: "accept", description: "Validate and promote a proposal to a real asset" },
-  args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    id: {
+      type: "positional",
+      description:
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+      required: false,
+    },
     target: { type: "string", description: "Override the write target by source name" },
+    // F-6 / #393: Batch accept by source, diff size, or age.
+    source: {
+      type: "string",
+      description:
+        "F-6: Bulk-accept all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description:
+        "F-6: When bulk-accepting, only accept proposals whose content is <= this many lines. Skips larger proposals.",
+    },
+    "older-than": {
+      type: "string",
+      description:
+        "F-6: When bulk-accepting, only accept proposals created more than this many days ago (e.g. '7' for 7 days).",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "F-6: List proposals that would be bulk-accepted without accepting them.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmProposalAccept({ id: args.id, target: args.target });
+      // F-6 / #393: Bulk-accept when --source is provided without a positional id.
+      if (args.source && !args.id) {
+        const { listProposals } = await import("./core/proposals");
+        const stashDir = resolveStashDir();
+        const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+          throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+        }
+        const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+          throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+        }
+        const maxDiffLines = rawMaxDiff;
+        const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
+        const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+          if (p.source !== args.source) return false;
+          if (maxDiffLines !== undefined) {
+            const lines = (p.payload.content ?? "").split("\n").length;
+            if (lines > maxDiffLines) return false;
+          }
+          if (olderThanMs !== undefined) {
+            const age = Date.now() - new Date(p.createdAt).getTime();
+            if (age < olderThanMs) return false;
+          }
+          return true;
+        });
+        const results = [];
+        for (const proposal of pending) {
+          if (args["dry-run"]) {
+            results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+          } else {
+            const result = await akmProposalAccept({ id: proposal.id, target: args.target as string | undefined });
+            results.push(result);
+          }
+        }
+        output("proposal-accept-batch", { accepted: results.length, results, dryRun: args["dry-run"] as boolean });
+        return;
+      }
+      if (!args.id) {
+        throw new UsageError("Usage: akm accept <id>  OR  akm accept --source <source>", "MISSING_REQUIRED_ARGUMENT");
+      }
+      const result = await akmProposalAccept({ id: args.id as string, target: args.target as string | undefined });
       output("proposal-accept", result);
     });
   },
 });
 
-const proposalRejectCommand = defineCommand({
-  meta: { name: "reject", description: "Archive a pending proposal with an optional reason" },
+const rejectCommand = defineCommand({
+  meta: { name: "reject", description: "Reject a proposal and record the reason" },
   args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
-    reason: { type: "string", description: "Reason for rejection (recorded in the archived proposal)" },
+    id: {
+      type: "positional",
+      description:
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+      required: false,
+    },
+    reason: { type: "string", description: "Reason for rejection (required)" },
+    // F-6 / #393: Batch reject by source, diff size, or age.
+    source: {
+      type: "string",
+      description:
+        "F-6: Bulk-reject all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description:
+        "F-6: When bulk-rejecting, only reject proposals whose content is <= this many lines. Skips larger proposals.",
+    },
+    "older-than": {
+      type: "string",
+      description:
+        "F-6: When bulk-rejecting, only reject proposals created more than this many days ago (e.g. '7' for 7 days).",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "F-6: List proposals that would be bulk-rejected without rejecting them.",
+      default: false,
+    },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = akmProposalReject({ id: args.id, reason: args.reason });
+    return runWithJsonErrors(async () => {
+      if (!args.reason || !String(args.reason).trim()) {
+        throw new UsageError(
+          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      // F-6 / #393: Bulk-reject when --source is provided without a positional id.
+      if (args.source && !args.id) {
+        const { listProposals } = await import("./core/proposals");
+        const stashDir = resolveStashDir();
+        const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+        if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+          throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+        }
+        const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+        if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+          throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+        }
+        const maxDiffLines = rawMaxDiff;
+        const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
+        const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+          if (p.source !== args.source) return false;
+          if (maxDiffLines !== undefined) {
+            const lines = (p.payload.content ?? "").split("\n").length;
+            if (lines > maxDiffLines) return false;
+          }
+          if (olderThanMs !== undefined) {
+            const age = Date.now() - new Date(p.createdAt).getTime();
+            if (age < olderThanMs) return false;
+          }
+          return true;
+        });
+        const results = [];
+        for (const proposal of pending) {
+          if (args["dry-run"]) {
+            results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+          } else {
+            const result = akmProposalReject({ id: proposal.id, reason: String(args.reason) });
+            results.push(result);
+          }
+        }
+        output("proposal-reject-batch", { rejected: results.length, results, dryRun: args["dry-run"] as boolean });
+        return;
+      }
+      if (!args.id) {
+        throw new UsageError(
+          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      const result = akmProposalReject({ id: args.id as string, reason: String(args.reason) });
       output("proposal-reject", result);
     });
   },
 });
 
-const proposalDiffCommand = defineCommand({
-  meta: { name: "diff", description: "Show the diff between an existing asset and a pending proposal" },
+const diffCommand = defineCommand({
+  meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix, or asset ref)" },
   args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    id: {
+      type: "positional",
+      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
+      required: true,
+    },
     target: { type: "string", description: "Override the write target by source name" },
   },
   run({ args }) {
@@ -2824,163 +3782,364 @@ const proposalDiffCommand = defineCommand({
   },
 });
 
-const proposalCommand = defineCommand({
+// Phase 6C (Advantage D6c): revert an accepted proposal.
+//
+// Exit codes (mapped by `runWithJsonErrors` from the typed errors thrown by
+// `akmProposalRevert` / `revertProposal`):
+//   0 — success; prior content restored.
+//   1 — generic error (also used by `UsageError("INVALID_FLAG_VALUE")` and
+//       `UsageError("MISSING_REQUIRED_ARGUMENT")` when the proposal is not
+//       accepted, or no backup is available).
+//   1 — `NotFoundError("FILE_NOT_FOUND")` when the proposal id does not resolve.
+const revertCommand = defineCommand({
   meta: {
-    name: "proposal",
-    description: "Review and promote queued asset proposals (durable storage under .akm/proposals/)",
+    name: "revert",
+    description:
+      "Revert an accepted proposal: restore the prior asset content from the backup captured at promotion time. " +
+      "Errors if the proposal is not accepted or has no backup (new-asset proposals leave no backup). " +
+      "Accepts the full proposal UUID or the asset ref. UUID prefixes are not supported for archived proposals — use the full UUID.",
   },
-  subCommands: {
-    list: proposalListCommand,
-    show: proposalShowCommand,
-    accept: proposalAcceptCommand,
-    reject: proposalRejectCommand,
-    diff: proposalDiffCommand,
+  args: {
+    id: {
+      type: "positional",
+      description:
+        "Proposal id (full uuid) or asset ref (e.g. skill:akm-dream). UUID prefixes are not supported for archived proposals — use the full UUID.",
+      required: true,
+    },
+    target: { type: "string", description: "Override the write target by source name" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmProposalRevert({
+        id: args.id as string,
+        target: args.target as string | undefined,
+      });
+      output("proposal-revert", result);
+    });
   },
 });
 
 // ── distill (#228) ──────────────────────────────────────────────────────────
 
-const distillCommand = defineCommand({
-  meta: {
-    name: "distill",
-    description:
-      "Distil feedback for an asset into a queued lesson proposal (gated on llm.features.feedback_distillation)",
-  },
-  args: {
-    ref: { type: "positional", description: "Asset ref (type:name) to distil from", required: true },
-    "source-run": {
-      type: "string",
-      description: "Optional run id propagated onto the queued proposal for traceability",
-    },
-    "exclude-feedback-from": {
-      type: "string",
-      description:
-        "Comma-separated asset refs whose feedback events MUST be filtered out before the LLM input is built. Falls back to AKM_DISTILL_EXCLUDE_FEEDBACK_FROM when omitted.",
-    },
-    "exclude-tags": {
-      type: "string",
-      description: "Exclude feedback events matching these tags (repeatable, e.g. --exclude-tags slice:eval)",
-    },
-    "include-tags": {
-      type: "string",
-      description: "Only include feedback events with ALL these tags (repeatable)",
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const excludeFlag = getHyphenatedArg(args, "exclude-feedback-from");
-      const excludeEnv = process.env.AKM_DISTILL_EXCLUDE_FEEDBACK_FROM;
-      // CLI flag takes precedence over the env var when both are present.
-      const excludeRaw = excludeFlag ?? excludeEnv;
-      const excludeFeedbackFromRefs = parseExcludeFeedbackFromRefs(excludeRaw);
-      const excludeTagsRaw = parseAllFlagValues("--exclude-tags");
-      const excludeTagsEnv = process.env.AKM_DISTILL_EXCLUDE_TAGS;
-      const excludeTags = [
-        ...new Set([
-          ...excludeTagsRaw,
-          ...(excludeTagsEnv
-            ? excludeTagsEnv
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-            : []),
-        ]),
-      ];
-      const includeTagsRaw = parseAllFlagValues("--include-tags");
-      const includeTagsEnv = process.env.AKM_DISTILL_INCLUDE_TAGS;
-      const includeTags = [
-        ...new Set([
-          ...includeTagsRaw,
-          ...(includeTagsEnv
-            ? includeTagsEnv
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-            : []),
-        ]),
-      ];
-      const result = await akmDistill({
-        ref: args.ref,
-        sourceRun: getHyphenatedArg(args, "source-run"),
-        ...(excludeFeedbackFromRefs.length > 0 ? { excludeFeedbackFromRefs } : {}),
-        ...(excludeTags.length > 0 ? { excludeTags } : {}),
-        ...(includeTags.length > 0 ? { includeTags } : {}),
-      });
-      output("distill", result);
-    });
-  },
-});
-
-/**
- * Parse a comma-separated list of asset refs (#267 — `--exclude-feedback-from`
- * and `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM`). Each entry is validated against
- * the canonical `[origin//]type:name` grammar via `parseAssetRef`; an
- * invalid entry surfaces as a UsageError → exit 2.
- */
-function parseExcludeFeedbackFromRefs(raw: string | undefined): string[] {
-  if (raw === undefined || raw.trim() === "") return [];
-  const refs = raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  for (const ref of refs) {
-    try {
-      parseAssetRef(ref);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new UsageError(
-        `Invalid --exclude-feedback-from ref "${ref}": ${message}`,
-        "INVALID_FLAG_VALUE",
-        "Each ref must match `[origin//]type:name`, e.g. skill:deploy or team//memory:auth-tips.",
-      );
-    }
-  }
-  return refs;
-}
-
-function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
+function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | "reverted" | undefined {
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  if (trimmed === "pending" || trimmed === "accepted" || trimmed === "rejected") return trimmed;
+  if (trimmed === "pending" || trimmed === "accepted" || trimmed === "rejected" || trimmed === "reverted") {
+    return trimmed;
+  }
   throw new UsageError(
-    `Invalid --status value: "${raw}". Expected one of: pending, accepted, rejected.`,
+    `Invalid --status value: "${raw}". Expected one of: pending, accepted, rejected, reverted.`,
     "INVALID_FLAG_VALUE",
   );
 }
 
-// ── reflect / propose (agent proposal-producers, #226) ──────────────────────
-
-const reflectCommand = defineCommand({
+const agentCommand = defineCommand({
   meta: {
-    name: "reflect",
-    description: "Ask the configured agent CLI to review an asset (or recent feedback) and queue a revised proposal",
+    name: "agent",
+    description:
+      "Dispatch an agent CLI (opencode, claude, …) with an optional agent asset that provides the system prompt, model, and tool policy. Use <agent-ref> to embody a stash agent, --model to override the model, and --prompt/--command/--workflow to provide the task.",
   },
   args: {
-    ref: {
+    profile: {
       type: "positional",
-      description: "Asset ref (type:name) to reflect on. Optional — omit to reflect across recent feedback.",
+      description: "Agent profile / platform to use (opencode, claude, …)",
       required: false,
     },
-    task: { type: "string", description: "Optional task hint passed into the reflection prompt" },
-    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    "agent-ref": {
+      type: "positional",
+      description:
+        "Optional agent asset ref (e.g. agent:code-reviewer). Loads system prompt, model, and tool policy from the stash asset.",
+      required: false,
+    },
+    prompt: { type: "string", description: "Task prompt to pass to the agent" },
+    command: { type: "string", description: "Load prompt from a command: asset" },
+    workflow: { type: "string", description: "Load prompt from a workflow: asset" },
+    model: {
+      type: "string",
+      description:
+        "Model override — accepts aliases (opus, sonnet, haiku) or exact platform model IDs. Overrides the model specified in the agent asset.",
+    },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
-      const timeoutMs =
-        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
-      const result = await akmReflect({
-        ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
-        task: typeof args.task === "string" && args.task.trim() ? args.task : undefined,
-        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
+      if (!args.profile) {
+        throw new UsageError(
+          "Usage: akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>]",
+          "MISSING_REQUIRED_ARGUMENT",
+          "Provide the agent profile name. Available profiles are listed in config.agent.profiles.",
+        );
+      }
+
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+
+      const config = loadConfig();
+      const { parseAgentConfig } = await import("./integrations/agent/config.js");
+      const agentConfig = parseAgentConfig(config.agent);
+
+      // Resolve agent asset ref → extract system prompt, model, and tool policy.
+      const agentRef = getStringArg(args, "agent-ref");
+
+      let systemPrompt: string | undefined;
+      let assetModel: string | undefined;
+      let assetTools: import("./sources/types.js").ShowResponse["toolPolicy"] | undefined;
+
+      if (agentRef) {
+        const { akmShowUnified } = await import("./commands/show.js");
+        const asset = await akmShowUnified({ ref: agentRef, detail: "full" });
+        systemPrompt = typeof asset.content === "string" ? asset.content : undefined;
+        assetModel = typeof asset.modelHint === "string" ? asset.modelHint : undefined;
+        assetTools = asset.toolPolicy;
+      }
+
+      // --model flag wins over the asset's modelHint.
+      const model = getStringArg(args, "model") ?? assetModel;
+
+      const promptText = getStringArg(args, "prompt");
+      const commandRef = getStringArg(args, "command");
+      const workflowRef = getStringArg(args, "workflow");
+
+      // Only build a dispatch request when there is something to dispatch — a
+      // prompt, an agent asset, or a model override. When none of these are
+      // present the agent is launched interactively (no injected prompt, no
+      // platform-specific flags beyond the profile's base args).
+      const hasDispatchContent = !!(promptText ?? commandRef ?? workflowRef ?? systemPrompt ?? model ?? assetTools);
+
+      const result = await akmAgentDispatch({
+        profileName: String(args.profile),
+        prompt: promptText,
+        commandRef,
+        workflowRef,
+        agentConfig,
+        llmConfig: config.llm,
+        ...(hasDispatchContent
+          ? {
+              dispatch: {
+                prompt: promptText ?? "",
+                systemPrompt,
+                model,
+                tools: assetTools,
+              },
+            }
+          : {}),
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });
-      output("reflect", result);
-      if (result.ok === false) {
+
+      output("agent-result", result);
+
+      if (!result.ok) {
         process.exit(EXIT_GENERAL);
       }
+    });
+  },
+});
+
+const lintCommand = defineCommand({
+  meta: {
+    name: "lint",
+    description:
+      "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths). Use --fix to auto-fix Tier 1 issues.",
+  },
+  args: {
+    fix: { type: "boolean", description: "Apply auto-fixes in place", default: false },
+    dir: { type: "string", description: "Override stash root directory (default: from config)" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = akmLint({
+        fix: args.fix ?? false,
+        dir: getStringArg(args, "dir"),
+      });
+      output("lint", result);
+      if (!result.ok) process.exit(EXIT_GENERAL);
+    });
+  },
+});
+
+const improveCommand = defineCommand({
+  meta: {
+    name: "improve",
+    description:
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when llm.features.memory_consolidation is enabled",
+  },
+  args: {
+    scope: {
+      type: "positional",
+      description: "Optional asset type or asset ref to improve",
+      required: false,
+    },
+    task: { type: "string", description: "Add extra guidance for this improvement pass" },
+    "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
+    target: { type: "string", description: "Override the write target for accepted proposals" },
+    "auto-accept": {
+      type: "string",
+      description:
+        "Auto-accept proposals at or above this confidence threshold (0-100). Default: 90. Pass 'false' to disable. Legacy alias 'safe' = 90.",
+    },
+    limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
+    "timeout-ms": {
+      type: "string",
+      description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
+    },
+    "ignore-cooldown": {
+      type: "boolean",
+      description:
+        "Ignore all cooldown periods (equivalent to --reflect-cooldown-days 0 --distill-cooldown-days 0 --consolidate-cooldown-days 0)",
+      default: false,
+    },
+    "reflect-cooldown-days": {
+      type: "string",
+      description:
+        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be persisted via config.improve.reflectCooldownByType. Set 0 to disable.",
+    },
+    "distill-cooldown-days": {
+      type: "string",
+      description: "Override distill cooldown for this run only (default: 1, 0 to disable)",
+    },
+    "consolidate-cooldown-days": {
+      type: "string",
+      description: "Override consolidate cooldown for this run only (default: 14, 0 to disable)",
+    },
+    "consolidate-recovery": {
+      type: "string",
+      description:
+        "How to handle stale/incomplete consolidation journals: abort (default) or clean (remove stale journal artifacts)",
+    },
+    "require-feedback-signal": {
+      type: "boolean",
+      description: "Only process assets with recent feedback signals (disables retrieval fallback)",
+      default: false,
+    },
+    "min-retrieval-count": {
+      type: "string",
+      description:
+        "Minimum retrieval count for zero-feedback fallback eligibility (default: 1, set 0 to include all assets regardless of retrieval history)",
+    },
+    "json-to-stdout": {
+      type: "boolean",
+      description:
+        "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full JSON is written to .akm/runs/<run-id>/improve-result.json and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve | jq`.)",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const formatFlagValue = parseFlagValue(process.argv, "--format");
+      if (formatFlagValue !== undefined) {
+        throw new UsageError(
+          `akm improve does not accept --format. That flag controls output formatting for other commands (search, show, etc.).\n` +
+            `Did you mean: akm improve (no --format flag)?`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const jsonToStdout = getHyphenatedBoolean(args, "json-to-stdout");
+      const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
+      const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
+      const targetArg = getStringArg(args, "target");
+      const taskArg = getStringArg(args, "task");
+      const dryRun = getHyphenatedBoolean(args, "dry-run");
+      const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+      const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");
+      const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
+      const reflectCooldownDays = ignoreCooldown
+        ? 0
+        : parseNonNegativeIntFlag(reflectCooldownRaw, "--reflect-cooldown-days");
+      const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
+      const distillCooldownDays = ignoreCooldown
+        ? 0
+        : parseNonNegativeIntFlag(distillCooldownRaw, "--distill-cooldown-days");
+      const consolidateCooldownRaw = getHyphenatedArg<string>(args, "consolidate-cooldown-days");
+      const consolidateCooldownDays = ignoreCooldown
+        ? 0
+        : parseNonNegativeIntFlag(consolidateCooldownRaw, "--consolidate-cooldown-days");
+      const consolidateRecoveryRaw = getHyphenatedArg<string>(args, "consolidate-recovery");
+      const consolidateRecovery =
+        consolidateRecoveryRaw === undefined
+          ? undefined
+          : (consolidateRecoveryRaw.trim().toLowerCase() as "abort" | "clean" | string);
+      if (consolidateRecovery !== undefined && consolidateRecovery !== "abort" && consolidateRecovery !== "clean") {
+        throw new UsageError(
+          `Invalid --consolidate-recovery value: "${consolidateRecoveryRaw}". Must be one of: abort, clean.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
+      const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
+      const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
+
+      const improveLogFile = path.join(
+        getCacheDir(),
+        "logs",
+        "improve",
+        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+      );
+      setLogFile(improveLogFile);
+      const startedAtMs = Date.now();
+      let improveResult: Awaited<ReturnType<typeof akmImprove>>;
+      try {
+        improveResult = await akmImprove({
+          scope: getStringArg(args, "scope"),
+          task: taskArg,
+          dryRun,
+          target: targetArg,
+          autoAccept,
+          ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
+          ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
+          ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
+          ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
+          ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
+          consolidateOptions: {
+            target: targetArg,
+            dryRun,
+            autoAccept,
+            task: taskArg,
+            ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
+          },
+        });
+      } finally {
+        clearLogFile();
+      }
+      const durationMs = Date.now() - startedAtMs;
+
+      if (jsonToStdout) {
+        // Legacy / escape-hatch mode: full JSON on stdout, no file write.
+        // Kept for scripts/agents that already pipe to jq.
+        output("improve", improveResult);
+        process.exit(0);
+      }
+
+      // Default mode (0.8.0+): persist the full result under
+      // `<stash>/.akm/runs/<run-id>/improve-result.json` and emit NOTHING
+      // on stdout. The verbose JSON would otherwise scroll earlier progress
+      // logs out of the terminal buffer. The existing `[improve] ...`
+      // progress log lines on stderr remain the canonical console UX —
+      // do NOT add any new console output here.
+      const runId = buildImproveRunId();
+      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      const resultPathFallback = relativeImproveResultPath(runId);
+      if (primaryStashDir) {
+        try {
+          writeImproveResultFile(primaryStashDir, runId, improveResult);
+        } catch (err) {
+          // Stderr warning on the failure path is preferable to crashing
+          // the run after all the work has completed.
+          process.stderr.write(
+            `warning: failed to write improve result file at ${path.join(primaryStashDir, resultPathFallback)}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      } else {
+        process.stderr.write(
+          `warning: no writable stash directory resolved; improve result not persisted to disk (use --json-to-stdout to capture)\n`,
+        );
+      }
+
+      // durationMs reserved for future use (no console emission today).
+      void durationMs;
+      process.exit(0);
     });
   },
 });
@@ -2997,6 +4156,7 @@ const proposeCommand = defineCommand({
     type: { type: "positional", description: "Asset type (skill, command, knowledge, lesson, ...)", required: false },
     name: { type: "positional", description: "Asset name (slug or path under the type dir)", required: false },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
+    file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
     profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
@@ -3005,27 +4165,243 @@ const proposeCommand = defineCommand({
       // citty silently shows help and exits 0 when required positionals are
       // omitted. Re-validate explicitly so the exit code is 2 (USAGE) and a
       // structured JSON error reaches scripted callers.
-      if (!args.type || !args.name || !args.task) {
+      const taskFromFlag = typeof args.task === "string" ? args.task : undefined;
+      const fileFromFlag = typeof args.file === "string" ? args.file : undefined;
+      if (!args.type || !args.name || (!taskFromFlag && !fileFromFlag)) {
         throw new UsageError(
-          "Usage: akm propose <type> <name> --task '<task>'.",
+          "Usage: akm propose <type> <name> (--task '<task>' | --file <path>).",
           "MISSING_REQUIRED_ARGUMENT",
-          "Provide the asset type, name, and a --task description, e.g. `akm propose skill deploy --task 'Deploy a service'`.",
+          "Provide the asset type, name, and exactly one of --task or --file.",
         );
       }
-      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
-      const timeoutMs =
-        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      if (taskFromFlag && fileFromFlag) {
+        throw new UsageError("Pass exactly one of --task or --file.", "INVALID_FLAG_VALUE");
+      }
+      const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
       const result = await akmPropose({
         type: String(args.type),
         name: String(args.name),
-        task: String(args.task ?? ""),
-        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
-        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+        task: taskText,
+        profile: getStringArg(args, "profile"),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("propose", result);
       if (result.ok === false) {
         process.exit(EXIT_GENERAL);
       }
+    });
+  },
+});
+
+const TASKS_SUBCOMMAND_SET = new Set([
+  "add",
+  "list",
+  "show",
+  "remove",
+  "enable",
+  "disable",
+  "run",
+  "history",
+  "sync",
+  "doctor",
+]);
+const GRAPH_SUBCOMMAND_SET = new Set([
+  "summary",
+  "entities",
+  "entity",
+  "relations",
+  "related",
+  "orphans",
+  "export",
+  "update",
+]);
+
+const tasksAddCommand = defineCommand({
+  meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
+  args: {
+    id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
+    schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
+    workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflow:my-flow)" },
+    prompt: {
+      type: "string",
+      description: "Prompt for the configured agent harness — inline text, an asset ref like agent:foo, or ./path.md",
+    },
+    command: {
+      type: "string",
+      description:
+        'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
+    },
+    profile: { type: "string", description: "Agent profile to use for prompt targets (default: config.agent.default)" },
+    params: { type: "string", description: "Workflow params as a JSON object" },
+    name: { type: "string", description: "Human-readable name for the task" },
+    "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },
+    description: { type: "string", description: "Human-readable description" },
+    tags: { type: "string", description: "Comma-separated tags" },
+    disabled: { type: "boolean", description: "Register but leave disabled in the OS scheduler", default: false },
+    force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksAdd({
+        id: args.id,
+        schedule: args.schedule,
+        workflow: args.workflow,
+        prompt: args.prompt,
+        command: args.command,
+        profile: args.profile,
+        params: args.params,
+        name: args.name,
+        when_to_use: getHyphenatedArg<string>(args, "when-to-use"),
+        description: args.description,
+        tags: args.tags
+          ? args.tags
+              .split(/[\s,]+/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : undefined,
+        disabled: args.disabled === true,
+        force: args.force === true,
+      });
+      output("tasks-add", result);
+    });
+  },
+});
+
+const tasksListCommand = defineCommand({
+  meta: { name: "list", description: "List scheduled tasks in the stash" },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksList();
+      output("tasks-list", result);
+    });
+  },
+});
+
+const tasksShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a parsed task definition" },
+  args: { id: { type: "positional", description: "Task id or task:<id>", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const result = await akmTasksShow(id);
+      output("tasks-show", result);
+    });
+  },
+});
+
+const tasksRemoveCommand = defineCommand({
+  meta: { name: "remove", description: "Delete a task file and uninstall it from the OS scheduler" },
+  args: { id: { type: "positional", description: "Task id", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const result = await akmTasksRemove(id);
+      output("tasks-remove", result);
+    });
+  },
+});
+
+function makeTasksToggleCommand(enabled: boolean) {
+  const verb = enabled ? "enable" : "disable";
+  const description = enabled
+    ? "Enable a previously-disabled task"
+    : "Disable a task in the OS scheduler without removing the file";
+  return defineCommand({
+    meta: { name: verb, description },
+    args: { id: { type: "positional", description: "Task id", required: true } },
+    async run({ args }) {
+      await runWithJsonErrors(async () => {
+        const { id } = parseTaskRef(args.id);
+        const result = await akmTasksSetEnabled(id, enabled);
+        output(`tasks-${verb}`, result);
+      });
+    },
+  });
+}
+
+const tasksEnableCommand = makeTasksToggleCommand(true);
+const tasksDisableCommand = makeTasksToggleCommand(false);
+
+const tasksRunCommand = defineCommand({
+  meta: {
+    name: "run",
+    description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
+  },
+  args: { id: { type: "positional", description: "Task id", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const envelope = await akmTasksRun(id);
+      output("tasks-run", envelope);
+      if (envelope.exitCode !== 0) process.exit(envelope.exitCode);
+    });
+  },
+});
+
+const tasksHistoryCommand = defineCommand({
+  meta: { name: "history", description: "Show recent task run history" },
+  args: {
+    id: { type: "string", description: "Filter to one task id" },
+    limit: { type: "string", description: "Maximum rows to return (default 50)" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const limit = parsePositiveIntFlag(args.limit ?? undefined);
+      const result = await akmTasksHistory({ id: args.id, limit });
+      output("tasks-history", result);
+    });
+  },
+});
+
+const tasksSyncCommand = defineCommand({
+  meta: {
+    name: "sync",
+    description: "Reconcile the on-disk task files with the OS scheduler",
+  },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksSync();
+      output("tasks-sync", result);
+    });
+  },
+});
+
+const tasksDoctorCommand = defineCommand({
+  meta: {
+    name: "doctor",
+    description: "Report the active scheduler backend, akm bin path, log dir, and supported schedule subset",
+  },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksDoctor();
+      output("tasks-doctor", result);
+    });
+  },
+});
+
+const tasksCommand = defineCommand({
+  meta: {
+    name: "tasks",
+    description: "Schedule workflows or prompts via the OS-native scheduler (cron / launchd / schtasks)",
+  },
+  subCommands: {
+    add: tasksAddCommand,
+    list: tasksListCommand,
+    show: tasksShowCommand,
+    remove: tasksRemoveCommand,
+    enable: tasksEnableCommand,
+    disable: tasksDisableCommand,
+    run: tasksRunCommand,
+    history: tasksHistoryCommand,
+    sync: tasksSyncCommand,
+    doctor: tasksDoctorCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (hasSubcommand(args, TASKS_SUBCOMMAND_SET)) return;
+      const result = await akmTasksList();
+      output("tasks-list", result);
     });
   },
 });
@@ -3050,7 +4426,10 @@ const main = defineCommand({
     setup: setupCommand,
     init: initCommand,
     index: indexCommand,
+    health: healthCommand,
     info: infoCommand,
+    graph: graphCommand,
+    db: dbCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
@@ -3071,19 +4450,26 @@ const main = defineCommand({
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
-    proposal: proposalCommand,
-    reflect: reflectCommand,
+    lessons: lessonsCommand,
+    agent: agentCommand,
+    lint: lintCommand,
+    improve: improveCommand,
     propose: proposeCommand,
-    distill: distillCommand,
+    proposals: proposalsCommand,
+    accept: acceptCommand,
+    reject: rejectCommand,
+    diff: diffCommand,
+    revert: revertCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
     vault: vaultCommand,
     wiki: wikiCommand,
+    tasks: tasksCommand,
   },
 });
 
-const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
+const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const WIKI_SUBCOMMAND_SET = new Set([
   "create",
@@ -3097,8 +4483,6 @@ const WIKI_SUBCOMMAND_SET = new Set([
   "lint",
   "ingest",
 ]);
-const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
-
 // ── Exit codes ──────────────────────────────────────────────────────────────
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
@@ -3113,17 +4497,10 @@ process.argv = normalizeShowArgv(process.argv);
 // invalid; surface it through the same JSON-error path the rest of the CLI uses
 // rather than letting the raw exception escape with a stack trace.
 try {
+  applyEarlyStderrFlags(process.argv);
   initOutputMode(process.argv, loadConfig().output ?? {});
 } catch (error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  const hint = extractHint(error);
-  const exitCode = classifyExitCode(error);
-  const code =
-    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
-      ? error.code
-      : undefined;
-  console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
-  process.exit(exitCode);
+  emitJsonError(error);
 }
 runMain(main);
 
@@ -3132,34 +4509,6 @@ function classifyExitCode(error: unknown): number {
   if (error instanceof ConfigError) return EXIT_CONFIG;
   if (error instanceof NotFoundError) return EXIT_GENERAL;
   return EXIT_GENERAL;
-}
-
-async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
-  try {
-    // Apply --quiet flag early so warnings inside the command are suppressed
-    if (process.argv.includes("--quiet") || process.argv.includes("-q")) {
-      setQuiet(true);
-    }
-    // Apply --verbose flag early so per-spec diagnostics (gated behind
-    // `isVerbose()` in src/core/warn.ts) are restored. The `AKM_VERBOSE`
-    // env var still wins regardless — see warn.ts for the precedence rule.
-    if (process.argv.includes("--verbose")) {
-      setVerbose(true);
-    }
-    await fn();
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    const hint = extractHint(error);
-    const exitCode = classifyExitCode(error);
-    // Surface machine-readable error code from typed errors when present so
-    // scripts can branch on `.code` instead of message-string matching.
-    const code =
-      error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
-        ? error.code
-        : undefined;
-    console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
-    process.exit(exitCode);
-  }
 }
 
 /**
@@ -3174,95 +4523,28 @@ function extractHint(error: unknown): string | undefined {
   return undefined;
 }
 
-function hasConfigSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && CONFIG_SUBCOMMAND_SET.has(command);
-}
-
-function hasVaultSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && VAULT_SUBCOMMAND_SET.has(command);
-}
-
-function hasWikiSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && WIKI_SUBCOMMAND_SET.has(command);
-}
-
 /**
- * Normalize argv so positional view-mode arguments after the asset ref
- * are rewritten into internal flags that citty can parse.
- *
- * Converts:
- *   akm show knowledge:guide.md toc          → akm show knowledge:guide.md --akmView toc
- *   akm show knowledge:guide.md section Auth → akm show knowledge:guide.md --akmView section --akmHeading Auth
- *   akm show knowledge:guide.md lines 1 50   → akm show knowledge:guide.md --akmView lines --akmStart 1 --akmEnd 50
- *
- * Legacy `--view` is intentionally unsupported.
- * Returns a new array; the input is never modified.
+ * Serialize an error to the standard JSON envelope and exit.
+ * Used in both the startup try/catch and `runWithJsonErrors`.
  */
-function normalizeShowArgv(argv: string[]): string[] {
-  // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
-  if (argv[2] !== "show") return argv;
-  if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
-    throw new UsageError(
-      'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',
-    );
+function emitJsonError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  const hint = extractHint(error);
+  const exitCode = classifyExitCode(error);
+  const code =
+    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
+      ? error.code
+      : undefined;
+  console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
+  process.exit(exitCode);
+}
+
+async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
+  try {
+    await fn();
+  } catch (error: unknown) {
+    emitJsonError(error);
   }
-
-  // Separate global flags from positional/show-specific args
-  const prefix = argv.slice(0, 3); // [bun, script, show]
-  const rest = argv.slice(3);
-
-  const globalFlags: string[] = [];
-  const showArgs: string[] = [];
-
-  for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i];
-    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
-      globalFlags.push(arg);
-      continue;
-    }
-    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
-      globalFlags.push(arg);
-      continue;
-    }
-    if (arg === "--format" || arg === "--detail") {
-      globalFlags.push(arg);
-      if (rest[i + 1] !== undefined) {
-        globalFlags.push(rest[i + 1]);
-        i++;
-      }
-      continue;
-    }
-    showArgs.push(arg);
-  }
-
-  // showArgs[0] = ref, showArgs[1] = potential view mode, showArgs[2..] = view params
-  const ref = showArgs[0];
-  const viewMode = showArgs[1];
-
-  if (!ref || !viewMode || !SHOW_VIEW_MODES.has(viewMode)) {
-    return argv;
-  }
-
-  const result = [...prefix, ref, "--akmView", viewMode];
-
-  if (viewMode === "section") {
-    // Next arg is the heading name; pass empty string when missing so the
-    // show handler can produce a clear "section not found" error.
-    const heading = showArgs[2] ?? "";
-    result.push("--akmHeading", heading);
-  } else if (viewMode === "lines") {
-    // Next two args are start and end
-    const start = showArgs[2];
-    const end = showArgs[3];
-    if (start) result.push("--akmStart", start);
-    if (end) result.push("--akmEnd", end);
-  }
-
-  result.push(...globalFlags);
-  return result;
 }
 
 // ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────

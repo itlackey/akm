@@ -4,6 +4,12 @@
  * - stepAddSources: recommended GitHub repos multiselect, cancel returns to menu
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+installPromptMock();
+let setupModule: typeof import("../src/setup/setup");
+let stepsModule: typeof import("../src/setup/steps");
 
 // ── Mock plumbing ────────────────────────────────────────────────────────────
 
@@ -33,54 +39,69 @@ function reset() {
   q.logged.length = 0;
 }
 
-// Must be called **before** any module that imports @clack/prompts is loaded.
-mock.module("@clack/prompts", () => ({
-  isCancel: (v: unknown) => v === CANCEL,
-  cancel: (msg: string) => {
-    q.logged.push(`[cancel] ${msg}`);
-  },
-  confirm: async () => q.confirms.shift() ?? false,
-  select: async () => q.selects.shift() ?? "done",
-  text: async () => q.texts.shift() ?? "",
-  multiselect: async (config: {
-    message: string;
-    initialValues?: string[];
-    options: Array<{ value: string; label: string }>;
-  }) => {
-    q.multiselectConfigs.push({
-      message: config.message,
-      initialValues: config.initialValues,
-      options: config.options,
-    });
-    return q.multiselects.shift() ?? [];
-  },
-  spinner: () => ({ start: () => {}, stop: () => {} }),
-  log: {
-    info: (msg: string) => {
-      q.logged.push(msg);
+function installPromptMock() {
+  mock.module("@clack/prompts", () => ({
+    isCancel: (v: unknown) => v === CANCEL,
+    cancel: (msg: string) => {
+      q.logged.push(`[cancel] ${msg}`);
     },
-    success: (msg: string) => {
-      q.logged.push(msg);
+    confirm: async () => q.confirms.shift() ?? false,
+    select: async () => q.selects.shift() ?? "done",
+    text: async () => q.texts.shift() ?? "",
+    multiselect: async (config: {
+      message: string;
+      initialValues?: string[];
+      options: Array<{ value: string; label: string }>;
+    }) => {
+      q.multiselectConfigs.push({
+        message: config.message,
+        initialValues: config.initialValues,
+        options: config.options,
+      });
+      return q.multiselects.shift() ?? [];
     },
-    warn: (msg: string) => {
-      q.logged.push(msg);
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    log: {
+      info: (msg: string) => {
+        q.logged.push(msg);
+      },
+      success: (msg: string) => {
+        q.logged.push(msg);
+      },
+      warn: (msg: string) => {
+        q.logged.push(msg);
+      },
+      step: () => {},
     },
-    step: () => {},
-  },
-  intro: () => {},
-  outro: () => {},
-  note: (msg: string, title?: string) => {
-    q.logged.push(`[note] ${title ?? ""} ${msg}`.trim());
-  },
-}));
+    intro: () => {},
+    outro: () => {},
+    note: (msg: string, title?: string) => {
+      q.logged.push(`[note] ${title ?? ""} ${msg}`.trim());
+    },
+  }));
+}
+
+async function reloadSetupModules() {
+  const setupUrl = pathToFileURL(path.join(import.meta.dir, "../src/setup/setup.ts")).href;
+  const stepsUrl = pathToFileURL(path.join(import.meta.dir, "../src/setup/steps.ts")).href;
+  setupModule = await import(`${setupUrl}?t=${Date.now()}-${Math.random()}`);
+  stepsModule = await import(`${stepsUrl}?t=${Date.now()}-${Math.random()}`);
+}
+
+async function resetHarness() {
+  mock.restore();
+  reset();
+  installPromptMock();
+  await reloadSetupModules();
+}
 
 // ── onCancel tests ───────────────────────────────────────────────────────────
 
 describe("onCancel – escape handling", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("pressing Escape on the exit-confirmation stays in the wizard", async () => {
-    const { onCancel } = await import("../src/setup/setup");
+    const { onCancel } = setupModule;
     // Simulate: user already pressed Escape in a prompt (value = CANCEL),
     // then presses Escape again on the "Exit the wizard?" confirmation.
     q.confirms.push(CANCEL);
@@ -90,7 +111,7 @@ describe("onCancel – escape handling", () => {
   });
 
   test("choosing No on the exit-confirmation stays in the wizard", async () => {
-    const { onCancel } = await import("../src/setup/setup");
+    const { onCancel } = setupModule;
     q.confirms.push(false);
 
     const stayed = await onCancel(CANCEL);
@@ -98,7 +119,7 @@ describe("onCancel – escape handling", () => {
   });
 
   test("choosing Yes on the exit-confirmation calls bail (exits)", async () => {
-    const { onCancel } = await import("../src/setup/setup");
+    const { onCancel } = setupModule;
     q.confirms.push(true);
 
     // bail() calls process.exit — mock it so it throws instead of killing the runner
@@ -115,7 +136,7 @@ describe("onCancel – escape handling", () => {
   });
 
   test("non-cancel input is a no-op (returns false)", async () => {
-    const { onCancel } = await import("../src/setup/setup");
+    const { onCancel } = setupModule;
     const stayed = await onCancel("normal-value");
     expect(stayed).toBe(false);
   });
@@ -124,10 +145,10 @@ describe("onCancel – escape handling", () => {
 // ── stepAddSources tests ───────────────────────────────────────────────────
 
 describe("stepAddSources – recommended GitHub repos", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("shows recommended repos and preselects the official stash for new configs", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     q.multiselects.push(["https://github.com/itlackey/akm-stash"]);
     q.selects.push("done");
@@ -150,7 +171,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 
   test("allows an existing recommended source to be unchecked and removed", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
     const cfg = {
       sources: [{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" }],
     };
@@ -164,7 +185,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 
   test("preserves an existing git stash that points at the legacy context-hub URL", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
     const ctxHubUrl = "https://github.com/andrewyng/context-hub";
     const cfg = {
       sources: [{ type: "git", url: ctxHubUrl, name: "context-hub" }],
@@ -181,7 +202,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 
   test("shows existing configured sources as a toggle list before recommendations", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
     const cfg = {
       sources: [
         { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
@@ -214,7 +235,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 
   test("shows installed managed stashes as preserved informational list", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     q.multiselects.push(["https://github.com/itlackey/akm-stash"]);
     q.selects.push("done");
@@ -229,7 +250,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 
   test("allows existing configured sources to be unchecked and removed", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
     const cfg = {
       sources: [
         { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
@@ -246,10 +267,10 @@ describe("stepAddSources – recommended GitHub repos", () => {
 });
 
 describe("agent and output setup steps", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("stepAgentSelection lets the user choose a detected default agent", async () => {
-    const { stepAgentSelection } = await import("../src/setup/setup");
+    const { stepAgentSelection } = setupModule;
     q.selects.push("codex");
 
     const result = await stepAgentSelection({ semanticSearchMode: "auto", agent: { default: "claude" } } as never, [
@@ -261,7 +282,7 @@ describe("agent and output setup steps", () => {
   });
 
   test("stepAgentSelection allows disabling the default agent", async () => {
-    const { stepAgentSelection } = await import("../src/setup/setup");
+    const { stepAgentSelection } = setupModule;
     q.selects.push("disabled");
 
     const result = await stepAgentSelection({ semanticSearchMode: "auto", agent: { default: "claude" } } as never, [
@@ -273,7 +294,7 @@ describe("agent and output setup steps", () => {
   });
 
   test("stepLlm keep current preserves the existing endpoint", async () => {
-    const { stepLlm } = await import("../src/setup/setup");
+    const { stepLlm } = setupModule;
     q.selects.push("keep");
 
     const current = {
@@ -293,7 +314,7 @@ describe("agent and output setup steps", () => {
   });
 
   test("stepOutputConfig prompts for format and detail", async () => {
-    const { stepOutputConfig } = await import("../src/setup/setup");
+    const { stepOutputConfig } = setupModule;
     q.selects.push("text", "full");
 
     const result = await stepOutputConfig({
@@ -306,10 +327,10 @@ describe("agent and output setup steps", () => {
 });
 
 describe("semantic search setup", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("should list local model and sqlite-vec guidance when describing semantic search assets", async () => {
-    const { describeSemanticSearchAssets } = await import("../src/setup/setup");
+    const { describeSemanticSearchAssets } = setupModule;
     const assets = describeSemanticSearchAssets();
 
     expect(assets[0]).toContain("Local embedding model");
@@ -318,7 +339,7 @@ describe("semantic search setup", () => {
   });
 
   test("stepSemanticSearch returns disabled when user opts out", async () => {
-    const { stepSemanticSearch } = await import("../src/setup/setup");
+    const { stepSemanticSearch } = setupModule;
     q.confirms.push(false);
 
     const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
@@ -326,7 +347,7 @@ describe("semantic search setup", () => {
   });
 
   test("stepSemanticSearch shows assets and allows asset preparation", async () => {
-    const { stepSemanticSearch } = await import("../src/setup/setup");
+    const { stepSemanticSearch } = setupModule;
     q.confirms.push(true, true);
 
     const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
@@ -335,11 +356,33 @@ describe("semantic search setup", () => {
   });
 });
 
+describe("non-interactive setup stash dir", () => {
+  beforeEach(resetHarness);
+
+  test("buildSetupSteps uses preferred stash dir without prompting in non-interactive mode", async () => {
+    const { buildSetupSteps } = setupModule;
+    const { createSetupContext, runSetupSteps } = stepsModule;
+
+    const ctx = createSetupContext({ semanticSearchMode: "auto" } as never, { nonInteractive: true });
+    const { steps } = buildSetupSteps({
+      online: false,
+      semanticSearchOutcome: { mode: "off", prepareAssets: false },
+      preferredStashDir: "/tmp/noninteractive-stash",
+    });
+
+    await runSetupSteps(steps.slice(0, 1), ctx);
+
+    expect(ctx.config.stashDir).toBe("/tmp/noninteractive-stash");
+    expect(q.selects).toHaveLength(0);
+    expect(q.texts).toHaveLength(0);
+  });
+});
+
 describe("stepRegistries", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("preselects akm-registry but not skills.sh by default", async () => {
-    const { stepRegistries } = await import("../src/setup/setup");
+    const { stepRegistries } = setupModule;
 
     q.multiselects.push(["https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json"]);
 
@@ -359,7 +402,7 @@ describe("stepRegistries", () => {
   });
 
   test("lets existing built-in registries be unchecked", async () => {
-    const { stepRegistries } = await import("../src/setup/setup");
+    const { stepRegistries } = setupModule;
     const current = {
       registries: [
         { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "akm-registry" },
@@ -386,10 +429,10 @@ describe("stepRegistries", () => {
 });
 
 describe("stepAddSources – custom GitHub repo", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("adds a custom GitHub repo with type 'git'", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     // multiselect recommended repos → none
     q.multiselects.push([]);
@@ -411,10 +454,10 @@ describe("stepAddSources – custom GitHub repo", () => {
 });
 
 describe("stepAddSources – cancel within sub-actions", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("pressing Escape on a sub-action text prompt returns to menu", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     // multiselect recommended → none
     q.multiselects.push([]);
@@ -431,7 +474,7 @@ describe("stepAddSources – cancel within sub-actions", () => {
   });
 
   test("pressing Escape on filesystem path returns to menu", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     q.multiselects.push([]);
     q.selects.push("filesystem");
@@ -443,7 +486,7 @@ describe("stepAddSources – cancel within sub-actions", () => {
   });
 
   test("pressing Escape on name prompt returns to menu without adding", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     q.multiselects.push([]);
     q.selects.push("github-repo");
@@ -458,10 +501,10 @@ describe("stepAddSources – cancel within sub-actions", () => {
 });
 
 describe("stepAddSources – deferred additional prompt", () => {
-  beforeEach(reset);
+  beforeEach(resetHarness);
 
   test("can skip the additional-source menu when requested", async () => {
-    const { stepAddSources } = await import("../src/setup/setup");
+    const { stepAddSources } = setupModule;
 
     q.multiselects.push([]);
 

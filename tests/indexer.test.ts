@@ -20,12 +20,19 @@ import * as embedderModule from "../src/llm/embedder";
 
 let testConfigDir = "";
 let testCacheDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let embedBatchImpl:
   | ((texts: string[], embeddingConfig?: EmbeddingConnectionConfig) => Promise<Float32Array[]>)
   | undefined;
 const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
+const originalAkmStashDir = process.env.AKM_STASH_DIR;
+const originalAkmVerbose = process.env.AKM_VERBOSE;
+const originalFetch = globalThis.fetch;
 
 mock.module("../src/llm/embedder.js", () => ({
   ...embedderModule,
@@ -37,8 +44,23 @@ mock.module("../src/llm/embedder.js", () => ({
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-config-"));
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-cache-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-state-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
+  if (originalAkmStashDir === undefined) {
+    delete process.env.AKM_STASH_DIR;
+  } else {
+    process.env.AKM_STASH_DIR = originalAkmStashDir;
+  }
+  if (originalAkmVerbose === undefined) {
+    delete process.env.AKM_VERBOSE;
+  } else {
+    process.env.AKM_VERBOSE = originalAkmVerbose;
+  }
+  globalThis.fetch = originalFetch;
   embedBatchImpl = undefined;
 
   const dbPath = getDbPath();
@@ -63,6 +85,27 @@ afterEach(() => {
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
+  if (originalAkmStashDir === undefined) {
+    delete process.env.AKM_STASH_DIR;
+  } else {
+    process.env.AKM_STASH_DIR = originalAkmStashDir;
+  }
+  if (originalAkmVerbose === undefined) {
+    delete process.env.AKM_VERBOSE;
+  } else {
+    process.env.AKM_VERBOSE = originalAkmVerbose;
+  }
+  globalThis.fetch = originalFetch;
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
@@ -70,6 +113,14 @@ afterEach(() => {
   if (testCacheDir) {
     fs.rmSync(testCacheDir, { recursive: true, force: true });
     testCacheDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 
@@ -376,6 +427,60 @@ test("akmIndex applies curated frontmatter metadata for wiki-root stash sources"
   }
 });
 
+test("akmIndex populates derived_from column for derived memories (Phase 5A)", async () => {
+  const stashDir = tmpStash();
+  fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
+  writeFile(
+    path.join(stashDir, "memories", "parent-fact.md"),
+    ["---", "description: A parent memory.", "---", "", "Body of the parent.", ""].join("\n"),
+  );
+  // Derived child: identified by name suffix + frontmatter source/inferred.
+  writeFile(
+    path.join(stashDir, "memories", "parent-fact.derived.md"),
+    [
+      "---",
+      "description: Distilled child surface.",
+      "inferred: true",
+      "source: memory:parent-fact",
+      "derivedFrom: parent-fact",
+      "---",
+      "",
+      "Distilled body.",
+      "",
+    ].join("\n"),
+  );
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+  await akmIndex({ stashDir, full: true });
+
+  const db = openDatabase();
+  try {
+    // 1. The entry JSON for the derived child carries `derivedFrom`.
+    const memoryEntries = getAllEntries(db, "memory");
+    const child = memoryEntries.find((e) => e.entry.name === "parent-fact.derived");
+    const parent = memoryEntries.find((e) => e.entry.name === "parent-fact");
+    expect(parent).toBeDefined();
+    expect(child).toBeDefined();
+    expect(child?.entry.derivedFrom).toBe("memory:parent-fact");
+    // The non-derived parent must NOT carry derivedFrom.
+    expect(parent?.entry.derivedFrom).toBeUndefined();
+
+    // 2. The dedicated `derived_from` column is populated on the child row
+    //    AND null on the parent row. Verifies the indexer's column mirror.
+    const rows = db.prepare("SELECT entry_key, derived_from FROM entries").all() as Array<{
+      entry_key: string;
+      derived_from: string | null;
+    }>;
+    const childRow = rows.find((r) => r.entry_key.endsWith(":memory:parent-fact.derived"));
+    const parentRow = rows.find((r) => r.entry_key.endsWith(":memory:parent-fact"));
+    expect(childRow?.derived_from).toBe("memory:parent-fact");
+    expect(parentRow?.derived_from).toBeNull();
+  } finally {
+    closeDatabase(db);
+  }
+});
+
 test("akmIndex skips malformed workflow assets and reports warnings", async () => {
   const stashDir = tmpStash();
   writeFile(
@@ -554,7 +659,6 @@ test("akmIndex reports progress events and semantic-search verification details"
     expect(messages[0]).toContain("Starting full index");
     expect(messages[0]).toContain("1 stash source");
     expect(messages[0]).toContain("semantic search: remote embeddings");
-    expect(messages.some((message) => message.includes("LLM passes disabled; rerun with --enrich"))).toBe(true);
     expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
     expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
       true,
@@ -569,132 +673,6 @@ test("akmIndex reports progress events and semantic-search verification details"
   } finally {
     warnSpy.mockRestore();
     globalThis.fetch = originalFetch;
-  }
-});
-
-test("akmIndex memory inference uses the configured llm maxTokens budget", async () => {
-  const requestBodies: Record<string, unknown>[] = [];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      requestBodies.push((await request.json()) as Record<string, unknown>);
-      return new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  title: "Derived memory",
-                  description: "Why the compressed memory matters.",
-                  tags: ["memory", "inference", "llm"],
-                  searchHints: ["derived memory", "memory inference", "llm summary"],
-                  content: "## Summary\n\nUse the configured token budget.",
-                }),
-              },
-            },
-          ],
-        }),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    },
-  });
-
-  try {
-    const stashDir = tmpStash();
-    writeFile(path.join(stashDir, "memories", "parent.md"), "---\n---\n\nA memory that needs inference.\n");
-
-    process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({
-      semanticSearchMode: "off",
-      llm: {
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        maxTokens: 1024,
-        features: { graph_extraction: false, memory_inference: true },
-      },
-    });
-
-    await akmIndex({ stashDir, enrich: true });
-
-    const memoryInferenceRequest = requestBodies.find(
-      (body) =>
-        Array.isArray(body.messages) &&
-        body.messages.some(
-          (message) =>
-            typeof message === "object" &&
-            message !== null &&
-            "content" in message &&
-            typeof message.content === "string" &&
-            message.content.includes("Compress the memory below into one concise, information-dense derived memory."),
-        ),
-    );
-
-    expect(memoryInferenceRequest).toBeDefined();
-    expect(memoryInferenceRequest).toMatchObject({
-      model: "test-model",
-      max_tokens: 1024,
-      temperature: 0.1,
-    });
-  } finally {
-    server.stop();
-  }
-});
-
-test("akmIndex warns and reports skipped memory inference when LLM returns unusable output", async () => {
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(
-        JSON.stringify({
-          choices: [{ message: { content: "" } }],
-        }),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    },
-  });
-
-  try {
-    const stashDir = tmpStash();
-    writeFile(path.join(stashDir, "memories", "parent.md"), "---\n---\n\nA memory that needs inference.\n");
-
-    process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({
-      semanticSearchMode: "off",
-      llm: {
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        maxTokens: 1024,
-        features: { memory_inference: true },
-      },
-    });
-
-    const messages: string[] = [];
-    await akmIndex({
-      stashDir,
-      enrich: true,
-      onProgress: ({ phase, message }) => {
-        if (phase === "llm") messages.push(message);
-      },
-    });
-
-    expect(
-      messages.some((message) =>
-        message.includes(
-          "Memory inference reviewed 1 memory; wrote 0 derived memories from 0 parent memories; skipped 1 memory with unusable LLM responses.",
-        ),
-      ),
-    ).toBe(true);
-    expect(warnSpy).toHaveBeenCalledWith(
-      "Memory inference skipped 1 memory because the LLM returned empty, invalid, or incomplete derived payloads. Check your model and token budget.",
-    );
-  } finally {
-    warnSpy.mockRestore();
-    server.stop();
   }
 });
 
@@ -717,6 +695,56 @@ test("akmIndex scan progress events include processed and total counts", async (
 
   expect(scanEvents.some((event) => event.processed !== undefined && event.total !== undefined)).toBe(true);
   expect(scanEvents.some((event) => event.message.includes("Processed 1/1 source"))).toBe(true);
+});
+
+test("akmIndex metadata enrichment progress events include visible per-entry progress", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
+  writeFile(path.join(stashDir, "scripts", "two", "two.sh"), "echo two\n");
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearchMode: "off",
+    llm: {
+      endpoint: "https://example.test/v1/chat/completions",
+      model: "demo-chat",
+      concurrency: 1,
+    },
+  });
+
+  const metadataEnhance = await import("../src/llm/metadata-enhance");
+  const enhanceSpy = spyOn(metadataEnhance, "enhanceMetadata").mockImplementation(async (_config, entry) => ({
+    description: entry.description ?? `Enhanced ${entry.name}`,
+    tags: ["enhanced"],
+    searchHints: [entry.name],
+  }));
+
+  try {
+    const llmEvents: Array<{ message: string; processed?: number; total?: number }> = [];
+    await akmIndex({
+      stashDir,
+      onProgress: (event) => {
+        if (event.phase === "llm") {
+          llmEvents.push({ message: event.message, processed: event.processed, total: event.total });
+        }
+      },
+    });
+
+    expect(llmEvents.some((event) => event.message.includes("Starting memory inference"))).toBe(false);
+    expect(llmEvents.some((event) => event.message.includes("Starting graph extraction"))).toBe(false);
+    expect(llmEvents.some((event) => event.message.includes("LLM enhancement starting for 2 entries"))).toBe(true);
+    expect(
+      llmEvents.some(
+        (event) => event.message.includes("Enhancing scripts/one") || event.message.includes("Enhancing scripts/two"),
+      ),
+    ).toBe(true);
+    expect(llmEvents.some((event) => event.message.includes("Completed 2/2 directories; 2/2 entries processed."))).toBe(
+      true,
+    );
+    expect(llmEvents.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
+  } finally {
+    enhanceSpy.mockRestore();
+  }
 });
 
 test("akmIndex verbose progress reports why a directory was rescanned", async () => {
@@ -746,6 +774,54 @@ test("akmIndex verbose progress reports why a directory was rescanned", async ()
   expect(reasonLine).toContain("mtime-changed");
   expect(reasonLine).toContain("deploy.sh");
   expect(reasonLine).toContain("previous rows=1");
+});
+
+test("akmIndex does not run slow passes", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearchMode: "off",
+    llm: {
+      endpoint: "https://example.test/v1/chat/completions",
+      model: "demo-chat",
+      concurrency: 1,
+    },
+  });
+
+  const memoryInfer = await import("../src/indexer/memory-inference");
+  const graphExtract = await import("../src/indexer/graph-extraction");
+  const memorySpy = spyOn(memoryInfer, "runMemoryInferencePass").mockResolvedValue({
+    considered: 0,
+    splitParents: 0,
+    writtenFacts: 0,
+    skippedNoFacts: 0,
+  });
+  const graphSpy = spyOn(graphExtract, "runGraphExtractionPass").mockResolvedValue({
+    considered: 0,
+    extracted: 0,
+    totalEntities: 0,
+    totalRelations: 0,
+    written: false,
+    quality: {
+      consideredFiles: 0,
+      extractedFiles: 0,
+      entityCount: 0,
+      relationCount: 0,
+      extractionCoverage: 0,
+      density: 0,
+    },
+  });
+
+  try {
+    await akmIndex({ stashDir });
+    expect(memorySpy).not.toHaveBeenCalled();
+    expect(graphSpy).not.toHaveBeenCalled();
+  } finally {
+    memorySpy.mockRestore();
+    graphSpy.mockRestore();
+  }
 });
 
 test("akmIndex incremental reruns stabilize for stash-owned wiki indexes", async () => {
@@ -1453,4 +1529,129 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   closeDatabase(db3);
 
   fs.rmSync(stashDir, { recursive: true, force: true });
+});
+
+// ── Skip enrichment for already-complete entries ─────────────────────────────
+
+test("enhanceDirsWithLlm does not call LLM for entries that are already complete when reEnrich=false", async () => {
+  // Set up a stash directory with a script file and a pre-populated .stash.json
+  // that already has description, tags, and searchHints.
+  const stashDir = tmpStash();
+  const scriptDir = path.join(stashDir, "scripts", "deploy");
+  fs.mkdirSync(scriptDir, { recursive: true });
+  const scriptFile = path.join(scriptDir, "deploy.sh");
+  fs.writeFileSync(scriptFile, "#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n");
+
+  // Pre-write a .stash.json with a complete entry (description + tags + searchHints)
+  // so that after mergeLegacyEntry the entry already has all enrichment fields.
+  const prePopulatedStash = {
+    entries: [
+      {
+        name: "deploy.sh",
+        type: "script",
+        quality: "generated",
+        filename: "deploy.sh",
+        description: "Deploy services to production",
+        tags: ["deploy", "production", "ops"],
+        searchHints: ["deploy a service to production", "roll out new code to staging"],
+      },
+    ],
+  };
+  fs.writeFileSync(path.join(scriptDir, ".stash.json"), JSON.stringify(prePopulatedStash));
+
+  // Configure an LLM endpoint so resolveIndexPassLLM would normally return a config.
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearchMode: "off",
+    llm: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" },
+  });
+
+  // Track whether any LLM/fetch call was made. The LLM client calls globalThis.fetch
+  // for chat completions; if our skip logic works, fetch should NOT be called.
+  let llmFetchCalled = false;
+  const originalFetch2 = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    // The LLM endpoint uses /chat/completions — flag any call to it.
+    if (url.includes("chat/completions")) {
+      llmFetchCalled = true;
+      throw new Error("LLM should not be called for already-complete entries");
+    }
+    return originalFetch2(input as Parameters<typeof fetch>[0], _init);
+  }) as typeof globalThis.fetch;
+
+  try {
+    await akmIndex({ stashDir, reEnrich: false });
+    expect(llmFetchCalled).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch2;
+  }
+});
+
+// ── Regression: graph rows are cleaned up when a stash source is removed ─────
+
+test("akmIndex removes graph rows when a stash source is no longer configured", async () => {
+  const primaryStash = tmpStash();
+  const secondaryStash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-graph-secondary-"));
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
+    fs.mkdirSync(path.join(secondaryStash, sub), { recursive: true });
+  }
+  writeFile(path.join(primaryStash, "knowledge", "primary.md"), "# Primary\n");
+  writeFile(path.join(secondaryStash, "knowledge", "secondary.md"), "# Secondary\n");
+
+  process.env.AKM_STASH_DIR = primaryStash;
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: secondaryStash, name: "secondary" }],
+  });
+
+  // First index: register both stash dirs in index_meta.stashDirs.
+  await akmIndex({ stashDir: primaryStash, full: true });
+
+  // Seed graph rows for the secondary stash directly into the database.
+  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/graph-db");
+  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
+  const seedDb = openDatabase();
+  try {
+    replaceStoredGraph(seedDb, {
+      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+      generatedAt: "2026-05-15T00:00:00.000Z",
+      stashRoot: secondaryStash,
+      files: [
+        {
+          path: path.join(secondaryStash, "knowledge", "secondary.md"),
+          type: "knowledge",
+          entities: ["alpha", "beta"],
+          relations: [{ from: "alpha", to: "beta" }],
+        },
+      ],
+      entities: ["alpha", "beta"],
+      relations: [{ from: "alpha", to: "beta" }],
+      quality: {
+        consideredFiles: 1,
+        extractedFiles: 1,
+        entityCount: 2,
+        relationCount: 1,
+        extractionCoverage: 1,
+        density: 0.5,
+      },
+    });
+  } finally {
+    closeDatabase(seedDb);
+  }
+
+  // Sanity: graph_meta row exists for the secondary stash.
+  const beforeMeta = loadStoredGraphMeta(secondaryStash);
+  expect(beforeMeta).not.toBeNull();
+
+  // Drop the secondary source so it is treated as removed on the next run.
+  saveConfig({ semanticSearchMode: "off", sources: [] });
+
+  await akmIndex({ stashDir: primaryStash });
+
+  // After removal, graph rows for the orphaned stash should be gone.
+  const afterMeta = loadStoredGraphMeta(secondaryStash);
+  expect(afterMeta).toBeNull();
+
+  fs.rmSync(secondaryStash, { recursive: true, force: true });
 });

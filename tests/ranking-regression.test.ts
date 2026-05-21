@@ -54,16 +54,24 @@ function createTmpDir(prefix = "akm-ranking-"): string {
 
 let originalXdgCacheHome: string | undefined;
 let originalXdgConfigHome: string | undefined;
+let originalAkmDataDir: string | undefined;
+let originalAkmStateDir: string | undefined;
 let originalAkmStashDir: string | undefined;
 let testCacheDir: string;
 let testConfigDir: string;
+let testDataDir: string;
+let testStateDir: string;
 
 beforeAll(async () => {
   originalXdgCacheHome = process.env.XDG_CACHE_HOME;
   originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  originalAkmDataDir = process.env.AKM_DATA_DIR;
+  originalAkmStateDir = process.env.AKM_STATE_DIR;
   originalAkmStashDir = process.env.AKM_STASH_DIR;
   testCacheDir = createTmpDir("akm-ranking-cache-");
   testConfigDir = createTmpDir("akm-ranking-config-");
+  testDataDir = createTmpDir("akm-ranking-data-");
+  testStateDir = createTmpDir("akm-ranking-state-");
 
   // Materialise the shared ranking-baseline fixture into a tmp dir.
   // The suite indexes it in-process against isolated XDG dirs so the
@@ -75,6 +83,10 @@ beforeAll(async () => {
 
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.AKM_DATA_DIR = testDataDir;
+  // Pair AKM_STASH_DIR with AKM_STATE_DIR so the test-isolation guard in
+  // src/core/paths.ts (getStateDir) stays inert.
+  process.env.AKM_STATE_DIR = testStateDir;
   process.env.AKM_STASH_DIR = FIXTURE_STASH;
 
   saveConfig({
@@ -91,6 +103,10 @@ afterAll(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalAkmDataDir === undefined) delete process.env.AKM_DATA_DIR;
+  else process.env.AKM_DATA_DIR = originalAkmDataDir;
+  if (originalAkmStateDir === undefined) delete process.env.AKM_STATE_DIR;
+  else process.env.AKM_STATE_DIR = originalAkmStateDir;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
 

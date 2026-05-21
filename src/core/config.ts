@@ -3,12 +3,36 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
-import { filterNonEmptyStrings } from "./common";
+import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
+import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from "./config-migration";
 import { ConfigError } from "./errors";
-import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath, getCacheDir } from "./paths";
+import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
 
 export type { AgentConfig } from "../integrations/agent/config";
+
+// ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
+
+/**
+ * Curated taxonomy of failure modes for negative feedback (F-3 / #384).
+ *
+ * Structured failure modes enable aggregation across feedback events so the
+ * distill pipeline can detect that "5 assets failed for the same reason" and
+ * act on it — free-text strings about the same issue are not aggregatable.
+ *
+ * Based on CAI principle-driven feedback (arXiv:2212.08073) and PRM/ORM
+ * process-level reward modelling (arXiv:2305.20050).
+ */
+export const FEEDBACK_FAILURE_MODES = [
+  "incorrect", // Factually wrong or logically flawed content
+  "outdated", // Correct at some point but now stale
+  "dangerous", // Could cause harm if followed (security, safety)
+  "incomplete", // Missing key steps, context, or caveats
+  "redundant", // Duplicates another asset without adding value
+] as const;
+
+/** Union of the curated failure-mode values. */
+export type FeedbackFailureMode = (typeof FEEDBACK_FAILURE_MODES)[number];
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -66,6 +90,13 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   maxTokens?: number;
   /** Optional request timeout in milliseconds. */
   timeoutMs?: number;
+  /**
+   * Max parallel LLM requests issued by index passes (graph extraction,
+   * memory inference, metadata enrichment). Defaults to 1. Cloud users can
+   * set this to 4 or higher; local model servers (LM Studio, Ollama) that
+   * run one inference at a time should leave it at the default.
+   */
+  concurrency?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
   /**
@@ -83,6 +114,59 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
    * thinking on Ollama qwen3/qwen3.5 models.
    */
   extraParams?: Record<string, unknown>;
+  /**
+   * Model context window size in tokens. When set, features that build
+   * LLM prompts (e.g. `akm consolidate`) use this to compute safe chunk
+   * sizes instead of relying on a conservative hard-coded default.
+   * Set this to the value your model was loaded with in LMStudio / Ollama
+   * (e.g. 16384 for a 16K context model). Has no effect on the HTTP request
+   * body itself.
+   */
+  contextLength?: number;
+  /**
+   * Optional model name override for the LLM-as-judge quality gate (P2-B).
+   * When set, the judge call uses this model instead of `llm.model`, enabling
+   * cheaper/faster model routing (e.g. "haiku" while distillation uses "sonnet").
+   */
+  judgeModel?: string;
+}
+
+export interface LlmProfileConfig extends LlmConnectionConfig {
+  supportsJsonSchema?: boolean;
+}
+
+export interface AgentProfileConfigV2 {
+  platform: "opencode" | "claude" | "opencode-sdk";
+  bin?: string;
+  args?: string[];
+  workspace?: string;
+  model?: string;
+}
+
+export interface ProcessEntry {
+  enabled?: boolean;
+  mode?: "llm" | "agent" | "sdk";
+  profile?: string;
+  timeoutMs?: number | null;
+  options?: Record<string, unknown>;
+}
+
+export interface FeaturesConfig {
+  /**
+   * Per-process runner overrides for the `improve` section (reflect, distill,
+   * propose, memory_consolidation, feedback_distillation, etc.).
+   *
+   * Known keys include:
+   *  - `validation`: third model tier (Advantage D3). A lower-cost classifier
+   *    runner used by staleness detection, confidence scoring, and lesson
+   *    classification. Default: off — callers fall back to `defaults.llm`
+   *    via {@link resolveValidationRunner}. Set this to point at a cheap
+   *    profile (for example a small local model) when running large
+   *    improvement passes where the primary model would be overkill.
+   */
+  improve?: Record<string, ProcessEntry | boolean>;
+  index?: Record<string, ProcessEntry | boolean>;
+  search?: Record<string, ProcessEntry | boolean>;
 }
 
 export interface LlmFeatureFlags {
@@ -107,6 +191,44 @@ export interface LlmFeatureFlags {
    * failing with `ConfigError`.
    */
   feedback_distillation?: boolean;
+  /**
+   * Gates `akm consolidate` memory deduplication and promotion. Default: false.
+   * When false (or absent), `akm consolidate` throws a ConfigError.
+   */
+  memory_consolidation?: boolean;
+  /**
+   * Gates the LLM-as-judge quality gate in `akmDistill`. When enabled, each
+   * generated lesson is scored on novelty, actionability, and non-redundancy
+   * before entering the proposal queue. Fail-open: judge failures always pass.
+   * Default: false.
+   */
+  lesson_quality_gate?: boolean;
+  /**
+   * Gates the LLM-as-judge quality gate on reflect proposals (R-5 / #374).
+   *
+   * When true, each proposal from `akm reflect` is scored by the judge before
+   * entering the proposal queue. Fail-open: judge failures always pass. Uses the
+   * same `runLessonQualityJudge` infrastructure as `lesson_quality_gate`.
+   *
+   * Also extends `lesson_quality_gate` semantics — both flags are checked by
+   * the reflect quality gate. Set either to enable it on reflect proposals.
+   * Default: false.
+   */
+  proposal_quality_gate?: boolean;
+  /**
+   * Gates the `akm index` metadata-enhancement pass. Default: false.
+   * When false (or absent), metadata enhancement is skipped and falls back to
+   * returning an empty enrichment object (no description/searchHints/tags update).
+   */
+  metadata_enhance?: boolean;
+  /**
+   * Gates the M-1 contradiction-detection pass in `akm improve` (#367).
+   * Default: false. When enabled, derived memories within the same parent family
+   * are checked pairwise for contradictions using an LLM judge, and
+   * `contradictedBy` edges are written to their frontmatter so the SCC resolver
+   * in `resolveFamilyContradictions` has edges to work on.
+   */
+  memory_contradiction_detection?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -174,6 +296,21 @@ export interface ConfiguredSource {
 }
 
 /**
+ * Provider-specific options for a configured source entry.
+ * Fields accessed by name are listed explicitly for type safety; additional
+ * provider-specific keys are accepted via the index signature.
+ */
+export interface SourceConfigEntryOptions {
+  /**
+   * When true and the source is a git repo, akm will run `git push` after
+   * every asset commit (write-source.ts §5).
+   */
+  pushOnCommit?: boolean;
+  /** Pass-through catch-all for provider-specific options not listed above. */
+  [key: string]: unknown;
+}
+
+/**
  * @deprecated Use {@link ConfiguredSource} (runtime) and let the loader derive
  * {@link SourceSpec} from the persisted fields. `SourceConfigEntry` describes
  * the on-disk JSON shape; new code should not reach for it directly.
@@ -193,8 +330,8 @@ export interface SourceConfigEntry {
   writable?: boolean;
   /** Marks this entry as the primary working stash (replaces top-level stashDir). */
   primary?: boolean;
-  /** Arbitrary provider-specific options */
-  options?: Record<string, unknown>;
+  /** Typed provider-specific options (see {@link SourceConfigEntryOptions}). */
+  options?: SourceConfigEntryOptions;
   /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
   wikiName?: string;
 }
@@ -220,6 +357,24 @@ export interface SecurityConfig {
 }
 
 export interface AkmConfig {
+  /** v2: schema version marker. "0.8.0" (or legacy integer 2) = already migrated to v2 shape. */
+  configVersion?: string | number;
+  /** v2: named LLM and agent profiles. */
+  profiles?: {
+    llm?: Record<string, LlmProfileConfig>;
+    agent?: Record<string, AgentProfileConfigV2>;
+  };
+  /** v2: default profile names and improve pipeline defaults. */
+  defaults?: {
+    llm?: string;
+    agent?: string;
+    improve?: {
+      limit?: number;
+      preset?: "fast" | "thorough" | "mixed" | "custom";
+    };
+  };
+  /** v2: unified features tree replacing the old top-level features flags. */
+  features?: FeaturesConfig;
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
   /** User preference for semantic search. "auto" means use semantic search whenever runtime prerequisites are healthy. */
@@ -254,11 +409,9 @@ export interface AkmConfig {
   /** Additional asset sources (filesystem paths and remote providers) */
   sources?: SourceConfigEntry[];
   /**
-   * @deprecated Removed. The legacy `stashes[]` config key is no longer
-   * loaded or persisted (one-cycle compat shim retired in #284). The field
-   * is retained on the runtime type only as a structural placeholder for
-   * defensive `config.sources ?? config.stashes ?? []` reads in downstream
-   * call sites; it is never populated by the loader.
+   * @deprecated use sources
+   * Legacy alias for `sources` — preserved for backward-compatibility with
+   * existing configs and tests that reference `stashes`.
    */
   stashes?: SourceConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
@@ -297,6 +450,123 @@ export interface AkmConfig {
      * hybrid hits are never filtered. Default: 0.2. Set to 0 to disable.
      */
     minScore?: number;
+    /**
+     * Search-time graph boost tuning knobs.
+     *
+     * Defaults preserve current behavior:
+     * - directBoostPerEntity: 0.25
+     * - directBoostCap: 0.75
+     * - hopBoostPerEntity: 0.1
+     * - hopBoostCap: 0.3
+     * - maxHops: 1
+     * - confidenceMode: "blend"
+     * - confidenceWeight: 0.2
+     */
+    graphBoost?: {
+      /** Additive direct-match boost per matched entity in the hit. */
+      directBoostPerEntity?: number;
+      /** Maximum total direct-match additive boost for one hit. */
+      directBoostCap?: number;
+      /** Base additive connected-entity boost per matched hop entity. */
+      hopBoostPerEntity?: number;
+      /** Maximum total connected-entity additive boost for one hit. */
+      hopBoostCap?: number;
+      /**
+       * Maximum traversal depth from query-matched entities.
+       * Default: 1 (existing behavior). Hard-capped conservatively at 3.
+       */
+      maxHops?: number;
+      /**
+       * Confidence integration mode for graph boost scoring.
+       * - "off": ignore confidence values.
+       * - "blend": softly downweight by confidence using confidenceWeight.
+       * - "multiply": directly multiply by confidence.
+       */
+      confidenceMode?: "off" | "blend" | "multiply";
+      /**
+       * Blend strength in [0,1] when confidenceMode is "blend".
+       * 0 means no effect; 1 means full confidence-driven downweight.
+       */
+      confidenceWeight?: number;
+    };
+  };
+  /**
+   * Feedback-specific configuration.
+   */
+  feedback?: {
+    /**
+     * When true, negative feedback without --reason throws a hard error
+     * (exit 2). When false, a non-blocking warning is emitted instead.
+     *
+     * Default: true (F-3 / #384). Structured failure signals are required
+     * for the distill verbal-gradient pipeline to aggregate failure patterns
+     * across feedback events (PRM/ORM, arXiv:2305.20050; CAI, arXiv:2212.08073).
+     */
+    requireReason?: boolean;
+    /**
+     * When set, only these failure-mode values are accepted by `--failure-mode`.
+     * Defaults to the built-in curated enum {@link FEEDBACK_FAILURE_MODES}.
+     * Set to an empty array to allow any string.
+     */
+    allowedFailureModes?: string[];
+  };
+  /**
+   * Number of days to retain soft-invalidated (superseded) memory assets in
+   * `.akm/archive/` before TTL cleanup removes them. Default: 90.
+   * Set to 0 to disable TTL cleanup entirely (archives accumulate indefinitely).
+   */
+  archiveRetentionDays?: number;
+  /**
+   * `akm improve` pipeline tuning. All fields are optional; missing fields fall
+   * back to built-in defaults. Persisted settings apply to every unattended run
+   * (cron / launchd / schtasks). Use CLI flags for one-off overrides.
+   */
+  improve?: ImproveConfig;
+}
+
+/**
+ * Per-type reflect cooldown configuration for `akm improve`.
+ * Each key is an asset type (`memory`, `knowledge`, `skill`, etc.) and the
+ * value is the cooldown window in days. Set a type to 0 to disable cooldown
+ * for that type. Unknown type keys are accepted and used as-is.
+ */
+export interface ImproveConfig {
+  /**
+   * Per-asset-type reflect cooldown in days. Overrides the built-in defaults
+   * for any type listed. Types not listed continue to use their built-in default.
+   *
+   * Built-in defaults:
+   *   memory: 2, lesson: 7, workflow/skill/agent/command/knowledge/script/wiki: 30, task: 60
+   *
+   * Example:
+   * ```json
+   * { "improve": { "reflectCooldownByType": { "memory": 1, "knowledge": 60 } } }
+   * ```
+   */
+  reflectCooldownByType?: Record<string, number>;
+  /**
+   * Phase 2A / Rec 5 — configurable forgetting curve.
+   *
+   * Tunes the exponential utility-score recency decay applied during search
+   * ranking. `halfLifeDays` (default 30) replaces the historical hardcoded
+   * `RECENCY_DECAY_DAYS = 30`. `feedbackStabilityBoost` (default 1.5)
+   * multiplicatively extends the half-life by `^positiveFeedbackCount`,
+   * capped at `halfLifeDays × 4`, so memories that have repeatedly proven
+   * useful decay more slowly than first-use memories.
+   *
+   * Default-safe: the absence of this object — and the absence of any
+   * recorded positive feedback events — collapses the formula back to the
+   * original `exp(-days / 30)` curve so pre-2A behaviour is preserved.
+   */
+  utilityDecay?: {
+    /** Recency half-life in days (default 30). Minimum 0.1. */
+    halfLifeDays?: number;
+    /**
+     * Multiplicative half-life extension applied per positive feedback event
+     * recorded against the entry. Default 1.5; minimum 1.0 (no boost).
+     * Effective half-life is capped at `halfLifeDays × 4`.
+     */
+    feedbackStabilityBoost?: number;
   };
 }
 
@@ -312,10 +582,43 @@ export interface OutputConfig {
  * v1 contract (#208): boolean opt-out only. Per-pass alternative provider
  * configuration is deliberately out of scope — any non-boolean value for
  * `llm`, or any other key, fails at config load with a `ConfigError`.
+ *
+ * Batch-size knobs:
+ *   - `graphExtractionBatchSize` — how many asset bodies to pack into one
+ *     graph-extraction LLM call. Default: 4 (chosen to amortise per-call HTTP
+ *     overhead while staying within typical 8K–16K context windows). When
+ *     `llm.contextLength` is set, the runtime clamps the effective batch size
+ *     via {@link resolveBatchSize} to fit within the context window.
+ *   - `graphExtractionIncludeTypes` — asset types eligible for graph extraction.
+ *     Default: ["memory", "knowledge"] (backwards compatible).
+ *   - `memoryInferenceBatchSize` — same for the memory-inference pass.
+ *     Default: 1 (one call per memory).
+ * Set higher values to amortise LLM HTTP round-trips across more assets.
  */
 export interface IndexPassConfig {
   /** When `false`, the pass skips its LLM call even if `akm.llm` is set. */
   llm?: boolean;
+  /**
+   * Number of asset bodies to batch into a single graph-extraction LLM call.
+   * Default: {@link DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE} (4). Practical range:
+   * 1–10. Higher values reduce HTTP round-trips at the cost of larger prompts;
+   * values above ~10 risk hitting context limits. The effective value is
+   * additionally clamped at runtime by {@link resolveBatchSize} when
+   * `llm.contextLength` is set.
+   */
+  graphExtractionBatchSize?: number;
+  /**
+   * Asset types eligible for graph extraction.
+   * Default: ["memory", "knowledge"] (existing behavior).
+   * Unknown values are rejected at config-load time.
+   */
+  graphExtractionIncludeTypes?: string[];
+  /**
+   * Number of memory bodies to batch into a single memory-inference LLM call.
+   * Default: 1 (one call per memory — existing behaviour, fully opt-in).
+   * Practical range: 1–10.
+   */
+  memoryInferenceBatchSize?: number;
 }
 
 /**
@@ -324,6 +627,38 @@ export interface IndexPassConfig {
  * configure via the same shape) but their entries are validated for shape.
  */
 export type IndexConfig = Record<string, IndexPassConfig>;
+
+/**
+ * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
+ * empirically: 4 amortises the per-call HTTP overhead 4× while keeping the
+ * combined prompt size well under common 8K/16K context windows (each body is
+ * sliced to ~500 chars in the graph-extract prompt builder).
+ */
+export const DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE = 4;
+
+/**
+ * Approximate character budget per asset body inside a batched
+ * graph-extraction prompt — used by {@link resolveBatchSize} to derive a
+ * context-window ceiling when `llm.contextLength` is configured. This accounts
+ * for the actual `MAX_BODY_CHARS` (500) in graph-extract.ts plus the system
+ * prompt, user prompt wrapper, and expected JSON response overhead.
+ */
+const GRAPH_EXTRACTION_CHARS_PER_BODY = 1500;
+
+/**
+ * Clamp a configured batch size against the model's known context window.
+ *
+ * `configured` defaults to {@link DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE} when
+ * `undefined`. When `contextLength` is provided, the result is the smaller of
+ * `configured` and `floor(contextLength / GRAPH_EXTRACTION_CHARS_PER_BODY)`,
+ * with a floor of 1 so the batched path always processes at least one body.
+ */
+export function resolveBatchSize(configured: number | undefined, contextLength?: number): number {
+  const base = configured && configured > 0 ? configured : DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
+  if (!contextLength || contextLength <= 0) return base;
+  const ceiling = Math.max(1, Math.floor(contextLength / GRAPH_EXTRACTION_CHARS_PER_BODY));
+  return Math.max(1, Math.min(base, ceiling));
+}
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -341,12 +676,88 @@ export const DEFAULT_CONFIG: AkmConfig = {
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
-export function getConfigDir(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): string {
-  return _getConfigDir(env, platform);
+// ── Private helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Returns `value` if it is a finite positive integer; otherwise `undefined`.
+ * Used to validate numeric config fields like `dimension`, `contextLength`,
+ * `timeoutMs`, `maxTokens`, and `ollamaOptions.num_ctx`.
+ */
+function parsePositiveInteger(_fieldPath: string, value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
 }
 
-export function getConfigPath(): string {
-  return _getConfigPath();
+function parseNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
+
+/**
+ * Returns `value` if it is a string present in `allowed`; otherwise `undefined`.
+ */
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
+/**
+ * Validates that `url` starts with `http://` or `https://`. Returns `url` on
+ * success and warns+returns `undefined` on failure. `fieldName` is used only
+ * in the warning message.
+ */
+function isValidHttpUrl(url: unknown, fieldName: string): string | undefined {
+  if (typeof url !== "string" || !url) return undefined;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    warn(`[akm] Ignoring ${fieldName}: endpoint must start with http:// or https://, got "${url}"`);
+    return undefined;
+  }
+  return url;
+}
+
+function clearAllCaches(): void {
+  cachedConfig = undefined;
+  cachedUserConfig = undefined;
+  configReadOnlyReason = undefined;
+}
+
+// ── Newer-config-than-binary guard (Fix 2 / migration safety) ───────────────
+//
+// When ANY loaded config layer declares a `configVersion` higher than the
+// binary's `CURRENT_CONFIG_VERSION`, this module enters a read-only mode for
+// the current process. Reads still succeed (unknown fields are silently
+// dropped by `parseConfigLayer`, preserving existing behaviour), but writes
+// via `saveConfig` are refused so we don't strip the newer fields on the way
+// back to disk.
+//
+// `AKM_FORCE_DOWNGRADE_CONFIG=1` is the explicit escape hatch: writes proceed
+// after emitting a stderr warning that fields will be stripped.
+let configReadOnlyReason: { path: string; foundVersion: string | number; binaryVersion: string } | undefined;
+
+/**
+ * Returns the read-only reason if a newer-than-binary config layer was loaded
+ * in the current process, otherwise undefined. Exposed for diagnostics/tests.
+ */
+export function getConfigReadOnlyReason():
+  | { path: string; foundVersion: string | number; binaryVersion: string }
+  | undefined {
+  return configReadOnlyReason;
+}
+
+function markConfigReadOnlyIfNewer(configPath: string, rawVersion: unknown): void {
+  if (typeof rawVersion !== "string" && typeof rawVersion !== "number") return;
+  const cmp = compareConfigVersion(rawVersion, CURRENT_CONFIG_VERSION);
+  if (cmp === 1) {
+    // First-seen newer layer wins (don't overwrite if an earlier layer was already newer).
+    if (!configReadOnlyReason) {
+      configReadOnlyReason = {
+        path: configPath,
+        foundVersion: rawVersion,
+        binaryVersion: CURRENT_CONFIG_VERSION,
+      };
+    }
+  }
 }
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
@@ -357,8 +768,7 @@ let cachedConfig: { config: AkmConfig; signature: string } | undefined;
 let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number; contentHash: string } | undefined;
 
 export function resetConfigCache(): void {
-  cachedConfig = undefined;
-  cachedUserConfig = undefined;
+  clearAllCaches();
 }
 
 function hashString(text: string): string {
@@ -395,6 +805,13 @@ export function loadUserConfig(): AkmConfig {
     cachedUserConfig = undefined;
     return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
   }
+
+  // ── Auto-migration hook (between parse and normalize) ─────────────────────
+  // Check if the raw config needs migrating to the 0.8.0 shape. This runs on
+  // every cache miss so we catch configs written before the feature shipped.
+  // AKM_NO_AUTO_MIGRATE=1 skips the disk rewrite (still applies in-memory).
+  text = maybeAutoMigrateConfigFile(configPath, text);
+
   const contentHash = hashString(text);
 
   if (
@@ -409,14 +826,89 @@ export function loadUserConfig(): AkmConfig {
 
   const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(text));
   const finalConfig = applyRuntimeEnvApiKeys(config);
+
+  // Re-stat after potential write-back so the cache key reflects the new mtime.
+  let finalStat = stat;
+  try {
+    finalStat = fs.statSync(configPath);
+  } catch {
+    // Stat failed — use original stat for cache; no harm done.
+  }
   cachedUserConfig = {
     config: finalConfig,
     path: configPath,
-    mtime: stat.mtimeMs,
-    size: stat.size,
+    mtime: finalStat.mtimeMs,
+    size: finalStat.size,
     contentHash,
   };
   return finalConfig;
+}
+
+export function getSources(config: AkmConfig): SourceConfigEntry[] {
+  return config.sources ?? [];
+}
+
+export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[] {
+  return config.registries ?? DEFAULT_CONFIG.registries ?? [];
+}
+
+export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
+  if (!config.llm)
+    throw new ConfigError("LLM is not configured. Run `akm config set llm` to configure one.", "LLM_NOT_CONFIGURED");
+  return config.llm;
+}
+
+/**
+ * Parse the config text, run `migrateConfigShape`, and — unless
+ * `AKM_NO_AUTO_MIGRATE=1` is set — write the migrated result back to disk.
+ *
+ * Returns the (possibly migrated) config JSON as a string so that the caller
+ * can continue with the standard `readNormalizedConfigFromText` path.
+ */
+function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(stripJsonComments(text));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return text; // Not a valid JSON object — let the normal loader handle it
+    }
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return text; // Malformed JSON — let the normal loader surface the error
+  }
+
+  // Track newer-than-binary layers so saveConfig can refuse to write later.
+  markConfigReadOnlyIfNewer(configPath, raw.configVersion);
+
+  // If the on-disk config is newer than this binary, do NOT attempt to
+  // "migrate" — `migrateConfigShape` only knows how to upgrade to
+  // CURRENT_CONFIG_VERSION, and downgrading would silently strip fields. We
+  // still let the rest of loadUserConfig run (so reads keep working), but
+  // we leave the bytes on disk untouched.
+  if (compareConfigVersion((raw as { configVersion?: string | number }).configVersion, CURRENT_CONFIG_VERSION) === 1) {
+    return text;
+  }
+
+  const { changed, result } = migrateConfigShape(raw);
+  if (!changed) {
+    return text;
+  }
+
+  const migratedText = `${JSON.stringify(result, null, 2)}\n`;
+
+  if (process.env.AKM_NO_AUTO_MIGRATE !== "1") {
+    try {
+      backupExistingConfig(configPath);
+      writeConfigObject(configPath, result);
+      warn(
+        `[akm] Config at ${configPath} migrated to ${result.configVersion ?? "0.8.0"} format. Backup written to cache dir.`,
+      );
+    } catch {
+      warn(`[akm] Could not write migrated config to ${configPath}. Run 'akm config migrate' manually.`);
+    }
+  }
+
+  return migratedText;
 }
 
 export function loadConfig(): AkmConfig {
@@ -439,8 +931,22 @@ export function loadConfig(): AkmConfig {
 }
 
 export function saveConfig(config: AkmConfig): void {
-  cachedConfig = undefined;
-  cachedUserConfig = undefined;
+  // Refuse to write if any loaded config layer in this process declared a
+  // configVersion newer than the binary. Writing back would strip whatever
+  // fields parseConfigLayer didn't recognize, silently losing the user's
+  // newer-format settings. The escape hatch is AKM_FORCE_DOWNGRADE_CONFIG=1.
+  const readOnly = configReadOnlyReason;
+  if (readOnly) {
+    if (process.env.AKM_FORCE_DOWNGRADE_CONFIG !== "1") {
+      throw new ConfigError(
+        `config v${String(readOnly.foundVersion)} (at ${readOnly.path}) is newer than this binary (v${readOnly.binaryVersion}); refusing to write to avoid stripping fields. Upgrade akm or set AKM_FORCE_DOWNGRADE_CONFIG=1 to override.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    warn("[akm] WARNING: config downgrade forced; non-recognised fields will be stripped");
+  }
+
+  clearAllCaches();
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
@@ -478,37 +984,24 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
     const { apiKey, ...rest } = config.llm;
     sanitized.llm = rest;
   }
+  if (config.profiles?.llm) {
+    const llmProfiles: Record<string, unknown> = {};
+    for (const [name, profile] of Object.entries(config.profiles.llm)) {
+      const { apiKey: _apiKey, ...rest } = profile;
+      llmProfiles[name] = rest;
+    }
+    sanitized.profiles = {
+      ...((sanitized.profiles as Record<string, unknown> | undefined) ?? {}),
+      llm: llmProfiles,
+    };
+  }
   // Drop empty keys to keep config clean
   return sanitized;
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   const current = loadUserConfig();
-  // Shallow-merge for top-level scalar fields; deep-merge known object-type config keys.
-  const merged: AkmConfig = { ...current, ...partial };
-  // Deep-merge output — partial update should not wipe sibling keys
-  if (current.output && partial.output && partial.output !== current.output) {
-    merged.output = { ...current.output, ...partial.output };
-  }
-  // Deep-merge embedding — only when both sides are objects and partial does not intend to clear
-  if (current.embedding && partial.embedding && partial.embedding !== current.embedding) {
-    merged.embedding = { ...current.embedding, ...partial.embedding };
-  }
-  // Deep-merge llm — same pattern
-  if (current.llm && partial.llm && partial.llm !== current.llm) {
-    merged.llm = { ...current.llm, ...partial.llm };
-  }
-  // Deep-merge index per-pass entries so partial updates don't wipe siblings.
-  if (current.index && partial.index && partial.index !== current.index) {
-    const mergedIndex: IndexConfig = { ...current.index };
-    for (const [passName, passOverride] of Object.entries(partial.index)) {
-      mergedIndex[passName] = { ...(mergedIndex[passName] ?? {}), ...passOverride };
-    }
-    merged.index = mergedIndex;
-  }
-  if (current.security && partial.security && partial.security !== current.security) {
-    merged.security = mergeSecurityConfig(current.security, partial.security);
-  }
+  const merged = mergeLoadedConfig(current, partial);
   saveConfig(merged);
   return merged;
 }
@@ -522,16 +1015,8 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
  * combining multiple config sources so project config files only override what
  * they set.
  */
-function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
+function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
   const config: Partial<AkmConfig> = {};
-
-  if (Array.isArray(raw.stashes)) {
-    throw new ConfigError(
-      "The legacy `stashes[]` config key is no longer supported; rename it to `sources[]`.",
-      "INVALID_CONFIG_FILE",
-      `Edit ${_getConfigPath()} and replace \`stashes\` with \`sources\`.`,
-    );
-  }
 
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();
@@ -540,7 +1025,7 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   // Backward compatibility: coerce legacy boolean values to string
   if (typeof raw.semanticSearchMode === "boolean") {
     config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
-  } else if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
+  } else if (isOneOf(raw.semanticSearchMode, ["off", "auto"] as const)) {
     config.semanticSearchMode = raw.semanticSearchMode;
   }
 
@@ -559,8 +1044,15 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
 
-  if (raw.stashInheritance === "replace" || raw.stashInheritance === "merge") {
+  if (isOneOf(raw.stashInheritance, ["replace", "merge"] as const)) {
     config.stashInheritance = raw.stashInheritance;
+  }
+
+  if (Array.isArray((raw as Record<string, unknown>).stashes)) {
+    throw new ConfigError(
+      "The legacy `stashes[]` config key is no longer supported. Rename it to `sources`.",
+      "INVALID_CONFIG_FILE",
+    );
   }
 
   const sources = parseSourcesConfig(raw.sources);
@@ -590,26 +1082,307 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   if (typeof raw.search === "object" && raw.search !== null && !Array.isArray(raw.search)) {
     const searchRaw = raw.search as Record<string, unknown>;
     const searchConfig: AkmConfig["search"] = {};
+    for (const key of Object.keys(searchRaw)) {
+      if (key !== "minScore" && key !== "graphBoost") {
+        warn(`[akm] Ignoring unknown search key "${key}".`);
+      }
+    }
     if (typeof searchRaw.minScore === "number" && Number.isFinite(searchRaw.minScore) && searchRaw.minScore >= 0) {
       searchConfig.minScore = searchRaw.minScore;
+    }
+    if (
+      typeof searchRaw.graphBoost === "object" &&
+      searchRaw.graphBoost !== null &&
+      !Array.isArray(searchRaw.graphBoost)
+    ) {
+      const graphBoostRaw = searchRaw.graphBoost as Record<string, unknown>;
+      const graphBoostConfig: NonNullable<AkmConfig["search"]>["graphBoost"] = {};
+      for (const key of Object.keys(graphBoostRaw)) {
+        if (
+          key !== "directBoostPerEntity" &&
+          key !== "directBoostCap" &&
+          key !== "hopBoostPerEntity" &&
+          key !== "hopBoostCap" &&
+          key !== "maxHops" &&
+          key !== "confidenceMode" &&
+          key !== "confidenceWeight"
+        ) {
+          warn(`[akm] Ignoring unknown search.graphBoost key "${key}".`);
+        }
+      }
+
+      const directBoostPerEntity = parseNonNegativeNumber(graphBoostRaw.directBoostPerEntity);
+      if (directBoostPerEntity !== undefined) graphBoostConfig.directBoostPerEntity = directBoostPerEntity;
+
+      const directBoostCap = parseNonNegativeNumber(graphBoostRaw.directBoostCap);
+      if (directBoostCap !== undefined) graphBoostConfig.directBoostCap = directBoostCap;
+
+      const hopBoostPerEntity = parseNonNegativeNumber(graphBoostRaw.hopBoostPerEntity);
+      if (hopBoostPerEntity !== undefined) graphBoostConfig.hopBoostPerEntity = hopBoostPerEntity;
+
+      const hopBoostCap = parseNonNegativeNumber(graphBoostRaw.hopBoostCap);
+      if (hopBoostCap !== undefined) graphBoostConfig.hopBoostCap = hopBoostCap;
+
+      const maxHops = parsePositiveInteger("search.graphBoost.maxHops", graphBoostRaw.maxHops);
+      if (maxHops !== undefined) graphBoostConfig.maxHops = Math.min(maxHops, 3);
+
+      if (isOneOf(graphBoostRaw.confidenceMode, ["off", "blend", "multiply"] as const)) {
+        graphBoostConfig.confidenceMode = graphBoostRaw.confidenceMode;
+      }
+
+      const confidenceWeight = parseNonNegativeNumber(graphBoostRaw.confidenceWeight);
+      if (confidenceWeight !== undefined) graphBoostConfig.confidenceWeight = Math.min(confidenceWeight, 1);
+
+      if (Object.keys(graphBoostConfig).length > 0) searchConfig.graphBoost = graphBoostConfig;
     }
     if (Object.keys(searchConfig).length > 0) config.search = searchConfig;
   }
 
+  if (typeof raw.feedback === "object" && raw.feedback !== null && !Array.isArray(raw.feedback)) {
+    const feedbackRaw = raw.feedback as Record<string, unknown>;
+    const feedbackConfig: AkmConfig["feedback"] = {};
+    if (typeof feedbackRaw.requireReason === "boolean") {
+      feedbackConfig.requireReason = feedbackRaw.requireReason;
+    }
+    // F-3 / #384: parse allowedFailureModes override list.
+    if (Array.isArray(feedbackRaw.allowedFailureModes)) {
+      feedbackConfig.allowedFailureModes = feedbackRaw.allowedFailureModes.filter(
+        (v): v is string => typeof v === "string" && v.trim().length > 0,
+      );
+    }
+    if (Object.keys(feedbackConfig).length > 0) config.feedback = feedbackConfig;
+  }
+
+  if (
+    typeof raw.archiveRetentionDays === "number" &&
+    Number.isFinite(raw.archiveRetentionDays) &&
+    raw.archiveRetentionDays >= 0
+  ) {
+    config.archiveRetentionDays = raw.archiveRetentionDays;
+  }
+
+  if (raw.improve !== null && typeof raw.improve === "object") {
+    const improveRaw = raw.improve as Record<string, unknown>;
+    const improveConfig: ImproveConfig = {};
+    if (improveRaw.reflectCooldownByType !== null && typeof improveRaw.reflectCooldownByType === "object") {
+      const byType: Record<string, number> = {};
+      for (const [type, days] of Object.entries(improveRaw.reflectCooldownByType as Record<string, unknown>)) {
+        if (typeof days === "number" && Number.isFinite(days) && days >= 0) {
+          byType[type] = days;
+        } else {
+          warn(`[akm] Ignoring improve.reflectCooldownByType["${type}"]: expected a non-negative number.`);
+        }
+      }
+      if (Object.keys(byType).length > 0) improveConfig.reflectCooldownByType = byType;
+    }
+    // Phase 2A / Rec 5: configurable forgetting curve.
+    if (improveRaw.utilityDecay !== null && typeof improveRaw.utilityDecay === "object") {
+      const decayRaw = improveRaw.utilityDecay as Record<string, unknown>;
+      const decay: NonNullable<ImproveConfig["utilityDecay"]> = {};
+      if (
+        typeof decayRaw.halfLifeDays === "number" &&
+        Number.isFinite(decayRaw.halfLifeDays) &&
+        decayRaw.halfLifeDays >= 0.1
+      ) {
+        decay.halfLifeDays = decayRaw.halfLifeDays;
+      } else if (decayRaw.halfLifeDays !== undefined) {
+        warn(`[akm] Ignoring improve.utilityDecay.halfLifeDays: expected a number ≥ 0.1.`);
+      }
+      if (
+        typeof decayRaw.feedbackStabilityBoost === "number" &&
+        Number.isFinite(decayRaw.feedbackStabilityBoost) &&
+        decayRaw.feedbackStabilityBoost >= 1.0
+      ) {
+        decay.feedbackStabilityBoost = decayRaw.feedbackStabilityBoost;
+      } else if (decayRaw.feedbackStabilityBoost !== undefined) {
+        warn(`[akm] Ignoring improve.utilityDecay.feedbackStabilityBoost: expected a number ≥ 1.0.`);
+      }
+      if (Object.keys(decay).length > 0) improveConfig.utilityDecay = decay;
+    }
+    if (Object.keys(improveConfig).length > 0) config.improve = improveConfig;
+  }
+
+  // v2 fields
+  if (typeof raw.configVersion === "number" && Number.isFinite(raw.configVersion)) {
+    config.configVersion = raw.configVersion;
+  } else if (typeof raw.configVersion === "string" && raw.configVersion.trim()) {
+    config.configVersion = raw.configVersion.trim();
+  }
+
+  const profiles = parseProfilesConfig(raw.profiles);
+  if (profiles) config.profiles = profiles;
+
+  const defaults = parseDefaultsConfig(raw.defaults);
+  if (defaults) config.defaults = defaults;
+
+  const features = parseFeaturesConfig(raw.features);
+  if (features) config.features = features;
+
   return config;
 }
 
-function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
-  const raw = readConfigObject(configPath);
-  const expanded = raw ? expandEnvVars(raw) : undefined;
-  return expanded ? pickKnownKeys(expanded) : undefined;
+function parseLlmProfileConfig(obj: Record<string, unknown>): LlmProfileConfig | undefined {
+  const base = parseLlmConfig(obj);
+  if (!base) return undefined;
+  const profile: LlmProfileConfig = { ...base };
+  if (typeof obj.supportsJsonSchema === "boolean") {
+    profile.supportsJsonSchema = obj.supportsJsonSchema;
+  }
+  return profile;
 }
 
-function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
+function parseAgentProfileConfigV2(obj: Record<string, unknown>): AgentProfileConfigV2 | undefined {
+  const VALID_PLATFORMS = ["opencode", "claude", "opencode-sdk"] as const;
+  if (!isOneOf(obj.platform, VALID_PLATFORMS)) {
+    warn(
+      `[akm] Ignoring agent profile: missing or invalid "platform" (must be one of: ${VALID_PLATFORMS.join(", ")}).`,
+    );
+    return undefined;
+  }
+  const profile: AgentProfileConfigV2 = { platform: obj.platform };
+  if (typeof obj.bin === "string" && obj.bin.trim()) profile.bin = obj.bin.trim();
+  if (Array.isArray(obj.args) && obj.args.every((a) => typeof a === "string")) {
+    profile.args = obj.args as string[];
+  }
+  if (typeof obj.workspace === "string" && obj.workspace.trim()) profile.workspace = obj.workspace.trim();
+  if (typeof obj.model === "string" && obj.model.trim()) profile.model = obj.model.trim();
+  return profile;
+}
+
+function parseProfilesConfig(value: unknown): AkmConfig["profiles"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: NonNullable<AkmConfig["profiles"]> = {};
+
+  if (typeof obj.llm === "object" && obj.llm !== null && !Array.isArray(obj.llm)) {
+    const llmMap: Record<string, LlmProfileConfig> = {};
+    for (const [name, raw] of Object.entries(obj.llm as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        warn(`[akm] Ignoring profiles.llm["${name}"]: expected an object.`);
+        continue;
+      }
+      const parsed = parseLlmProfileConfig(raw as Record<string, unknown>);
+      if (parsed) llmMap[name] = parsed;
+      else warn(`[akm] Ignoring profiles.llm["${name}"]: invalid or incomplete LLM connection config.`);
+    }
+    if (Object.keys(llmMap).length > 0) result.llm = llmMap;
+  }
+
+  if (typeof obj.agent === "object" && obj.agent !== null && !Array.isArray(obj.agent)) {
+    const agentMap: Record<string, AgentProfileConfigV2> = {};
+    for (const [name, raw] of Object.entries(obj.agent as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        warn(`[akm] Ignoring profiles.agent["${name}"]: expected an object.`);
+        continue;
+      }
+      const parsed = parseAgentProfileConfigV2(raw as Record<string, unknown>);
+      if (parsed) agentMap[name] = parsed;
+    }
+    if (Object.keys(agentMap).length > 0) result.agent = agentMap;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseDefaultsConfig(value: unknown): AkmConfig["defaults"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: NonNullable<AkmConfig["defaults"]> = {};
+
+  if (typeof obj.llm === "string" && obj.llm.trim()) result.llm = obj.llm.trim();
+  if (typeof obj.agent === "string" && obj.agent.trim()) result.agent = obj.agent.trim();
+
+  if (typeof obj.improve === "object" && obj.improve !== null && !Array.isArray(obj.improve)) {
+    const improveRaw = obj.improve as Record<string, unknown>;
+    const improve: NonNullable<NonNullable<AkmConfig["defaults"]>["improve"]> = {};
+    const limit = parsePositiveInteger("defaults.improve.limit", improveRaw.limit);
+    if (limit !== undefined) improve.limit = limit;
+    if (isOneOf(improveRaw.preset, ["fast", "thorough", "mixed", "custom"] as const)) {
+      improve.preset = improveRaw.preset;
+    }
+    if (Object.keys(improve).length > 0) result.improve = improve;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export function parseProcessEntry(value: unknown): ProcessEntry | boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const entry: ProcessEntry = {};
+  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
+  if (isOneOf(obj.mode, ["llm", "agent", "sdk"] as const)) entry.mode = obj.mode;
+  if (typeof obj.profile === "string" && obj.profile.trim()) entry.profile = obj.profile.trim();
+  if (obj.timeoutMs === null) {
+    entry.timeoutMs = null;
+  } else if (typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0) {
+    entry.timeoutMs = obj.timeoutMs;
+  }
+  if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
+    entry.options = obj.options as Record<string, unknown>;
+  }
+  return entry;
+}
+
+function parseFeaturesSection(value: unknown, section: string): Record<string, ProcessEntry | boolean> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: Record<string, ProcessEntry | boolean> = {};
+  for (const [name, raw] of Object.entries(obj)) {
+    const parsed = parseProcessEntry(raw);
+    if (parsed === undefined) {
+      warn(`[akm] Ignoring features.${section}["${name}"]: expected a boolean or process entry object.`);
+      continue;
+    }
+    result[name] = parsed;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseFeaturesConfig(value: unknown): FeaturesConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const result: FeaturesConfig = {};
+
+  const improve = parseFeaturesSection(obj.improve, "improve");
+  if (improve) result.improve = improve;
+
+  const index = parseFeaturesSection(obj.index, "index");
+  if (index) result.index = index;
+
+  const search = parseFeaturesSection(obj.search, "search");
+  if (search) result.search = search;
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseConfigText(text: string): Partial<AkmConfig> | undefined {
   const raw = parseConfigObjectFromText(text);
   if (!raw) return undefined;
   const expanded = expandEnvVars(raw);
-  return pickKnownKeys(expanded);
+  return parseConfigLayer(expanded);
+}
+
+function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(configPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  // Detect a newer-than-binary layer (project config) so saveConfig can refuse
+  // to write later. Failures are silently ignored — malformed JSON is the
+  // normal parser's problem to report.
+  const raw = parseConfigObjectFromText(text);
+  if (raw) {
+    markConfigReadOnlyIfNewer(configPath, raw.configVersion);
+  }
+  return parseConfigText(text);
+}
+
+function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
+  return parseConfigText(text);
 }
 
 function parseOutputConfig(value: unknown): OutputConfig | undefined {
@@ -617,11 +1390,11 @@ function parseOutputConfig(value: unknown): OutputConfig | undefined {
   const obj = value as Record<string, unknown>;
   const output: OutputConfig = {};
 
-  if (obj.format === "json" || obj.format === "yaml" || obj.format === "text") {
+  if (isOneOf(obj.format, ["json", "yaml", "text"] as const)) {
     output.format = obj.format;
   }
 
-  if (obj.detail === "brief" || obj.detail === "normal" || obj.detail === "full") {
+  if (isOneOf(obj.detail, ["brief", "normal", "full"] as const)) {
     output.detail = obj.detail;
   }
 
@@ -676,15 +1449,6 @@ function expandEnvVars<T>(value: T, fieldName?: string): T {
   return value;
 }
 
-function readConfigObject(configPath: string): Record<string, unknown> | undefined {
-  try {
-    const text = fs.readFileSync(configPath, "utf8");
-    return parseConfigObjectFromText(text);
-  } catch {
-    return undefined;
-  }
-}
-
 function parseConfigObjectFromText(text: string): Record<string, unknown> | undefined {
   try {
     const raw = JSON.parse(stripJsonComments(text));
@@ -696,18 +1460,7 @@ function parseConfigObjectFromText(text: string): Record<string, unknown> | unde
 }
 
 function writeConfigObject(configPath: string, config: Record<string, unknown>): void {
-  const tmpPath = `${configPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, configPath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 /**
@@ -774,8 +1527,7 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     }
     return undefined;
   }
-  if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    warn(`[akm] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
+  if (!isValidHttpUrl(obj.endpoint, "embedding config")) {
     // Still return localModel-only config if localModel was set
     if (localModel) {
       return { endpoint: "", model: "", localModel };
@@ -800,15 +1552,9 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     result.provider = obj.provider;
   }
   if ("dimension" in obj) {
-    if (
-      typeof obj.dimension !== "number" ||
-      !Number.isFinite(obj.dimension) ||
-      !Number.isInteger(obj.dimension) ||
-      obj.dimension <= 0
-    ) {
-      return undefined;
-    }
-    result.dimension = obj.dimension;
+    const dim = parsePositiveInteger("embedding.dimension", obj.dimension);
+    if (dim === undefined) return undefined;
+    result.dimension = dim;
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
@@ -817,26 +1563,16 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     result.localModel = localModel;
   }
   if ("contextLength" in obj) {
-    if (
-      typeof obj.contextLength !== "number" ||
-      !Number.isFinite(obj.contextLength) ||
-      !Number.isInteger(obj.contextLength) ||
-      obj.contextLength <= 0
-    ) {
-      return undefined;
-    }
-    result.contextLength = obj.contextLength;
+    const ctx = parsePositiveInteger("embedding.contextLength", obj.contextLength);
+    if (ctx === undefined) return undefined;
+    result.contextLength = ctx;
   }
   if (typeof obj.ollamaOptions === "object" && obj.ollamaOptions !== null && !Array.isArray(obj.ollamaOptions)) {
     const opts = obj.ollamaOptions as Record<string, unknown>;
     const parsed: EmbeddingConnectionConfig["ollamaOptions"] = {};
-    if (
-      typeof opts.num_ctx === "number" &&
-      Number.isFinite(opts.num_ctx) &&
-      Number.isInteger(opts.num_ctx) &&
-      opts.num_ctx > 0
-    ) {
-      parsed.num_ctx = opts.num_ctx;
+    const numCtx = parsePositiveInteger("embedding.ollamaOptions.num_ctx", opts.num_ctx);
+    if (numCtx !== undefined) {
+      parsed.num_ctx = numCtx;
     }
     if (Object.keys(parsed).length > 0) {
       result.ollamaOptions = parsed;
@@ -849,8 +1585,7 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
   if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
-  if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
+  if (!isValidHttpUrl(obj.endpoint, "llm config")) {
     return undefined;
   }
   if (!obj.endpoint.endsWith("/chat/completions")) {
@@ -871,26 +1606,23 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     result.temperature = obj.temperature;
   }
   if ("timeoutMs" in obj) {
-    if (
-      typeof obj.timeoutMs !== "number" ||
-      !Number.isFinite(obj.timeoutMs) ||
-      !Number.isInteger(obj.timeoutMs) ||
-      obj.timeoutMs <= 0
-    ) {
-      return undefined;
-    }
-    result.timeoutMs = obj.timeoutMs;
+    const t = parsePositiveInteger("llm.timeoutMs", obj.timeoutMs);
+    if (t === undefined) return undefined;
+    result.timeoutMs = t;
+  }
+  if ("concurrency" in obj) {
+    const c = parsePositiveInteger("llm.concurrency", obj.concurrency);
+    if (c === undefined) return undefined;
+    result.concurrency = c;
   }
   if ("maxTokens" in obj) {
-    if (
-      typeof obj.maxTokens !== "number" ||
-      !Number.isFinite(obj.maxTokens) ||
-      !Number.isInteger(obj.maxTokens) ||
-      obj.maxTokens <= 0
-    ) {
-      return undefined;
-    }
-    result.maxTokens = obj.maxTokens;
+    const m = parsePositiveInteger("llm.maxTokens", obj.maxTokens);
+    if (m === undefined) return undefined;
+    result.maxTokens = m;
+  }
+  if ("contextLength" in obj) {
+    const ctx = parsePositiveInteger("llm.contextLength", obj.contextLength);
+    if (ctx !== undefined) result.contextLength = ctx;
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
@@ -904,6 +1636,9 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof obj.features === "object" && obj.features !== null && !Array.isArray(obj.features)) {
     const features = parseLlmFeatures(obj.features as Record<string, unknown>);
     if (Object.keys(features).length > 0) result.features = features;
+  }
+  if (typeof obj.judgeModel === "string" && obj.judgeModel.trim()) {
+    result.judgeModel = obj.judgeModel.trim();
   }
   if (typeof obj.extraParams === "object" && obj.extraParams !== null && !Array.isArray(obj.extraParams)) {
     result.extraParams = obj.extraParams as Record<string, unknown>;
@@ -923,6 +1658,11 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "feedback_distillation",
   "memory_inference",
   "graph_extraction",
+  "memory_consolidation",
+  "lesson_quality_gate",
+  "proposal_quality_gate",
+  "metadata_enhance",
+  "memory_contradiction_detection",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
@@ -936,22 +1676,8 @@ function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
       warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
       continue;
     }
-    switch (key) {
-      case "memory_inference":
-        out.memory_inference = value;
-        break;
-      case "graph_extraction":
-        out.graph_extraction = value;
-        break;
-      case "curate_rerank":
-        out.curate_rerank = value;
-        break;
-      case "feedback_distillation":
-        out.feedback_distillation = value;
-        break;
-      // No default: LOCKED_LLM_FEATURE_KEYS is the source of truth for which
-      // keys are accepted. Adding a new locked key requires an arm here AND a
-      // field on LlmFeatureFlags above.
+    if (LOCKED_LLM_FEATURE_KEYS.has(key as keyof LlmFeatureFlags)) {
+      (out as Record<string, boolean>)[key] = value as boolean;
     }
   }
   return out;
@@ -972,6 +1698,18 @@ const PROVIDER_CONFIG_KEYS = new Set([
   "temperature",
   "maxTokens",
   "capabilities",
+]);
+
+const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = new Set([
+  "memory",
+  "knowledge",
+  "skill",
+  "command",
+  "agent",
+  "workflow",
+  "lesson",
+  "task",
+  "wiki",
 ]);
 
 /**
@@ -1010,9 +1748,14 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
           'Move provider settings to the top-level "llm" block, then set `index.<pass>.llm = false` to opt a single pass out.',
         );
       }
-      if (key !== "llm") {
+      if (
+        key !== "llm" &&
+        key !== "graphExtractionBatchSize" &&
+        key !== "graphExtractionIncludeTypes" &&
+        key !== "memoryInferenceBatchSize"
+      ) {
         throw new ConfigError(
-          `Unknown key \`index.${passName}.${key}\`. Per-pass entries only support \`llm\` (boolean opt-out).`,
+          `Unknown key \`index.${passName}.${key}\`. Per-pass entries support \`llm\` (boolean opt-out), \`graphExtractionBatchSize\`, \`graphExtractionIncludeTypes\`, and \`memoryInferenceBatchSize\`.`,
           "INVALID_CONFIG_FILE",
         );
       }
@@ -1030,19 +1773,50 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
       }
       passConfig.llm = llmFlag;
     }
+    if ("graphExtractionBatchSize" in passRaw) {
+      const n = parsePositiveInteger(`index.${passName}.graphExtractionBatchSize`, passRaw.graphExtractionBatchSize);
+      if (n !== undefined) passConfig.graphExtractionBatchSize = n;
+    }
+    if ("graphExtractionIncludeTypes" in passRaw) {
+      const rawTypes = passRaw.graphExtractionIncludeTypes;
+      if (!Array.isArray(rawTypes) || !rawTypes.every((t) => typeof t === "string" && t.trim().length > 0)) {
+        throw new ConfigError(
+          `Invalid \`index.${passName}.graphExtractionIncludeTypes\`: expected a non-empty string array of asset types.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      const normalized = rawTypes.map((t) => t.trim().toLowerCase());
+      const invalid = normalized.filter((t) => !GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED.has(t));
+      if (invalid.length > 0) {
+        throw new ConfigError(
+          `Invalid \`index.${passName}.graphExtractionIncludeTypes\`: unsupported type(s): ${invalid.join(", ")}.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      passConfig.graphExtractionIncludeTypes = normalized;
+    }
+    if ("memoryInferenceBatchSize" in passRaw) {
+      const n = parsePositiveInteger(`index.${passName}.memoryInferenceBatchSize`, passRaw.memoryInferenceBatchSize);
+      if (n !== undefined) passConfig.memoryInferenceBatchSize = n;
+    }
     out[passName] = passConfig;
   }
   return out;
 }
 
-function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
+/**
+ * Parse an array of values with a per-item parser, filtering out undefined
+ * results. Returns undefined when the input is not an array, or (unless
+ * `allowEmpty` is true) when all items parse to undefined.
+ */
+function parseArray<T>(value: unknown, parseOne: (v: unknown) => T | undefined, allowEmpty = false): T[] | undefined {
   if (!Array.isArray(value)) return undefined;
+  const items = value.map(parseOne).filter((x): x is T => x !== undefined);
+  return items.length > 0 || allowEmpty ? items : undefined;
+}
 
-  const entries = value
-    .map((entry) => parseInstalledStashEntry(entry))
-    .filter((entry): entry is InstalledStashEntry => entry !== undefined);
-
-  return entries.length > 0 ? entries : undefined;
+function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
+  return parseArray(value, parseInstalledStashEntry);
 }
 
 function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefined {
@@ -1082,10 +1856,6 @@ function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefin
   const wikiName = asNonEmptyString(obj.wikiName);
   if (wikiName) entry.wikiName = wikiName;
   return entry;
-}
-
-function asNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
 }
 
 /**
@@ -1139,6 +1909,9 @@ function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined
   if (typeof obj.blockOnCritical === "boolean") config.blockOnCritical = obj.blockOnCritical;
   if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
   const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
+  if (!obj.registryAllowlist && obj.registryWhitelist) {
+    warn("[akm] config: `registryWhitelist` is deprecated; rename it to `registryAllowlist`");
+  }
   if (rawAllowlist) {
     config.registryAllowlist = rawAllowlist;
   }
@@ -1184,7 +1957,7 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
     throw new ConfigError(
       `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${name}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
       "INVALID_CONFIG_FILE",
-      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${_getConfigPath()} to remove the openviking entry.`,
+      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${getConfigPath()} to remove the openviking entry.`,
     );
   }
 
@@ -1211,7 +1984,7 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
     );
   }
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-    entry.options = obj.options as Record<string, unknown>;
+    entry.options = obj.options as SourceConfigEntryOptions;
   }
   const wikiName = asNonEmptyString(obj.wikiName);
   if (wikiName) entry.wikiName = wikiName;
@@ -1365,6 +2138,12 @@ function mergeAgentConfig(base: AgentConfig, override: AgentConfig): AgentConfig
     }
     merged.profiles = profiles;
   }
+  // Shallow merge per-key: later layer wins per process name (same as profiles).
+  const baseProcesses = base.processes;
+  const overrideProcesses = override.processes;
+  if (baseProcesses || overrideProcesses) {
+    merged.processes = { ...(baseProcesses ?? {}), ...(overrideProcesses ?? {}) };
+  }
   return merged;
 }
 
@@ -1450,6 +2229,43 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
   if (next.llm && !next.llm.apiKey) {
     const envKey = process.env.AKM_LLM_API_KEY?.trim();
     if (envKey) next.llm = { ...next.llm, apiKey: envKey };
+  }
+
+  // v2: inject AKM_LLM_API_KEY into the default LLM profile
+  if (next.profiles?.llm && next.defaults?.llm) {
+    const defaultProfileName = next.defaults.llm;
+    const defaultProfile = next.profiles.llm[defaultProfileName];
+    if (defaultProfile && !defaultProfile.apiKey) {
+      const envKey = process.env.AKM_LLM_API_KEY?.trim();
+      if (envKey) {
+        next.profiles = {
+          ...next.profiles,
+          llm: {
+            ...next.profiles.llm,
+            [defaultProfileName]: { ...defaultProfile, apiKey: envKey },
+          },
+        };
+      }
+    }
+  }
+
+  // v2: per-profile AKM_PROFILE_<UPPER_NAME>_API_KEY
+  if (next.profiles?.llm) {
+    const updatedLlmProfiles = { ...next.profiles.llm };
+    let changed = false;
+    for (const [profileName, profile] of Object.entries(updatedLlmProfiles)) {
+      if (!profile.apiKey) {
+        const envVarName = `AKM_PROFILE_${profileName.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+        const envKey = process.env[envVarName]?.trim();
+        if (envKey) {
+          updatedLlmProfiles[profileName] = { ...profile, apiKey: envKey };
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      next.profiles = { ...next.profiles, llm: updatedLlmProfiles };
+    }
   }
 
   return next;

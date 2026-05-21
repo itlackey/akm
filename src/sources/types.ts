@@ -4,6 +4,7 @@ import type { InstalledStashEntry, KitSource } from "../registry/types";
 export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
 export type SearchHitSize = "small" | "medium" | "large";
+export type BeliefFilterMode = "all" | "current" | "historical";
 
 export interface SourceSearchHit {
   type: string;
@@ -39,6 +40,26 @@ export interface SourceSearchHit {
    * `quality` field.
    */
   quality?: string;
+  beliefState?: string;
+  currentBeliefRefs?: string[];
+  /**
+   * Phase 5A / Advantage D5 — derived-memory pointer.
+   *
+   * When a parent memory has a derived child indexed, the parent's search hit
+   * is enriched with `expandTo` set to the child's ref (e.g.
+   * `"memory:claude-prefs.derived"`). Clients can fetch the child via
+   * `akm show <expandTo>` to retrieve the distilled lesson surface while the
+   * parent itself remains the primary retrieval result.
+   *
+   * Absent when no derived child exists. The accompanying description /
+   * searchHints / tags fields on the hit are swapped in from the derived
+   * child when this pointer is set.
+   */
+  expandTo?: string;
+  graph?: {
+    entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
+    relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+  };
 }
 
 export interface RegistrySearchResultHit {
@@ -306,6 +327,10 @@ export interface ShowResponse {
    * leading `#` stripped). Inline/trailing comments are deliberately omitted.
    */
   comments?: string[];
+  related?: {
+    total: number;
+    hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+  };
 }
 
 export type KnowledgeView =
@@ -379,4 +404,88 @@ export interface InfoResponse {
     hasEmbeddings: boolean;
     vecAvailable: boolean;
   };
+}
+
+export interface HealthResponse {
+  schemaVersion: 1;
+  ok: boolean;
+  status: "pass" | "warn" | "fail";
+  since: string;
+  hardChecks: Array<{
+    name: string;
+    kind: "deterministic" | "heuristic";
+    status: "pass" | "warn" | "fail" | "unknown";
+    message: string;
+    confidence: "high" | "medium" | "low";
+    evidence?: Record<string, unknown>;
+  }>;
+  advisories: Array<{
+    name: string;
+    kind: "deterministic" | "heuristic";
+    status: "pass" | "warn" | "fail" | "unknown";
+    message: string;
+    confidence: "high" | "medium" | "low";
+    evidence?: Record<string, unknown>;
+  }>;
+  metrics: {
+    taskFailRate: number;
+    agentFailureRate: number;
+    stuckActiveRuns: number;
+    logBackingRate: number;
+    probeRoundTripMs: number | null;
+  };
+  improve: {
+    invoked: number;
+    completed: number;
+    skipped: number;
+    skipReasons: Record<string, number>;
+    plannedRefs: number;
+    actions: {
+      reflect: number;
+      distill: number;
+      distillSkipped: number;
+      memoryPrune: number;
+      memoryInference: number;
+      graphExtraction: number;
+      error: number;
+    };
+    reflectsWithErrorContext: number;
+    coverageGapCount: number;
+    executionLogCandidateCount: number;
+    evalCasesWritten: number;
+    deadUrlCount: number;
+    memorySummary: {
+      eligible: number;
+      derived: number;
+    };
+    memoryCleanup: {
+      pruneCandidates: number;
+      contradictionCandidates: number;
+      beliefStateTransitions: number;
+      consolidationCandidates: number;
+      archived: number;
+      warnings: number;
+    };
+    consolidation: {
+      ran: boolean;
+      processed: number;
+      durationMs: number;
+    };
+    memoryInference: {
+      ran: boolean;
+      writes: number;
+      durationMs: number;
+    };
+    graphExtraction: {
+      ran: boolean;
+      extractedFiles: number;
+      durationMs: number;
+    };
+  };
+  sessionLogAdvisories: Array<{
+    topic: string;
+    frequency: number;
+    source: string;
+    isFailurePattern: boolean;
+  }>;
 }

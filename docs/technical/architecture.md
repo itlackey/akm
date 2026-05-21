@@ -248,6 +248,13 @@ akm has two distinct integration paths to language models. They do not share
 state, do not share modules, and do not share import graphs. The boundary is
 locked by v1 spec §9.7 and is enforced at two concrete seams.
 
+A unified adapter (`src/llm/call-ai.ts`) bridges the two paths for interactive
+commands (`akm propose`, `akm reflect`, etc.): it routes to `config.agent`
+(agent CLI shell-out or SDK) when an agent is configured, and falls back to
+`config.llm` (HTTP chat-completions) otherwise. The indexer LLM passes do
+**not** use this adapter — they call `chatCompletion` directly to stay on the
+HTTP path and avoid agent-CLI overhead.
+
 ### In-tree LLM helpers (`src/llm/`)
 
 Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
@@ -271,26 +278,39 @@ inspects the module shape of each `src/llm/*` entry — not the source text.
 
 ### External agents (`src/integrations/agent/`)
 
-External coding agents are reachable **only** via the spawn wrapper in
-`src/integrations/agent/spawn.ts`. Concretely:
+External coding agents are reachable via two execution paths:
 
-- `runAgent(profile, prompt, options)` is the single entry point. It owns
-  process spawn, captured/interactive stdio, hard timeout, and structured
-  failure reasons.
+**Spawn path** (`src/integrations/agent/spawn.ts`):
+
+- `runAgent(profile, prompt, options)` is the single shell-out entry point.
+  It owns process spawn, captured/interactive stdio, hard timeout, and
+  structured failure reasons.
 - The `AgentRunResult` envelope carries `{ ok, exitCode, stdout, stderr,
   durationMs, reason?, error?, parsed? }` where `reason` is one of
   `"timeout" | "spawn_failed" | "non_zero_exit" | "parse_error"`. Callers
   never see raw process errors.
-- No file under `src/integrations/agent/` imports a vendor LLM SDK. Agents
-  are CLIs, not in-process clients.
 
-The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`, which
-asserts the documented shape of `runAgent`, the failure-reason discriminated
-union, and the captured/interactive stdio modes. A regression guard in
-`tests/architecture/agent-no-llm-sdk-guard.test.ts` catches accidental
-introduction of vendor SDK imports under that path. The guard is a
-defence-in-depth mechanism — the primary enforcement is the seam test, the
-type system, and code review.
+**SDK path** (`src/integrations/agent/sdk-runner.ts`):
+
+- `runAgentSdk(profile, prompt, opts, llmConfig?)` uses the embedded
+  `@opencode-ai/sdk` instead of `Bun.spawn`. No agent CLI binary is required.
+- Enabled when `profile.sdkMode === true`. The profile can specify an
+  `endpoint`, `apiKey`, and `model`; absent fields inherit from `config.llm`.
+- Manages a single per-process singleton server, creating one fresh session
+  per call to avoid history accumulation and unbounded token growth.
+
+**Shared pipeline** (`src/integrations/agent/pipeline.ts`):
+
+- `runProposalAgentPipeline(opts)` is the shared entry point for
+  `akm propose` and `akm reflect`. It routes to `runAgentSdk` when
+  `profile.sdkMode` is true, and to `runAgent` (spawn path) otherwise.
+
+No file under `src/integrations/agent/` imports an in-tree LLM helper
+(`src/llm/`). The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`,
+which asserts the documented shape of `runAgent`, the failure-reason
+discriminated union, and the captured/interactive stdio modes. A regression
+guard in `tests/architecture/agent-no-llm-sdk-guard.test.ts` catches
+accidental introduction of in-tree LLM imports under that path.
 
 ---
 
@@ -303,6 +323,8 @@ type system, and code review.
 | `src/core/asset-ref.ts` | asset ref parsing and normalization |
 | `src/core/config.ts` | config loading, validation, env resolution |
 | `src/core/errors.ts` | error classes with stable codes and hints |
+| `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
+| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 4 workers) |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/sources/source-provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
@@ -319,12 +341,15 @@ type system, and code review.
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
 | `src/output/renderers.ts` | search/show shaping per asset type |
 | `src/workflows/workflow-runs.ts` | workflow run persistence |
+| `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
 | `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `llm.features.memory_inference`) |
 | `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
-| `src/integrations/agent/spawn.ts` | the single agent CLI shell-out entry point (`runAgent`) |
+| `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
+| `src/integrations/agent/sdk-runner.ts` | embedded SDK runner (`runAgentSdk`); no CLI binary needed when `sdkMode` is true |
+| `src/integrations/agent/pipeline.ts` | shared proposal-agent pipeline; routes to spawn or SDK based on `profile.sdkMode` |
 | `src/integrations/agent/profiles.ts` | built-in agent CLI profile registry |
 | `src/integrations/agent/config.ts` | agent config parsing and profile resolution |
 | `src/integrations/agent/detect.ts` | PATH-based agent CLI detection for `akm setup` |

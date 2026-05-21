@@ -43,6 +43,21 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "index": {
       const indexResult = result as Partial<IndexResponse>;
       let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+      const graphQuality = indexResult.graphQuality as
+        | {
+            extractionCoverage?: number;
+            density?: number;
+            entityCount?: number;
+            relationCount?: number;
+          }
+        | undefined;
+      if (graphQuality) {
+        const coverage =
+          typeof graphQuality.extractionCoverage === "number"
+            ? `${Math.round(graphQuality.extractionCoverage * 100)}%`
+            : "n/a";
+        out += `\nGraph quality: entities ${graphQuality.entityCount ?? 0}, relations ${graphQuality.relationCount ?? 0}, coverage ${coverage}, density ${graphQuality.density ?? 0}`;
+      }
       const warnings = indexResult.warnings;
       if (Array.isArray(warnings) && warnings.length > 0) {
         out += `\nWarnings (${warnings.length}):`;
@@ -208,6 +223,9 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "proposal-diff": {
       return formatProposalDiffPlain(r);
     }
+    case "proposal-revert": {
+      return formatProposalRevertPlain(r);
+    }
     // Output shape registration for `akm reflect` / `akm propose` (#226).
     case "reflect":
     case "propose": {
@@ -218,6 +236,35 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "distill": {
       return formatDistillPlain(r);
     }
+    case "graph-summary":
+      return formatGraphSummaryPlain(r);
+    case "graph-entities":
+      return formatGraphEntitiesPlain(r);
+    case "graph-entity":
+      return formatGraphEntityPlain(r);
+    case "graph-relations":
+      return formatGraphRelationsPlain(r);
+    case "graph-related":
+      return formatGraphRelatedPlain(r);
+    case "graph-orphans":
+      return formatGraphOrphansPlain(r);
+    case "graph-export":
+      return formatGraphExportPlain(r);
+    case "improve": {
+      return formatImprovePlain(r);
+    }
+    case "consolidate": {
+      return formatConsolidatePlain(r);
+    }
+    // Output shape registration for `akm agent <profile>` (#agent-dispatch).
+    // In interactive mode stdout/stderr are empty (they went to the TTY), so
+    // we print only the profile name and exit status. In captured mode we
+    // emit stdout first, then stderr, then the exit code summary.
+    case "agent-result": {
+      return formatAgentResultPlain(r);
+    }
+    case "health":
+      return formatHealthPlain(r);
     case "info":
       return formatInfoPlain(r);
     case "config":
@@ -246,7 +293,7 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "vault-list":
       return formatVaultListPlain(r);
     case "vault-create":
-      return `Created vault ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
+      return `Created vault ${String(r.ref ?? "?")}`;
     case "vault-set":
       return `Set ${String(r.key ?? "?")} in ${String(r.ref ?? "?")} (value not displayed)`;
     case "vault-unset": {
@@ -289,6 +336,60 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
     }
   }
   if (lines.length === 0) return JSON.stringify(r, null, 2);
+  return lines.join("\n");
+}
+
+export function formatHealthPlain(r: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push(`health: ${String(r.status ?? "unknown")}`);
+  if (typeof r.since === "string") lines.push(`since: ${r.since}`);
+
+  const metrics =
+    typeof r.metrics === "object" && r.metrics !== null ? (r.metrics as Record<string, unknown>) : undefined;
+  if (metrics) {
+    lines.push("metrics:");
+    lines.push(`  taskFailRate: ${String(metrics.taskFailRate ?? 0)}`);
+    lines.push(`  agentFailureRate: ${String(metrics.agentFailureRate ?? 0)}`);
+    lines.push(`  stuckActiveRuns: ${String(metrics.stuckActiveRuns ?? 0)}`);
+    lines.push(`  logBackingRate: ${String(metrics.logBackingRate ?? 0)}`);
+    lines.push(`  probeRoundTripMs: ${String(metrics.probeRoundTripMs ?? "null")}`);
+  }
+
+  const improve =
+    typeof r.improve === "object" && r.improve !== null ? (r.improve as Record<string, unknown>) : undefined;
+  if (improve) {
+    const actions =
+      typeof improve.actions === "object" && improve.actions !== null
+        ? (improve.actions as Record<string, unknown>)
+        : {};
+    lines.push("improve:");
+    lines.push(`  invoked: ${String(improve.invoked ?? 0)}`);
+    lines.push(`  completed: ${String(improve.completed ?? 0)}`);
+    lines.push(`  skipped: ${String(improve.skipped ?? 0)}`);
+    lines.push(`  plannedRefs: ${String(improve.plannedRefs ?? 0)}`);
+    lines.push(
+      `  actions: reflect=${String(actions.reflect ?? 0)} distill=${String(actions.distill ?? 0)} distillSkipped=${String(actions.distillSkipped ?? 0)} memoryPrune=${String(actions.memoryPrune ?? 0)} memoryInference=${String(actions.memoryInference ?? 0)} graphExtraction=${String(actions.graphExtraction ?? 0)} error=${String(actions.error ?? 0)}`,
+    );
+    lines.push(`  coverageGapCount: ${String(improve.coverageGapCount ?? 0)}`);
+    lines.push(`  executionLogCandidateCount: ${String(improve.executionLogCandidateCount ?? 0)}`);
+    lines.push(`  deadUrlCount: ${String(improve.deadUrlCount ?? 0)}`);
+  }
+
+  const sections: Array<[string, unknown]> = [
+    ["hardChecks", r.hardChecks],
+    ["advisories", r.advisories],
+  ];
+  for (const [label, value] of sections) {
+    const checks = Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+    if (checks.length === 0) continue;
+    lines.push(`${label}:`);
+    for (const check of checks) {
+      lines.push(
+        `  - [${String(check.status ?? "unknown")}] ${String(check.name ?? "check")}: ${String(check.message ?? "")}`,
+      );
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -440,6 +541,101 @@ export function formatWorkflowValidatePlain(r: Record<string, unknown>): string 
   return `workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`;
 }
 
+export function formatGraphSummaryPlain(r: Record<string, unknown>): string {
+  const lines = [
+    `Graph: ${String(r.graphPath ?? "?")}`,
+    `Generated: ${String(r.generatedAt ?? "?")}`,
+    `Files: ${String(r.fileCount ?? 0)}  Entities: ${String(r.entityCount ?? 0)}  Relations: ${String(r.relationCount ?? 0)}`,
+  ];
+  const quality = r.quality as Record<string, unknown> | undefined;
+  if (quality) {
+    const coverage =
+      typeof quality.extractionCoverage === "number" ? `${Math.round(quality.extractionCoverage * 100)}%` : "n/a";
+    lines.push(`Coverage: ${coverage}  Density: ${String(quality.density ?? 0)}`);
+  }
+  return lines.join("\n");
+}
+
+function formatConfidenceSuffix(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "";
+  return ` (conf ${value.toFixed(2)})`;
+}
+
+export function formatGraphEntitiesPlain(r: Record<string, unknown>): string {
+  const entities = Array.isArray(r.entities) ? (r.entities as Array<Record<string, unknown>>) : [];
+  if (entities.length === 0) return "No entities found in graph.";
+  const lines = [`Entities (${String(r.total ?? entities.length)} total):`];
+  for (const entity of entities) {
+    const conf = formatConfidenceSuffix(entity.confidence);
+    lines.push(`- ${String(entity.name ?? "?")} (${String(entity.fileCount ?? 0)} files)${conf}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphRelationsPlain(r: Record<string, unknown>): string {
+  const relations = Array.isArray(r.relations) ? (r.relations as Array<Record<string, unknown>>) : [];
+  if (relations.length === 0) return "No relations found in graph.";
+  const lines = [`Relations (${String(r.total ?? relations.length)} total):`];
+  for (const relation of relations) {
+    const type = relation.type ? ` [${String(relation.type)}]` : "";
+    const conf = formatConfidenceSuffix(relation.confidence);
+    lines.push(
+      `- ${String(relation.from ?? "?")} -> ${String(relation.to ?? "?")}${type} x${String(relation.count ?? 0)}${conf}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphEntityPlain(r: Record<string, unknown>): string {
+  const matches = Array.isArray(r.matches) ? (r.matches as Array<Record<string, unknown>>) : [];
+  if (matches.length === 0) return `No assets contain entity ${String(r.entity ?? "?")}.`;
+  const lines = [`Assets containing entity ${String(r.entity ?? "?")} (${String(r.total ?? matches.length)} total):`];
+  for (const match of matches) {
+    const label = typeof match.ref === "string" && match.ref ? match.ref : String(match.path ?? "?");
+    const conf = formatConfidenceSuffix(match.confidence);
+    lines.push(`- ${String(match.type ?? "?")}: ${label}${conf}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphOrphansPlain(r: Record<string, unknown>): string {
+  const orphans = Array.isArray(r.orphans) ? (r.orphans as Array<Record<string, unknown>>) : [];
+  const considered = String(r.totalConsidered ?? "?");
+  if (orphans.length === 0) {
+    return `No orphan assets (0 of ${considered} have zero extracted entities).`;
+  }
+  const lines = [`Orphans (${String(r.total ?? orphans.length)} of ${considered} considered):`];
+  for (const orphan of orphans) {
+    const label = typeof orphan.ref === "string" && orphan.ref ? orphan.ref : String(orphan.path ?? "?");
+    lines.push(`- ${String(orphan.type ?? "?")}: ${label}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphRelatedPlain(r: Record<string, unknown>): string {
+  const related = Array.isArray(r.related) ? (r.related as Array<Record<string, unknown>>) : [];
+  if (related.length === 0) return String(r.tip ?? "No related graph neighbors were found.");
+  const lines = [`Related (${String(r.total ?? related.length)} total) for ${String(r.ref ?? "?")}:`];
+  for (const hit of related) {
+    const shared = Array.isArray(hit.sharedEntities) ? (hit.sharedEntities as unknown[]).map(String).join(", ") : "";
+    lines.push(`- ${String(hit.type ?? "?")}: ${formatRelatedLabel(hit)}`);
+    if (shared) lines.push(`  shared: ${shared}`);
+    lines.push(`  relationCount: ${String(hit.relationCount ?? 0)}`);
+  }
+  const topHit = related[0];
+  if (topHit) {
+    const target = typeof topHit.ref === "string" && topHit.ref ? topHit.ref : formatRelatedLabel(topHit);
+    if (target && target !== "?") {
+      lines.push(`Next: akm show '${target}'`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphExportPlain(r: Record<string, unknown>): string {
+  return `Exported graph (${String(r.format ?? "json")}, ${String(r.bytes ?? 0)} bytes) to ${String(r.outPath ?? "?")}`;
+}
+
 export function formatProposalProducerPlain(command: string, r: Record<string, unknown>): string {
   if (r.ok === false) {
     const reason = String(r.reason ?? "unknown");
@@ -463,7 +659,7 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
   const proposals = Array.isArray(r.proposals) ? (r.proposals as Array<Record<string, unknown>>) : [];
   const total = typeof r.totalCount === "number" ? r.totalCount : proposals.length;
   if (proposals.length === 0) {
-    return `${total} proposal(s).\nNo proposals.\nGenerate one with \`akm reflect <ref>\`, \`akm propose <type> <name> --task ...\`, or \`akm distill <ref>\`.`;
+    return `${total} proposal(s).\nNo proposals.\nGenerate one with \`akm improve\`, \`akm propose <type> <name> --task ...\`, or \`akm improve <ref>\`.`;
   }
   const lines = [`${total} proposal(s)`, ""];
   for (const p of proposals) {
@@ -487,6 +683,9 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   if (p.sourceRun) lines.push(`sourceRun: ${String(p.sourceRun)}`);
   if (p.createdAt) lines.push(`createdAt: ${String(p.createdAt)}`);
   if (p.updatedAt) lines.push(`updatedAt: ${String(p.updatedAt)}`);
+  // Phase 6A / 6C: surface confidence and backup metadata.
+  if (typeof p.confidence === "number") lines.push(`confidence: ${(p.confidence as number).toFixed(2)}`);
+  if (typeof p.backup === "string" && p.backup.length > 0) lines.push(`backup: ${String(p.backup)}`);
   const review = p.review as Record<string, unknown> | undefined;
   if (review) {
     lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);
@@ -521,13 +720,19 @@ export function formatProposalRejectPlain(r: Record<string, unknown>): string {
   return `Rejected proposal ${String(r.id ?? "?")} (${String(r.ref ?? "?")})${reason}`;
 }
 
+export function formatProposalRevertPlain(r: Record<string, unknown>): string {
+  // Phase 6C: mirror the accept-plain text — the user-facing message focuses
+  // on the destination path because that's what they need to verify.
+  return `Reverted proposal ${String(r.id ?? "?")} → restored prior content of ${String(r.ref ?? "?")} at ${String(r.assetPath ?? "?")}`;
+}
+
 export function formatDistillPlain(r: Record<string, unknown>): string {
   const outcome = String(r.outcome ?? "unknown");
   const inputRef = String(r.inputRef ?? "?");
   const lessonRef = String(r.lessonRef ?? "?");
   if (outcome === "queued") {
     const id = String(r.proposalId ?? "?");
-    return `Distilled ${inputRef} → proposal ${id} (${lessonRef}). Run \`akm proposal show ${id}\` to review.`;
+    return `Distilled ${inputRef} → proposal ${id} (${lessonRef}). Run \`akm show proposal ${id}\` to review.`;
   }
   if (outcome === "validation_failed") {
     const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
@@ -542,6 +747,52 @@ export function formatDistillPlain(r: Record<string, unknown>): string {
   return `Distill skipped for ${inputRef}: ${message}`;
 }
 
+export function formatConsolidatePlain(r: Record<string, unknown>): string {
+  const processed = typeof r.processed === "number" ? r.processed : 0;
+  const merged = typeof r.merged === "number" ? r.merged : 0;
+  const deleted = typeof r.deleted === "number" ? r.deleted : 0;
+  const promoted = Array.isArray(r.promoted) ? r.promoted.length : 0;
+  const warnings = Array.isArray(r.warnings) ? (r.warnings as string[]) : [];
+  const lines: string[] = [];
+
+  if (r.dryRun === true) {
+    lines.push(`[consolidate] dry-run: ${processed} memories found, no AI call`);
+  } else if (r.previewOnly === true) {
+    lines.push(`[consolidate] preview: processed=${processed}`);
+    const planned = Array.isArray(r.planned) ? (r.planned as Array<Record<string, unknown>>) : [];
+    for (const op of planned) {
+      if (op.op === "merge") {
+        lines.push(
+          `  merge: ${String(op.primary)} ← ${String(Array.isArray(op.secondaries) ? (op.secondaries as string[]).join(", ") : "")}`,
+        );
+      } else if (op.op === "delete") {
+        lines.push(`  delete: ${String(op.ref)} (${String(op.reason ?? "")})`);
+      } else if (op.op === "promote") {
+        lines.push(`  promote: ${String(op.ref)} → ${String(op.knowledgeRef)}`);
+      }
+    }
+  } else {
+    lines.push(`[consolidate] processed=${processed} merged=${merged} deleted=${deleted} promoted=${promoted}`);
+  }
+
+  for (const w of warnings) {
+    lines.push(`  warning: ${w}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatImprovePlain(r: Record<string, unknown>): string {
+  const scope = (r.scope as Record<string, unknown> | undefined) ?? {};
+  const mode = String(scope.mode ?? "all");
+  const value = typeof scope.value === "string" ? ` ${scope.value}` : "";
+  const plannedRefs = Array.isArray(r.plannedRefs) ? r.plannedRefs.length : 0;
+  if (r.dryRun === true) {
+    return `Improve dry-run:${mode === "all" ? " all assets" : value} (${plannedRefs} planned ref(s))`;
+  }
+  const actions = Array.isArray(r.actions) ? r.actions.length : 0;
+  return `Improve:${mode === "all" ? " all assets" : value} queued ${actions} action(s) across ${plannedRefs} ref(s)`;
+}
+
 export function formatProposalDiffPlain(r: Record<string, unknown>): string {
   const header = r.isNew
     ? `# proposal ${String(r.id ?? "?")} (new asset: ${String(r.ref ?? "?")})`
@@ -551,15 +802,23 @@ export function formatProposalDiffPlain(r: Record<string, unknown>): string {
   return `${header}\n${unified}`;
 }
 
+/**
+ * Build the summary header line shared by formatEventsPlain and formatHistoryPlain.
+ * Accumulates ref/type/since label parts then appends the count label.
+ */
+function buildEventHeader(r: Record<string, unknown>, countLabel: string, totalCount: number): string {
+  const parts: string[] = [];
+  if (typeof r.ref === "string" && r.ref) parts.push(`ref: ${r.ref}`);
+  if (typeof r.type === "string" && r.type) parts.push(`type: ${r.type}`);
+  if (typeof r.since === "string" && r.since) parts.push(`since: ${r.since}`);
+  parts.push(`${totalCount} ${countLabel}`);
+  return parts.join("  ");
+}
+
 export function formatEventsPlain(r: Record<string, unknown>): string {
   const events = Array.isArray(r.events) ? (r.events as Array<Record<string, unknown>>) : [];
-  const headerParts: string[] = [];
-  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
-  if (typeof r.type === "string" && r.type) headerParts.push(`type: ${r.type}`);
-  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
   const totalCount = typeof r.totalCount === "number" ? r.totalCount : events.length;
-  headerParts.push(`${totalCount} event(s)`);
-  const header = headerParts.join("  ");
+  const header = buildEventHeader(r, "event(s)", totalCount);
   if (events.length === 0) {
     return `${header}\nNo events.`;
   }
@@ -584,11 +843,8 @@ export function formatEventLine(event: Record<string, unknown>): string {
 
 export function formatHistoryPlain(r: Record<string, unknown>): string {
   const entries = Array.isArray(r.entries) ? (r.entries as Array<Record<string, unknown>>) : [];
-  const headerParts: string[] = [];
-  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
-  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
   const totalCount = typeof r.totalCount === "number" ? r.totalCount : entries.length;
-  headerParts.push(`${totalCount} event(s)`);
+  const headerParts = [buildEventHeader(r, "event(s)", totalCount)];
   // Show active event sources so operators know which streams were consulted.
   if (Array.isArray(r.sources) && r.sources.length > 0) {
     headerParts.push(`sources: ${(r.sources as string[]).join(", ")}`);
@@ -607,11 +863,13 @@ export function formatHistoryPlain(r: Record<string, unknown>): string {
     const ref = entry.ref ? String(entry.ref) : null;
     const signal = entry.signal ? String(entry.signal) : null;
     const query = entry.query ? String(entry.query) : null;
+    const source = entry.source ? String(entry.source) : null;
 
     const head = ref ? `${created}  [${eventType}] ${ref}` : `${created}  [${eventType}]`;
     lines.push(head);
     if (signal) lines.push(`  signal: ${signal}`);
     if (query) lines.push(`  query: ${query}`);
+    if (source && source !== "user") lines.push(`  source: ${source}`);
     if (entry.metadata != null && entry.metadata !== "") {
       const meta = typeof entry.metadata === "string" ? entry.metadata : JSON.stringify(entry.metadata);
       lines.push(`  metadata: ${meta}`);
@@ -653,6 +911,19 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
     if (r.editable !== undefined) lines.push(`editable: ${String(r.editable)}`);
     if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
     if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
+  }
+  const related =
+    typeof r.related === "object" && r.related !== null ? (r.related as Record<string, unknown>) : undefined;
+  const relatedHits = related && Array.isArray(related.hits) ? (related.hits as Array<Record<string, unknown>>) : [];
+  if (related) {
+    lines.push("");
+    lines.push(`related: ${String(related.total ?? relatedHits.length)}`);
+    for (const hit of relatedHits) {
+      lines.push(`  - ${String(hit.type ?? "?")}: ${formatRelatedLabel(hit)}`);
+      const shared = Array.isArray(hit.sharedEntities) ? (hit.sharedEntities as unknown[]).map(String) : [];
+      if (shared.length > 0) lines.push(`    shared: ${shared.join(", ")}`);
+      lines.push(`    relationCount: ${String(hit.relationCount ?? 0)}`);
+    }
   }
   const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
   if (Array.isArray(r.steps) && r.steps.length > 0) {
@@ -788,6 +1059,13 @@ function isCommandOutputSkill(lines: string[]): boolean {
   const cliCount = codeLines.filter((l) => cliPattern.test(l.trim())).length;
   const yamlCount = codeLines.filter((l) => yamlPattern.test(l)).length;
   return cliCount > yamlCount && cliCount > 0;
+}
+
+function formatRelatedLabel(hit: Record<string, unknown>): string {
+  const ref = typeof hit.ref === "string" ? hit.ref : undefined;
+  if (ref) return ref;
+  const pathValue = typeof hit.path === "string" ? hit.path : "?";
+  return pathValue.split("/").pop() ?? pathValue;
 }
 
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
@@ -927,6 +1205,27 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     // `curated` boolean was removed in v1.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
+    }
+    const graph =
+      typeof hit.graph === "object" && hit.graph !== null ? (hit.graph as Record<string, unknown>) : undefined;
+    if (graph) {
+      const entities = Array.isArray(graph.entities) ? (graph.entities as Array<Record<string, unknown>>) : [];
+      if (entities.length > 0) {
+        const matched = entities
+          .filter((entity) => String(entity.kind ?? "") === "matched")
+          .map((entity) => String(entity.name ?? "?"));
+        const neighbors = entities
+          .filter((entity) => String(entity.kind ?? "") !== "matched")
+          .map((entity) => String(entity.name ?? "?"));
+        lines.push(
+          `  graph: ${[
+            matched.length > 0 ? `query match=${matched.join(", ")}` : undefined,
+            neighbors.length > 0 ? `neighbors=${neighbors.join(", ")}` : undefined,
+          ]
+            .filter(Boolean)
+            .join("; ")}`,
+        );
+      }
     }
 
     if (detail === "full") {
@@ -1117,4 +1416,33 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
   lines.push("To search further: akm search '<query>'");
 
   return lines.join("\n");
+}
+
+/**
+ * Render the result of `akm agent <profile>`.
+ *
+ * Interactive mode: stdout and stderr are empty (output went to the TTY).
+ * Print only the profile name and exit code so the caller knows the agent
+ * finished.
+ *
+ * Captured mode: emit stdout (if non-empty), then stderr (if non-empty),
+ * then the profile/exit-code summary line.
+ */
+export function formatAgentResultPlain(r: Record<string, unknown>): string {
+  const profile = String(r.profileName ?? "agent");
+  const exitCode = r.exitCode !== undefined && r.exitCode !== null ? Number(r.exitCode) : 0;
+  const stdout = typeof r.stdout === "string" ? r.stdout : "";
+  const stderr = typeof r.stderr === "string" ? r.stderr : "";
+
+  // Interactive mode: both streams are empty.
+  if (!stdout && !stderr) {
+    return `[${profile}] agent exited with code ${exitCode}`;
+  }
+
+  // Captured mode: stream content + summary.
+  const parts: string[] = [];
+  if (stdout) parts.push(stdout.trimEnd());
+  if (stderr) parts.push(stderr.trimEnd());
+  parts.push(`[${profile}] agent exited with code ${exitCode}`);
+  return parts.join("\n");
 }

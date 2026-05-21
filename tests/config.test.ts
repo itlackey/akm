@@ -4,8 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
-  getConfigDir,
-  getConfigPath,
+  getConfigReadOnlyReason,
   loadConfig,
   loadUserConfig,
   resetConfigCache,
@@ -13,7 +12,7 @@ import {
   updateConfig,
 } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
-import { getCacheDir } from "../src/core/paths";
+import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -30,17 +29,25 @@ function writeRawConfig(configPath: string, content: string): void {
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalHome = process.env.HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalCwd = process.cwd();
 let testConfigHome = "";
 let testCacheHome = "";
+let testDataHome = "";
+let testStateHome = "";
 
 beforeEach(() => {
   testConfigHome = makeTmpDir();
   testCacheHome = makeTmpDir();
+  testDataHome = makeTmpDir();
+  testStateHome = makeTmpDir();
   process.env.XDG_CONFIG_HOME = testConfigHome;
   process.env.XDG_CACHE_HOME = testCacheHome;
+  process.env.XDG_DATA_HOME = testDataHome;
+  process.env.XDG_STATE_HOME = testStateHome;
   process.chdir(originalCwd);
   resetConfigCache();
 });
@@ -56,6 +63,18 @@ afterEach(() => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
 
   if (originalHome === undefined) {
@@ -78,6 +97,16 @@ afterEach(() => {
   if (testCacheHome) {
     cleanup(testCacheHome);
     testCacheHome = "";
+  }
+
+  if (testDataHome) {
+    cleanup(testDataHome);
+    testDataHome = "";
+  }
+
+  if (testStateHome) {
+    cleanup(testStateHome);
+    testStateHome = "";
   }
 
   process.chdir(originalCwd);
@@ -774,5 +803,478 @@ describe("stashDir config", () => {
   test("ignores empty stashDir", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: "   " }));
     expect(loadConfig().stashDir).toBeUndefined();
+  });
+});
+
+// ── search config ────────────────────────────────────────────────────────────
+
+describe("search config", () => {
+  test("loads search.graphBoost values", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          minScore: 0.15,
+          graphBoost: {
+            directBoostPerEntity: 0.2,
+            directBoostCap: 0.6,
+            hopBoostPerEntity: 0.08,
+            hopBoostCap: 0.24,
+            maxHops: 2,
+            confidenceMode: "multiply",
+            confidenceWeight: 0.4,
+          },
+        },
+      }),
+    );
+
+    expect(loadConfig().search).toEqual({
+      minScore: 0.15,
+      graphBoost: {
+        directBoostPerEntity: 0.2,
+        directBoostCap: 0.6,
+        hopBoostPerEntity: 0.08,
+        hopBoostCap: 0.24,
+        maxHops: 2,
+        confidenceMode: "multiply",
+        confidenceWeight: 0.4,
+      },
+    });
+  });
+
+  test("loads search.graphBoost confidence mode and caps confidenceWeight at 1", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          graphBoost: {
+            confidenceMode: "blend",
+            confidenceWeight: 99,
+          },
+        },
+      }),
+    );
+
+    expect(loadConfig().search?.graphBoost).toEqual({
+      confidenceMode: "blend",
+      confidenceWeight: 1,
+    });
+  });
+
+  test("caps search.graphBoost.maxHops at conservative hard limit", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ search: { graphBoost: { maxHops: 99 } } }));
+    expect(loadConfig().search?.graphBoost?.maxHops).toBe(3);
+  });
+
+  test("warns and ignores unknown search and search.graphBoost keys", () => {
+    const originalWarn = console.warn;
+    const messages: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      messages.push(args.map(String).join(" "));
+    };
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          search: {
+            minScore: 0.2,
+            unsupportedTopLevel: true,
+            graphBoost: {
+              maxHops: 2,
+              unsupportedNested: "x",
+            },
+          },
+        }),
+      );
+
+      const loaded = loadConfig();
+      expect(loaded.search?.minScore).toBe(0.2);
+      expect(loaded.search?.graphBoost?.maxHops).toBe(2);
+      expect(messages.some((m) => m.includes('Ignoring unknown search key "unsupportedTopLevel"'))).toBe(true);
+      expect(messages.some((m) => m.includes('Ignoring unknown search.graphBoost key "unsupportedNested"'))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
+
+describe("v2 config shape parsing", () => {
+  test("parses configVersion", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: 2 }));
+    const loaded = loadConfig();
+    expect(loaded.configVersion).toBe(2);
+  });
+
+  test("parses profiles.llm with supportsJsonSchema", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          llm: {
+            "openai-mini": {
+              endpoint: "https://api.openai.com/v1/chat/completions",
+              model: "gpt-4o-mini",
+              temperature: 0.3,
+              supportsJsonSchema: true,
+            },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.llm?.["openai-mini"]?.model).toBe("gpt-4o-mini");
+    expect(loaded.profiles?.llm?.["openai-mini"]?.supportsJsonSchema).toBe(true);
+  });
+
+  test("parses profiles.agent with platform field", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          agent: {
+            "opencode-default": { platform: "opencode", bin: "opencode", args: ["run"] },
+            "opencode-sdk": { platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.agent?.["opencode-default"]?.platform).toBe("opencode");
+    expect(loaded.profiles?.agent?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
+    expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
+  });
+
+  test("warns and skips agent profile with invalid platform", () => {
+    const messages: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      messages.push(args.map(String).join(" "));
+    };
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          profiles: { agent: { bad: { platform: "invalid-platform" } } },
+        }),
+      );
+      const loaded = loadConfig();
+      expect(loaded.profiles?.agent?.bad).toBeUndefined();
+      expect(messages.some((m) => m.includes("platform"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("parses defaults.llm, defaults.agent, defaults.improve", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        defaults: {
+          llm: "openai-mini",
+          agent: "opencode-default",
+          improve: { limit: 25, preset: "custom" },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.defaults?.llm).toBe("openai-mini");
+    expect(loaded.defaults?.agent).toBe("opencode-default");
+    expect(loaded.defaults?.improve?.limit).toBe(25);
+    expect(loaded.defaults?.improve?.preset).toBe("custom");
+  });
+
+  test("parses features.improve with boolean and object entries", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        features: {
+          improve: {
+            reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
+            memory_consolidation: false,
+            feedback_distillation: true,
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    const reflect = loaded.features?.improve?.reflect;
+    expect(typeof reflect).toBe("object");
+    if (reflect && typeof reflect === "object") {
+      expect((reflect as { mode?: string }).mode).toBe("llm");
+      expect((reflect as { timeoutMs?: number }).timeoutMs).toBe(60000);
+    }
+    expect(loaded.features?.improve?.memory_consolidation).toBe(false);
+    expect(loaded.features?.improve?.feedback_distillation).toBe(true);
+  });
+
+  test("parses features.index and features.search", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        features: {
+          index: { memory_inference: true, graph_extraction: { profile: "openai-mini" }, metadata_enhance: false },
+          search: { curate_rerank: true },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.features?.index?.memory_inference).toBe(true);
+    expect(loaded.features?.index?.metadata_enhance).toBe(false);
+    expect(loaded.features?.search?.curate_rerank).toBe(true);
+  });
+
+  test("sanitizeConfigForWrite strips apiKey from profiles.llm entries", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          llm: {
+            myprofile: {
+              endpoint: "https://api.openai.com/v1/chat/completions",
+              model: "gpt-4o",
+              apiKey: "sk-secret",
+            },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    saveConfig(loaded);
+    // Re-read from disk to verify apiKey was stripped
+    const saved = JSON.parse(require("node:fs").readFileSync(getConfigPath(), "utf8"));
+    expect(saved.profiles?.llm?.myprofile?.apiKey).toBeUndefined();
+    expect(saved.profiles?.llm?.myprofile?.model).toBe("gpt-4o");
+  });
+});
+
+// ── Auto-migration hook ──────────────────────────────────────────────────────
+
+describe("auto-migration in loadConfig", () => {
+  const originalNoAutoMigrate = process.env.AKM_NO_AUTO_MIGRATE;
+
+  afterEach(() => {
+    // Restore env after each test
+    if (originalNoAutoMigrate === undefined) {
+      delete process.env.AKM_NO_AUTO_MIGRATE;
+    } else {
+      process.env.AKM_NO_AUTO_MIGRATE = originalNoAutoMigrate;
+    }
+    resetConfigCache();
+  });
+
+  test("auto-migrates a v1 config file (missing configVersion) and rewrites it to disk", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    // Write a pre-0.8.0 config: has llm.features block, no configVersion
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // loadConfig triggers auto-migration
+    const loaded = loadConfig();
+
+    // In-memory config should reflect the migrated shape
+    expect(loaded.llm?.endpoint).toBe("http://localhost:11434");
+
+    // The file on disk should have been rewritten with configVersion
+    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(onDisk.configVersion).toBe("0.8.0");
+    expect(onDisk.llm?.features).toBeUndefined();
+
+    // A backup should have been created in the cache dir
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const backupFiles = fs.readdirSync(backupDir);
+    expect(backupFiles.length).toBeGreaterThan(0);
+  });
+
+  test("does NOT rewrite the config file when AKM_NO_AUTO_MIGRATE=1", () => {
+    process.env.AKM_NO_AUTO_MIGRATE = "1";
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // loadConfig should NOT rewrite the file
+    loadConfig();
+
+    const onDisk = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(onDisk);
+    // File should still match v1 shape — no configVersion written
+    expect(parsed.configVersion).toBeUndefined();
+    expect(parsed.llm?.features?.memory_inference).toBe(true);
+  });
+
+  test("does not crash or backup when config file is already at 0.8.0", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    const currentConfig = {
+      configVersion: "0.8.0",
+      llm: { endpoint: "http://localhost:11434", model: "qwen3" },
+    };
+    writeRawConfig(configPath, JSON.stringify(currentConfig));
+
+    const loaded = loadConfig();
+    expect(loaded.configVersion).toBe("0.8.0");
+
+    // No backup should be created since nothing needed migrating
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const backupFiles = fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : [];
+    expect(backupFiles.length).toBe(0);
+  });
+
+  test("auto-migration is applied in-memory even when AKM_NO_AUTO_MIGRATE=1", () => {
+    process.env.AKM_NO_AUTO_MIGRATE = "1";
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { graph_extraction: false },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // The LLM endpoint should still be available even though migration was suppressed
+    const loaded = loadConfig();
+    expect(loaded.llm?.endpoint).toBe("http://localhost:11434");
+  });
+});
+
+// ── Newer-than-binary config guard (Fix 2 / migration safety) ──────────────
+
+describe("newer-than-binary config guard", () => {
+  const originalForceDowngrade = process.env.AKM_FORCE_DOWNGRADE_CONFIG;
+
+  afterEach(() => {
+    if (originalForceDowngrade === undefined) {
+      delete process.env.AKM_FORCE_DOWNGRADE_CONFIG;
+    } else {
+      process.env.AKM_FORCE_DOWNGRADE_CONFIG = originalForceDowngrade;
+    }
+  });
+
+  test("loadConfig reads a newer-than-binary config successfully", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.99.0",
+        semanticSearchMode: "off",
+        // Field the older binary does not know about — must be silently dropped
+        // on read (existing behaviour) but preserved on disk.
+        unknownFutureField: { foo: "bar" },
+      }),
+    );
+
+    const loaded = loadConfig();
+    expect(loaded.semanticSearchMode).toBe("off");
+    // Disk bytes must be untouched (no auto-migration of a newer config).
+    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(onDisk.configVersion).toBe("0.99.0");
+    expect(onDisk.unknownFutureField).toEqual({ foo: "bar" });
+    // Read-only reason is recorded for diagnostics.
+    expect(getConfigReadOnlyReason()?.foundVersion).toBe("0.99.0");
+  });
+
+  test("saveConfig throws when the loaded config is newer than the binary", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.99.0", semanticSearchMode: "off" }));
+    const loaded = loadConfig();
+
+    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).toThrow(ConfigError);
+    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).toThrow(
+      /config v0\.99\.0 .* is newer than this binary .* refusing to write/,
+    );
+    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).toThrow(/AKM_FORCE_DOWNGRADE_CONFIG=1/);
+  });
+
+  test("AKM_FORCE_DOWNGRADE_CONFIG=1 lets the write proceed", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.99.0",
+        semanticSearchMode: "off",
+        unknownFutureField: { foo: "bar" },
+      }),
+    );
+    const loaded = loadConfig();
+
+    process.env.AKM_FORCE_DOWNGRADE_CONFIG = "1";
+    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).not.toThrow();
+
+    // The unknown future field was stripped by sanitizeConfigForWrite as the
+    // user explicitly opted in to a downgrade.
+    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(onDisk.unknownFutureField).toBeUndefined();
+    expect(onDisk.semanticSearchMode).toBe("auto");
+  });
+
+  test("maybeAutoMigrateConfigFile does not rewrite a newer config", () => {
+    const newerConfig = {
+      configVersion: "0.99.0",
+      // legacy llm.features key that WOULD normally trigger an auto-migration
+      llm: { endpoint: "http://localhost", model: "qwen3", features: { graph_extraction: false } },
+    };
+    const original = JSON.stringify(newerConfig, null, 2);
+    writeRawConfig(getConfigPath(), original);
+    const mtimeBefore = fs.statSync(getConfigPath()).mtimeMs;
+
+    loadConfig();
+
+    const onDisk = fs.readFileSync(getConfigPath(), "utf8");
+    expect(onDisk).toBe(`${JSON.stringify(newerConfig, null, 2)}`);
+    // No write occurred — file bytes unchanged.
+    const mtimeAfter = fs.statSync(getConfigPath()).mtimeMs;
+    expect(mtimeAfter).toBe(mtimeBefore);
+  });
+
+  test("project config with newer version triggers the same guard", () => {
+    const projectDir = makeTmpDir();
+    try {
+      // User config at current version — safe on its own.
+      writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.8.0" }));
+      writeRawConfig(
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({ configVersion: "0.99.0", semanticSearchMode: "off" }),
+      );
+
+      process.chdir(projectDir);
+
+      // Reading still works.
+      const loaded = loadConfig();
+      expect(loaded.semanticSearchMode).toBe("off");
+      // …but saveConfig is blocked because a project layer was newer.
+      expect(() => saveConfig(loaded)).toThrow(/is newer than this binary/);
+    } finally {
+      cleanup(projectDir);
+    }
+  });
+
+  test("legacy numeric configVersion at current shape does not trigger the guard", () => {
+    // legacy `configVersion: 2` is treated as "already migrated to v2 shape"
+    // by migrateConfigShape; it must NOT be flagged as newer than 0.8.0.
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: 2, semanticSearchMode: "off" }));
+    const loaded = loadConfig();
+    expect(loaded.semanticSearchMode).toBe("off");
+    expect(getConfigReadOnlyReason()).toBeUndefined();
+    expect(() => saveConfig(loaded)).not.toThrow();
   });
 });

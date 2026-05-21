@@ -13,7 +13,7 @@ id: 3363736
 date: '2026-03-18T18:09:15Z'
 ---
 
-This is part four in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I covered why progressive disclosure beats dumping everything into context. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them) showed how `akm` unifies your local assets across platforms into one searchable stash. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking for teams that need persistent, shared knowledge.
+This is part four in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I covered why progressive disclosure beats dumping everything into context. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them) showed how `akm` unifies your local assets across platforms into one searchable stash. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking for teams that need persistent, shared knowledge. *(note: OpenViking is not supported in akm v1 — see [intro-part-03](intro-part-03.md) for details)*
 
 All of that assumed you were building your own library from scratch. Your skills. Your knowledge docs. Your team's accumulated context. That's fine — and it's necessary — but it ignores a much larger resource: everything everyone else has already built.
 
@@ -153,7 +153,7 @@ Results might include:
 
 1. A local script from your primary stash — the deploy script you wrote last month
 2. A team skill from an installed GitHub stash — the Docker Compose workflow your teammate packaged
-3. A knowledge doc from OpenViking — the architecture decision about container orchestration from last sprint
+3. A knowledge doc from OpenViking — the architecture decision about container orchestration from last sprint *(note: OpenViking is not supported in akm v1 — see [intro-part-03](intro-part-03.md) for details)*
 4. A community skill from Context Hub — a battle-tested container deployment pattern that 50 other people have already vetted
 
 Four different sources. One result set. One `akm show` command to load whichever one the agent needs. Everything else stays out of context.

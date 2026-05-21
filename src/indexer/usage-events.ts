@@ -2,7 +2,7 @@
  * Usage event helpers for telemetry and utility-based re-ranking.
  *
  * Schema (created by ensureUsageEventsSchema):
- *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, created_at
+ *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
 import type { Database } from "bun:sqlite";
@@ -16,6 +16,12 @@ export interface UsageEvent {
   entry_ref?: string;
   signal?: string;
   metadata?: string;
+  /**
+   * Event source: `"user"` for direct CLI invocations, `"improve"` for
+   * operations triggered by `akm improve` (reflect/distill agents).
+   * Defaults to `"user"` when omitted.
+   */
+  source?: "user" | "improve";
 }
 
 export interface UsageEventRow {
@@ -26,12 +32,14 @@ export interface UsageEventRow {
   entry_ref: string | null;
   signal: string | null;
   metadata: string | null;
+  source: string;
   created_at: string;
 }
 
 export interface UsageEventFilters {
   event_type?: string;
   entry_ref?: string;
+  source?: "user" | "improve";
 }
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -46,11 +54,13 @@ export function ensureUsageEventsSchema(db: Database): void {
       entry_ref  TEXT,
       signal     TEXT,
       metadata   TEXT,
+      source     TEXT NOT NULL DEFAULT 'user',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
     CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_usage_events_ref ON usage_events(entry_ref);
+    CREATE INDEX IF NOT EXISTS idx_usage_events_source ON usage_events(source);
   `);
 }
 
@@ -63,8 +73,8 @@ export function ensureUsageEventsSchema(db: Database): void {
 export function insertUsageEvent(db: Database, event: UsageEvent): void {
   try {
     db.prepare(
-      `INSERT INTO usage_events (event_type, query, entry_id, entry_ref, signal, metadata)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO usage_events (event_type, query, entry_id, entry_ref, signal, metadata, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       event.event_type,
       event.query ?? null,
@@ -72,6 +82,7 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
       event.entry_ref ?? null,
       event.signal ?? null,
       event.metadata ?? null,
+      event.source ?? "user",
     );
   } catch {
     /* fire-and-forget: silently ignore errors */
@@ -95,9 +106,13 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
     conditions.push("entry_ref = ?");
     params.push(filters.entry_ref);
   }
+  if (filters?.source) {
+    conditions.push("source = ?");
+    params.push(filters.source);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, created_at
+  const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
                FROM usage_events ${where}
                ORDER BY id ASC`;
 

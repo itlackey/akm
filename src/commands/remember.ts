@@ -13,6 +13,7 @@ import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/metadata";
 import { SCOPE_KEYS } from "../indexer/metadata";
+import { parseFlagValue } from "../output/context";
 
 /**
  * Fields the CLI collects via `--tag`, `--expires`, `--source`, `--auto`,
@@ -33,6 +34,19 @@ export interface MemoryFrontmatterFields {
   expires?: string;
   subjective?: boolean;
   scope?: StashEntryScope;
+  /**
+   * Capture-mode marker (Phase 1B / Rec 7). `hot` marks memories written via
+   * the `akm remember` CLI; `background` is reserved for derived/inferred
+   * memories. Persisted as the `captureMode:` frontmatter key.
+   */
+  captureMode?: "hot" | "background";
+  /**
+   * Belief state marker (Phase 1B). Hot-path memories are written as
+   * `asserted`; the value is persisted verbatim into the `beliefState:`
+   * frontmatter key for downstream consumers. Phase 1A widens the indexer's
+   * union; until then, the indexer simply passes the string through.
+   */
+  beliefState?: string;
 }
 
 /**
@@ -70,6 +84,12 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
+  if (fields.captureMode === "hot" || fields.captureMode === "background") {
+    obj.captureMode = fields.captureMode;
+  }
+  if (typeof fields.beliefState === "string" && fields.beliefState.trim()) {
+    obj.beliefState = fields.beliefState.trim();
+  }
   // Scope keys are emitted as flat top-level keys (`scope_user`, …) so the
   // existing one-level frontmatter parser can read them without nesting.
   // A scope object with no populated values is dropped.
@@ -254,4 +274,71 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);
     return { tags: [] };
   }
+}
+
+// ── Content-arg disambiguation ───────────────────────────────────────────────
+
+/**
+ * Guard against citty consuming a global flag value as the `content` positional.
+ *
+ * When the user runs `akm remember --format json` without a content argument,
+ * citty may assign `"json"` to the `content` positional because of how it
+ * handles flag order. This helper detects that case and returns `undefined`
+ * so `readMemoryContent` falls through to stdin.
+ */
+export function resolveRememberContentArg(content: string | undefined): string | undefined {
+  if (content === undefined) return undefined;
+
+  const parsedFormat = parseFlagValue(process.argv, "--format");
+  if (
+    parsedFormat !== undefined &&
+    content === parsedFormat &&
+    wasRememberFlagValueConsumedAsContent(content, parsedFormat, "--format")
+  ) {
+    return undefined;
+  }
+
+  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  if (
+    parsedDetail !== undefined &&
+    content === parsedDetail &&
+    wasRememberFlagValueConsumedAsContent(content, parsedDetail, "--detail")
+  ) {
+    return undefined;
+  }
+
+  return content;
+}
+
+function wasRememberFlagValueConsumedAsContent(
+  content: string,
+  flagValue: string,
+  flagName: "--format" | "--detail",
+): boolean {
+  const argv = process.argv.slice(2);
+  const rememberIndex = argv.indexOf("remember");
+  const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
+
+  let flagIndex = -1;
+  let flagConsumesNextToken = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === flagName) {
+      flagIndex = i;
+      flagConsumesNextToken = true;
+      break;
+    }
+    if (token === `${flagName}=${flagValue}`) {
+      flagIndex = i;
+      break;
+    }
+  }
+
+  if (flagIndex === -1) return false;
+  if (tokens.slice(0, flagIndex).includes(content)) return false;
+
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
+  if (tokens.slice(firstTokenAfterFlag).includes(content)) return false;
+
+  return true;
 }

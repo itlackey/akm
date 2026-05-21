@@ -1,9 +1,14 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { InstallAuditReport } from "../src/commands/install-audit";
+import * as installAudit from "../src/commands/install-audit";
 import { akmListSources, akmRemove, akmUpdate } from "../src/commands/installed-stashes";
 import { loadConfig, saveConfig } from "../src/core/config";
+import { UsageError } from "../src/core/errors";
+import type { InstalledStashEntry } from "../src/registry/types";
+import * as syncFromRefModule from "../src/sources/providers/sync-from-ref";
 import { createWiki } from "../src/wiki/wiki";
 
 const createdTmpDirs: string[] = [];
@@ -22,20 +27,28 @@ afterAll(() => {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let stashDir = "";
 
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-registry-cache-");
   testConfigDir = createTmpDir("akm-registry-config-");
+  testDataDir = createTmpDir("akm-registry-data-");
+  testStateDir = createTmpDir("akm-registry-state-");
   stashDir = createTmpDir("akm-registry-stash-");
   for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 });
 
@@ -50,6 +63,16 @@ afterEach(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (originalStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -62,6 +85,14 @@ afterEach(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 
@@ -338,6 +369,30 @@ describe("akmRemove", () => {
 
     expect(fs.existsSync(cacheDir)).toBe(false);
   });
+
+  test("removes installed entries when the lockfile data directory is missing", async () => {
+    const cacheDir = createTmpDir("akm-registry-remove-missing-lock-cache-");
+    const stashRoot = createTmpDir("akm-registry-remove-missing-lock-root-");
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
+      fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
+    }
+
+    const entry = {
+      id: "npm:left-pad",
+      source: "npm" as const,
+      ref: "npm:left-pad",
+      artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad.tgz",
+      stashRoot,
+      cacheDir,
+      installedAt: new Date().toISOString(),
+    };
+
+    saveConfig({ semanticSearchMode: "off", installed: [entry] });
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+
+    const result = await akmRemove({ target: entry.id, stashDir });
+    expect(result.removed.id).toBe(entry.id);
+  });
 });
 
 // ── selectTargets (tested via akmUpdate error paths) ────────────────
@@ -414,5 +469,62 @@ describe("selectTargets via akmUpdate", () => {
     expect(fs.existsSync(localDir)).toBe(true);
     const config = loadConfig();
     expect((config.sources ?? []).some((s) => s.path === localDir)).toBe(true);
+  });
+
+  test("blocked update audit suggests update --trust remediation", async () => {
+    const entry: InstalledStashEntry = {
+      id: "npm:left-pad",
+      source: "npm",
+      ref: "npm:left-pad",
+      artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad.tgz",
+      stashRoot: createTmpDir("akm-registry-update-audit-root-"),
+      cacheDir: createTmpDir("akm-registry-update-audit-cache-"),
+      installedAt: new Date().toISOString(),
+    };
+
+    saveConfig({ semanticSearchMode: "off", installed: [entry] });
+
+    const syncSpy = spyOn(syncFromRefModule, "syncFromRef").mockResolvedValue({
+      id: entry.id,
+      source: entry.source,
+      ref: entry.ref,
+      artifactUrl: entry.artifactUrl,
+      contentDir: entry.stashRoot,
+      extractedDir: entry.stashRoot,
+      cacheDir: entry.cacheDir,
+      syncedAt: new Date().toISOString(),
+    });
+    const auditSpy = spyOn(installAudit, "auditInstallCandidate").mockReturnValue({
+      enabled: true,
+      passed: false,
+      blocked: true,
+      trusted: false,
+      registryLabels: ["npm"],
+      findings: [
+        {
+          id: "prompt-reveal-hidden-secrets",
+          severity: "critical",
+          category: "prompt-injection",
+          message: "Contains instructions to reveal hidden prompts or secrets.",
+        },
+      ],
+      scannedFiles: 1,
+      scannedBytes: 10,
+      summary: { low: 0, moderate: 0, high: 0, critical: 1, total: 1 },
+    } satisfies InstallAuditReport);
+
+    try {
+      await expect(akmUpdate({ target: entry.id, stashDir })).rejects.toBeInstanceOf(UsageError);
+      try {
+        await akmUpdate({ target: entry.id, stashDir });
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("akm update npm:left-pad --trust");
+        expect(message).not.toContain("one-off 'akm add'");
+      }
+    } finally {
+      syncSpy.mockRestore();
+      auditSpy.mockRestore();
+    }
   });
 });

@@ -16,6 +16,95 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
+import { isProcessAlive, writeFileAtomic } from "../core/common";
+
+// ── Write-lock helper ─────────────────────────────────────────────────────────
+
+/**
+ * Acquire an exclusive lock file for the given vault path, execute `fn`, then
+ * release the lock.  Uses O_EXCL creation so two concurrent writers cannot
+ * both acquire the lock simultaneously (POSIX atomic guarantee).
+ *
+ * Retry strategy: if the lock is held we spin for up to 5 s, yielding via
+ * `Bun.sleepSync` when available (avoids burning 100 % CPU), otherwise falling
+ * back to a busy-wait counter.  After the deadline we throw rather than
+ * silently proceeding — a timeout here is always a programming error or a
+ * stale lock left by a crashed process.
+ *
+ * Stale lock detection: the current PID is written into the lock file on
+ * acquisition.  When a lock-acquire attempt fails, the PID stored in the
+ * existing lock file is read and tested with `process.kill(pid, 0)`.  If the
+ * signal call throws (ESRCH — no such process), the lock is stale and is
+ * deleted immediately so the next loop iteration can acquire it.  If the
+ * process is still alive the retry loop continues normally.
+ */
+function withVaultLock<T>(vaultPath: string, fn: () => T): T {
+  // TODO(refactor): see improve.ts acquireLock and lockfile.ts acquireLockSentinel — three implementations of the same O_EXCL+PID-staleness pattern.
+  const lockPath = `${vaultPath}.lock`;
+  const deadline = Date.now() + 5000;
+  let fd = -1;
+
+  while (true) {
+    try {
+      fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+      // Write our PID so staleness can be detected by other waiters
+      fs.writeSync(fd, String(process.pid));
+      break;
+    } catch {
+      if (Date.now() > deadline) {
+        throw new Error(`Could not acquire vault lock for ${vaultPath} after 5s. Is another process holding it?`);
+      }
+      // Check for stale lock: read PID and test if that process is alive
+      try {
+        const rawPid = fs.readFileSync(lockPath, "utf8").trim();
+        const pid = Number.parseInt(rawPid, 10);
+        if (!Number.isNaN(pid) && pid > 0) {
+          if (!isProcessAlive(pid)) {
+            // Process is dead — stale lock, remove and retry immediately
+            try {
+              fs.unlinkSync(lockPath);
+            } catch {
+              /* ignore */
+            }
+            continue;
+          }
+          // PID is alive — legitimate holder, wait
+        }
+      } catch {
+        /* lock file unreadable, keep waiting */
+      }
+      // Yield before next attempt
+      if (
+        typeof (globalThis as Record<string, unknown> & { Bun?: { sleepSync?: (ms: number) => void } }).Bun
+          ?.sleepSync === "function"
+      ) {
+        (globalThis as Record<string, unknown> & { Bun: { sleepSync: (ms: number) => void } }).Bun.sleepSync(10);
+      } else {
+        let spin = 0;
+        while (spin++ < 100_000) {
+          /* yield */
+        }
+      }
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    if (fd !== -1) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 /** Matches a KEY=value assignment line, capturing only the key. */
 const ASSIGN_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
@@ -181,83 +270,106 @@ export function buildShellExportScript(vaultPath: string): string {
  */
 export function setKey(vaultPath: string, key: string, value: string, comment?: string): void {
   validateKeyName(key);
+  if (comment !== undefined && /[\r\n]/.test(comment)) {
+    throw new Error("Vault key comment cannot contain newline characters.");
+  }
   ensureParentDir(vaultPath);
-  const existing = fs.existsSync(vaultPath) ? fs.readFileSync(vaultPath, "utf8") : "";
-  const lines = existing.length > 0 ? existing.split(/\r?\n/) : [];
-  const formatted = `${key}=${quoteValue(value)}`;
-  let replaced = false;
+  withVaultLock(vaultPath, () => {
+    const existing = fs.existsSync(vaultPath) ? fs.readFileSync(vaultPath, "utf8") : "";
+    const lines = existing.length > 0 ? existing.split(/\r?\n/) : [];
+    const formatted = `${key}=${quoteValue(value)}`;
+    let replaced = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(ASSIGN_RE);
-    if (m && m[1] === key) {
-      lines[i] = formatted;
-      replaced = true;
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(ASSIGN_RE);
+      if (m && m[1] === key) {
+        lines[i] = formatted;
+        replaced = true;
+        if (comment !== undefined) {
+          const commentLine = `# ${comment}`;
+          const prevIsComment = i > 0 && lines[i - 1].trimStart().startsWith("#");
+          if (prevIsComment) {
+            lines[i - 1] = commentLine;
+          } else {
+            lines.splice(i, 0, commentLine);
+          }
+        }
+        break;
+      }
+    }
+
+    if (!replaced) {
       if (comment !== undefined) {
         const commentLine = `# ${comment}`;
-        const prevIsComment = i > 0 && lines[i - 1].trimStart().startsWith("#");
-        if (prevIsComment) {
-          lines[i - 1] = commentLine;
+        if (lines.length > 0 && lines[lines.length - 1] === "") {
+          lines[lines.length - 1] = commentLine;
+          lines.push(formatted);
+          lines.push("");
         } else {
-          lines.splice(i, 0, commentLine);
+          lines.push(commentLine);
+          lines.push(formatted);
         }
-      }
-      break;
-    }
-  }
-
-  if (!replaced) {
-    if (comment !== undefined) {
-      const commentLine = `# ${comment}`;
-      if (lines.length > 0 && lines[lines.length - 1] === "") {
-        lines[lines.length - 1] = commentLine;
-        lines.push(formatted);
+      } else if (lines.length > 0 && lines[lines.length - 1] === "") {
+        lines[lines.length - 1] = formatted;
         lines.push("");
       } else {
-        lines.push(commentLine);
         lines.push(formatted);
       }
-    } else if (lines.length > 0 && lines[lines.length - 1] === "") {
-      lines[lines.length - 1] = formatted;
-      lines.push("");
-    } else {
-      lines.push(formatted);
     }
-  }
 
-  let out = lines.join("\n");
-  if (!out.endsWith("\n")) out += "\n";
-  writeFileAtomic(vaultPath, out);
+    let out = lines.join("\n");
+    if (!out.endsWith("\n")) out += "\n";
+    writeFileAtomic(vaultPath, out, 0o600);
+  });
 }
 
 /** Remove a key from the vault file. Returns true if the key was present. */
 export function unsetKey(vaultPath: string, key: string): boolean {
   if (!fs.existsSync(vaultPath)) return false;
-  const text = fs.readFileSync(vaultPath, "utf8");
-  const lines = text.split(/\r?\n/);
-  const kept: string[] = [];
-  let removed = false;
+  return withVaultLock(vaultPath, () => {
+    const text = fs.readFileSync(vaultPath, "utf8");
+    const lines = text.split(/\r?\n/);
+    let keyLineIdx = -1;
 
-  for (const line of lines) {
-    const m = line.match(ASSIGN_RE);
-    if (m && m[1] === key) {
-      removed = true;
-      continue;
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(ASSIGN_RE);
+      if (m && m[1] === key) {
+        keyLineIdx = i;
+        break;
+      }
     }
-    kept.push(line);
-  }
 
-  if (!removed) return false;
-  let out = kept.join("\n");
-  if (out.length > 0 && !out.endsWith("\n")) out += "\n";
-  writeFileAtomic(vaultPath, out);
-  return true;
+    if (keyLineIdx === -1) return false;
+
+    // Determine how many consecutive comment lines immediately precede the key.
+    // We walk backwards, skipping only comment lines (lines matching /^\s*#/).
+    // A blank line between a comment and the key breaks the association — we
+    // stop at the first non-comment, non-assignment line (including blank lines).
+    let commentStart = keyLineIdx;
+    for (let i = keyLineIdx - 1; i >= 0; i--) {
+      if (/^\s*#/.test(lines[i])) {
+        commentStart = i;
+      } else {
+        // Stop at the first non-comment line (blank or assignment)
+        break;
+      }
+    }
+
+    // Remove from commentStart through keyLineIdx (inclusive).
+    lines.splice(commentStart, keyLineIdx - commentStart + 1);
+
+    let out = lines.join("\n");
+    if (out.length > 0 && !out.endsWith("\n")) out += "\n";
+    writeFileAtomic(vaultPath, out, 0o600);
+    return true;
+  });
 }
 
 /** Create an empty vault file (does nothing if it already exists). */
 export function createVault(vaultPath: string): void {
   ensureParentDir(vaultPath);
   if (fs.existsSync(vaultPath)) return;
-  writeFileAtomic(vaultPath, "");
+  writeFileAtomic(vaultPath, "", 0o600);
 }
 
 /**
@@ -305,25 +417,5 @@ function validateKeyName(key: string): void {
 
 function ensureParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function writeFileAtomic(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmp, content, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(tmp, filePath);
-    try {
-      fs.chmodSync(filePath, 0o600);
-    } catch {
-      /* best-effort on platforms without chmod */
-    }
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }

@@ -17,11 +17,15 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
   const stashDir = makeTempDir("akm-wfqa-stash-");
   const xdgCache = makeTempDir("akm-wfqa-cache-");
   const xdgConfig = makeTempDir("akm-wfqa-config-");
+  const xdgData = makeTempDir("akm-wfqa-data-");
+  const xdgState = makeTempDir("akm-wfqa-state-");
   return {
     ...process.env,
     AKM_STASH_DIR: stashDir,
     XDG_CACHE_HOME: xdgCache,
     XDG_CONFIG_HOME: xdgConfig,
+    XDG_DATA_HOME: xdgData,
+    XDG_STATE_HOME: xdgState,
   };
 }
 

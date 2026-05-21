@@ -2,9 +2,9 @@
 
 `akm index` builds and refreshes the local SQLite search index.
 
-By default it skips all index-time LLM passes, even when `akm.llm` is
-configured. Pass `--enrich` to enable memory inference, graph extraction, and
-metadata enrichment for that run.
+By default it builds the local index and keeps metadata in the index. When
+`akm.llm` is configured and `index.enrichment.llm` is not `false`, metadata
+enhancement runs during indexing.
 
 ## High-Level Flow
 
@@ -50,10 +50,34 @@ The `content` column is intentionally sparse. Longer freeform guidance such as
 
 - incremental (default): reprocesses changed directories/files
 - full rebuild (`akm index --full`): rebuilds the search index from scratch
-- enriched (`akm index --enrich`): enables index-time LLM passes for the run
 
 Full rebuilds preserve usage history and then re-link it to rebuilt entries by
 ref.
+
+## LLM Enrichment Pass
+
+When metadata enhancement is enabled, the enrichment pass runs after all
+entries are upserted and FTS is rebuilt. Key properties:
+
+**Concurrency** — directories are enriched in parallel using a bounded
+concurrency pool of 4 workers (`concurrentMap(..., 4)` from
+`src/core/concurrent.ts`). Individual entry failures within a directory are
+isolated; the pool continues with remaining work.
+
+**`quality: "enriched"` caching** — after a successful LLM enrichment call,
+the entry's `quality` field is set to `"enriched"` and written back to the
+index. On subsequent `akm index` runs, entries already marked `"enriched"`
+are skipped unless the caller explicitly requests re-enrichment.
+
+**5-minute wall-clock budget** — the enrichment pass operates under a 5-minute
+total deadline enforced by `AbortSignal.timeout(5 * 60 * 1000)`. Once the
+deadline fires, no new enrichment calls are started; entries that were not
+reached are left at `quality: "generated"` and will be picked up on the next
+eligible run.
+
+**Eligibility** — only entries with `quality: "generated"` are enriched by
+default. Entries with `quality: "curated"` or `quality: "enriched"` are
+skipped unless the caller explicitly requests re-enrichment.
 
 ## Progress Reporting
 
@@ -128,6 +152,22 @@ Structured parameters can come from:
 
 Parameter names and descriptions are stored structurally and also fed into the
 lowest-weight `content` field.
+
+## Quality Values
+
+The `quality` field on an index entry tracks how its metadata was produced.
+Well-known values (defined in `src/indexer/metadata.ts`):
+
+| Value | Meaning |
+| --- | --- |
+| `"generated"` | metadata derived automatically from file content |
+| `"enriched"` | metadata produced by or updated via an LLM enrichment pass |
+| `"curated"` | metadata written or explicitly approved by a human |
+| `"proposed"` | metadata from a proposal awaiting review |
+
+The `"enriched"` marker is set by the indexer after a successful metadata
+enrichment pass during plain `akm index` and prevents unnecessary re-enrichment
+on the next run (see LLM Enrichment Pass above).
 
 ## Utility Recomputation
 

@@ -12,7 +12,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../src/commands/distill";
+import {
+  akmDistill,
+  buildDistillPrompt,
+  deriveLessonRef,
+  detectDoubleFrontmatter,
+  isValidDescription,
+  isValidWhenToUse,
+} from "../src/commands/distill";
+import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/distill-promotion-policy";
 import type { AkmConfig } from "../src/core/config";
 import { readEvents } from "../src/core/events";
 import { listProposals } from "../src/core/proposals";
@@ -25,6 +33,7 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -35,7 +44,7 @@ function makeTempDir(prefix: string): string {
 
 function makeStashDir(): string {
   const stash = makeTempDir("akm-distill-stash-");
-  for (const dir of ["lessons", "skills", "memories"]) {
+  for (const dir of ["lessons", "skills", "memories", "knowledge"]) {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
@@ -92,12 +101,37 @@ description: Use ripgrep
 Body without when_to_use.
 `;
 
+const VALID_KNOWLEDGE = `---
+description: Durable deploy guidance
+sources: [skill:deploy]
+---
+
+# Deploy Guidance
+
+Connect the VPN before production deploys.
+`;
+
 const noopLookup = async () => null;
 const emptyEvents = (() => ({ events: [], nextOffset: 0 })) as unknown as typeof readEvents;
+
+function eventsFor(ref: string, signals: Array<"positive" | "negative">) {
+  return (() => ({
+    events: signals.map((s, i) => ({
+      schemaVersion: 1 as const,
+      id: i,
+      ts: `2026-04-27T00:00:0${i}Z`,
+      eventType: "feedback",
+      ref,
+      metadata: { signal: s },
+    })),
+    nextOffset: 0,
+  })) as unknown as typeof readEvents;
+}
 
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-distill-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-distill-config-");
+  process.env.XDG_DATA_HOME = makeTempDir("akm-distill-data-");
 });
 
 afterEach(() => {
@@ -107,6 +141,8 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -146,20 +182,108 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("(asset is not currently indexed");
   });
 
-  test("formats feedback events compactly", () => {
+  test("D-3: negative signal feedback goes into '## What failed' section", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skill:deploy",
       assetContent: null,
-      feedback: [{ ts: "2026-04-27T00:00:00Z", eventType: "feedback", metadata: { signal: "negative" } }],
+      feedback: [
+        {
+          ts: "2026-04-27T00:00:00Z",
+          eventType: "feedback",
+          metadata: { signal: "negative", reason: "Missed the rollback step" },
+        },
+      ],
     });
-    expect(prompt).toContain('2026-04-27T00:00:00Z feedback {"signal":"negative"}');
+    expect(prompt).toContain("## What failed");
+    expect(prompt).toContain("Missed the rollback step");
+    expect(prompt).not.toContain("## What worked");
+  });
+
+  test("D-3: positive signal feedback goes into '## What worked' section", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [
+        {
+          ts: "2026-04-27T00:00:00Z",
+          eventType: "feedback",
+          metadata: { signal: "positive", note: "Deploy succeeded first try" },
+        },
+      ],
+    });
+    expect(prompt).toContain("## What worked");
+    expect(prompt).toContain("Deploy succeeded first try");
+    expect(prompt).not.toContain("## What failed");
+  });
+
+  test("D-3: mixed signals produce both What-worked and What-failed sections", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [
+        { ts: "2026-04-26T00:00:00Z", eventType: "feedback", metadata: { signal: "positive", reason: "Quick" } },
+        { ts: "2026-04-27T00:00:00Z", eventType: "feedback", metadata: { signal: "negative", reason: "Broke prod" } },
+      ],
+    });
+    expect(prompt).toContain("## What worked");
+    expect(prompt).toContain("Quick");
+    expect(prompt).toContain("## What failed");
+    expect(prompt).toContain("Broke prod");
+  });
+
+  test("D-3: non-signal events fall back to flat format", () => {
+    // When no positive/negative signals are present, fall back to old format.
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [{ ts: "2026-04-27T00:00:00Z", eventType: "reflect_invoked", metadata: { profile: "test" } }],
+    });
+    expect(prompt).toContain("Recent feedback events (most recent last):");
+    expect(prompt).toContain("reflect_invoked");
+    expect(prompt).not.toContain("## What failed");
+    expect(prompt).not.toContain("## What worked");
+  });
+
+  test("uses knowledge wording when targeting knowledge output", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [],
+      proposalKind: "knowledge",
+    });
+    expect(prompt).toContain("Produce the knowledge markdown file now.");
+    expect(prompt).not.toContain("Produce the lesson markdown file now.");
+  });
+
+  test("injects rejected proposals as Reflexion verbal-RL context when present", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "skill:deploy",
+      assetContent: null,
+      feedback: [],
+      rejectedProposals: [
+        {
+          reason: "Too vague, missing concrete examples",
+          contentPreview: "---\ndescription: deploy stuff\n---\nBody.",
+        },
+        { reason: "Duplicate of existing lesson" },
+      ],
+    });
+    expect(prompt).toContain("Previously rejected proposals");
+    expect(prompt).toContain("Too vague, missing concrete examples");
+    expect(prompt).toContain("Duplicate of existing lesson");
+    expect(prompt).toContain("MUST differ meaningfully");
+  });
+
+  test("omits rejected proposals section when none provided", () => {
+    const prompt = buildDistillPrompt({ inputRef: "skill:deploy", assetContent: null, feedback: [] });
+    expect(prompt).not.toContain("Previously rejected proposals");
   });
 });
 
 // ── Acceptance: gate disabled ───────────────────────────────────────────────
 
 describe("akmDistill — feature gate", () => {
-  test("absent feature flag → outcome 'skipped', exit 0, no proposal, event emitted", async () => {
+  test("absent feature flag → outcome 'config_disabled', no proposal, NO event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -173,16 +297,19 @@ describe("akmDistill — feature gate", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
+    expect(result.message).toContain("feedback_distillation is disabled");
     expect(result.proposalId).toBeUndefined();
     expect(listProposals(stash)).toEqual([]);
 
+    // No `distill_invoked` event for the config-gate-off branch: the LLM
+    // was never invoked, so emitting the event would inflate planner counts
+    // with phantom invocations.
     const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.length).toBe(1);
-    expect(events[0].metadata?.outcome).toBe("skipped");
+    expect(events.length).toBe(0);
   });
 
-  test("explicit `feedback_distillation: false` → also skipped", async () => {
+  test("explicit `feedback_distillation: false` → also config_disabled, NO event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -194,15 +321,18 @@ describe("akmDistill — feature gate", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
     expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(0);
   });
 });
 
 // ── Acceptance: LLM throws ──────────────────────────────────────────────────
 
 describe("akmDistill — LLM error paths", () => {
-  test("chat throws → graceful skipped outcome, no proposal, event emitted", async () => {
+  test("chat throws → llm_failed outcome, no proposal, event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -214,15 +344,16 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
+    expect(result.message).toContain("LLM call returned no usable output");
     expect(result.proposalId).toBeUndefined();
     expect(listProposals(stash)).toEqual([]);
 
     const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.at(-1)?.metadata?.outcome).toBe("skipped");
+    expect(events.at(-1)?.metadata?.outcome).toBe("llm_failed");
   });
 
-  test("chat returns empty string → also skipped", async () => {
+  test("chat returns empty string → llm_failed (LLM ran but produced nothing)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -232,11 +363,11 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
     expect(listProposals(stash)).toEqual([]);
   });
 
-  test("simulated timeout → handled like an error and falls back to skipped", async () => {
+  test("simulated timeout → llm_failed (LLM was invoked but timed out)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -250,11 +381,11 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
     expect(listProposals(stash)).toEqual([]);
   });
 
-  test("no `llm` block configured at all → gate is closed, outcome skipped", async () => {
+  test("no `llm` block configured at all → gate is closed, outcome config_disabled", async () => {
     const stash = makeStashDir();
     const config = {
       stashDir: stash,
@@ -273,15 +404,84 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
     expect(listProposals(stash)).toEqual([]);
+  });
+});
+
+// ── Acceptance: Item 1 — distinguish config_disabled from llm_failed ────────
+//
+// Empirical context: a 108-run audit on release/0.8.0 found 100% of skipped
+// outcomes were actually the config-gate-off branch. The previous conflated
+// message ("disabled or LLM failed") gave operators no signal to act on, and
+// the planner accumulated phantom `distill_invoked` events for invocations
+// that never made an LLM call. These two tests pin the new behaviour so the
+// signal does not regress.
+
+describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () => {
+  test("feedback_distillation undefined → outcome 'config_disabled', NO distill_invoked event emitted", async () => {
+    const stash = makeStashDir();
+    // configAbsentFeature leaves `llm.features` undefined → gate is closed
+    // → fallbackReason === "disabled" → suppress event, emit config_disabled.
+    let chatCalled = false;
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => {
+        chatCalled = true;
+        return "anything";
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    // The LLM must NOT have been called.
+    expect(chatCalled).toBe(false);
+    // Outcome must precisely identify the cause (config off, not LLM failure).
+    expect(result.outcome).toBe("config_disabled");
+    expect(result.message).toContain("feedback_distillation is disabled in config");
+    expect(result.message).toContain("enable to activate");
+    // CRITICAL: no `distill_invoked` event because no invocation occurred.
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(0);
+  });
+
+  test("gate enabled + LLM returns null → outcome 'llm_failed', event IS emitted", async () => {
+    const stash = makeStashDir();
+    // configEnabled flips feedback_distillation: true. The chat seam throws
+    // (simulating a transport failure); tryLlmFeature catches it with
+    // reason "error" → outcome resolves to llm_failed AND the event fires
+    // so the failure is observable on the events stream.
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("simulated upstream LLM error");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("llm_failed");
+    expect(result.message).toContain("LLM call returned no usable output");
+    // Event MUST be emitted: the LLM was actually invoked.
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(1);
+    expect(events[0].metadata?.outcome).toBe("llm_failed");
   });
 });
 
 // ── Acceptance: validation failure ──────────────────────────────────────────
 
 describe("akmDistill — validation failure", () => {
-  test("LLM returns lesson missing `when_to_use` → throws, no proposal, event emitted", async () => {
+  test("LLM returns lesson missing `when_to_use` AND body has no real trigger → validation_failed (no placeholder fallback)", async () => {
+    // Updated for the pipeline-fix sweep: the previous behaviour synthesised a
+    // circular `When working with <slug>.` placeholder. That fallback is the
+    // root cause of one of the systematic defects observed across 323 archived
+    // rejected proposals, so we now refuse to fabricate a when_to_use when no
+    // trigger sentence can be extracted from the body. Validation fails cleanly.
     const stash = makeStashDir();
     let threw: Error | undefined;
     try {
@@ -297,11 +497,35 @@ describe("akmDistill — validation failure", () => {
       threw = err as Error;
     }
     expect(threw).toBeInstanceOf(Error);
-    expect(threw?.message).toContain("when_to_use");
     expect(listProposals(stash)).toEqual([]);
-
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+  });
+
+  test("LLM returns lesson missing `when_to_use` BUT body contains a real 'When …' line → auto-repaired, queued", async () => {
+    // Auto-repair still works when there is real trigger prose to harvest.
+    const stash = makeStashDir();
+    const lesson = `---
+description: Always validate the ripgrep installation before running searches across very large monorepos.
+---
+
+When searching multi-thousand-file repos, prefer ripgrep to GNU grep — it is faster and respects .gitignore by default.`;
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => lesson,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    const fm = proposals[0].payload.frontmatter ?? {};
+    expect(typeof fm.when_to_use).toBe("string");
+    expect((fm.when_to_use as string).toLowerCase()).toContain("when ");
+    // Crucially NOT the circular fallback string.
+    expect((fm.when_to_use as string).toLowerCase()).not.toContain("when working with");
   });
 });
 
@@ -372,25 +596,318 @@ describe("akmDistill — queued proposal", () => {
     });
     expect(receivedPrompt).toContain("body");
   });
+
+  test("reinforced stable memory can queue a knowledge proposal without LLM help", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      [
+        "---",
+        "description: VPN required before deploy",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "tags: [deploy, ops]",
+        "---",
+        "",
+        "Always connect the VPN before starting production deploys.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = await akmDistill({
+      ref: "memory:deploy-fact",
+      proposalKind: "auto",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("chat must not be called for benchmark-scored memory promotion");
+      },
+      lookupFn: async () => memoryFile,
+      readEventsFn: eventsFor("memory:deploy-fact", ["positive", "positive"]),
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(result.proposalKind).toBe("knowledge");
+    expect(result.lessonRef).toBe("knowledge:deploy-fact");
+    expect(result.proposalRef).toBe("knowledge:deploy-fact");
+
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ref).toBe("knowledge:deploy-fact");
+    expect(proposals[0].payload.content).toContain("sources:");
+    expect(proposals[0].payload.content).toContain("memory:deploy-fact");
+    expect(proposals[0].payload.content).toContain("Always connect the VPN");
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events).toHaveLength(1);
+    expect(events[0].metadata?.proposalKind).toBe("knowledge");
+    expect(events[0].metadata?.proposalRef).toBe("knowledge:deploy-fact");
+  });
+
+  test("explicit knowledge mode uses knowledge validation instead of lesson lint", async () => {
+    const stash = makeStashDir();
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      proposalKind: "knowledge",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        receivedPrompt = messages.map((m) => m.content).join("\n");
+        return VALID_KNOWLEDGE;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(result.proposalKind).toBe("knowledge");
+    expect(result.lessonRef).toBe("knowledge:deploy");
+    expect(receivedPrompt).toContain("produce a concise\n*knowledge* markdown document");
+    expect(receivedPrompt).toContain("Produce the knowledge markdown file now.");
+
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ref).toBe("knowledge:deploy");
+    expect(proposals[0].payload.content).toContain("# Deploy Guidance");
+  });
+
+  test("explicit knowledge mode rejects bodyless output without lesson-specific errors", async () => {
+    const stash = makeStashDir();
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "skill:deploy",
+        proposalKind: "knowledge",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => "---\ndescription: empty\n---\n",
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(threw?.message).toContain("knowledge");
+    expect(threw?.message).toContain("non-empty markdown body");
+    expect(threw?.message).not.toContain("when_to_use");
+    expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+    expect(events.at(-1)?.metadata?.proposalKind).toBe("knowledge");
+  });
+
+  test.each([
+    {
+      name: "negative feedback blocks promotion",
+      frontmatter: [
+        "description: VPN required before deploy",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+      ],
+      body: "Always connect the VPN before starting production deploys.",
+      signals: ["positive", "negative", "positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "single positive signal is not enough",
+      frontmatter: [
+        "description: VPN required before deploy",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+      ],
+      body: "Always connect the VPN before starting production deploys.",
+      signals: ["positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "subjective memories do not promote",
+      frontmatter: [
+        "description: VPN required before deploy",
+        "subjective: true",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+      ],
+      body: "I prefer connecting the VPN before starting production deploys.",
+      signals: ["positive", "positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "expiring memories stay as lessons",
+      frontmatter: [
+        "description: Temporary deploy token workaround",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "expires: 2026-06-01",
+      ],
+      body: "Use the temporary deploy token workaround until the incident is closed.",
+      signals: ["positive", "positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "proposed memories do not promote",
+      frontmatter: [
+        "description: VPN required before deploy",
+        "quality: proposed",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+      ],
+      body: "Always connect the VPN before starting production deploys.",
+      signals: ["positive", "positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "insufficient stability signals do not promote",
+      frontmatter: ["description: VPN required before deploy", "source: skill:deploy"],
+      body: "Always connect the VPN before starting production deploys.",
+      signals: ["positive", "positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "contradicted memories do not promote",
+      frontmatter: [
+        "description: VPN required before deploy",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "contradictedBy: [memory:deploy-fact.derived]",
+      ],
+      body: "Always connect the VPN before starting production deploys.",
+      signals: ["positive", "positive"] as Array<"positive" | "negative">,
+    },
+    {
+      name: "tentative memories do not promote",
+      frontmatter: [
+        "description: Deploy may require VPN",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+      ],
+      body: "Maybe connect the VPN before starting production deploys.",
+      signals: ["positive", "positive"] as Array<"positive" | "negative">,
+    },
+  ])("promotion boundary: $name", async ({ frontmatter, body, signals }) => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(memoryFile, ["---", ...frontmatter, "---", "", body, ""].join("\n"), "utf8");
+
+    const result = await akmDistill({
+      ref: "memory:deploy-fact",
+      proposalKind: "auto",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: async () => memoryFile,
+      readEventsFn: eventsFor("memory:deploy-fact", signals),
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(result.proposalKind).toBe("lesson");
+    expect(result.lessonRef).toBe("lesson:memory-deploy-fact-lesson");
+    expect(result.proposalRef).toBe("lesson:memory-deploy-fact-lesson");
+
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ref).toBe("lesson:memory-deploy-fact-lesson");
+    expect(proposals[0].payload.content).toContain("when_to_use:");
+    expect(proposals[0].payload.content).not.toContain("sources:");
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events).toHaveLength(1);
+    expect(events[0].metadata?.proposalKind).toBe("lesson");
+    expect(events[0].metadata?.proposalRef).toBe("lesson:memory-deploy-fact-lesson");
+  });
+
+  test("scored promotion can still pass without curated quality when the fixture is strongly reinforced", () => {
+    const assessment = assessMemoryKnowledgePromotionCandidate({
+      inputRef: "memory:deploy-fact",
+      assetContent: [
+        "---",
+        "description: VPN required before deploy",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "tags: [deploy, ops]",
+        "---",
+        "",
+        "Always connect the VPN before starting production deploys.",
+        "",
+      ].join("\n"),
+      feedbackEvents: [{ metadata: { signal: "positive" } }, { metadata: { signal: "positive" } }],
+    });
+
+    expect(assessment.promote).toBe(true);
+    expect(assessment.score).toBeGreaterThanOrEqual(assessment.threshold);
+    expect(assessment.positiveSignals).toContain("repeated reinforcement");
+    expect(assessment.positiveSignals).toContain("strong confidence");
+  });
+
+  test("feedback contradiction markers block deterministic promotion", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      [
+        "---",
+        "description: VPN required before deploy",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "---",
+        "",
+        "Always connect the VPN before starting production deploys.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const contradictoryEvents = (() => ({
+      events: [
+        {
+          schemaVersion: 1 as const,
+          id: 1,
+          ts: "2026-04-27T00:00:01Z",
+          eventType: "feedback",
+          ref: "memory:deploy-fact",
+          metadata: { signal: "positive" },
+        },
+        {
+          schemaVersion: 1 as const,
+          id: 2,
+          ts: "2026-04-27T00:00:02Z",
+          eventType: "feedback",
+          ref: "memory:deploy-fact",
+          metadata: { signal: "positive", conflict: true },
+        },
+      ],
+      nextOffset: 0,
+    })) as unknown as typeof readEvents;
+
+    const result = await akmDistill({
+      ref: "memory:deploy-fact",
+      proposalKind: "auto",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: async () => memoryFile,
+      readEventsFn: contradictoryEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(result.proposalKind).toBe("lesson");
+    expect(listProposals(stash)).toHaveLength(1);
+    expect(listProposals(stash)[0].ref).toBe("lesson:memory-deploy-fact-lesson");
+  });
 });
 
 // ── #267: excludeFeedbackFromRefs option ─────────────────────────────────────
 
 describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
-  function eventsFor(ref: string, signals: Array<"positive" | "negative">) {
-    return (() => ({
-      events: signals.map((s, i) => ({
-        schemaVersion: 1 as const,
-        id: i,
-        ts: `2026-04-27T00:00:0${i}Z`,
-        eventType: "feedback",
-        ref,
-        metadata: { signal: s },
-      })),
-      nextOffset: 0,
-    })) as unknown as typeof readEvents;
-  }
-
   test("filters out events whose ref is in the exclusion list", async () => {
     const stash = makeStashDir();
     let receivedPrompt = "";
@@ -433,8 +950,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     expect(result.outcome).toBe("queued");
     expect(result.filteredFeedbackCount).toBe(0);
     expect(result.feedbackFullyFiltered).toBe(false);
-    expect(receivedPrompt).toContain('"signal":"negative"');
-    expect(receivedPrompt).toContain('"signal":"positive"');
+    // D-3: negative/positive signals now appear in verbal contrast sections.
+    expect(receivedPrompt).toContain("## What failed");
+    expect(receivedPrompt).toContain("## What worked");
   });
 
   test("empty exclusion list is a no-op (no diagnostic fields stamped)", async () => {
@@ -493,11 +1011,14 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
 // ── #284 GAP-HIGH 7: feature gate ON but llm config missing ────────────────
 
 describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
-  test("feature_distillation: true but no `llm` block → outcome=skipped, no crash", async () => {
+  test("feature_distillation: true but no `llm` block → outcome=llm_failed, no crash", async () => {
     const stash = makeStashDir();
     // Construct a config WITH features enabled but WITHOUT the `llm` block.
     // Validation in parseLlmFeatures requires `llm`; we bypass that by
     // assembling the shape directly (this mimics a partial / racy config).
+    // The gate is OPEN (feedback_distillation: true) but the inner LLM call
+    // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
+    // with reason "error" → outcome resolves to `llm_failed`.
     const config = {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
@@ -514,7 +1035,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("llm_failed");
     expect(result.proposalId).toBeUndefined();
     expect(listProposals(stash)).toEqual([]);
   });
@@ -544,7 +1065,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
   });
 
-  test("skipped result preserves the same outer shape but omits proposalId", async () => {
+  test("config_disabled result preserves the same outer shape but omits proposalId", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -557,8 +1078,360 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
       readEventsFn: emptyEvents,
     });
     expect(result.ok).toBe(true);
-    expect(result.outcome).toBe("skipped");
+    expect(result.outcome).toBe("config_disabled");
     expect(result.proposalId).toBeUndefined();
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
+  });
+});
+
+// ── D-1 / #369 — fast path forces LLM when destination knowledge exists ───────
+
+describe("D-1: fast path calls LLM merge when destination knowledge exists (#369)", () => {
+  test("NOOP: LLM says no update needed — proposal is skipped", async () => {
+    const stash = makeStashDir();
+    // Create an existing knowledge file at the destination
+    const existingKnowledgePath = path.join(stash, "knowledge", "auth-guide.md");
+    fs.mkdirSync(path.dirname(existingKnowledgePath), { recursive: true });
+    fs.writeFileSync(existingKnowledgePath, "---\ndescription: Auth guide\n---\nExisting auth content.\n", "utf8");
+
+    const memPath1 = path.join(stash, "memories", "auth-guide.md");
+    fs.mkdirSync(path.dirname(memPath1), { recursive: true });
+    fs.writeFileSync(
+      memPath1,
+      [
+        "---",
+        "description: VPN required",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "---",
+        "",
+        "Always connect the VPN.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    // LLM returns NOOP — keep existing content
+    const chatCalls: string[] = [];
+    const result = await akmDistill({
+      ref: "memory:auth-guide",
+      proposalKind: "auto",
+      stashDir: stash,
+      config: {
+        stashDir: stash,
+        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: { endpoint: "http://localhost/v1/chat", model: "test" },
+      } as import("../src/core/config").AkmConfig,
+      lookupFn: async (ref: string) => {
+        if (ref === "memory:auth-guide") return memPath1;
+        if (ref.includes("auth-guide")) return existingKnowledgePath;
+        return null;
+      },
+      readEventsFn: eventsFor("memory:auth-guide", ["positive", "positive"]),
+      chat: async (_cfg, msgs) => {
+        chatCalls.push(msgs[1]?.content ?? "");
+        return JSON.stringify({ action: "NOOP", content: "" });
+      },
+    });
+
+    // D-1: NOOP → proposal not created, outcome skipped
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("skipped");
+    expect(chatCalls.length).toBeGreaterThan(0); // LLM was called for merge resolution
+  });
+
+  test("UPDATE: LLM produces merged content — proposal queued with merged content", async () => {
+    const stash = makeStashDir();
+    const existingKnowledgePath = path.join(stash, "knowledge", "auth-guide2.md");
+    fs.mkdirSync(path.dirname(existingKnowledgePath), { recursive: true });
+    fs.writeFileSync(existingKnowledgePath, "---\ndescription: Auth guide v1\n---\nOld auth content.\n", "utf8");
+
+    const memPath2 = path.join(stash, "memories", "auth-guide2.md");
+    fs.mkdirSync(path.dirname(memPath2), { recursive: true });
+    fs.writeFileSync(
+      memPath2,
+      [
+        "---",
+        "description: VPN required v2",
+        "source: skill:deploy",
+        "observed_at: 2026-04-21",
+        "confidence: 0.95",
+        "---",
+        "",
+        "Updated auth tips.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const mergedContent = "---\ndescription: Auth guide v2 (merged)\n---\nMerged auth content.\n";
+    const result = await akmDistill({
+      ref: "memory:auth-guide2",
+      proposalKind: "auto",
+      stashDir: stash,
+      config: {
+        stashDir: stash,
+        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+        defaultWriteTarget: "stash",
+        llm: { endpoint: "http://localhost/v1/chat", model: "test" },
+      } as import("../src/core/config").AkmConfig,
+      lookupFn: async (ref: string) => {
+        if (ref === "memory:auth-guide2") return memPath2;
+        if (ref.includes("auth-guide2")) return existingKnowledgePath;
+        return null;
+      },
+      readEventsFn: eventsFor("memory:auth-guide2", ["positive", "positive"]),
+      chat: async () => JSON.stringify({ action: "UPDATE", content: mergedContent }),
+    });
+
+    // D-1: UPDATE → proposal queued with merged content
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("queued");
+    const { listProposals } = await import("../src/core/proposals");
+    const proposals = listProposals(stash, { ref: result.lessonRef });
+    expect(proposals.length).toBeGreaterThan(0);
+    const proposal = proposals[0];
+    expect(proposal?.payload.content).toContain("Merged auth content");
+  });
+});
+
+// ── Pipeline-fix regression tests (improve-pipeline-fixes branch) ────────────
+//
+// These tests pin the systematic failure modes observed across 323 archived
+// rejected distill proposals on the 0.8.x release branch. Each test maps to
+// one of the four root causes the pipeline fix targets:
+//   1. Recursive lesson distillation (lesson:lesson-…-lesson-lesson refs).
+//   2. Double-frontmatter blocks (YAML header + bold-markdown restatement).
+//   3. `description` is a section-heading fragment or placeholder.
+//   4. `when_to_use` is the circular "When working with <ref>" fallback.
+
+describe("isValidDescription (pipeline-fix regression)", () => {
+  test.each([
+    ["For example", "section heading too short"],
+    ["To reduce clutter", "section heading too short"],
+    ["Key pitfalls", "section heading"],
+    ["Key fixes focus on", "ends with preposition"],
+    ["Always validate your setup with", "ends with preposition"],
+    ["Lesson distilled from lesson:foo", "literal placeholder"],
+    ["30", "pure number / too short"],
+    ["", "empty"],
+    ["When the deploy fails, retry once with the safe flag enabled.", "starts with When"],
+    ["# Heading line", "starts with markdown marker"],
+  ])("rejects %j (%s)", (bad, _why) => {
+    const r = isValidDescription(bad, "skill:deploy");
+    expect(r.ok).toBe(false);
+  });
+
+  test.each([
+    "Prefer ripgrep over grep on large repos",
+    "Always validate project filter existence before aborting to prevent premature workflow termination.",
+    "Use HMR-safe imports so SvelteKit does not double-evaluate stateful module-level code.",
+  ])("accepts %j", (good) => {
+    const r = isValidDescription(good, "skill:deploy");
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects description that just names the input ref's slug verbatim", () => {
+    // The slug includes hyphens; this description contains the exact slug.
+    const r = isValidDescription(
+      "Notes about pagedjs-content-none-transform-workaround.",
+      "knowledge:pagedjs-content-none-transform-workaround",
+    );
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("isValidWhenToUse (pipeline-fix regression)", () => {
+  test("rejects the circular fallback `When working with <slug>`", () => {
+    const r = isValidWhenToUse(
+      "When working with pagedjs-content-none-transform-workaround.",
+      "knowledge:pagedjs-content-none-transform-workaround",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  test("rejects too-short triggers", () => {
+    expect(isValidWhenToUse("When deploying.", "skill:deploy").ok).toBe(false);
+  });
+
+  test("accepts a real trigger sentence", () => {
+    const r = isValidWhenToUse(
+      "When designing a CSS solution for Paged.js footers that need content: none after the runtime stylesheet.",
+      "knowledge:pagedjs",
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("detectDoubleFrontmatter (pipeline-fix regression)", () => {
+  test("flags content with three or more `---` fences", () => {
+    const bad = [
+      "---",
+      "description: First-frontmatter description here is long enough to pass.",
+      "when_to_use: First-frontmatter trigger sentence here is long enough to pass.",
+      "---",
+      "",
+      "---",
+      "Some body that has its own fence below.",
+      "---",
+    ].join("\n");
+    const r = detectDoubleFrontmatter(bad);
+    expect(r).not.toBeNull();
+    expect(r?.kind).toBe("double-frontmatter-fence");
+  });
+
+  test("flags bold-markdown `**description:**` pseudo-frontmatter in body", () => {
+    const bad = [
+      "---",
+      "description: Real description that is long enough to be acceptable.",
+      "when_to_use: Real trigger that is long enough to be acceptable.",
+      "---",
+      "",
+      "**description:** something else entirely",
+      "**when_to_use:** another contradiction",
+      "",
+      "Lesson body prose.",
+    ].join("\n");
+    const r = detectDoubleFrontmatter(bad);
+    expect(r).not.toBeNull();
+    expect(r?.kind).toBe("pseudo-frontmatter-in-body");
+  });
+
+  test("passes a clean lesson with a single frontmatter block", () => {
+    const ok = [
+      "---",
+      "description: Real description that is long enough to be acceptable.",
+      "when_to_use: Real trigger that is long enough to be acceptable.",
+      "---",
+      "",
+      "Lesson body without restated metadata.",
+    ].join("\n");
+    expect(detectDoubleFrontmatter(ok)).toBeNull();
+  });
+});
+
+describe("akmDistill — pipeline-fix integration", () => {
+  test("refuses lesson refs as input (recursive-distillation guard)", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "lesson:skill-deploy-lesson",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("chat must not be called when input ref is a lesson");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("skipped");
+    expect(result.lessonRef).toBe("lesson:skill-deploy-lesson");
+    expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.skipReason).toBe("recursive_lesson_input");
+    // CRITICAL: the proposed ref must NOT carry the recursive `lesson-…-lesson-lesson` shape.
+    expect(result.lessonRef).not.toMatch(/^lesson:lesson-/);
+    expect(result.lessonRef).not.toMatch(/-lesson-lesson$/);
+  });
+
+  test("LLM returns the archived recursive-lesson bad fixture → validation_failed (no broken proposal queued)", async () => {
+    // Synthesised from proposal id 187de1c9-d7eb-47c1-92a2-23ad29f669cc (lesson-of-a-lesson
+    // with double frontmatter, placeholder description, and circular when_to_use). The
+    // recursive-ref guard fires first, so chat is never called — but to be defensive we
+    // also exercise the path where the bad content comes from a non-lesson source.
+    const stash = makeStashDir();
+    const archivedBadContent = [
+      "---",
+      'description: "Lesson distilled from knowledge:foo"',
+      'when_to_use: "When working with foo."',
+      "---",
+      "",
+      "---",
+      "**description:** Real-looking text crammed into the body.",
+      "**when_to_use:** Another contradiction crammed into the body.",
+      "",
+      "Some prose that an LLM happened to write.",
+    ].join("\n");
+
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "knowledge:foo",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => archivedBadContent,
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(threw?.message).toMatch(/description|when_to_use|frontmatter/);
+    expect(listProposals(stash)).toEqual([]);
+
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+    const findingKinds = events.at(-1)?.metadata?.findingKinds as string[] | undefined;
+    expect(findingKinds?.some((k) => /description|when_to_use|frontmatter/.test(k))).toBe(true);
+  });
+
+  test("LLM returns description='Key pitfalls' → validation_failed (section-heading fragment caught)", async () => {
+    const stash = makeStashDir();
+    const badContent = [
+      "---",
+      'description: "Key pitfalls"',
+      'when_to_use: "When working with pagedjs."',
+      "---",
+      "",
+      "Body explaining the pitfalls of Paged.js usage.",
+    ].join("\n");
+
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "knowledge:pagedjs",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => badContent,
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(listProposals(stash)).toEqual([]);
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata?.outcome).toBe("validation_failed");
+  });
+
+  test("memory: source with valid LLM output → proposal queued (happy-path stays green)", async () => {
+    const stash = makeStashDir();
+    const goodLesson = [
+      "---",
+      "description: Always connect to the corporate VPN before triggering a production deploy.",
+      "when_to_use: When deploying to production over an untrusted network from a remote workstation.",
+      "---",
+      "",
+      "Production deploys assume an authenticated origin. Run the VPN check first.",
+    ].join("\n");
+    const result = await akmDistill({
+      ref: "memory:deploy-tips",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => goodLesson,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.lessonRef).toBe("lesson:memory-deploy-tips-lesson");
+    expect(listProposals(stash).length).toBe(1);
   });
 });

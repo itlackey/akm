@@ -22,6 +22,8 @@ afterAll(() => {
 
 const origPath = process.env.PATH;
 const origXdgCacheHome = process.env.XDG_CACHE_HOME;
+const origXdgDataHome = process.env.XDG_DATA_HOME;
+const origXdgStateHome = process.env.XDG_STATE_HOME;
 const origHome = process.env.HOME;
 
 afterEach(() => {
@@ -35,6 +37,16 @@ afterEach(() => {
   } else {
     process.env.XDG_CACHE_HOME = origXdgCacheHome;
   }
+  if (origXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = origXdgDataHome;
+  }
+  if (origXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = origXdgStateHome;
+  }
   if (origHome === undefined) {
     delete process.env.HOME;
   } else {
@@ -45,6 +57,8 @@ afterEach(() => {
 /** Isolate cache so getBinDir() never finds a real rg binary. */
 function isolateCache(): void {
   process.env.XDG_CACHE_HOME = makeTempDir();
+  process.env.XDG_DATA_HOME = makeTempDir();
+  process.env.XDG_STATE_HOME = makeTempDir();
 }
 
 // ── resolveRg ───────────────────────────────────────────────────────────────

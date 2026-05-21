@@ -15,17 +15,17 @@ import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 const REQUIRED_PROPOSAL_FIELDS = ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt"];
 
-const REQUIRED_PROPOSAL_COMMANDS = ["list", "show", "diff", "accept", "reject"];
+const REQUIRED_PROPOSAL_COMMANDS = ["proposals", "show proposal", "diff proposal", "accept", "reject"];
 
-const REQUIRED_EVENTS = ["propose_invoked", "reflect_invoked", "distill_invoked", "promoted", "rejected"];
+const REQUIRED_EVENTS = ["improve_invoked", "promoted", "rejected"];
 
 describe("v1 spec §11 — proposal queue", () => {
   const spec = readDoc(SPEC_PATH);
   const section = extractSection(spec, "## 11. Proposal queue");
 
-  test("§11 exists and is marked Planned for v1", () => {
+  test("§11 exists and is marked shipped", () => {
     expect(section).not.toBe("");
-    expect(section).toContain("Planned for v1");
+    expect(section).toContain("(shipped)");
   });
 
   test("§11.1 names the per-id proposal directory layout as the durable store", () => {
@@ -51,7 +51,7 @@ describe("v1 spec §11 — proposal queue", () => {
 
   test("§11.2 lists every proposal subcommand", () => {
     for (const cmd of REQUIRED_PROPOSAL_COMMANDS) {
-      expect(section).toContain(`akm proposal ${cmd}`);
+      expect(section).toContain(`akm ${cmd}`);
     }
   });
 
@@ -75,7 +75,7 @@ describe("v1 spec §11 — proposal queue", () => {
   });
 
   test("§11.2 names a `--reason` flag on `reject`", () => {
-    expect(section).toMatch(/akm proposal reject.*--reason/);
+    expect(section).toMatch(/akm reject.*--reason/);
   });
 
   test("§11.3 declares every locked event name", () => {
@@ -109,6 +109,8 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -173,6 +175,8 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-events-meta-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-events-meta-config-");
+  process.env.XDG_DATA_HOME = makeTempDir("akm-events-meta-data-");
+  process.env.XDG_STATE_HOME = makeTempDir("akm-events-meta-state-");
 });
 
 afterEach(() => {
@@ -182,6 +186,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -241,7 +249,19 @@ describe("§11 event metadata shape (runtime)", () => {
       ref: "skill:deploy",
       config,
       stashDir: stash,
-      chat: async () => "---\ndescription: x\nwhen_to_use: y\n---\n\nbody.\n",
+      // Use a fixture that passes the description / when_to_use quality validators
+      // added in the improve-pipeline-fixes branch. The contract under test is the
+      // event metadata shape on the happy path, not lint behaviour.
+      chat: async () =>
+        [
+          "---",
+          "description: Always validate the deploy plan in staging before running it in production.",
+          "when_to_use: When promoting a new release artifact from the staging cluster to production.",
+          "---",
+          "",
+          "Deploy plans must be exercised end-to-end in staging first.",
+          "",
+        ].join("\n"),
       lookupFn: async () => null,
       readEventsFn: (() => ({ events: [], nextOffset: 0 })) as never,
     });

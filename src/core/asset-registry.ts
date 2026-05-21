@@ -20,10 +20,12 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   command: "command-md",
   agent: "agent-md",
   knowledge: "knowledge-md",
+  lesson: "lesson-md",
   memory: "memory-md",
   workflow: "workflow-md",
   vault: "vault-env",
   wiki: "wiki-md",
+  task: "task-yaml",
 };
 
 /** Map asset types to action builder functions for search results. */
@@ -33,11 +35,14 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   command: (ref) => `akm show ${ref} -> fill placeholders and dispatch`,
   agent: (ref) => `akm show ${ref} -> dispatch with full prompt`,
   knowledge: (ref) => `akm show ${ref} -> read reference material`,
+  lesson: (ref) => `akm show ${ref} -> read the lesson and apply when_to_use`,
   memory: (ref) => `akm show ${ref} -> recall context`,
   workflow: (ref) => buildWorkflowAction(ref),
   vault: (ref) =>
     `akm show ${ref} -> inspect keys; source "$(akm vault path ${ref})" -> load values; akm vault run ${ref} -- <command> -> run with injected env`,
   wiki: (ref) => `akm show ${ref} -> read the wiki page`,
+  task: (ref) =>
+    `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`,
 };
 
 /**
@@ -81,23 +86,3 @@ export const defaultRendererRegistry: RendererRegistry = {
     return ACTION_BUILDERS[type];
   },
 };
-
-/**
- * Build a registry from explicit maps. Useful for tests that need to assert
- * rendering behavior without touching the global singletons.
- */
-export function createRendererRegistry(maps: {
-  renderers?: Record<string, string>;
-  actionBuilders?: Record<string, (ref: string) => string>;
-}): RendererRegistry {
-  const renderers = maps.renderers ?? {};
-  const actionBuilders = maps.actionBuilders ?? {};
-  return {
-    rendererNameFor(type) {
-      return renderers[type];
-    },
-    actionBuilderFor(type) {
-      return actionBuilders[type];
-    },
-  };
-}

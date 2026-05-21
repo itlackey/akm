@@ -7,7 +7,7 @@ Step-by-step instructions for automated installation and configuration of
 ## Quick Automation Script
 
 The following sequence performs a complete headless setup with local
-embeddings:
+embeddings and no interactive prompts:
 
 ```sh
 #!/usr/bin/env bash
@@ -16,8 +16,8 @@ set -euo pipefail
 # 1. Install (standalone binary)
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
-# 2. Initialize stash
-akm init
+# 2. Initialize stash and accept all defaults (no prompts)
+akm setup --yes
 
 # 3. Local embeddings are on by default — nothing to configure
 
@@ -28,6 +28,28 @@ akm init
 akm index
 
 # 6. Verify
+akm info
+echo "akm setup complete"
+```
+
+To pre-configure a specific LLM endpoint at the same time, use `--config`:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+
+# Initialize and configure in one step (no prompts)
+akm setup --config '{
+  "llm": {
+    "endpoint": "http://localhost:11434/v1/chat/completions",
+    "model": "llama3.2"
+  }
+}'
+
+akm index
 akm info
 echo "akm setup complete"
 ```
@@ -70,18 +92,51 @@ akm info
 
 ## 3. Initialize the Working Stash
 
-```sh
-# Use the default location (~/akm)
-akm init
+`akm setup` creates the stash directory, installs ripgrep, and optionally
+configures AI connections. Three modes are available for automated use:
 
-# Or specify a custom path
-akm init --dir /path/to/stash
+```sh
+# Interactive wizard (default)
+akm setup
+
+# Non-interactive: accept all defaults, no prompts
+akm setup --yes
+
+# Non-interactive with a custom stash path
+akm setup --yes --dir /path/to/stash
+
+# Pre-configure with known settings (no prompts)
+akm setup --config '{"llm":{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}}'
+
+# Pre-configure LLM + agent connection in one step
+akm setup --config '{
+  "llm": {
+    "endpoint": "https://api.openai.com/v1/chat/completions",
+    "model": "gpt-4o-mini",
+    "apiKey": "'$OPENAI_API_KEY'"
+  },
+  "agent": {
+    "default": "opencode",
+    "profiles": {
+      "opencode": { "sdkMode": true, "model": "gpt-4o" }
+    }
+  }
+}'
+
+# Probe the configured endpoint after writing (verifies connectivity)
+akm setup --config '{"llm":{...}}' --probe
 ```
+
+The `--config` flag accepts a JSON object with any of these top-level keys:
+`stashDir`, `llm`, `embedding`, `agent`, `semanticSearchMode`, `output`.
+It **merges** with the existing config rather than replacing it, so
+subsequent runs are safe to use in idempotent scripts.
 
 Verify:
 
 ```sh
 akm config get stashDir
+akm config get llm
 ```
 
 ## 4. Configure Semantic Search (Local Embeddings)

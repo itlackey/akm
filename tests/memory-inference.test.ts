@@ -37,7 +37,6 @@ type Draft = {
 };
 
 let compressor: (body: string) => Draft | undefined = () => undefined;
-
 mock.module("../src/llm/memory-infer", () => ({
   compressMemoryToDerivedMemory: async (_config: unknown, body: string) => compressor(body),
 }));
@@ -62,6 +61,7 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+  mock.restore();
 });
 
 function writeMemory(name: string, frontmatter: Record<string, unknown>, body: string): string {
@@ -129,6 +129,22 @@ describe("isPendingMemory", () => {
   test("inference markers must be literal `true` — non-boolean is treated as not-set", () => {
     expect(isPendingMemory({ inferred: "yes" })).toBe(true);
     expect(isPendingMemory({ inferenceProcessed: 1 })).toBe(true);
+  });
+
+  test("name-based guard: .derived suffix blocks re-walk regardless of frontmatter", () => {
+    expect(isPendingMemory({}, "/stash/memories/auth-tips.derived.md")).toBe(false);
+    expect(isPendingMemory({ description: "anything" }, "/stash/memories/auth-tips.derived.md")).toBe(false);
+    expect(isPendingMemory({ inferred: false }, "/stash/memories/auth-tips.derived.md")).toBe(false);
+  });
+
+  test("name-based guard: non-.derived path is not affected", () => {
+    expect(isPendingMemory({ description: "anything" }, "/stash/memories/auth-tips.md")).toBe(true);
+    expect(isPendingMemory({}, "/stash/memories/nested/note.md")).toBe(true);
+  });
+
+  test("name-based guard: absent filePath falls back to frontmatter-only check", () => {
+    expect(isPendingMemory({})).toBe(true);
+    expect(isPendingMemory({ inferred: true })).toBe(false);
   });
 });
 
@@ -253,6 +269,25 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
   });
 });
 
+describe("runMemoryInferencePass — progress", () => {
+  test("emits per-memory progress events", async () => {
+    writeMemory("one", {}, "Body one.");
+    writeMemory("two", {}, "Body two.");
+    compressor = () => sampleDraft();
+
+    const events: Array<{ processed: number; total: number; currentRef?: string }> = [];
+    const result = await runMemoryInferencePass(configWithLlm(), sources(), undefined, undefined, false, (event) => {
+      events.push({ processed: event.processed, total: event.total, currentRef: event.currentRef });
+    });
+
+    expect(result.writtenFacts).toBe(2);
+    expect(events[0]).toEqual({ processed: 0, total: 2, currentRef: undefined });
+    expect(events.some((event) => event.processed === 1 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.currentRef === "memory:one" || event.currentRef === "memory:two")).toBe(true);
+  });
+});
+
 // ── runMemoryInferencePass — enabled path ───────────────────────────────────
 
 describe("runMemoryInferencePass — enabled", () => {
@@ -277,6 +312,10 @@ describe("runMemoryInferencePass — enabled", () => {
 
     const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));
     expect(derived.data.inferred).toBe(true);
+    // Phase 1B / Rec 7: derived memories must be tagged as background-captured
+    // so ranking does not give them the hot-capture boost reserved for the
+    // user-driven `akm remember` write path.
+    expect(derived.data.captureMode).toBe("background");
     expect(derived.data.source).toBe("memory:parent");
     expect(derived.data.description).toBe("A higher-signal summary of the parent.");
     expect(derived.data.tags).toEqual(["one", "two", "three"]);

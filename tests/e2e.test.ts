@@ -142,15 +142,23 @@ async function withMockedFetch<T>(handler: (input: string) => Response, run: () 
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeAll(async () => {
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-"));
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-config-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-"));
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 });
 
 beforeEach(() => {
@@ -174,6 +182,16 @@ afterAll(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (originalAkmStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -186,6 +204,14 @@ afterAll(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 
@@ -206,22 +232,32 @@ afterEach(() => {
 describe("Scenario: Full lifecycle (index → search → show)", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s1-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s1-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s1-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("search works without index (substring fallback)", async () => {
@@ -380,23 +416,33 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 describe("Scenario: Agent discovers capabilities for task", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s2-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s2-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s2-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test.skipIf(!!process.env.CI)("agent asks 'set up local dev environment' → docker-compose ranks high", async () => {
@@ -448,12 +494,18 @@ describe("Scenario: Agent discovers capabilities for task", () => {
 describe("Scenario: Mixed local + registry search compatibility", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s2b-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s2b-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s2b-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
   });
 
@@ -463,6 +515,8 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     const perTestCache = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-reg-cache-"));
+    const perTestData = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-reg-data-"));
+    const perTestState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-reg-state-"));
     // Copy the scenario's index DB so local search still finds it
     const srcDb = path.join(scenarioCacheDir, "akm", "index.db");
     const destDir = path.join(perTestCache, "akm");
@@ -471,6 +525,8 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
       fs.copyFileSync(srcDb, path.join(destDir, "index.db"));
     }
     process.env.XDG_CACHE_HOME = perTestCache;
+    process.env.XDG_DATA_HOME = perTestData;
+    process.env.XDG_STATE_HOME = perTestState;
   });
 
   afterEach(() => {
@@ -478,11 +534,21 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     if (tmpCache && tmpCache !== scenarioCacheDir) {
       fs.rmSync(tmpCache, { recursive: true, force: true });
     }
+    const tmpData = process.env.XDG_DATA_HOME;
+    if (tmpData && tmpData !== scenarioDataDir) {
+      fs.rmSync(tmpData, { recursive: true, force: true });
+    }
+    const tmpState = process.env.XDG_STATE_HOME;
+    if (tmpState && tmpState !== scenarioStateDir) {
+      fs.rmSync(tmpState, { recursive: true, force: true });
+    }
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("local source does not call registry providers", async () => {
@@ -577,23 +643,33 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 describe("Scenario: CLI subprocess execution", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s3-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s3-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s3-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("cli: akm search returns JSON with hits", async () => {
@@ -625,29 +701,19 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.every((h: CliJsonHit) => h.type === "knowledge")).toBe(true);
   });
 
-  // Issue 9: empty query must list all assets rather than throwing UsageError.
-  // The CLI contract (--help text) promises omitting the query returns all
-  // indexed assets. The akmSearch function handles empty queries end-to-end
-  // via getAllEntries (DB path) and the substring-fallback's query-less branch.
-  test("cli: akm search with no query lists all assets (empty-query listing)", async () => {
+  test("cli: akm search with no query fails with structured usage error", async () => {
     const result = runCli("search");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.hits).toBeInstanceOf(Array);
-    expect(json.hits.length).toBeGreaterThan(0);
-    // Brief output: ref is NOT present (only full/agent levels include ref)
-    expect(json.hits.every((h: CliJsonHit) => h.type !== undefined)).toBe(true);
-    expect(json.hits.every((h: CliJsonHit) => h.name !== undefined)).toBe(true);
+    expect(result.exitCode).toBe(2);
+    const json = parseJson(result.stderr);
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(json.error).toContain("search query is required");
   });
 
-  test("cli: akm search with no query and --type filters by type", async () => {
+  test("cli: akm search with no query and --type still fails", async () => {
     const result = runCli("search", "--type", "skill");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.hits).toBeInstanceOf(Array);
-    expect(json.hits.every((h: CliJsonHit) => h.type === "skill")).toBe(true);
+    expect(result.exitCode).toBe(2);
+    const json = parseJson(result.stderr);
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
   });
 
   test("cli: akm search --limit 2 respects limit", async () => {
@@ -810,12 +876,10 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.mode).toBe("full");
   });
 
-  test("cli: akm index accepts --enrich", async () => {
+  test("cli: akm index rejects removed --enrich flag", async () => {
     const result = runCli("index", "--enrich");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.totalEntries).toBeGreaterThan(0);
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain("--enrich");
   });
 
   test("cli: repeated index runs on a stash-owned wiki keep a stable entry count", async () => {
@@ -861,6 +925,23 @@ describe("Scenario: CLI subprocess execution", () => {
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
       maxTokens: 256,
+    });
+  });
+
+  test("cli: startup applies --quiet before config-load warnings", async () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      llm: { endpoint: "http://localhost/v1", model: "gpt-4" },
+    });
+
+    const result = runCli("config", "get", "llm", "--quiet");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+
+    const json = parseJson(result.stdout);
+    expect(json).toMatchObject({
+      endpoint: "http://localhost/v1",
+      model: "gpt-4",
     });
   });
 
@@ -1243,6 +1324,17 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     expect(output).toContain("## [0.5.0]");
   });
 
+  test("cli: akm help migrate with no version fails structurally even with --format json", async () => {
+    const result = spawnSync("bun", [CLI, "help", "migrate", "--format", "json"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status).toBe(2);
+    const json = JSON.parse(result.stderr) as { code: string; error: string };
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(json.error).toContain("Usage: akm help migrate <version>");
+  });
+
   test("cli: akm --help lists the help command", async () => {
     const result = spawnSync("bun", [CLI, "--help"], {
       encoding: "utf8",
@@ -1364,25 +1456,35 @@ describe("Scenario: CLI knowledge view modes (positional)", () => {
 describe("Scenario: Zero-config progressive improvement", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-prog-"));
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s4-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s4-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s4-"));
     for (const sub of ["scripts", "skills", "commands", "agents"]) {
       fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
     }
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("user drops a script in scripts/ — search finds it by name (no index)", async () => {
@@ -1478,23 +1580,33 @@ describe("Scenario: Zero-config progressive improvement", () => {
 describe("Scenario: Multi-script directory with hand-written .stash.json", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s5-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s5-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s5-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("docker/ directory exposes two scripts from single .stash.json", async () => {
@@ -1527,22 +1639,32 @@ describe("Scenario: Multi-script directory with hand-written .stash.json", () =>
 describe("Scenario: Index persistence across sessions", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s6-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s6-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s6-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("index is persisted and loadable", async () => {
@@ -1709,23 +1831,33 @@ describe("Scenario: Error handling and edge cases", () => {
 describe("Scenario: Cross-type discovery", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s8-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s8-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s8-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("search 'any' type returns mixed results across scripts, skills, commands, agents", async () => {

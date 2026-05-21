@@ -26,11 +26,15 @@ function createTmpDir(prefix = "akm-website-"): string {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = createTmpDir("akm-website-cache-");
   process.env.XDG_CONFIG_HOME = createTmpDir("akm-website-config-");
+  process.env.XDG_DATA_HOME = createTmpDir("akm-website-data-");
+  process.env.XDG_STATE_HOME = createTmpDir("akm-website-state-");
   process.env.AKM_STASH_DIR = createTmpDir("akm-website-stash-");
   saveConfig({ semanticSearchMode: "off" });
 });
@@ -41,6 +45,12 @@ afterEach(() => {
 
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
 
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;

@@ -10,8 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listKeys as listVaultKeys } from "../commands/vault";
-import { hasErrnoCode } from "../core/common";
-import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { parseFrontmatter } from "../core/frontmatter";
 import {
   extractFrontmatterOnly,
   extractLineRange,
@@ -23,6 +23,7 @@ import type { AssetRenderer, RenderContext } from "../indexer/file-context";
 import { registerRenderer } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
 import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/metadata";
+import { registerMetadataContributor } from "../indexer/metadata-contributors";
 import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 
@@ -208,7 +209,7 @@ const skillMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Read and follow the instructions below",
-      description: toStringOrUndefined(parsed.data.description),
+      description: asNonEmptyString(parsed.data.description),
       ...(tags ? { tags } : {}),
       content: parsed.content,
     };
@@ -230,11 +231,11 @@ const commandMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Fill $ARGUMENTS placeholders in the template, then dispatch",
-      description: toStringOrUndefined(parsedMd.data.description),
+      description: asNonEmptyString(parsedMd.data.description),
       ...(tags ? { tags } : {}),
       template,
       modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
-      agent: toStringOrUndefined(parsedMd.data.agent),
+      agent: asNonEmptyString(parsedMd.data.agent),
       parameters: extractParameters(template),
     };
   },
@@ -253,7 +254,7 @@ const agentMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
-      description: toStringOrUndefined(parsedMd.data.description),
+      description: asNonEmptyString(parsedMd.data.description),
       prompt: parsedMd.content,
       toolPolicy: parsedMd.data.tools as ShowResponse["toolPolicy"],
       modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
@@ -261,167 +262,70 @@ const agentMdRenderer: AssetRenderer = {
   },
 };
 
+// ── 4. knowledge-md / wiki-md shared helper ───────────────────────────────────
+
+const KNOWLEDGE_ACTION = "Reference material - read the content below. Use 'toc' view for large documents.";
+const WIKI_PAGE_ACTION = "Wiki page — read below. Use 'toc' to scan, 'section <heading>' for depth.";
+
+/**
+ * Shared implementation for knowledge-md and wiki-md `buildShowResponse`.
+ *
+ * Both renderers handle the same set of view modes (toc, frontmatter, section,
+ * lines, full). The only differences are the `type` discriminant and the
+ * section-not-found message. Extracting this helper eliminates ~90 lines of
+ * byte-for-byte duplication.
+ */
+function buildMarkdownViewResponse(ctx: RenderContext, type: "knowledge" | "wiki", action: string): ShowResponse {
+  const name = deriveName(ctx);
+  const v = (ctx.matchResult.meta?.view as KnowledgeView) ?? { mode: "full" };
+  const content = ctx.content();
+
+  switch (v.mode) {
+    case "toc": {
+      const toc = parseMarkdownToc(content);
+      return { type, name, path: ctx.absPath, action, content: formatToc(toc) };
+    }
+    case "frontmatter": {
+      const fm = extractFrontmatterOnly(content);
+      return { type, name, path: ctx.absPath, action, content: fm ?? "(no frontmatter)" };
+    }
+    case "section": {
+      const section = extractSection(content, v.heading);
+      if (!section) {
+        const notFoundMsg =
+          type === "wiki"
+            ? `Section "${v.heading}" not found in ${name}. Try \`akm show wiki:${name} toc\` to discover available headings.`
+            : `Section "${v.heading}" not found in ${name}. Try \`akm show <ref> toc\` to discover available headings.`;
+        return { type, name, path: ctx.absPath, action, content: notFoundMsg };
+      }
+      return { type, name, path: ctx.absPath, action, content: section.content };
+    }
+    case "lines": {
+      return { type, name, path: ctx.absPath, action, content: extractLineRange(content, v.start, v.end) };
+    }
+    default: {
+      return { type, name, path: ctx.absPath, action, content };
+    }
+  }
+}
+
 // ── 4. knowledge-md ──────────────────────────────────────────────────────────
 
 const knowledgeMdRenderer: AssetRenderer = {
   name: "knowledge-md",
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
-    const name = deriveName(ctx);
-    const v = (ctx.matchResult.meta?.view as KnowledgeView) ?? { mode: "full" };
-    const content = ctx.content();
-
-    switch (v.mode) {
-      case "toc": {
-        const toc = parseMarkdownToc(content);
-        return {
-          type: "knowledge",
-          name,
-          path: ctx.absPath,
-          action: "Reference material - read the content below. Use 'toc' view for large documents.",
-          content: formatToc(toc),
-        };
-      }
-      case "frontmatter": {
-        const fm = extractFrontmatterOnly(content);
-        return {
-          type: "knowledge",
-          name,
-          path: ctx.absPath,
-          action: "Reference material - read the content below. Use 'toc' view for large documents.",
-          content: fm ?? "(no frontmatter)",
-        };
-      }
-      case "section": {
-        const section = extractSection(content, v.heading);
-        if (!section) {
-          return {
-            type: "knowledge",
-            name,
-            path: ctx.absPath,
-            action: "Reference material - read the content below. Use 'toc' view for large documents.",
-            content: `Section "${v.heading}" not found in ${name}. Try \`akm show <ref> toc\` to discover available headings.`,
-          };
-        }
-        return {
-          type: "knowledge",
-          name,
-          path: ctx.absPath,
-          action: "Reference material - read the content below. Use 'toc' view for large documents.",
-          content: section.content,
-        };
-      }
-      case "lines": {
-        return {
-          type: "knowledge",
-          name,
-          path: ctx.absPath,
-          action: "Reference material - read the content below. Use 'toc' view for large documents.",
-          content: extractLineRange(content, v.start, v.end),
-        };
-      }
-      default: {
-        return {
-          type: "knowledge",
-          name,
-          path: ctx.absPath,
-          action: "Reference material - read the content below. Use 'toc' view for large documents.",
-          content,
-        };
-      }
-    }
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const toc = parseMarkdownToc(ctx.content());
-      if (toc.headings.length > 0) entry.toc = toc.headings;
-    } catch {
-      // Non-fatal: skip TOC if file can't be read
-    }
+    return buildMarkdownViewResponse(ctx, "knowledge", KNOWLEDGE_ACTION);
   },
 };
 
 // ── 4b. wiki-md ──────────────────────────────────────────────────────────────
 
-const WIKI_PAGE_ACTION = "Wiki page — read below. Use 'toc' to scan, 'section <heading>' for depth.";
-
 const wikiMdRenderer: AssetRenderer = {
   name: "wiki-md",
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
-    const name = deriveName(ctx);
-    const v = (ctx.matchResult.meta?.view as KnowledgeView) ?? { mode: "full" };
-    const content = ctx.content();
-
-    switch (v.mode) {
-      case "toc": {
-        const toc = parseMarkdownToc(content);
-        return {
-          type: "wiki",
-          name,
-          path: ctx.absPath,
-          action: WIKI_PAGE_ACTION,
-          content: formatToc(toc),
-        };
-      }
-      case "frontmatter": {
-        const fm = extractFrontmatterOnly(content);
-        return {
-          type: "wiki",
-          name,
-          path: ctx.absPath,
-          action: WIKI_PAGE_ACTION,
-          content: fm ?? "(no frontmatter)",
-        };
-      }
-      case "section": {
-        const section = extractSection(content, v.heading);
-        if (!section) {
-          return {
-            type: "wiki",
-            name,
-            path: ctx.absPath,
-            action: WIKI_PAGE_ACTION,
-            content: `Section "${v.heading}" not found in ${name}. Try \`akm show wiki:${name} toc\` to discover available headings.`,
-          };
-        }
-        return {
-          type: "wiki",
-          name,
-          path: ctx.absPath,
-          action: WIKI_PAGE_ACTION,
-          content: section.content,
-        };
-      }
-      case "lines": {
-        return {
-          type: "wiki",
-          name,
-          path: ctx.absPath,
-          action: WIKI_PAGE_ACTION,
-          content: extractLineRange(content, v.start, v.end),
-        };
-      }
-      default: {
-        return {
-          type: "wiki",
-          name,
-          path: ctx.absPath,
-          action: WIKI_PAGE_ACTION,
-          content,
-        };
-      }
-    }
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const toc = parseMarkdownToc(ctx.content());
-      if (toc.headings.length > 0) entry.toc = toc.headings;
-    } catch {
-      // Non-fatal: skip TOC if file can't be read
-    }
+    return buildMarkdownViewResponse(ctx, "wiki", WIKI_PAGE_ACTION);
   },
 };
 
@@ -443,8 +347,8 @@ const lessonMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const parsed = parseFrontmatter(ctx.content());
-    const description = toStringOrUndefined(parsed.data.description);
-    const whenToUse = toStringOrUndefined(parsed.data.when_to_use);
+    const description = asNonEmptyString(parsed.data.description);
+    const whenToUse = asNonEmptyString(parsed.data.when_to_use);
     const action = whenToUse
       ? `Apply this lesson when: ${whenToUse}`
       : "Apply this lesson when its `when_to_use` trigger matches the current task.";
@@ -456,33 +360,6 @@ const lessonMdRenderer: AssetRenderer = {
       description,
       content: parsed.content,
     };
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const parsed = parseFrontmatter(ctx.content());
-      const fm = parsed.data;
-      const desc = toStringOrUndefined(fm.description);
-      if (desc && !entry.description) {
-        entry.description = desc;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
-      const whenToUse = toStringOrUndefined(fm.when_to_use);
-      if (whenToUse) {
-        const hints = new Set<string>(entry.searchHints ?? []);
-        hints.add(`when_to_use:${whenToUse}`);
-        entry.searchHints = Array.from(hints).filter(Boolean);
-      }
-      if (Array.isArray(fm.tags) && fm.tags.length > 0) {
-        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-        if (fmTags.length > 0) {
-          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
-        }
-      }
-    } catch {
-      // Non-fatal: skip metadata extraction on parse error
-    }
   },
 };
 
@@ -500,60 +377,6 @@ const memoryMdRenderer: AssetRenderer = {
       action: "Recall context — read the content below",
       content: ctx.content(),
     };
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const parsed = parseFrontmatter(ctx.content());
-      const fm = parsed.data;
-
-      // Description from frontmatter
-      const desc = toStringOrUndefined(fm.description);
-      if (desc && !entry.description) {
-        entry.description = desc;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
-
-      // Tags from frontmatter
-      if (Array.isArray(fm.tags) && fm.tags.length > 0) {
-        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-        if (fmTags.length > 0) {
-          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
-        }
-      }
-
-      // Build searchHints from structured memory metadata fields
-      const hints = new Set<string>(entry.searchHints ?? []);
-      const source = toStringOrUndefined(fm.source);
-      if (source) hints.add(source);
-
-      // observed_at: prefer frontmatter value, fall back to file mtime
-      const fmObservedAt = toStringOrUndefined(fm.observed_at);
-      if (fmObservedAt) {
-        hints.add(`observed_at:${fmObservedAt}`);
-      } else {
-        // mtime fallback: format as ISO date (YYYY-MM-DD)
-        try {
-          const mtime = ctx.stat().mtime;
-          const isoDate = mtime.toISOString().slice(0, 10);
-          hints.add(`observed_at:${isoDate}`);
-        } catch {
-          // Non-fatal: skip mtime fallback on stat error
-        }
-      }
-
-      const expires = toStringOrUndefined(fm.expires);
-      if (expires) hints.add(`expires:${expires}`);
-
-      if (fm.subjective === true) hints.add("subjective");
-
-      if (hints.size > 0) {
-        entry.searchHints = Array.from(hints).filter(Boolean);
-      }
-    } catch {
-      // Non-fatal: skip metadata extraction on error
-    }
   },
 };
 
@@ -607,17 +430,6 @@ const scriptSourceRenderer: AssetRenderer = {
       if (!hasErrnoCode(error, "ENOENT")) throw error;
     }
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    if (ctx.ext !== ".md") {
-      const commentDesc = extractDescriptionFromComments(ctx.absPath);
-      if (commentDesc && !entry.description) {
-        entry.description = commentDesc;
-        entry.source = "comments";
-        entry.confidence = 0.7;
-      }
-    }
-  },
 };
 
 // ── 8. vault-env ─────────────────────────────────────────────────────────────
@@ -649,23 +461,173 @@ const vaultEnvRenderer: AssetRenderer = {
     const { keys } = listVaultKeys(hit.path);
     if (keys.length > 0) hit.keys = keys;
   },
+};
 
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    // Re-derive from the file directly to guarantee no value ever transits
-    // through any other code path. Caller already short-circuits in
-    // generateMetadata{,Flat}, but this is defense in depth.
-    const { keys, comments } = listVaultKeys(ctx.absPath);
-    if (comments.length > 0 && !entry.description) {
-      entry.description = comments.join(" ").slice(0, 500);
-      entry.source = "comments";
-      entry.confidence = 0.7;
-    }
-    if (keys.length > 0) {
-      entry.searchHints = keys;
-    }
-    entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
+// ── 7. task-md ───────────────────────────────────────────────────────────────
+
+const TASK_PAGE_ACTION =
+  "Scheduled task — `akm tasks show <id>` for parsed details, `akm tasks run <id>` to invoke now.";
+
+const taskMdRenderer: AssetRenderer = {
+  name: "task-yaml",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    return {
+      type: "task",
+      name,
+      path: ctx.absPath,
+      action: TASK_PAGE_ACTION,
+      content: ctx.content(),
+    };
   },
 };
+
+function applyTocMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const toc = parseMarkdownToc(ctx.content());
+    if (toc.headings.length > 0) entry.toc = toc.headings;
+  } catch {
+    // Non-fatal: skip TOC if file can't be read
+  }
+}
+
+/**
+ * Parse frontmatter, apply description (if not already set) and merge tags
+ * into `entry`. Returns the raw frontmatter data object so callers can access
+ * type-specific fields without re-parsing.
+ */
+function applyFrontmatterDescriptionAndTags(entry: StashEntry, ctx: RenderContext): Record<string, unknown> {
+  const parsed = parseFrontmatter(ctx.content());
+  const fm = parsed.data;
+  const desc = asNonEmptyString(fm.description);
+  if (desc && !entry.description) {
+    entry.description = desc;
+    entry.source = "frontmatter";
+    entry.confidence = 0.9;
+  }
+  if (Array.isArray(fm.tags) && fm.tags.length > 0) {
+    const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+    if (fmTags.length > 0) {
+      entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+    }
+  }
+  return fm;
+}
+
+function applyLessonMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
+    const whenToUse = asNonEmptyString(fm.when_to_use);
+    if (whenToUse) {
+      const hints = new Set<string>(entry.searchHints ?? []);
+      hints.add(`when_to_use:${whenToUse}`);
+      entry.searchHints = Array.from(hints).filter(Boolean);
+    }
+  } catch {
+    // Non-fatal: skip metadata extraction on parse error
+  }
+}
+function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
+    const hints = new Set<string>(entry.searchHints ?? []);
+    const source = asNonEmptyString(fm.source);
+    if (source) hints.add(source);
+    const fmObservedAt = asNonEmptyString(fm.observed_at);
+    if (fmObservedAt) {
+      hints.add(`observed_at:${fmObservedAt}`);
+    } else {
+      try {
+        const isoDate = ctx.stat().mtime.toISOString().slice(0, 10);
+        hints.add(`observed_at:${isoDate}`);
+      } catch {
+        // Non-fatal: skip mtime fallback on stat error
+      }
+    }
+    const expires = asNonEmptyString(fm.expires);
+    if (expires) hints.add(`expires:${expires}`);
+    if (fm.subjective === true) hints.add("subjective");
+    if (hints.size > 0) {
+      entry.searchHints = Array.from(hints).filter(Boolean);
+    }
+  } catch {
+    // Non-fatal: skip metadata extraction on error
+  }
+}
+function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
+  if (ctx.ext === ".md") return;
+  const commentDesc = extractDescriptionFromComments(ctx.absPath);
+  if (commentDesc && !entry.description) {
+    entry.description = commentDesc;
+    entry.source = "comments";
+    entry.confidence = 0.7;
+  }
+}
+
+function applyVaultMetadata(entry: StashEntry, ctx: RenderContext): void {
+  const { keys, comments } = listVaultKeys(ctx.absPath);
+  if (comments.length > 0 && !entry.description) {
+    entry.description = comments.join(" ").slice(0, 500);
+    entry.source = "comments";
+    entry.confidence = 0.7;
+  }
+  if (keys.length > 0) {
+    entry.searchHints = keys;
+  }
+  entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
+}
+
+function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
+    entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
+    const hints = new Set<string>(entry.searchHints ?? []);
+    const schedule = asNonEmptyString(fm.schedule);
+    if (schedule) hints.add(`schedule:${schedule}`);
+    const workflow = asNonEmptyString(fm.workflow);
+    if (workflow) hints.add(`workflow:${workflow}`);
+    const prompt = asNonEmptyString(fm.prompt);
+    if (prompt) hints.add(`prompt:${prompt}`);
+    if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
+  } catch {
+    // Non-fatal: skip metadata extraction on error
+  }
+}
+registerMetadataContributor({
+  name: "toc-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "knowledge-md" || rendererName === "wiki-md",
+  contribute: (entry, ctx) => applyTocMetadata(entry, ctx.renderContext),
+});
+registerMetadataContributor({
+  name: "lesson-frontmatter-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "lesson-md",
+  contribute: (entry, ctx) => applyLessonMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "memory-frontmatter-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "memory-md",
+  contribute: (entry, ctx) => applyMemoryMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "script-comment-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "script-source",
+  contribute: (entry, ctx) => applyScriptMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "vault-secret-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "vault-env",
+  contribute: (entry, ctx) => applyVaultMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "task-yaml-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "task-yaml",
+  contribute: (entry, ctx) => applyTaskMetadata(entry, ctx.renderContext),
+});
 
 // ── Registration ─────────────────────────────────────────────────────────────
 
@@ -681,6 +643,7 @@ const builtinRenderers: AssetRenderer[] = [
   workflowMdRenderer,
   scriptSourceRenderer,
   vaultEnvRenderer,
+  taskMdRenderer,
 ];
 
 /**

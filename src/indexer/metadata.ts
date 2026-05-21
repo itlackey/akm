@@ -5,11 +5,12 @@ import {
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
 } from "../core/asset-spec";
-import { isAssetType } from "../core/common";
-import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { asNonEmptyString, isAssetType, writeFileAtomic } from "../core/common";
+import { parseFrontmatter } from "../core/frontmatter";
 import type { TocHeading } from "../core/markdown";
 import { isVerbose, warn } from "../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
+import { applyMetadataContributors } from "./metadata-contributors";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -61,13 +62,15 @@ export interface StashEntry {
   intent?: StashIntent;
   filename?: string;
   /**
-   * Asset quality marker (v1 spec §4.2). Three values are well-known:
+   * Asset quality marker (v1 spec §4.2). Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
+   * `"enriched"` marks entries that have been LLM-enhanced (also included in
+   * default search, excluded from re-enrichment unless `--re-enrich` is set);
    * `"proposed"` is excluded from default search and surfaced only with
    * `--include-proposed`. Unknown string values parse with a one-time
    * `console.warn` and remain searchable (treated as included-by-default).
    */
-  quality?: "generated" | "curated" | "proposed" | (string & {});
+  quality?: "generated" | "curated" | "enriched" | "proposed" | (string & {});
   confidence?: number;
   source?: "package" | "frontmatter" | "comments" | "filename" | "manual" | "llm";
   aliases?: string[];
@@ -106,6 +109,46 @@ export interface StashEntry {
   xrefs?: string[];
   /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
   sources?: string[];
+  beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
+  supersededBy?: string[];
+  contradictedBy?: string[];
+  currentBeliefRefs?: string[];
+  /**
+   * How the memory was captured. `hot` indicates a user-driven write
+   * (the `akm remember` CLI path); `background` indicates an
+   * agent/derived write (e.g. memory-inference). Absent on legacy memories.
+   * Surfaced from the `captureMode:` frontmatter key.
+   */
+  captureMode?: "hot" | "background";
+  /**
+   * Free-form guidance describing when this asset should be applied.
+   * Surfaced from the `when_to_use:` frontmatter key. Indexed into the
+   * `hints` FTS column so retrieval can match query intent.
+   */
+  whenToUse?: string;
+  /**
+   * Strength signal for lessons: count of refs that have credited this
+   * lesson via `akm feedback --applied-to`. Extracted from frontmatter:
+   * an array stores its length here, a number stores directly.
+   */
+  lessonStrength?: number;
+  /**
+   * Source refs that this asset is derived from. Surfaced from the
+   * `evidenceSources:` frontmatter key.
+   */
+  evidenceSources?: string[];
+  /**
+   * For derived memories (Phase 5A / Advantage D5), the parent ref that this
+   * entry was distilled from. Surfaced from the `source:` frontmatter key
+   * (form: `"memory:<parent-name>"`) when the entry is recognized as a
+   * derived child (either by frontmatter `inferred: true` or by name suffix
+   * `.derived`). Absent on non-derived entries.
+   *
+   * The indexer mirrors this value into the dedicated `entries.derived_from`
+   * column so `getDerivedForParent()` can resolve the child by parent ref
+   * without a full table scan.
+   */
+  derivedFrom?: string;
 }
 
 export interface StashFile {
@@ -124,11 +167,11 @@ const STASH_FILENAME = ".stash.json";
 // ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
 
 /**
- * Well-known quality values. `generated` and `curated` are included in
+ * Well-known quality values. `generated`, `curated`, and `enriched` are included in
  * default search; `proposed` is excluded by default and opt-in via
  * `--include-proposed`. Unknown values warn once and remain searchable.
  */
-export const KNOWN_QUALITY_VALUES = new Set(["generated", "curated", "proposed"]);
+export const KNOWN_QUALITY_VALUES = new Set(["generated", "curated", "enriched", "proposed"]);
 
 /** Tracks unknown quality values we've already warned about (one warn per value per process). */
 const warnedUnknownQualityValues = new Set<string>();
@@ -198,18 +241,7 @@ export function loadStashFile(dirPath: string, options?: LegacyStashLoadOptions)
 
 export function writeStashFile(dirPath: string, stash: StashFile): void {
   const filePath = stashFilePath(dirPath);
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(stash, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(filePath, `${JSON.stringify(stash, null, 2)}\n`);
 }
 
 /**
@@ -288,17 +320,32 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof e.pageKind === "string" && e.pageKind.trim().length > 0) {
     result.pageKind = e.pageKind.trim();
   }
-  if (Array.isArray(e.xrefs)) {
-    const filtered = e.xrefs
-      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-      .map((x) => x.trim());
-    if (filtered.length > 0) result.xrefs = filtered;
+  const xrefs = normalizeNonEmptyStringList(e.xrefs);
+  if (xrefs) result.xrefs = xrefs;
+  const sources = normalizeNonEmptyStringList(e.sources);
+  if (sources) result.sources = sources;
+  if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
+    result.beliefState = e.beliefState.trim() as StashEntry["beliefState"];
   }
-  if (Array.isArray(e.sources)) {
-    const filtered = e.sources
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (filtered.length > 0) result.sources = filtered;
+  const supersededBy = normalizeNonEmptyStringList(e.supersededBy);
+  if (supersededBy) result.supersededBy = supersededBy;
+  const contradictedBy = normalizeNonEmptyStringList(e.contradictedBy);
+  if (contradictedBy) result.contradictedBy = contradictedBy;
+  const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
+  if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
+  if (e.captureMode === "hot" || e.captureMode === "background") {
+    result.captureMode = e.captureMode;
+  }
+  if (typeof e.whenToUse === "string" && e.whenToUse.trim().length > 0) {
+    result.whenToUse = e.whenToUse.trim();
+  }
+  if (typeof e.lessonStrength === "number" && Number.isFinite(e.lessonStrength) && e.lessonStrength >= 0) {
+    result.lessonStrength = Math.floor(e.lessonStrength);
+  }
+  const evidenceSources = normalizeNonEmptyStringList(e.evidenceSources);
+  if (evidenceSources) result.evidenceSources = evidenceSources;
+  if (typeof e.derivedFrom === "string" && e.derivedFrom.trim().length > 0) {
+    result.derivedFrom = e.derivedFrom.trim();
   }
   if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
     const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
@@ -368,9 +415,9 @@ function normalizeIntent(value: unknown): StashIntent | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
   const intent: StashIntent = {};
-  const when = toStringOrUndefined(raw.when);
-  const input = toStringOrUndefined(raw.input);
-  const output = toStringOrUndefined(raw.output);
+  const when = asNonEmptyString(raw.when);
+  const input = asNonEmptyString(raw.input);
+  const output = asNonEmptyString(raw.output);
   if (when) intent.when = when;
   if (input) intent.input = input;
   if (output) intent.output = output;
@@ -382,7 +429,7 @@ function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
 }
 
 export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
-  const description = toStringOrUndefined(fmData.description);
+  const description = asNonEmptyString(fmData.description);
   if (description) {
     entry.description = description;
     entry.source = "frontmatter";
@@ -404,15 +451,70 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
   const examples = normalizeStringListOrUndefined(fmData.examples);
   if (examples) entry.examples = examples;
 
-  const run = toStringOrUndefined(fmData.run);
+  const run = asNonEmptyString(fmData.run);
   if (run) entry.run = run;
-  const setup = toStringOrUndefined(fmData.setup);
+  const setup = asNonEmptyString(fmData.setup);
   if (setup) entry.setup = setup;
-  const cwd = toStringOrUndefined(fmData.cwd);
+  const cwd = asNonEmptyString(fmData.cwd);
   if (cwd) entry.cwd = cwd;
 
-  const quality = toStringOrUndefined(fmData.quality);
+  const quality = asNonEmptyString(fmData.quality);
   if (quality) entry.quality = normalizeQuality(quality);
+
+  const beliefState = asNonEmptyString(fmData.beliefState);
+  if (beliefState) entry.beliefState = beliefState as StashEntry["beliefState"];
+
+  const supersededBy = normalizeStringListOrUndefined(fmData.supersededBy);
+  if (supersededBy) entry.supersededBy = supersededBy;
+
+  const contradictedBy = normalizeStringListOrUndefined(fmData.contradictedBy);
+  if (contradictedBy) entry.contradictedBy = contradictedBy;
+
+  const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
+  if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
+
+  // captureMode: "hot" | "background" — strict whitelist; unknown values are ignored.
+  if (fmData.captureMode === "hot" || fmData.captureMode === "background") {
+    entry.captureMode = fmData.captureMode;
+  }
+
+  // when_to_use → whenToUse — free-form guidance for retrieval/intent matching.
+  const whenToUse = asNonEmptyString(fmData.when_to_use);
+  if (whenToUse) entry.whenToUse = whenToUse;
+
+  // lessonStrength: array → length, number → direct. Negative numbers clamp to 0.
+  if (Array.isArray(fmData.lessonStrength)) {
+    entry.lessonStrength = fmData.lessonStrength.length;
+  } else if (typeof fmData.lessonStrength === "number" && Number.isFinite(fmData.lessonStrength)) {
+    entry.lessonStrength = Math.max(0, Math.floor(fmData.lessonStrength));
+  }
+
+  const evidenceSources = normalizeStringListOrUndefined(fmData.evidenceSources);
+  if (evidenceSources) entry.evidenceSources = evidenceSources;
+
+  // Phase 5A / Advantage D5: capture parent ref for derived memories.
+  // Memory-inference writes `source: "memory:<parent>"` and `inferred: true`
+  // (and a derived child name suffix `.derived`). We mirror that source ref
+  // into `entry.derivedFrom` so the indexer can populate the dedicated
+  // `derived_from` column. Non-derived entries leave this field unset.
+  if (entry.type === "memory") {
+    const isDerivedByName = entry.name.toLowerCase().endsWith(".derived");
+    const isDerivedByFm = fmData.inferred === true;
+    if (isDerivedByName || isDerivedByFm) {
+      const sourceStr = asNonEmptyString(fmData.source);
+      if (sourceStr?.includes(":")) {
+        entry.derivedFrom = sourceStr;
+      } else {
+        // Fallback: some legacy renderings store only `derivedFrom: <name>`
+        // (a bare parent name). Promote it to a `memory:` ref so the lookup
+        // column stays consistent.
+        const derivedFromName = asNonEmptyString(fmData.derivedFrom);
+        if (derivedFromName) {
+          entry.derivedFrom = derivedFromName.includes(":") ? derivedFromName : `memory:${derivedFromName}`;
+        }
+      }
+    }
+  }
 
   const intent = normalizeIntent(fmData.intent);
   if (intent) entry.intent = intent;
@@ -517,6 +619,12 @@ export function shouldIndexStashFile(
 
   const segments = relPath.split(/[\\/]+/).filter(Boolean);
   if (segments.length === 0) return true;
+
+  // Skip vault .env files that have a sibling .sensitive marker file.
+  if (segments[0] === "vaults" && (file.endsWith(".env") || path.basename(file) === ".env")) {
+    const markerPath = file.replace(/\.env$/, ".sensitive");
+    if (fs.existsSync(markerPath)) return false;
+  }
 
   if (options?.treatStashRootAsWikiRoot) {
     return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
@@ -816,7 +924,154 @@ function mergeAliases(existing: string[] | undefined, generated: string[]): stri
   return merged.length > 0 ? merged : undefined;
 }
 
+// ── Enrichment Completeness ─────────────────────────────────────────────────
+
+/**
+ * Returns `true` when a stash entry already has enough LLM-quality metadata
+ * that calling the LLM would produce no meaningful improvement.
+ *
+ * An entry is considered complete when ALL of the following hold:
+ * - `description` is a non-empty string
+ * - `tags` is a non-empty array
+ * - `searchHints` is a non-empty array
+ *
+ * This predicate is used by `enhanceDirsWithLlm` to skip the LLM call for
+ * entries that were previously enriched and already carry all three fields.
+ * Pass `reEnrich = true` in the caller to bypass this check.
+ */
+export function isEnrichmentComplete(entry: StashEntry): boolean {
+  const hasDescription = typeof entry.description === "string" && entry.description.trim().length > 0;
+  const hasTags = Array.isArray(entry.tags) && entry.tags.length > 0;
+  const hasSearchHints = Array.isArray(entry.searchHints) && entry.searchHints.length > 0;
+  return hasDescription && hasTags && hasSearchHints;
+}
+
 // ── Metadata Generation ─────────────────────────────────────────────────────
+
+/**
+ * Shared pipeline (steps 2-6) for building a single StashEntry from a file.
+ *
+ * Both `generateMetadata` and `generateMetadataFlat` perform identical work
+ * once the initial `entry` object has been seeded with type and canonical name.
+ * This helper encapsulates that shared pipeline so the two callers only differ
+ * in how they determine the asset type and canonical name (step 1):
+ *
+ *  - `generateMetadata`     — explicit `assetType` arg + `deriveCanonicalAssetName`
+ *  - `generateMetadataFlat` — type from `runMatchers()` + `deriveCanonicalAssetNameFromStashRoot`
+ *
+ * @param file        Absolute path to the file being processed.
+ * @param assetType   Resolved asset type string (already validated by caller).
+ * @param canonicalName Resolved canonical name (already computed by caller).
+ * @param dirPath     Directory containing the file (used for tag fallback).
+ * @param pkgMeta     Pre-loaded package.json metadata for this directory (may be null/undefined).
+ * @param stashRoot   Stash root used for renderer search hints context.
+ * @param ctx         FileContext for the file (may be pre-built by the caller).
+ * @param match       Pre-resolved MatchResult when available (from `generateMetadataFlat`).
+ * @returns The populated entry, or `{ skip: true, warning: string }` when the
+ *          renderer throws and the file should be dropped.
+ */
+async function buildEntryFromFile(
+  file: string,
+  assetType: string,
+  canonicalName: string,
+  dirPath: string,
+  pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
+  stashRoot: string,
+  ctx: ReturnType<typeof buildFileContext>,
+  match: import("./file-context").MatchResult | null,
+): Promise<StashEntry | { skip: true; warning: string }> {
+  const ext = path.extname(file).toLowerCase();
+  const baseName = path.basename(file, ext);
+
+  const entry: StashEntry = {
+    name: canonicalName,
+    type: assetType,
+    quality: "generated",
+    confidence: 0.55,
+    source: "filename",
+  };
+
+  // Priority 1: Package.json metadata
+  if (pkgMeta) {
+    if (pkgMeta.description && !entry.description) {
+      entry.description = pkgMeta.description;
+      entry.source = "package";
+      entry.confidence = 0.8;
+    }
+    if (pkgMeta.keywords && pkgMeta.keywords.length > 0) entry.tags = normalizeTerms(pkgMeta.keywords);
+  }
+
+  // Priority 2: Frontmatter (for .md files -- overrides package.json description)
+  if (ext === ".md") {
+    const content = ctx.content();
+    const parsed = parseFrontmatter(content);
+    applyCuratedFrontmatter(entry, parsed.data);
+    // Extract parameters from frontmatter params: key
+    const fmParams = extractFrontmatterParameters(parsed.data);
+    if (fmParams) entry.parameters = fmParams;
+    // Pass wiki-pattern frontmatter through onto the entry
+    applyWikiFrontmatter(entry, parsed.data);
+    // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
+    if (entry.type === "command") {
+      const cmdParams = extractCommandParameters(parsed.content);
+      if (cmdParams) {
+        entry.parameters = mergeParameters(entry.parameters, cmdParams);
+      }
+    }
+  }
+
+  // Extract @param from script files.
+  // Vault files (.env) are deliberately excluded — their contents are secrets
+  // and must never be parsed for @param or any other metadata that could
+  // embed a value into the entry.
+  if (ext !== ".md" && assetType !== "vault") {
+    const content = ctx.content();
+    const scriptParams = extractScriptParameters(file, content);
+    if (scriptParams) entry.parameters = scriptParams;
+    applyCommentMetadata(entry, extractCommentMetadata(file, content));
+  }
+
+  // Priority 3: Renderer metadata extraction
+  // When no pre-resolved match is available (generateMetadata path), run
+  // matchers now so the renderer can extract type-specific metadata.
+  const resolvedMatch = match ?? (await runMatchers(ctx));
+  if (resolvedMatch) {
+    const renderer = await getRenderer(resolvedMatch.renderer);
+    if (renderer) {
+      const renderCtx = buildRenderContext(ctx, resolvedMatch, [stashRoot]);
+      try {
+        await applyMetadataContributors(entry, {
+          rendererName: renderer.name,
+          renderContext: renderCtx,
+        });
+      } catch (error) {
+        return {
+          skip: true,
+          warning: buildMetadataSkipWarning(file, assetType, error),
+        };
+      }
+    }
+  }
+
+  // Priority 4: Filename heuristics (fallback)
+  if (!entry.description) {
+    entry.description = fileNameToDescription(baseName);
+    entry.source = "filename";
+    entry.confidence = Math.min(entry.confidence ?? 0.55, 0.55);
+  }
+  if (!entry.tags || entry.tags.length === 0) {
+    entry.tags = extractTagsFromPath(file, dirPath);
+  }
+
+  entry.tags = normalizeTerms(entry.tags ?? []);
+  entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
+
+  // Search hints are only generated when LLM is configured (via enhanceStashWithLlm)
+  // Heuristic search hints are too noisy to be useful for search quality
+
+  entry.filename = path.basename(file);
+  return entry;
+}
 
 export async function generateMetadata(
   dirPath: string,
@@ -838,88 +1093,17 @@ export async function generateMetadata(
 
     const canonicalName = deriveCanonicalAssetName(assetType, typeRoot, file) ?? baseName;
 
-    const entry: StashEntry = {
-      name: canonicalName,
-      type: assetType,
-      quality: "generated",
-      confidence: 0.55,
-      source: "filename",
-    };
-
-    // Priority 1: Package.json metadata
-    if (pkgMeta) {
-      if (pkgMeta.description && !entry.description) {
-        entry.description = pkgMeta.description;
-        entry.source = "package";
-        entry.confidence = 0.8;
-      }
-      if (pkgMeta.keywords && pkgMeta.keywords.length > 0) entry.tags = normalizeTerms(pkgMeta.keywords);
-    }
-
-    // Priority 2: Frontmatter (for .md files -- overrides package.json description)
-    if (ext === ".md") {
-      const content = fs.readFileSync(file, "utf8");
-      const parsed = parseFrontmatter(content);
-      applyCuratedFrontmatter(entry, parsed.data);
-      // Extract parameters from frontmatter params: key
-      const fmParams = extractFrontmatterParameters(parsed.data);
-      if (fmParams) entry.parameters = fmParams;
-      // Pass wiki-pattern frontmatter through onto the entry
-      applyWikiFrontmatter(entry, parsed.data);
-      // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
-      if (entry.type === "command") {
-        const cmdParams = extractCommandParameters(parsed.content);
-        if (cmdParams) {
-          entry.parameters = mergeParameters(entry.parameters, cmdParams);
-        }
-      }
-    }
-
-    // Extract @param from script files.
-    // Vault files (.env) are deliberately excluded — their contents are secrets
-    // and must never be parsed for @param or any other metadata that could
-    // embed a value into the entry.
-    if (ext !== ".md" && assetType !== "vault") {
-      const content = fs.readFileSync(file, "utf8");
-      const scriptParams = extractScriptParameters(file, content);
-      if (scriptParams) entry.parameters = scriptParams;
-      applyCommentMetadata(entry, extractCommentMetadata(file, content));
-    }
-
-    // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for scripts)
+    // Build file context with typeRoot as the stash root so renderer context
+    // and search hints are scoped to the type directory.
     const fileCtx = buildFileContext(typeRoot, file);
-    const match = await runMatchers(fileCtx);
-    if (match) {
-      const renderer = await getRenderer(match.renderer);
-      if (renderer?.extractMetadata) {
-        const renderCtx = buildRenderContext(fileCtx, match, [typeRoot]);
-        try {
-          renderer.extractMetadata(entry, renderCtx);
-        } catch (error) {
-          warnings.push(buildMetadataSkipWarning(file, assetType, error));
-          continue;
-        }
-      }
+
+    // Step 1: type is explicit; delegate steps 2-6 to the shared pipeline.
+    const result = await buildEntryFromFile(file, assetType, canonicalName, dirPath, pkgMeta, typeRoot, fileCtx, null);
+    if ("skip" in result) {
+      warnings.push(result.warning);
+      continue;
     }
-
-    // Priority 4: Filename heuristics (fallback)
-    if (!entry.description) {
-      entry.description = fileNameToDescription(baseName);
-      entry.source = "filename";
-      entry.confidence = Math.min(entry.confidence ?? 0.55, 0.55);
-    }
-    if (!entry.tags || entry.tags.length === 0) {
-      entry.tags = extractTagsFromPath(file, dirPath);
-    }
-
-    entry.tags = normalizeTerms(entry.tags ?? []);
-    entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
-
-    // Search hints are only generated when LLM is configured (via enhanceStashWithLlm)
-    // Heuristic search hints are too noisy to be useful for search quality
-
-    entry.filename = path.basename(file);
-    entries.push(entry);
+    entries.push(result);
   }
 
   return warnings.length > 0 ? { entries, warnings } : { entries };
@@ -939,6 +1123,8 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
 
   for (const file of files) {
     if (!shouldIndexStashFile(stashRoot, file)) continue;
+
+    // Step 1: determine type and canonical name via the matcher system.
     const ctx = buildFileContext(stashRoot, file);
     const match = await runMatchers(ctx);
     if (!match) continue;
@@ -953,85 +1139,21 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     const baseName = path.basename(file, ext);
     const canonicalName = deriveCanonicalAssetNameFromStashRoot(assetType, stashRoot, file) ?? baseName;
 
-    const entry: StashEntry = {
-      name: canonicalName,
-      type: assetType,
-      quality: "generated",
-      confidence: 0.55,
-      source: "filename",
-    };
-
-    // Package.json metadata
+    // Resolve package.json metadata with a per-directory cache.
     const dirPath = path.dirname(file);
     if (!pkgMetaCache.has(dirPath)) {
       pkgMetaCache.set(dirPath, extractPackageMetadata(dirPath));
     }
     const pkgMeta = pkgMetaCache.get(dirPath);
-    if (pkgMeta) {
-      if (pkgMeta.description && !entry.description) {
-        entry.description = pkgMeta.description;
-        entry.source = "package";
-        entry.confidence = 0.8;
-      }
-      if (pkgMeta.keywords?.length) entry.tags = normalizeTerms(pkgMeta.keywords);
-    }
 
-    // Frontmatter
-    if (ext === ".md") {
-      const content = ctx.content();
-      const parsed = parseFrontmatter(content);
-      applyCuratedFrontmatter(entry, parsed.data);
-      // Extract parameters from frontmatter params: key
-      const fmParams = extractFrontmatterParameters(parsed.data);
-      if (fmParams) entry.parameters = fmParams;
-      // Pass wiki-pattern frontmatter through onto the entry
-      applyWikiFrontmatter(entry, parsed.data);
-      // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
-      if (entry.type === "command") {
-        const cmdParams = extractCommandParameters(parsed.content);
-        if (cmdParams) {
-          entry.parameters = mergeParameters(entry.parameters, cmdParams);
-        }
-      }
+    // Steps 2-6: delegate to the shared pipeline; pass the pre-resolved match
+    // so we don't run matchers a second time.
+    const result = await buildEntryFromFile(file, assetType, canonicalName, dirPath, pkgMeta, stashRoot, ctx, match);
+    if ("skip" in result) {
+      warnings.push(result.warning);
+      continue;
     }
-
-    // Extract @param from script files.
-    // Vault files (.env) are deliberately excluded — their contents are secrets
-    // and must never be parsed for @param or any other metadata that could
-    // embed a value into the entry.
-    if (ext !== ".md" && assetType !== "vault") {
-      const content = ctx.content();
-      const scriptParams = extractScriptParameters(file, content);
-      if (scriptParams) entry.parameters = scriptParams;
-      applyCommentMetadata(entry, extractCommentMetadata(file, content));
-    }
-
-    // Renderer metadata extraction
-    const renderer = await getRenderer(match.renderer);
-    if (renderer?.extractMetadata) {
-      const renderCtx = buildRenderContext(ctx, match, [stashRoot]);
-      try {
-        renderer.extractMetadata(entry, renderCtx);
-      } catch (error) {
-        warnings.push(buildMetadataSkipWarning(file, assetType, error));
-        continue;
-      }
-    }
-
-    // Filename heuristics fallback
-    if (!entry.description) {
-      entry.description = fileNameToDescription(baseName);
-      entry.source = "filename";
-      entry.confidence = Math.min(entry.confidence ?? 0.55, 0.55);
-    }
-    if (!entry.tags || entry.tags.length === 0) {
-      entry.tags = extractTagsFromPath(file, dirPath);
-    }
-
-    entry.tags = normalizeTerms(entry.tags ?? []);
-    entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
-    entry.filename = path.basename(file);
-    entries.push(entry);
+    entries.push(result);
   }
 
   return warnings.length > 0 ? { entries, warnings } : { entries };
@@ -1132,18 +1254,6 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   if (hashLines.length > 0) return hashLines.join(" ");
 
   return null;
-}
-
-export function extractFrontmatterDescription(filePath: string): string | null {
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
-
-  const parsed = parseFrontmatter(content);
-  return toStringOrUndefined(parsed.data.description) ?? null;
 }
 
 export function extractPackageMetadata(

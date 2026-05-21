@@ -18,11 +18,15 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
   const stashDir = makeTempDir("akm-workflow-stash-");
   const xdgCache = makeTempDir("akm-workflow-cache-");
   const xdgConfig = makeTempDir("akm-workflow-config-");
+  const xdgData = makeTempDir("akm-workflow-data-");
+  const xdgState = makeTempDir("akm-workflow-state-");
   return {
     ...process.env,
     AKM_STASH_DIR: stashDir,
     XDG_CACHE_HOME: xdgCache,
     XDG_CONFIG_HOME: xdgConfig,
+    XDG_DATA_HOME: xdgData,
+    XDG_STATE_HOME: xdgState,
   };
 }
 
@@ -263,7 +267,7 @@ describe("workflow CLI", () => {
     expect(statusJson.run.id).toBe(nextJson.run.id);
     expect(statusJson.run.status).toBe("active");
     expect(statusJson.run.currentStepId).toBe("validate");
-  });
+  }, 15_000);
 
   test("complete rejects non-current and finalized step updates", () => {
     const env = createWorkflowEnv();

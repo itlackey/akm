@@ -10,6 +10,75 @@ import type { DetailLevel } from "./context";
 
 const NORMAL_DESCRIPTION_LIMIT = 250;
 
+const PASSTHROUGH_COMMANDS = new Set([
+  "add",
+  "agent-result",
+  "clone",
+  "config",
+  "consolidate",
+  "curate",
+  "db-backups",
+  "disable",
+  "enable",
+  "feedback",
+  "graph-entities",
+  "graph-entity",
+  "graph-export",
+  "graph-orphans",
+  "graph-related",
+  "graph-relations",
+  "graph-summary",
+  "health",
+  "import",
+  "improve",
+  "index",
+  "info",
+  "init",
+  "lessons-coverage",
+  "lint",
+  "list",
+  "registry-add",
+  "registry-build-index",
+  "registry-list",
+  "registry-remove",
+  "remember",
+  "remove",
+  "save",
+  "setup",
+  "tasks-add",
+  "tasks-disable",
+  "tasks-doctor",
+  "tasks-enable",
+  "tasks-history",
+  "tasks-list",
+  "tasks-remove",
+  "tasks-run",
+  "tasks-show",
+  "tasks-sync",
+  "update",
+  "upgrade",
+  "vault-create",
+  "vault-set",
+  "vault-unset",
+  "wiki-create",
+  "wiki-ingest",
+  "wiki-lint",
+  "wiki-list",
+  "wiki-pages",
+  "wiki-register",
+  "wiki-remove",
+  "wiki-show",
+  "wiki-stash",
+  "workflow-complete",
+  "workflow-create",
+  "workflow-list",
+  "workflow-next",
+  "workflow-resume",
+  "workflow-start",
+  "workflow-status",
+  "workflow-validate",
+]);
+
 export function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
   switch (command) {
     case "search":
@@ -43,71 +112,43 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
     case "proposal-diff":
       return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
+    // Phase 6C (Advantage D6c): revert envelope mirrors accept/reject.
+    case "proposal-revert":
+      return shapeProposalRevertOutput(result as Record<string, unknown>, detail);
     // Output shape registration for `akm reflect` and `akm propose` (#226).
     // Both share the proposal-producer envelope shape (success carries a
     // proposal entry; failure carries an AgentFailureReason discriminant).
     case "reflect":
     case "propose":
       return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
-    // Output shape registration for `akm distill <ref>` (#228). The shape is
-    // simple — outcome + ids + optional payload — so `brief` strips the full
-    // proposal blob, `normal` keeps the headline fields, and `full` projects
-    // everything for downstream automation.
     case "distill":
       return shapeDistillOutput(result as Record<string, unknown>, detail);
-    // Identity-passthrough commands — registered here so the registry stays
-    // exhaustive (v1 spec §9). Each result object is already shaped at the
-    // command boundary; the registry just confirms there's no surprise
-    // command name slipping through.
-    case "add":
-    case "clone":
-    case "config":
-    case "curate":
-    case "disable":
-    case "enable":
-    case "feedback":
-    case "import":
-    case "index":
-    case "info":
-    case "init":
-    case "list":
-    case "registry-add":
-    case "registry-build-index":
-    case "registry-list":
-    case "registry-remove":
-    case "remember":
-    case "remove":
-    case "save":
-    case "update":
-    case "upgrade":
-    case "vault-create":
-    case "vault-list":
-    case "vault-set":
-    case "vault-unset":
-    case "wiki-create":
-    case "wiki-ingest":
-    case "wiki-lint":
-    case "wiki-list":
-    case "wiki-pages":
-    case "wiki-register":
-    case "wiki-remove":
-    case "wiki-show":
-    case "wiki-stash":
-    case "workflow-complete":
-    case "workflow-create":
-    case "workflow-list":
-    case "workflow-next":
-    case "workflow-resume":
-    case "workflow-start":
-    case "workflow-status":
-    case "workflow-validate":
-      return result;
+    case "vault-list": {
+      const r = result as Record<string, unknown>;
+      const vaults = Array.isArray(r.vaults) ? r.vaults : [];
+      return {
+        ...r,
+        vaults: vaults.map((v) => {
+          const { path: _path, ...rest } = v as Record<string, unknown>;
+          return rest;
+        }),
+      };
+    }
     default:
-      // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
-      // fallback. A missing case here is a registration bug — fail loudly so
-      // the caller (or its tests) sees the missing command name.
+      // v1 spec §9 (output-shape registry exhaustive): identity-passthrough
+      // commands are listed in PASSTHROUGH_COMMANDS; anything not in that set
+      // is a registration bug — fail loudly.
+      if (PASSTHROUGH_COMMANDS.has(command)) return result;
       throw new Error(`output shape not registered for command: ${command}`);
   }
+}
+
+function maybeAddSchema<T extends Record<string, unknown>>(
+  base: T,
+  detail: DetailLevel,
+  version?: number,
+): T | (T & { schemaVersion: number }) {
+  return detail === "full" ? { schemaVersion: version ?? 1, ...base } : base;
 }
 
 /**
@@ -149,18 +190,28 @@ export function shapeProposalProducerOutput(
     ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (detail === "brief") {
-    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
+    // Phase 6A: confidence is small + load-bearing for auto-accept telemetry,
+    // so include it even at brief detail.
+    return pickFields(entry, ["id", "ref", "status", "source", "createdAt", "confidence"]);
   }
   if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
+    return pickFields(entry, [
+      "id",
+      "ref",
+      "status",
+      "source",
+      "sourceRun",
+      "createdAt",
+      "updatedAt",
+      "review",
+      "confidence",
+      "backup",
+    ]);
   }
   // full / agent: project everything including the payload.
   return pickFields(entry, [
@@ -173,6 +224,8 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "updatedAt",
     "payload",
     "review",
+    "confidence",
+    "backup",
   ]);
 }
 
@@ -183,10 +236,7 @@ export function shapeProposalListOutput(result: Record<string, unknown>, detail:
     totalCount: result.totalCount ?? shaped.length,
     proposals: shaped,
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -196,10 +246,7 @@ export function shapeProposalShowOutput(result: Record<string, unknown>, detail:
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
     ...(validation ? { validation } : {}),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalAcceptOutput(
@@ -214,10 +261,7 @@ export function shapeProposalAcceptOutput(
     assetPath: result.assetPath,
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalRejectOutput(
@@ -232,10 +276,30 @@ export function shapeProposalRejectOutput(
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
+}
+
+/**
+ * Shape the result of `akm proposal revert <id>` (Phase 6C / Advantage D6c).
+ *
+ * Mirrors {@link shapeProposalAcceptOutput} — the surface is intentionally
+ * symmetric with accept because the user-visible workflow is: accept restores
+ * the new content; revert restores the prior content; both should look the
+ * same in JSON output beyond the verb.
+ */
+export function shapeProposalRevertOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    id: result.id,
+    ref: result.ref,
+    assetPath: result.assetPath,
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeDistillOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -253,10 +317,7 @@ export function shapeDistillOutput(result: Record<string, unknown>, detail: Deta
     ...(Array.isArray(result.findings) && result.findings.length > 0 ? { findings: result.findings } : {}),
     ...(proposal ? { proposal: shapeProposalEntry(proposal, detail === "summary" ? "normal" : detail) } : {}),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalDiffOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -267,10 +328,7 @@ export function shapeProposalDiffOutput(result: Record<string, unknown>, detail:
     unified: result.unified,
     ...(result.targetPath !== undefined ? { targetPath: result.targetPath } : {}),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -290,17 +348,11 @@ export function shapeEventsOutput(result: Record<string, unknown>, detail: Detai
   if (typeof result.reason === "string") {
     base.reason = result.reason;
   }
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") {
-    return pickFields(entry, ["eventType", "ref", "ts"]);
-  }
-  if (detail === "normal" || detail === "summary") {
+  if (detail === "brief" || detail === "normal" || detail === "summary") {
     return pickFields(entry, ["eventType", "ref", "ts"]);
   }
   // full / agent: project everything the reader emits.
@@ -338,13 +390,13 @@ export function shapeHistoryEntry(entry: Record<string, unknown>, detail: Detail
   if (detail === "brief") {
     // signal is load-bearing for feedback rows (positive/negative) so we
     // project it even at brief — without it the entry is ambiguous.
-    return pickFields(entry, ["eventType", "ref", "signal", "createdAt"]);
+    return pickFields(entry, ["eventType", "ref", "signal", "source", "createdAt"]);
   }
   if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["eventType", "ref", "signal", "query", "createdAt"]);
+    return pickFields(entry, ["eventType", "ref", "signal", "query", "source", "createdAt"]);
   }
   // full / agent: return everything the reader emits.
-  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "metadata", "createdAt"]);
+  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "source", "metadata", "createdAt"]);
 }
 
 export function shapeSearchOutput(
@@ -518,6 +570,7 @@ export function shapeShowOutput(
       "steps",
       "keys",
       "comments",
+      "related",
     ]);
   }
   if (detail === "summary") {
@@ -533,10 +586,11 @@ export function shapeShowOutput(
       "origin",
       "keys",
       "comments",
+      "related",
     ]);
   }
 
-  const base = pickFields(result, [
+  const baseFields = [
     "type",
     "name",
     "origin",
@@ -559,11 +613,15 @@ export function shapeShowOutput(
     "activeRun",
     "keys",
     "comments",
+    "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).
-    "path",
+    // Exception: vault assets omit path to avoid leaking absolute disk paths
+    // into structured JSON output (security fix M3).
+    ...(result.type === "vault" ? [] : ["path"]),
     "editable",
-  ]);
+  ];
+  const base = pickFields(result, baseFields);
 
   if (detail !== "full") {
     return base;

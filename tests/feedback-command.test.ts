@@ -16,6 +16,8 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -64,6 +66,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
 
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -75,6 +81,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -125,6 +133,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "commands", "complete-github-issue.md"),
@@ -146,6 +156,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(path.join(stashDir, "memories", "known.md"), "---\ndescription: known memory\n---\nKnown.\n");
     await buildIndex(stashDir);
@@ -163,6 +175,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -184,15 +198,16 @@ describe("akm feedback", () => {
       ok: true,
       ref: "memory:deployment-notes",
       signal: "positive",
-      note: "saved me 30 minutes",
+      reason: "saved me 30 minutes",
+      tags: [],
     });
 
-    // Read events.jsonl directly and verify the note was persisted in metadata.
+    // Read events.jsonl directly and verify the reason was persisted in metadata.
     const { readEvents } = await import("../src/core/events");
     const { events } = readEvents({ type: "feedback", ref: "memory:deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
-    expect(md.note).toBe("saved me 30 minutes");
+    expect(md.reason).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
   });
 
@@ -200,6 +215,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "memories", "alpha.md"),
@@ -226,5 +243,189 @@ describe("akm feedback", () => {
     const afterMemories = after.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
     expect(afterMemories[0]?.ref).toBe("memory:omega");
     expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
+  });
+});
+
+// ── F-3 / #384 — requireReason default true + --failure-mode enum ─────────────
+
+describe("F-3: requireReason default + --failure-mode enum (#384)", () => {
+  test("negative feedback without --reason fails by default (requireReason default: true)", async () => {
+    const stashDir = makeTempDir("akm-f3-require-reason-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    // No --reason: should fail with exit code 2 by default (requireReason: true)
+    const result = runCli(["feedback", "memory:auth", "--negative", "--format=json"]);
+    expect(result.status).toBe(2);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toContain("requires --reason");
+  });
+
+  test("negative feedback with --reason succeeds", async () => {
+    const stashDir = makeTempDir("akm-f3-with-reason-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache2-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config2-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data2-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state2-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "memory:auth", "--negative", "--reason", "outdated content", "--format=json"]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    expect(out.signal).toBe("negative");
+  });
+
+  test("--failure-mode with valid enum value is accepted and appears in output", async () => {
+    const stashDir = makeTempDir("akm-f3-failure-mode-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache3-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config3-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data3-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state3-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:auth",
+      "--negative",
+      "--reason",
+      "content is wrong",
+      "--failure-mode",
+      "incorrect",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    expect(out.failureMode).toBe("incorrect");
+  });
+
+  test("--failure-mode with invalid value is rejected (exit 2)", async () => {
+    const stashDir = makeTempDir("akm-f3-bad-mode-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache4-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config4-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data4-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state4-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:auth",
+      "--negative",
+      "--reason",
+      "broken",
+      "--failure-mode",
+      "totally-invalid-mode",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(2);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toContain("totally-invalid-mode");
+  });
+
+  test("--applied-to lesson:x appends caller ref to lessonStrength array (Phase 7A)", async () => {
+    const stashDir = makeTempDir("akm-applied-to-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-at-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-at-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-at-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-at-state-");
+
+    writeFile(
+      path.join(stashDir, "memories", "auth.md"),
+      "---\ndescription: auth memory\n---\nUse token x for staging auth.\n",
+    );
+    writeFile(
+      path.join(stashDir, "lessons", "prefer-tokens.md"),
+      "---\ndescription: prefer scoped tokens\n---\nAlways prefer scoped tokens over long-lived bearer creds.\n",
+    );
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:auth",
+      "--positive",
+      "--applied-to",
+      "lesson:prefer-tokens",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    expect(out.appliedTo).toMatchObject({ ref: "lesson:prefer-tokens", lessonStrength: 1 });
+
+    const lessonContent = fs.readFileSync(path.join(stashDir, "lessons", "prefer-tokens.md"), "utf8");
+    const { parseFrontmatter } = await import("../src/core/frontmatter");
+    const lessonFm = parseFrontmatter(lessonContent);
+    expect(lessonFm.data.lessonStrength).toEqual(["memory:auth"]);
+
+    // Idempotent: re-applying with the same ref should not duplicate the entry.
+    const second = runCli([
+      "feedback",
+      "memory:auth",
+      "--positive",
+      "--applied-to",
+      "lesson:prefer-tokens",
+      "--format=json",
+    ]);
+    expect(second.status).toBe(0);
+    const second2 = parseJsonOutput(second);
+    expect(second2.appliedTo).toMatchObject({ ref: "lesson:prefer-tokens", lessonStrength: 1 });
+
+    const lessonContent2 = fs.readFileSync(path.join(stashDir, "lessons", "prefer-tokens.md"), "utf8");
+    const lessonFm2 = parseFrontmatter(lessonContent2);
+    expect(lessonFm2.data.lessonStrength).toEqual(["memory:auth"]);
+  });
+
+  test("--applied-to on a non-lesson target is silently ignored (Phase 7A)", async () => {
+    const stashDir = makeTempDir("akm-applied-to-nonlesson-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-at2-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-at2-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-at2-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-at2-state-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    writeFile(path.join(stashDir, "skills", "deploy.md"), "---\ndescription: deploy skill\n---\nDeploy steps.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "memory:auth", "--positive", "--applied-to", "skill:deploy", "--format=json"]);
+    expect(result.status).toBe(0);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(true);
+    // Output omits appliedTo when the target type is not "lesson".
+    expect(out.appliedTo).toBeUndefined();
+
+    // The non-lesson target must not have been mutated.
+    const skillContent = fs.readFileSync(path.join(stashDir, "skills", "deploy.md"), "utf8");
+    expect(skillContent).not.toContain("lessonStrength");
+  });
+
+  test("--failure-mode on --positive is rejected (exit 2)", async () => {
+    const stashDir = makeTempDir("akm-f3-mode-on-pos-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache5-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config5-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data5-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state5-");
+
+    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "memory:auth", "--positive", "--failure-mode", "incorrect", "--format=json"]);
+    expect(result.status).toBe(2);
+    const out = parseJsonOutput(result);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toContain("only valid for negative");
   });
 });

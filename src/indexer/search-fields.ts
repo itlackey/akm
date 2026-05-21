@@ -47,6 +47,7 @@ export function buildSearchFields(entry: StashEntry): {
   }
   if (entry.xrefs) hintParts.push(entry.xrefs.join(" "));
   if (entry.pageKind) hintParts.push(entry.pageKind);
+  if (entry.whenToUse) hintParts.push(entry.whenToUse);
   const hints = hintParts.join(" ").toLowerCase();
 
   const contentParts: string[] = [];

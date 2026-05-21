@@ -78,9 +78,13 @@ function serveJson(body: unknown): { url: string; close: () => void } {
 }
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = createTmpDir("akm-parity-cache-");
+  process.env.XDG_DATA_HOME = createTmpDir("akm-parity-data-");
+  process.env.XDG_STATE_HOME = createTmpDir("akm-parity-state-");
 });
 
 afterEach(() => {
@@ -97,6 +101,16 @@ afterEach(() => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
 });
 

@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
 import {
   closeDatabase,
   openDatabase,
+  openExistingDatabase,
   rebuildFts,
   searchFts,
   setMeta,
@@ -101,16 +103,26 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 // ── Environment isolation ───────────────────────────────────────────────────
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
 
+let testDataDir = "";
+let testStateDir = "";
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-parallel-cache-");
   testConfigDir = createTmpDir("akm-parallel-config-");
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  testDataDir = createTmpDir("akm-parallel-search-data-");
+  testStateDir = createTmpDir("akm-parallel-search-state-");
+  // Pair AKM_STASH_DIR mutations with XDG_DATA_HOME / XDG_STATE_HOME so
+  // the test-isolation guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   clearEmbeddingCache();
 });
 
@@ -124,6 +136,16 @@ afterEach(() => {
     delete process.env.XDG_CONFIG_HOME;
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
   if (originalAkmStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
@@ -180,8 +202,18 @@ describe("Parallel search: result parity", () => {
 
     await buildTestIndex(stashDir, {});
 
-    // Run the same query twice and verify identical results
+    // Run the same query twice and verify identical results.
+    // Reset utility scores between calls so that the score-bump side-effect of
+    // logSearchEvent() does not make the second call return different scores.
     const result1 = await akmSearch({ query: "deploy", source: "local" });
+    {
+      const db = openExistingDatabase(getDbPath());
+      try {
+        db.exec("DELETE FROM utility_scores");
+      } finally {
+        closeDatabase(db);
+      }
+    }
     const result2 = await akmSearch({ query: "deploy", source: "local" });
     const localHits1 = result1.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const localHits2 = result2.hits.filter((h): h is SourceSearchHit => h.type !== "registry");

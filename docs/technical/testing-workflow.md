@@ -11,7 +11,7 @@ CLI coverage, then Docker-based deployment and upgrade validation.
 
 ## What To Validate
 
-- core CLI flows: `init`, `index`, `search`, `show`, `info`, `list`, `config`
+- core CLI flows: `setup`, `index`, `search`, `show`, `info`, `list`, `config`
 - asset lifecycle: add assets, re-index, search, show, and incremental refresh
 - managed-source lifecycle: `akm add`, `akm list`, `akm update`, `akm remove`
 - binary lifecycle: install, run, `akm upgrade --check`, `akm upgrade`
@@ -233,7 +233,7 @@ export XDG_CACHE_HOME="$(mktemp -d)"
 export AKM_STASH_DIR="$(mktemp -d)/akm"
 
 bun run build
-bun run src/cli.ts init
+bun run src/cli.ts setup --yes
 ```
 
 Then run a complete user flow:
@@ -255,7 +255,7 @@ bun run src/cli.ts info --format json
 
 Expected outcomes:
 
-- `init` creates the stash and saves config
+- `setup --yes` creates the stash and saves config
 - `index` reports at least one entry
 - `search` returns the script with an action and score
 - `show` returns `type: script` and a `run` command
@@ -315,7 +315,7 @@ docker run --rm -it ubuntu:22.04 bash
 apt-get update && apt-get install -y curl ca-certificates git
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 akm --help
-akm init
+akm setup --yes
 akm index
 ```
 

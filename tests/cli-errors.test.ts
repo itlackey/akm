@@ -24,6 +24,8 @@ afterAll(() => {
 /** Isolated temp dirs so the CLI never touches real user config/cache/home. */
 const xdgCache = makeTempDir();
 const xdgConfig = makeTempDir();
+const xdgData = makeTempDir();
+const xdgState = makeTempDir();
 const isolatedHome = makeTempDir();
 const repoRoot = path.resolve(import.meta.dir, "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -42,6 +44,8 @@ function runCliWithOptions(
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       ...options?.env,
     },
   });
@@ -72,7 +76,7 @@ describe("CLI error handling", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
   });
 
   test("search --source invalid prints hint about source", () => {
@@ -97,6 +101,8 @@ describe("CLI error handling", () => {
         HOME: isolatedHome,
         XDG_CACHE_HOME: xdgCache,
         XDG_CONFIG_HOME: xdgConfig,
+        XDG_DATA_HOME: xdgData,
+        XDG_STATE_HOME: xdgState,
       },
     });
     const stderr = result.stderr ?? "";
@@ -142,7 +148,7 @@ describe("error class hints", () => {
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
     expect(new ConfigError("no embedding", "EMBEDDING_NOT_CONFIGURED").hint()).toContain("akm config set embedding");
-    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("akm config set llm");
+    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("akm config set profiles.llm");
   });
 
   test("ConfigError without a code-mapped hint returns undefined", () => {

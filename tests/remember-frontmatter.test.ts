@@ -8,7 +8,7 @@
  * - Required-field rejection before any file write
  * - --expires duration → ISO date computation
  * - Zero-flag remember still works (no frontmatter written)
- * - memoryMdRenderer.extractMetadata populates StashEntry fields
+ * - memory metadata contributors populate StashEntry fields
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -19,7 +19,7 @@ import path from "node:path";
 import { parseFrontmatter } from "../src/core/frontmatter";
 import { buildFileContext, buildRenderContext } from "../src/indexer/file-context";
 import type { StashEntry } from "../src/indexer/metadata";
-import { memoryMdRenderer } from "../src/output/renderers";
+import { applyMetadataContributors } from "../src/indexer/metadata-contributors";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
 
@@ -36,6 +36,8 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string })
   const stashDir = options?.stashDir ?? makeTempDir("akm-rmfm-stash-");
   const xdgCache = makeTempDir("akm-rmfm-cache-");
   const xdgConfig = makeTempDir("akm-rmfm-config-");
+  const xdgData = makeTempDir("akm-rmfm-data-");
+  const xdgState = makeTempDir("akm-rmfm-state-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -45,6 +47,8 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string })
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   return { stashDir, result };
@@ -59,25 +63,34 @@ afterEach(() => {
 // ── Zero-flag path (backward compatibility) ──────────────────────────────────
 
 describe("zero-flag remember", () => {
-  test("writes bare memory with no frontmatter", () => {
+  test("writes memory with captureMode: hot + beliefState: asserted and nothing else", () => {
     const { stashDir, result } = runCli(["remember", "Deployment needs VPN access"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
 
-    // No frontmatter delimiter present
-    expect(content.startsWith("---")).toBe(false);
-    expect(content).toContain("Deployment needs VPN access");
+    // Phase 1B / Rec 7: zero-flag hot-path emits captureMode + beliefState
+    expect(content.startsWith("---")).toBe(true);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    // No other frontmatter keys
+    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
+    expect(parsed.content).toContain("Deployment needs VPN access");
     expect(stashDir).toBeTruthy();
   });
 
-  test("writes bare memory when reading from stdin", () => {
+  test("stdin zero-flag path also writes captureMode: hot + beliefState: asserted", () => {
     const { result } = runCli(["remember"], { input: "VPN needed for staging deploys" });
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
-    expect(content.startsWith("---")).toBe(false);
+    expect(content.startsWith("---")).toBe(true);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
   });
 
   test("reads stdin when --format json is present", () => {
@@ -314,12 +327,12 @@ describe("remember --auto", () => {
   });
 });
 
-// ── memoryMdRenderer.extractMetadata ─────────────────────────────────────────
+// ── memory metadata contributors ─────────────────────────────────────────────
 
 /** A static MatchResult for memory-md (avoids calling runMatchers and null assertions). */
 const MEMORY_MATCH = { type: "memory", specificity: 10, renderer: "memory-md" };
 
-describe("memoryMdRenderer.extractMetadata", () => {
+describe("memory metadata contributors", () => {
   const createdTmpDirs: string[] = [];
 
   afterEach(() => {
@@ -338,40 +351,40 @@ describe("memoryMdRenderer.extractMetadata", () => {
     return { filePath, stashRoot };
   }
 
-  test("populates tags from frontmatter", () => {
+  async function applyMemoryMetadata(entry: StashEntry, stashRoot: string, filePath: string): Promise<void> {
+    const ctx = buildFileContext(stashRoot, filePath);
+    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
+    await applyMetadataContributors(entry, { rendererName: "memory-md", renderContext: renderCtx });
+  }
+
+  test("populates tags from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops, networking]\n---\nDeployment needs VPN access\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
     expect(entry.tags).toContain("networking");
   });
 
-  test("populates description from frontmatter", () => {
+  test("populates description from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ndescription: VPN required for staging deploys\ntags: [ops]\n---\nBody content\n",
     );
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.description).toBe("VPN required for staging deploys");
   });
 
-  test("populates searchHints with source, observed_at, expires, subjective", () => {
+  test("populates searchHints with source, observed_at, expires, subjective", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ntags: [ops]\nsource: skill:deploy\nobserved_at: 2026-01-15\nexpires: 2026-04-15\nsubjective: true\n---\nVPN needed\n",
     );
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.searchHints).toBeDefined();
     expect(entry.searchHints).toContain("skill:deploy");
@@ -380,13 +393,11 @@ describe("memoryMdRenderer.extractMetadata", () => {
     expect(entry.searchHints).toContain("subjective");
   });
 
-  test("observed_at falls back to file mtime when not in frontmatter", () => {
+  test("observed_at falls back to file mtime when not in frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     // Should have an observed_at hint derived from mtime
     const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
@@ -396,28 +407,24 @@ describe("memoryMdRenderer.extractMetadata", () => {
     expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("works for bare memory with no frontmatter (no crash)", () => {
+  test("works for bare memory with no frontmatter (no crash)", async () => {
     const { filePath, stashRoot } = writeTmpMemory("Just a plain memory without any frontmatter.\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
 
     // Should not throw
-    expect(() => memoryMdRenderer.extractMetadata?.(entry, renderCtx)).not.toThrow();
+    await expect(applyMemoryMetadata(entry, stashRoot, filePath)).resolves.toBeUndefined();
 
     // mtime fallback should still fire
     const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
     expect(mtimeHint).toBeDefined();
   });
 
-  test("block-sequence tags in frontmatter are parsed correctly", () => {
+  test("block-sequence tags in frontmatter are parsed correctly", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags:\n- ops\n- networking\n- deploy\n---\nVPN required\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
     expect(entry.tags).toContain("networking");
@@ -432,20 +439,13 @@ describe("memoryMdRenderer.extractMetadata", () => {
 // against a non-existent endpoint and verify the graceful-degradation behaviour.
 
 describe("remember --enrich graceful degradation", () => {
-  test("when no LLM is configured, --enrich emits warning but still fails if no tags", () => {
-    // No LLM configured in the temp config dir — should warn and return empty tags
+  test("when no LLM is configured, --enrich emits warning and still writes the memory", () => {
     const { result } = runCli(["remember", "Some note about ops", "--enrich"]);
-    // Will fail because enrichment produces no tags and no CLI tags given.
-    // stderr may contain a warning line followed by a multi-line JSON error block.
-    if (result.status !== 0) {
-      // Extract the JSON portion (from first '{' to end of stderr)
-      const jsonStart = result.stderr.indexOf("{");
-      expect(jsonStart).toBeGreaterThanOrEqual(0);
-      const jsonStr = result.stderr.slice(jsonStart);
-      const json = JSON.parse(jsonStr) as { error: string };
-      expect(json.error).toContain("tags");
-    }
-    // Either path is acceptable: rejection (no tags) or success (if enrichment happened to work)
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    expect(content).toContain("Some note about ops");
   });
 
   test("--enrich with --tag satisfies required-field check even if LLM fails", () => {
@@ -458,5 +458,31 @@ describe("remember --enrich graceful degradation", () => {
     const parsed = parseFrontmatter(content);
     // At minimum, the --tag value must be present
     expect(parsed.data.tags as string[]).toContain("misc");
+  });
+});
+
+// ── Phase 1B / Rec 7: hot-path captureMode + beliefState ────────────────────
+
+describe("remember writes captureMode: hot + beliefState: asserted (Phase 1B)", () => {
+  test("--tag path writes captureMode: hot and beliefState: asserted", () => {
+    const { result } = runCli(["remember", "VPN required for staging", "--tag", "ops"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+  });
+
+  test("--auto path writes captureMode: hot and beliefState: asserted", () => {
+    const { result } = runCli(["remember", "Plain text note", "--auto", "--tag", "misc"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
   });
 });

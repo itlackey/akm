@@ -11,14 +11,23 @@ import { buildSearchText } from "../src/indexer/search-fields";
 
 let testConfigDir = "";
 let testCacheDir = "";
+let testDataDir = "";
+let testStateDir = "";
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
+const originalAkmStashDir = process.env.AKM_STASH_DIR;
 
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-config-"));
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-cache-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-state-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -41,6 +50,25 @@ afterEach(() => {
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
+  // Test 9 ("indexed command entries include parameters in search text")
+  // sets AKM_STASH_DIR but had no restore — leaking the stash dir to
+  // subsequent files where it tripped the test-isolation guard and
+  // silently broke registry-search / skills-sh caching tests.
+  if (originalAkmStashDir === undefined) {
+    delete process.env.AKM_STASH_DIR;
+  } else {
+    process.env.AKM_STASH_DIR = originalAkmStashDir;
+  }
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
@@ -48,6 +76,14 @@ afterEach(() => {
   if (testCacheDir) {
     fs.rmSync(testCacheDir, { recursive: true, force: true });
     testCacheDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 

@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
@@ -22,6 +23,15 @@ import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
 import { parseWorkflow } from "./parser";
 import type { WorkflowDocument } from "./schema";
 import { getCurrentWorkflowScopeKey } from "./scope-key";
+
+async function withWorkflowDb<T>(fn: (db: Database) => T | Promise<T>): Promise<T> {
+  const db = openWorkflowDatabase();
+  try {
+    return await Promise.resolve(fn(db));
+  } finally {
+    closeWorkflowDatabase(db);
+  }
+}
 
 type WorkflowAsset = {
   ref: string;
@@ -90,25 +100,21 @@ export interface CompleteWorkflowStepInput {
 
 export async function startWorkflowRun(ref: string, params: Record<string, unknown> = {}): Promise<WorkflowRunDetail> {
   const asset = await loadWorkflowAsset(ref);
-  const workflowDb = openWorkflowDatabase();
-
-  try {
+  return withWorkflowDb(async (db) => {
     const now = new Date().toISOString();
     const runId = randomUUID();
     const scopeKey = getCurrentWorkflowScopeKey();
     const currentStepId = asset.steps[0]?.id ?? null;
     const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
 
-    workflowDb.transaction(() => {
-      workflowDb
-        .prepare(
-          `INSERT INTO workflow_runs (
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO workflow_runs (
           id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-        )
-        .run(runId, asset.ref, scopeKey, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
+      ).run(runId, asset.ref, scopeKey, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
 
-      const insertStep = workflowDb.prepare(
+      const insertStep = db.prepare(
         `INSERT INTO workflow_run_steps (
           run_id, step_id, step_title, instructions, completion_json, sequence_index, status
         ) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
@@ -125,46 +131,35 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
       }
     })();
 
-    const result = getWorkflowStatus(runId);
+    const result = await getWorkflowStatus(runId);
     appendEvent({
       eventType: "workflow_started",
       ref: ref,
       metadata: { runId: result.run.id, title: result.run.workflowTitle },
     });
     return result;
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
-export function getWorkflowStatus(runId: string): WorkflowRunDetail {
-  const workflowDb = openWorkflowDatabase();
-  try {
-    const run = readWorkflowRun(workflowDb, runId);
-    const steps = readWorkflowRunSteps(workflowDb, run.id);
+export async function getWorkflowStatus(runId: string): Promise<WorkflowRunDetail> {
+  return withWorkflowDb((db) => {
+    const run = readWorkflowRun(db, runId);
+    const steps = readWorkflowRunSteps(db, run.id);
     return buildWorkflowRunDetail(run, steps);
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
-export function hasWorkflowRun(runId: string): boolean {
-  const workflowDb = openWorkflowDatabase();
-  try {
-    const row = workflowDb.prepare("SELECT 1 FROM workflow_runs WHERE id = ? LIMIT 1").get(runId) as
-      | { 1: number }
-      | undefined;
+export async function hasWorkflowRun(runId: string): Promise<boolean> {
+  return withWorkflowDb((db) => {
+    const row = db.prepare("SELECT 1 FROM workflow_runs WHERE id = ? LIMIT 1").get(runId) as { 1: number } | undefined;
     return !!row;
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
-export function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: boolean }): {
+export async function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: boolean }): Promise<{
   runs: WorkflowRunSummary[];
-} {
-  const workflowDb = openWorkflowDatabase();
-  try {
+}> {
+  return withWorkflowDb((db) => {
     const filters: string[] = [];
     const params: string[] = [];
     const scopeKey = getCurrentWorkflowScopeKey();
@@ -182,23 +177,20 @@ export function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: bo
       filters.push("status IN ('active', 'blocked')");
     }
     const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
-    const rows = workflowDb
+    const rows = db
       .prepare(`SELECT * FROM workflow_runs ${where} ORDER BY updated_at DESC, created_at DESC`)
       .all(...params) as WorkflowRunRow[];
     return { runs: rows.map(toWorkflowRunSummary) };
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
 export async function getNextWorkflowStep(
   specifier: string,
   params?: Record<string, unknown>,
 ): Promise<WorkflowNextResult> {
-  const workflowDb = openWorkflowDatabase();
-  try {
-    const { run, autoStarted } = await resolveRunSpecifier(workflowDb, specifier, params);
-    const steps = readWorkflowRunSteps(workflowDb, run.id);
+  return withWorkflowDb(async (db) => {
+    const { run, autoStarted } = await resolveRunSpecifier(db, specifier, params);
+    const steps = readWorkflowRunSteps(db, run.id);
     const currentStep = resolveCurrentStep(run, steps);
     const done = run.status === "completed" ? (true as const) : undefined;
     return {
@@ -212,57 +204,49 @@ export async function getNextWorkflowStep(
       ...(done ? { done } : {}),
       ...(autoStarted ? { autoStarted } : {}),
     };
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
-export function resumeWorkflowRun(runId: string): WorkflowRunDetail {
-  const workflowDb = openWorkflowDatabase();
-  try {
-    const run = readWorkflowRun(workflowDb, runId);
+export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
+  return withWorkflowDb((db) => {
+    const run = readWorkflowRun(db, runId);
     if (run.status === "completed") {
       throw new UsageError(`Workflow run ${run.id} is already completed and cannot be resumed.`);
     }
     if (run.status === "active") {
-      const steps = readWorkflowRunSteps(workflowDb, run.id);
+      const steps = readWorkflowRunSteps(db, run.id);
       return buildWorkflowRunDetail(run, steps);
     }
     // blocked or failed → flip back to active and re-open the current step so
     // it can be reclassified (completed, failed, skipped) after resuming.
     const now = new Date().toISOString();
-    workflowDb.transaction(() => {
+    db.transaction(() => {
       if (run.current_step_id) {
-        workflowDb
-          .prepare(
-            `UPDATE workflow_run_steps
+        db.prepare(
+          `UPDATE workflow_run_steps
              SET status = 'pending', notes = NULL, evidence_json = NULL, completed_at = NULL
              WHERE run_id = ? AND step_id = ? AND status IN ('blocked', 'failed')`,
-          )
-          .run(run.id, run.current_step_id);
+        ).run(run.id, run.current_step_id);
       }
-      workflowDb.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(now, run.id);
+      db.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(now, run.id);
     })();
     const updated: WorkflowRunRow = { ...run, status: "active", updated_at: now };
-    const steps = readWorkflowRunSteps(workflowDb, run.id);
+    const steps = readWorkflowRunSteps(db, run.id);
     return buildWorkflowRunDetail(updated, steps);
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
-export function completeWorkflowStep(input: CompleteWorkflowStepInput): WorkflowRunDetail {
-  const workflowDb = openWorkflowDatabase();
-  try {
+export async function completeWorkflowStep(input: CompleteWorkflowStepInput): Promise<WorkflowRunDetail> {
+  return withWorkflowDb((db) => {
     let updatedRun: WorkflowRunRow | undefined;
     let refreshedSteps: WorkflowRunStepRow[] = [];
 
-    workflowDb.transaction(() => {
-      const run = readWorkflowRun(workflowDb, input.runId);
+    db.transaction(() => {
+      const run = readWorkflowRun(db, input.runId);
       if (run.status !== "active") {
         throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
       }
-      const existing = workflowDb
+      const existing = db
         .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
         .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
       if (!existing) {
@@ -278,30 +262,26 @@ export function completeWorkflowStep(input: CompleteWorkflowStepInput): Workflow
       }
 
       const completedAt = new Date().toISOString();
-      workflowDb
-        .prepare(
-          `UPDATE workflow_run_steps
+      db.prepare(
+        `UPDATE workflow_run_steps
            SET status = ?, notes = ?, evidence_json = ?, completed_at = ?
            WHERE run_id = ? AND step_id = ?`,
-        )
-        .run(
-          input.status,
-          input.notes?.trim() || null,
-          input.evidence ? JSON.stringify(input.evidence) : null,
-          completedAt,
-          run.id,
-          input.stepId,
-        );
+      ).run(
+        input.status,
+        input.notes?.trim() || null,
+        input.evidence ? JSON.stringify(input.evidence) : null,
+        completedAt,
+        run.id,
+        input.stepId,
+      );
 
-      refreshedSteps = readWorkflowRunSteps(workflowDb, run.id);
+      refreshedSteps = readWorkflowRunSteps(db, run.id);
       const state = deriveRunState(refreshedSteps);
-      workflowDb
-        .prepare(
-          `UPDATE workflow_runs
+      db.prepare(
+        `UPDATE workflow_runs
            SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?
            WHERE id = ?`,
-        )
-        .run(state.status, state.currentStepId, completedAt, state.completedAt, run.id);
+      ).run(state.status, state.currentStepId, completedAt, state.completedAt, run.id);
 
       updatedRun = {
         ...run,
@@ -322,9 +302,7 @@ export function completeWorkflowStep(input: CompleteWorkflowStepInput): Workflow
       appendEvent({ eventType: "workflow_finished", ref: detail.run.workflowRef, metadata: { runId: input.runId } });
     }
     return detail;
-  } finally {
-    closeWorkflowDatabase(workflowDb);
-  }
+  });
 }
 
 async function resolveRunSpecifier(
@@ -396,7 +374,7 @@ async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
     throw new NotFoundError(`Workflow not found for ref: workflow:${parsed.name}`);
   }
 
-  const resolvedSourcePath = sourcePath ?? loadConfig().stashDir ?? assetPath;
+  const resolvedSourcePath = sourcePath ?? config.stashDir ?? assetPath;
   const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
 
   const cached = readWorkflowDocumentFromIndex(resolvedSourcePath, fullRef);
@@ -604,20 +582,16 @@ function parseJsonArray(value: string | null): string[] | undefined {
   return undefined;
 }
 
-export function getActiveWorkflowRun(
+export async function getActiveWorkflowRun(
   scopeKey = getCurrentWorkflowScopeKey(),
-): { runId: string; stepId: string | null; workflowRef: string } | null {
-  try {
-    const workflowDb = openWorkflowDatabase();
-    const row = workflowDb
+): Promise<{ runId: string; stepId: string | null; workflowRef: string } | null> {
+  return withWorkflowDb((db) => {
+    const row = db
       .query<{ id: string; current_step_id: string | null; workflow_ref: string }, [string]>(
         "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE scope_key = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
       )
       .get(scopeKey);
-    closeWorkflowDatabase(workflowDb);
     if (!row) return null;
     return { runId: row.id, stepId: row.current_step_id, workflowRef: row.workflow_ref };
-  } catch {
-    return null; // fail-open: never crash show output due to DB error
-  }
+  }).catch(() => null); // fail-open: never crash show output due to DB error
 }

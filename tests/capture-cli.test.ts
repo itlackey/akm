@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { seedStoredGraph } from "./helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -17,6 +18,10 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string; e
   const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
   const xdgCache = makeTempDir("akm-capture-cache-");
   const xdgConfig = makeTempDir("akm-capture-config-");
+  // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
+  // test-isolation guard in src/core/paths.ts stays inert in the spawned CLI.
+  const xdgData = makeTempDir("akm-capture-data-");
+  const xdgState = makeTempDir("akm-capture-state-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -26,6 +31,8 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string; e
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       ...options?.env,
     },
   });
@@ -43,7 +50,11 @@ describe("capture commands", () => {
     const parentDir = makeTempDir("akm-init-parent-");
     const customDir = path.join(parentDir, "custom-stash");
     const homeDir = makeTempDir("akm-init-home-");
-    const { result } = runCli(["init", flag, customDir], { env: { HOME: homeDir } });
+    // Init's sandbox guard (item 6) refuses explicit --dir /tmp/... under a
+    // test runner; this test legitimately exercises that flag, so opt out.
+    const { result } = runCli(["init", flag, customDir], {
+      env: { HOME: homeDir, AKM_FORCE_INIT_TMP_STASH: "1" },
+    });
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { stashDir: string; configPath: string; created: boolean };
@@ -133,5 +144,58 @@ describe("capture commands", () => {
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("Asset name cannot be empty");
+  });
+
+  test("graph summary and entities commands return structured output", () => {
+    const stashDir = makeTempDir("akm-capture-graph-stash-");
+    const xdgData = makeTempDir("akm-capture-graph-data-");
+    seedStoredGraph(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          {
+            path: path.join(stashDir, "knowledge", "k1.md"),
+            type: "knowledge",
+            entities: ["alpha", "beta"],
+            relations: [{ from: "alpha", to: "beta", type: "uses" }],
+          },
+        ],
+        entities: ["alpha", "beta"],
+        relations: [{ from: "alpha", to: "beta", type: "uses" }],
+        quality: {
+          consideredFiles: 1,
+          extractedFiles: 1,
+          entityCount: 2,
+          relationCount: 1,
+          extractionCoverage: 1,
+          density: 1,
+        },
+      },
+      path.join(xdgData, "akm", "index.db"),
+    );
+
+    const summary = runCli(["graph", "summary", "--format=json"], {
+      stashDir,
+      env: { XDG_DATA_HOME: xdgData },
+    }).result;
+    expect(summary.status).toBe(0);
+    const summaryJson = JSON.parse(summary.stdout) as { shape: string; entityCount: number; relationCount: number };
+    expect(summaryJson.shape).toBe("graph-summary");
+    expect(summaryJson.entityCount).toBe(2);
+    expect(summaryJson.relationCount).toBe(1);
+
+    const entities = runCli(["graph", "entities", "--limit", "1", "--format=json"], {
+      stashDir,
+      env: { XDG_DATA_HOME: xdgData },
+    }).result;
+    expect(entities.status).toBe(0);
+    const entitiesJson = JSON.parse(entities.stdout) as {
+      shape: string;
+      entities: Array<{ name: string; fileCount: number }>;
+    };
+    expect(entitiesJson.shape).toBe("graph-entities");
+    expect(entitiesJson.entities).toEqual([{ name: "alpha", fileCount: 1 }]);
   });
 });

@@ -1,18 +1,52 @@
+/**
+ * M-4 / #395 — Index Consistency Architecture Decision Record
+ *
+ * AKM maintains four indexes per stash:
+ *   1. Frontmatter index (SQLite `entries` table) — asset metadata.
+ *   2. FTS5 full-text search index (SQLite `entries_fts` virtual table).
+ *   3. Vector (embedding) index (SQLite `embedding` / `vec_entries` table).
+ *   4. Graph index (SQLite `graph_nodes`, `graph_edges` tables).
+ *
+ * Decision (2026-05-16): No transactional boundary spans all four indexes.
+ * Each step is individually crash-tolerant; cross-step consistency is
+ * **opportunistic recovery** — subsequent index runs detect and heal drift.
+ *
+ * Audit findings:
+ *   - FTS5 is redundant with the main `entries` table when semantic search is
+ *     on, but is the primary search path for keyword-only stashes.
+ *   - The vector index depends on the `entries` table for entry IDs; orphan
+ *     detection in `clearStaleCacheEntries` covers most drift cases.
+ *   - The graph index is rebuilt from scratch on each extraction pass; it is
+ *     not incremental, so cross-step drift resolves on the next extraction.
+ *   - Eliminating any of the four indexes would break the current keyword/
+ *     semantic/graph search paths. Merge is not currently feasible.
+ *
+ * Accepted strategy: opportunistic recovery (reindex heals drift).
+ * CRDT-based convergence (Shapiro et al. 2011) would require per-operation
+ * CRDTs for all four stores — deferred pending a dedicated storage refactor.
+ *
+ * See docs/technical/index-consistency-adr.md for the full analysis.
+ */
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
+import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
+  clearStaleCacheEntries,
   closeDatabase,
   type DbIndexedEntry,
   deleteEntriesByDir,
+  deleteEntriesByIds,
   deleteEntriesByStashDir,
   deleteIndexDirStatesByStashDir,
+  getAllEntriesForEmbedding,
   getEmbeddingCount,
   getEntriesByDir,
   getEntryCount,
@@ -22,19 +56,22 @@ import {
   openDatabase,
   openExistingDatabase,
   rebuildFts,
+  relinkUsageEvents,
   setMeta,
   upsertEmbedding,
   upsertEntry,
   upsertIndexDirState,
   upsertUtilityScore,
+  upsertWorkflowDocument,
   warnIfVecMissing,
 } from "./db";
-import { runGraphExtractionPass } from "./graph-extraction";
-import { runMemoryInferencePass } from "./memory-inference";
+import { deleteStoredGraph } from "./graph-db";
+import type { IndexRunContext } from "./index-context";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
   generateMetadataFlat,
+  isEnrichmentComplete,
   isWorkflowSkipWarning,
   loadStashFile,
   type StashEntry,
@@ -55,6 +92,17 @@ import { walkStashFlat } from "./walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export interface IndexCleanResult {
+  /** Number of entries checked for disk presence. */
+  checked: number;
+  /** Number of entries deleted (0 when dryRun is true). */
+  removed: number;
+  /** Refs of entries whose source file was missing (also populated in dry-run). */
+  removedRefs: string[];
+  /** Whether the run was a dry-run (no deletions performed). */
+  dryRun: boolean;
+}
+
 export interface IndexResponse {
   stashDir: string;
   totalEntries: number;
@@ -65,8 +113,18 @@ export interface IndexResponse {
   directoriesSkipped: number;
   warnings?: string[];
   verification: IndexVerification;
+  graphQuality?: {
+    consideredFiles: number;
+    extractedFiles: number;
+    entityCount: number;
+    relationCount: number;
+    extractionCoverage: number;
+    density: number;
+  };
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
+  /** Present when --clean was passed: stale-entry purge results. */
+  clean?: IndexCleanResult;
 }
 
 export interface IndexVerification {
@@ -92,7 +150,21 @@ export interface IndexProgressEvent {
 interface IndexOptions {
   stashDir?: string;
   full?: boolean;
-  enrich?: boolean;
+  /**
+   * When true, re-enrich all entries regardless of quality (including already
+   * `"enriched"` entries). Default: false — already-enriched entries are skipped.
+   */
+  reEnrich?: boolean;
+  /**
+   * When true, run a post-pass after indexing that removes entries whose source
+   * file no longer exists on disk. Remote entries (empty file_path) are skipped.
+   */
+  clean?: boolean;
+  /**
+   * When true (and `clean` is also true), report which entries would be removed
+   * without actually deleting them.
+   */
+  dryRun?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
 }
@@ -108,13 +180,260 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
+function getDefaultLlmConcurrency(llmConfig?: LlmConnectionConfig): number {
+  if (typeof llmConfig?.concurrency === "number") return llmConfig.concurrency;
+  if (!llmConfig?.endpoint) return 1;
+  try {
+    const url = new URL(llmConfig.endpoint);
+    const host = url.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) return 1;
+  } catch {
+    return 1;
+  }
+  return 4;
+}
+
+// ── Phase functions ──────────────────────────────────────────────────────────
+
+/**
+ * Source cache phase: ensure git stash caches are up to date and purge orphaned
+ * entries from removed sources (incremental only).
+ */
+async function runSourceCachePhase(ctx: IndexRunContext): Promise<void> {
+  const { db, config, sourceDirs, isIncremental, full } = ctx;
+
+  if (isIncremental && !full) {
+    // Purge entries from stash dirs that have been removed since the last run
+    // (e.g. after `akm remove`) so orphaned entries don't linger.
+    const prevStashDirsJson = getMeta(db, "stashDirs");
+    if (prevStashDirsJson) {
+      let prevStashDirs: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(prevStashDirsJson);
+        if (Array.isArray(parsed)) {
+          prevStashDirs = parsed.filter((d): d is string => typeof d === "string");
+        } else {
+          warn("index_meta stashDirs value is not an array — treating as empty");
+        }
+      } catch {
+        warn("index_meta stashDirs value is corrupt JSON — treating as empty");
+      }
+      const currentSet = new Set(sourceDirs);
+      for (const dir of prevStashDirs) {
+        if (!currentSet.has(dir)) {
+          ctx.hadRemovedSources = true;
+          deleteEntriesByStashDir(db, dir);
+          deleteIndexDirStatesByStashDir(db, dir);
+          deleteStoredGraph(db, dir);
+        }
+      }
+    }
+  }
+  // Source caches are hydrated before akmIndex() calls this phase; nothing
+  // further to do here. The flag is exposed on ctx for runWalkPhase().
+  void config;
+}
+
+/**
+ * Walk phase: scan the filesystem, generate metadata, and persist entries to
+ * the database. Also kicks off LLM enrichment for directories that need it.
+ *
+ * Writes `ctx.scannedDirs`, `ctx.skippedDirs`, `ctx.generatedCount`,
+ * `ctx.walkWarnings`, and `ctx.dirsNeedingLlm` for downstream phases.
+ */
+async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
+  const { db, sources, isIncremental, builtAtMs, hadRemovedSources, full, reEnrich, signal, onProgress, config } = ctx;
+
+  throwIfAborted(signal);
+
+  ctx.timing.tWalkStart = Date.now();
+
+  const doFullDelete = full || !isIncremental;
+  const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm, warnings } = await indexEntries(
+    db,
+    sources,
+    isIncremental,
+    builtAtMs,
+    hadRemovedSources,
+    doFullDelete,
+    onProgress,
+  );
+
+  ctx.scannedDirs = scannedDirs;
+  ctx.skippedDirs = skippedDirs;
+  ctx.generatedCount = generatedCount;
+  ctx.walkWarnings = warnings;
+  ctx.dirsNeedingLlm = dirsNeedingLlm;
+
+  onProgress({
+    phase: "scan",
+    message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
+  });
+
+  // Workflow validation noise gate (issue #273): suppress per-spec stderr lines
+  // at default verbosity and emit a single summary instead.
+  // In verbose mode the per-spec lines are already printed by
+  // buildMetadataSkipWarning at generation time — no second pass needed here.
+  if (!isVerbose()) {
+    const workflowSkipWarnings = warnings.filter(isWorkflowSkipWarning);
+    const skippedWorkflowCount = workflowSkipWarnings.length;
+    if (skippedWorkflowCount > 0) {
+      const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
+      warn(
+        `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
+          "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
+      );
+    }
+  }
+
+  ctx.timing.tWalkEnd = Date.now();
+
+  throwIfAborted(signal);
+
+  // LLM enrichment for directories that need it
+  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, onProgress, signal, true, reEnrich);
+  onProgress({
+    phase: "llm",
+    message: resolveIndexPassLLM("enrichment", config)
+      ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
+      : "LLM enhancement disabled.",
+  });
+
+  ctx.timing.tLlmEnd = Date.now();
+}
+
+/**
+ * Embedding phase: generate and store vector embeddings for all unembedded
+ * entries. Writes `ctx.embeddingResult` for the finalize phase.
+ */
+async function runEmbeddingPhase(ctx: IndexRunContext): Promise<void> {
+  const { db, config, signal, onProgress } = ctx;
+
+  throwIfAborted(signal);
+
+  ctx.embeddingResult = await generateEmbeddingsForDb(db, config, onProgress);
+  ctx.timing.tEmbedEnd = Date.now();
+}
+
+/**
+ * Finalize phase: rebuild FTS, re-link usage events, recompute utility scores,
+ * regenerate wiki indexes, update index metadata, and emit the verify event.
+ */
+async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
+  const { db, config, sources, sourceDirs, isIncremental, stashDir, signal, onProgress } = ctx;
+
+  // Rebuild FTS after all inserts. Use incremental mode when this whole
+  // index run is incremental — only entries touched by `upsertEntry`
+  // since the last rebuild are re-indexed.
+  rebuildFts(db, { incremental: isIncremental });
+  onProgress({
+    phase: "fts",
+    message: isIncremental ? "Rebuilt full-text search index (dirty rows only)." : "Rebuilt full-text search index.",
+  });
+  ctx.timing.tFtsEnd = Date.now();
+
+  // Re-link detached usage_events and recompute utility scores.
+  relinkUsageEvents(db);
+  recomputeUtilityScores(db);
+
+  // Purge LLM cache entries for assets that no longer exist in the index.
+  try {
+    clearStaleCacheEntries(db);
+  } catch {
+    /* ignore */
+  }
+
+  // Regenerate each wiki's index.md from its pages' frontmatter. Best-effort.
+  try {
+    const { regenerateAllWikiIndexes } = await import("../wiki/wiki.js");
+    regenerateAllWikiIndexes(stashDir);
+  } catch {
+    /* best-effort */
+  }
+
+  throwIfAborted(signal);
+
+  // Update index metadata
+  const embeddingResult = ctx.embeddingResult ?? { success: false };
+  setMeta(db, "builtAt", new Date().toISOString());
+  setMeta(db, "stashDir", stashDir);
+  setMeta(db, "stashDirs", JSON.stringify(sourceDirs));
+  setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
+
+  warnIfVecMissing(db);
+
+  const totalEntries = getEntryCount(db);
+  const verification = verifyIndexState(db, config, totalEntries, embeddingResult);
+
+  if (config.semanticSearchMode === "off") {
+    clearSemanticStatus();
+  } else {
+    writeSemanticStatus({
+      status: verification.semanticStatus === "disabled" ? "pending" : verification.semanticStatus,
+      ...(embeddingResult.reason ? { reason: embeddingResult.reason } : {}),
+      ...(embeddingResult.message ? { message: embeddingResult.message } : {}),
+      providerFingerprint: deriveSemanticProviderFingerprint(config.embedding),
+      lastCheckedAt: new Date().toISOString(),
+      entryCount: verification.entryCount,
+      embeddingCount: verification.embeddingCount,
+    });
+  }
+  onProgress({ phase: "verify", message: verification.message });
+
+  // Store verification result and totalEntries on ctx for the caller to use
+  (ctx as IndexRunContext & { _verification: IndexVerification; _totalEntries: number })._verification = verification;
+  (ctx as IndexRunContext & { _verification: IndexVerification; _totalEntries: number })._totalEntries = totalEntries;
+
+  // suppress unused warning — sources was previously used inline
+  void sources;
+}
+
+// ── Clean pass ───────────────────────────────────────────────────────────────
+
+/**
+ * Post-index clean pass: scan the `entries` table for rows whose source file
+ * no longer exists on disk and remove them (unless `dryRun` is true).
+ *
+ * Only rows with a non-empty `file_path` are checked — remote/virtual entries
+ * that have no local path are always skipped.
+ */
+function runCleanPass(db: Database, dryRun: boolean): IndexCleanResult {
+  const allEntries = db.prepare("SELECT id, entry_key AS ref, file_path AS path FROM entries").all() as {
+    id: number;
+    ref: string;
+    path: string;
+  }[];
+
+  // Only check entries that have a non-empty local path (skip remote/virtual).
+  const localEntries = allEntries.filter((e) => typeof e.path === "string" && e.path.trim() !== "");
+
+  const missing = localEntries.filter((e) => !fs.existsSync(e.path));
+
+  if (!dryRun && missing.length > 0) {
+    deleteEntriesByIds(
+      db,
+      missing.map((e) => e.id),
+    );
+  }
+
+  return {
+    checked: localEntries.length,
+    removed: dryRun ? 0 : missing.length,
+    removedRefs: missing.map((e) => e.ref),
+    dryRun,
+  };
+}
+
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
 export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const stashDir = options?.stashDir || resolveStashDir();
   const onProgress = options?.onProgress ?? (() => {});
   const signal = options?.signal;
-  const enrich = options?.enrich === true;
+  const reEnrich = options?.reEnrich === true;
+  const full = options?.full === true;
+  const clean = options?.clean === true;
+  const dryRun = options?.dryRun === true;
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("../core/config.js");
@@ -123,7 +442,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
   const { ensureSourceCaches, resolveSourceEntries } = await import("./search-source.js");
-  await ensureSourceCaches(config, { force: options?.full === true });
+  await ensureSourceCaches(config, { force: full });
   const allSourceEntries = resolveSourceEntries(stashDir, config);
   const allSourceDirs = allSourceEntries.map((s) => s.path);
 
@@ -135,11 +454,43 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
 
   try {
-    // Check if we should do incremental
+    // Determine incremental vs full mode
     const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
-    const isIncremental = !options?.full && prevStashDir === stashDir && !!prevBuiltAt;
+    const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
+
+    // Assemble the run context
+    const ctx: IndexRunContext = {
+      db,
+      config,
+      sources: allSourceEntries,
+      sourceDirs: allSourceDirs,
+      full,
+      reEnrich,
+      stashDir,
+      onProgress,
+      signal,
+      timing: {
+        t0,
+        tWalkStart: t0,
+        tWalkEnd: t0,
+        tLlmEnd: t0,
+        tFtsEnd: t0,
+        tEmbedEnd: t0,
+      },
+      isIncremental,
+      builtAtMs,
+      hadRemovedSources: false,
+      scannedDirs: 0,
+      skippedDirs: 0,
+      generatedCount: 0,
+      walkWarnings: [],
+      dirsNeedingLlm: [],
+      embeddingResult: null,
+      graphExtractionResult: null,
+    };
+
     onProgress({
       phase: "summary",
       message: buildIndexSummaryMessage({
@@ -147,261 +498,51 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         sourcesCount: allSourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
-        llmEnabled: enrich && !!resolveIndexPassLLM("enrichment", config),
+        llmEnabled: !!resolveIndexPassLLM("enrichment", config),
         vecAvailable: isVecAvailable(db),
       }),
     });
 
-    let hadRemovedSources = false;
-    if (options?.full || !isIncremental) {
-      // The delete is now merged into the insert transaction inside
-      // indexEntries() so that a reader never sees an empty database between
-      // the wipe and the re-inserts.  The doFullDelete flag signals this path.
-    } else {
-      // Incremental: purge entries from stash dirs that have been removed
-      // (e.g. after `akm remove`) so orphaned entries don't linger.
-      const prevStashDirsJson = getMeta(db, "stashDirs");
-      if (prevStashDirsJson) {
-        let prevStashDirs: string[] = [];
-        try {
-          const parsed: unknown = JSON.parse(prevStashDirsJson);
-          if (Array.isArray(parsed)) {
-            prevStashDirs = parsed.filter((d): d is string => typeof d === "string");
-          } else {
-            warn("index_meta stashDirs value is not an array — treating as empty");
-          }
-        } catch {
-          warn("index_meta stashDirs value is corrupt JSON — treating as empty");
-        }
-        const currentSet = new Set(allSourceDirs);
-        for (const dir of prevStashDirs) {
-          if (!currentSet.has(dir)) {
-            hadRemovedSources = true;
-            deleteEntriesByStashDir(db, dir);
-            deleteIndexDirStatesByStashDir(db, dir);
-          }
-        }
-      }
+    // ── Phase sequence ───────────────────────────────────────────────────────
+    await runSourceCachePhase(ctx);
+    await runWalkPhase(ctx);
+    await runEmbeddingPhase(ctx);
+    await runFinalizePhase(ctx);
+    // ────────────────────────────────────────────────────────────────────────
+
+    const { _verification: verification, _totalEntries: totalEntries } = ctx as IndexRunContext & {
+      _verification: IndexVerification;
+      _totalEntries: number;
+    };
+    const { timing } = ctx;
+
+    // ── Clean pass ───────────────────────────────────────────────────────────
+    // After the normal index completes, remove entries whose source files no
+    // longer exist on disk. Remote entries (empty file_path) are skipped.
+    let cleanResult: IndexCleanResult | undefined;
+    if (clean) {
+      cleanResult = runCleanPass(db, dryRun);
     }
-
-    throwIfAborted(signal);
-
-    // Memory inference pass (#201). Runs before the walk so any derived-memory
-    // children that get written are picked up by the walker in this same run
-    // and don't have to wait for the next `akm index`. Gated entirely by
-    // `resolveIndexPassLLM("memory", config)` — when the user has no
-    // `akm.llm` block or has set `index.memory.llm = false`, this is a no-op
-    // and existing inferred children are left in place.
-    if (enrich) {
-      try {
-        const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal);
-        if (inferenceResult.writtenFacts > 0 || inferenceResult.skippedNoFacts > 0) {
-          onProgress({
-            phase: "llm",
-            message:
-              `Memory inference reviewed ${inferenceResult.considered} ` +
-              `${inferenceResult.considered === 1 ? "memory" : "memories"}; wrote ` +
-              `${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} ` +
-              `from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}` +
-              (inferenceResult.skippedNoFacts > 0
-                ? `; skipped ${inferenceResult.skippedNoFacts} ${inferenceResult.skippedNoFacts === 1 ? "memory" : "memories"} with unusable LLM responses`
-                : "") +
-              ".",
-          });
-        }
-        if (inferenceResult.skippedNoFacts > 0) {
-          warn(
-            `Memory inference skipped ${inferenceResult.skippedNoFacts} ` +
-              `${inferenceResult.skippedNoFacts === 1 ? "memory" : "memories"} because the LLM returned empty, invalid, or incomplete derived payloads. ` +
-              "Check your model and token budget.",
-          );
-        }
-      } catch (err) {
-        warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    } else {
-      onProgress({
-        phase: "llm",
-        message: "LLM passes disabled; rerun with --enrich to enable inference and enrichment.",
-      });
-    }
-
-    // Graph extraction pass (#207). Runs after memory inference so any
-    // atomic-fact children that just got written are visible to the graph
-    // walk. Persists `<stashRoot>/.akm/graph.json` — an indexer artifact,
-    // NOT a user-visible asset, so it is not routed through
-    // writeAssetToSource. The artifact feeds the existing FTS5+boosts
-    // pipeline as a single boost component (see graph-boost.ts); there is
-    // no parallel scoring track. Disabled when either gate (the locked
-    // `llm.features.graph_extraction` feature flag or the per-pass
-    // `index.graph.llm` toggle) is off; the existing graph file is
-    // preserved on disk in that case.
-    if (enrich) {
-      try {
-        const graphResult = await runGraphExtractionPass(config, allSourceEntries, signal);
-        if (graphResult.written) {
-          onProgress({
-            phase: "llm",
-            message: `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}.`,
-          });
-        }
-      } catch (err) {
-        warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    throwIfAborted(signal);
-
-    const tWalkStart = Date.now();
-
-    // Walk stash dirs and index entries.
-    // doFullDelete=true merges the wipe into the same transaction as the
-    // inserts so readers never see an empty database mid-rebuild.
-    const doFullDelete = options?.full || !isIncremental;
-    const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm, warnings } = await indexEntries(
-      db,
-      allSourceEntries,
-      isIncremental,
-      builtAtMs,
-      hadRemovedSources,
-      doFullDelete,
-      onProgress,
-    );
-    onProgress({
-      phase: "scan",
-      message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
-    });
-
-    // Workflow validation noise gate (issue #273): per-spec stderr lines from
-    // `buildMetadataSkipWarning` are suppressed at default verbosity in
-    // `metadata.ts`. Replace them with a single summary line so operators
-    // running a cold-start search against a fresh registry-cloned source
-    // don't get the impression akm is broken. Verbose mode keeps the
-    // per-spec output instead of (not in addition to) the summary.
-    if (!isVerbose()) {
-      const skippedWorkflowCount = warnings.filter(isWorkflowSkipWarning).length;
-      if (skippedWorkflowCount > 0) {
-        const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
-        warn(
-          `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
-            "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
-        );
-      }
-    }
-
-    const tWalkEnd = Date.now();
-
-    throwIfAborted(signal);
-
-    // Enhance entries with LLM if configured
-    await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal, enrich);
-    onProgress({
-      phase: "llm",
-      message:
-        enrich && resolveIndexPassLLM("enrichment", config)
-          ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
-          : "LLM enhancement disabled.",
-    });
-
-    const tLlmEnd = Date.now();
-
-    throwIfAborted(signal);
-
-    // Rebuild FTS after all inserts. Use incremental mode when this whole
-    // index run is incremental — only entries touched by `upsertEntry`
-    // since the last rebuild are re-indexed, instead of re-scanning every
-    // row on every `akm index` invocation.
-    rebuildFts(db, { incremental: isIncremental });
-    onProgress({
-      phase: "fts",
-      message: isIncremental ? "Rebuilt full-text search index (dirty rows only)." : "Rebuilt full-text search index.",
-    });
-    const tFtsEnd = Date.now();
-
-    // Re-link detached usage_events to their new entry_ids via entry_ref.
-    // entry_ref is "type:name" (e.g., "skill:code-review"), entry_key is "stashDir:type:name".
-    // Use substr to extract the "type:name" suffix from entry_key for exact comparison
-    // (avoids LIKE which would require escaping % and _ in user-facing names).
-    try {
-      db.exec(`
-        UPDATE usage_events SET entry_id = (
-          SELECT e.id FROM entries e
-          WHERE substr(e.entry_key, length(e.entry_key) - length(usage_events.entry_ref)) = ':' || usage_events.entry_ref
-          LIMIT 1
-        )
-        WHERE entry_id IS NULL AND entry_ref IS NOT NULL
-      `);
-    } catch {
-      /* ignore if table doesn't exist yet */
-    }
-
-    // Recompute utility scores from usage_events after FTS rebuild
-    recomputeUtilityScores(db);
-
-    // Regenerate each wiki's index.md from its pages' frontmatter. Best-effort
-    // — errors are caught inside regenerateAllWikiIndexes and never block the
-    // index run. The primary stash is the only target: additional sources
-    // are read-only caches, and regenerating their indexes would mutate
-    // cache content.
-    try {
-      const { regenerateAllWikiIndexes } = await import("../wiki/wiki.js");
-      regenerateAllWikiIndexes(stashDir);
-    } catch {
-      /* best-effort */
-    }
-
-    throwIfAborted(signal);
-
-    // Generate embeddings if semantic search is enabled
-    const embeddingResult = await generateEmbeddingsForDb(db, config, onProgress);
-
-    const tEmbedEnd = Date.now();
-
-    // Update metadata
-    setMeta(db, "builtAt", new Date().toISOString());
-    setMeta(db, "stashDir", stashDir);
-    setMeta(db, "stashDirs", JSON.stringify(allSourceDirs));
-    setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
-
-    const totalEntries = getEntryCount(db);
-
-    // Warn on every index run if using JS fallback with many entries
-    warnIfVecMissing(db);
-
-    const tEnd = Date.now();
-    const verification = verifyIndexState(db, config, totalEntries, embeddingResult);
-    if (config.semanticSearchMode === "off") {
-      clearSemanticStatus();
-    } else {
-      writeSemanticStatus({
-        status: verification.semanticStatus === "disabled" ? "pending" : verification.semanticStatus,
-        ...(embeddingResult.reason ? { reason: embeddingResult.reason } : {}),
-        ...(embeddingResult.message ? { message: embeddingResult.message } : {}),
-        providerFingerprint: deriveSemanticProviderFingerprint(config.embedding),
-        lastCheckedAt: new Date().toISOString(),
-        entryCount: verification.entryCount,
-        embeddingCount: verification.embeddingCount,
-      });
-    }
-    onProgress({ phase: "verify", message: verification.message });
+    // ────────────────────────────────────────────────────────────────────────
 
     return {
       stashDir,
       totalEntries,
-      generatedMetadata: generatedCount,
+      generatedMetadata: ctx.generatedCount,
       indexPath: dbPath,
       mode: isIncremental ? "incremental" : "full",
-      directoriesScanned: scannedDirs,
-      directoriesSkipped: skippedDirs,
-      ...(warnings.length > 0 ? { warnings } : {}),
+      directoriesScanned: ctx.scannedDirs,
+      directoriesSkipped: ctx.skippedDirs,
+      ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
       verification,
       timing: {
-        totalMs: tEnd - t0,
-        walkMs: tWalkEnd - tWalkStart,
-        llmMs: tLlmEnd - tWalkEnd,
-        embedMs: tEmbedEnd - tFtsEnd,
-        ftsMs: tFtsEnd - tLlmEnd,
+        totalMs: Date.now() - timing.t0,
+        walkMs: timing.tWalkEnd - timing.tWalkStart,
+        llmMs: timing.tLlmEnd - timing.tWalkEnd,
+        embedMs: timing.tEmbedEnd - timing.tFtsEnd,
+        ftsMs: timing.tFtsEnd - timing.tLlmEnd,
       },
+      ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
     };
   } finally {
     closeDatabase(db);
@@ -720,7 +861,10 @@ async function indexEntries(
       if (stash) {
         for (const entry of stash.entries) {
           const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
-          if (!entryPath) continue; // skip unresolvable entries
+          if (!entryPath) {
+            warn(`Skipping entry with no resolvable path in ${dirPath}`);
+            continue;
+          }
           if (!shouldIndexStashFile(currentStashDir, entryPath)) continue;
 
           // Skip if a higher-priority stash root already indexed this asset
@@ -746,7 +890,9 @@ async function indexEntries(
           }
         }
 
-        // Collect dirs needing LLM enhancement during the first walk
+        // Collect dirs needing LLM enhancement during the first walk.
+        // Only dirs with "generated" entries need enrichment (unless reEnrich
+        // forces re-processing of already-enriched entries).
         if (stash.entries.some((e) => e.quality === "generated")) {
           dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
         }
@@ -766,7 +912,19 @@ async function indexEntries(
         reason: persistedReason,
       });
       if (persistedRows === 0) {
-        warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        // Warn only when the dir had files that *could* produce entries (.md or
+        // known script extensions). Dirs with only non-indexable types (.json,
+        // .yaml, .conf, .env, .gitkeep) or deduped-only rows are expected and
+        // not actionable at normal log level.
+        const hasIndexableExtension = files.some((f) => {
+          const ext = path.extname(f).toLowerCase();
+          return ext === ".md" || SCRIPT_EXTENSIONS.has(ext);
+        });
+        if (persistedReason !== "deduped-zero-row" && hasIndexableExtension) {
+          warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        } else {
+          warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        }
       }
     }
   });
@@ -926,11 +1084,11 @@ async function enhanceDirsWithLlm(
     currentStashDir: string;
     stash: StashFile;
   }>,
+  onProgress?: (event: IndexProgressEvent) => void,
   signal?: AbortSignal,
-  enrich = false,
+  _enrich = false,
+  reEnrich = false,
 ): Promise<void> {
-  if (!enrich) return;
-
   // Resolve per-pass LLM config via the unified shim. Returns undefined when
   // either no `akm.llm` is configured or the user opted this pass out via
   // `index.enrichment.llm = false`. (#208)
@@ -941,25 +1099,172 @@ async function enhanceDirsWithLlm(
   // as a single visible warning instead of silently degrading every entry
   // and leaving the user wondering why nothing got enhanced.
   const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
+  let completedDirs = 0;
+  let completedEntries = 0;
+  const totalDirs = dirsNeedingLlm.length;
+  const totalEntries = dirsNeedingLlm.reduce((sum, { stash }) => {
+    const entriesToEnhance = stash.entries.filter((e) => {
+      if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
+      if (!reEnrich && isEnrichmentComplete(e)) return false;
+      return true;
+    });
+    return sum + entriesToEnhance.length;
+  }, 0);
 
-  for (const { dirPath, files, currentStashDir, stash: originalStash } of dirsNeedingLlm) {
-    throwIfAborted(signal);
-    // Only enhance generated entries; user-provided overrides should not be overwritten
-    const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
-    if (generatedEntries.length === 0) continue;
-    const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(llmConfig, generatedStash, files, summary, signal);
+  // P3 — wall-clock budget for the enrichment pass. Defaults to llm.timeoutMs
+  // (or 10 minutes if not set). Users can extend this via llm.timeoutMs in
+  // config — no separate knob needed.
+  const budgetMs = (llmConfig.timeoutMs ?? 10 * 60 * 1000) * Math.max(totalEntries, 1);
+  const enrichDeadline = AbortSignal.timeout(budgetMs);
+  let deadlineHit = false;
+  const enrichSignal: AbortSignal = (() => {
+    if (!signal) return enrichDeadline;
+    // Combine: abort when either fires.
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    enrichDeadline.addEventListener(
+      "abort",
+      () => {
+        deadlineHit = true;
+        controller.abort();
+      },
+      { once: true },
+    );
+    return controller.signal;
+  })();
 
-    // Re-upsert the enhanced entries in a single transaction so a crash
-    // cannot leave half the entries updated and the rest stale.
-    db.transaction(() => {
-      for (const entry of enhanced.entries) {
-        const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-        const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
-        const searchText = buildSearchText(entry);
-        upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
-      }
-    })();
+  if (totalEntries > 0) {
+    onProgress?.({
+      phase: "llm",
+      message:
+        `LLM enhancement starting for ${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} ` +
+        `across ${totalDirs} director${totalDirs === 1 ? "y" : "ies"} (concurrency ${getDefaultLlmConcurrency(llmConfig)}).`,
+      processed: 0,
+      total: totalEntries,
+    });
+  }
+
+  let currentDirLabel: string | undefined;
+  let lastProgressAt = Date.now();
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  if (totalEntries > 0 && onProgress) {
+    heartbeatTimer = setInterval(() => {
+      if (Date.now() - lastProgressAt < 15000) return;
+      onProgress({
+        phase: "llm",
+        message:
+          `Still enriching ${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"}` +
+          (currentDirLabel ? `; waiting on ${currentDirLabel}` : "") +
+          ".",
+        processed: completedEntries,
+        total: totalEntries,
+      });
+      lastProgressAt = Date.now();
+    }, 15000);
+  }
+
+  try {
+    await concurrentMap(
+      dirsNeedingLlm,
+      async ({ dirPath, files, currentStashDir, stash: originalStash }) => {
+        if (enrichSignal.aborted) return undefined;
+        // Only enhance generated entries (or all when reEnrich=true);
+        // user-provided overrides should not be overwritten.
+        // Skip entries that are already fully enriched (description + tags + searchHints)
+        // unless the caller explicitly requests re-enrichment via reEnrich=true.
+        const entriesToEnhance = originalStash.entries.filter((e) => {
+          if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
+          if (!reEnrich && isEnrichmentComplete(e)) {
+            warnVerbose(`[akm] skipping LLM enrichment for "${e.name}" — entry already complete`);
+            return false;
+          }
+          return true;
+        });
+        if (entriesToEnhance.length === 0) return undefined;
+        currentDirLabel = path.relative(currentStashDir, dirPath) || ".";
+        onProgress?.({
+          phase: "llm",
+          message:
+            `Enhancing ${currentDirLabel} ` +
+            `(${entriesToEnhance.length} entr${entriesToEnhance.length === 1 ? "y" : "ies"}).`,
+          processed: completedEntries,
+          total: totalEntries,
+        });
+        lastProgressAt = Date.now();
+        const targetStash: StashFile = { entries: entriesToEnhance };
+        const entryKeys = entriesToEnhance.map((e) => `${currentStashDir}:${e.type}:${e.name}`);
+        const enhanced = await enhanceStashWithLlm(
+          llmConfig,
+          targetStash,
+          files,
+          summary,
+          enrichSignal,
+          db,
+          entryKeys,
+          reEnrich,
+          config,
+          (event) => {
+            completedEntries++;
+            lastProgressAt = Date.now();
+            onProgress?.({
+              phase: "llm",
+              message:
+                `Enhanced ${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"}; ` +
+                `${completedDirs}/${totalDirs} director${totalDirs === 1 ? "y" : "ies"} complete` +
+                (event.entryName ? `; current ${event.entryName}` : "") +
+                (currentDirLabel ? ` in ${currentDirLabel}` : "") +
+                (event.outcome === "cache-hit" ? " (cache hit)" : ""),
+              processed: completedEntries,
+              total: totalEntries,
+            });
+          },
+        );
+
+        // Re-upsert the enhanced entries in a single transaction so a crash
+        // cannot leave half the entries updated and the rest stale.
+        db.transaction(() => {
+          for (const entry of enhanced.entries) {
+            const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+            const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+            const searchText = buildSearchText(entry);
+            upsertEntry(
+              db,
+              entryKey,
+              dirPath,
+              entryPath,
+              currentStashDir,
+              attachFileSize(entry, entryPath),
+              searchText,
+            );
+          }
+        })();
+        completedDirs++;
+        lastProgressAt = Date.now();
+        onProgress?.({
+          phase: "llm",
+          message:
+            `Completed ${completedDirs}/${totalDirs} director${totalDirs === 1 ? "y" : "ies"}; ` +
+            `${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} processed.`,
+          processed: completedEntries,
+          total: totalEntries,
+        });
+        return undefined;
+      },
+      // Default concurrency of 4 works well for cloud LLM APIs. Local model
+      // servers (LM Studio, Ollama) run one inference at a time — set
+      // `llm.concurrency: 1` in config.json to avoid "Model reloaded" / 500
+      // errors from concurrent request overload.
+      getDefaultLlmConcurrency(llmConfig),
+    );
+  } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+  }
+
+  if (deadlineHit) {
+    warn(
+      "[akm] LLM enrichment budget exceeded. Re-run `akm index` to continue. Increase llm.timeoutMs for a larger budget.",
+    );
   }
 
   if (summary.attempted > 0 && summary.succeeded === 0) {
@@ -1042,14 +1347,25 @@ async function generateEmbeddingsForDb(
     throwIfAborted(signal);
     // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.
+    let storedCount = 0;
+    let skippedCount = 0;
     db.transaction(() => {
       for (let i = 0; i < allEntries.length; i++) {
-        upsertEmbedding(db, allEntries[i].id, embeddings[i]);
+        if (upsertEmbedding(db, allEntries[i].id, embeddings[i])) {
+          storedCount++;
+        } else {
+          skippedCount++;
+        }
       }
     })();
+    if (skippedCount > 0) {
+      warn(
+        `[embed] ${skippedCount} embedding${skippedCount === 1 ? "" : "s"} skipped (entry deleted between queue and write)`,
+      );
+    }
     onProgress({
       phase: "embeddings",
-      message: `Stored ${embeddings.length} embedding${embeddings.length === 1 ? "" : "s"}.`,
+      message: `Stored ${storedCount} embedding${storedCount === 1 ? "" : "s"}.`,
     });
     setMeta(db, "embeddingFingerprint", currentFingerprint);
     return { success: true };
@@ -1076,54 +1392,12 @@ interface EmbeddingGenerationResult {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function getAllEntriesForEmbedding(
-  db: Database,
-): Array<{ id: number; searchText: string; entryKey: string; filePath: string }> {
-  return db
-    .prepare(`
-      SELECT e.id, e.search_text AS searchText, e.entry_key AS entryKey, e.file_path AS filePath FROM entries e
-      WHERE NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)
-    `)
-    .all() as Array<{ id: number; searchText: string; entryKey: string; filePath: string }>;
-}
-
 function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
   try {
     return { ...entry, fileSize: fs.statSync(entryPath).size };
   } catch {
     return entry;
   }
-}
-
-function upsertWorkflowDocument(
-  db: Database,
-  entryId: number,
-  doc: import("../workflows/schema").WorkflowDocument,
-  content: Buffer,
-): void {
-  const sourceHash = computeSourceHash(content);
-  db.prepare(
-    `INSERT INTO workflow_documents (entry_id, schema_version, document_json, source_path, source_hash, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(entry_id) DO UPDATE SET
-       schema_version = excluded.schema_version,
-       document_json = excluded.document_json,
-       source_path = excluded.source_path,
-       source_hash = excluded.source_hash,
-       updated_at = excluded.updated_at`,
-  ).run(entryId, doc.schemaVersion, JSON.stringify(doc), doc.source.path, sourceHash, new Date().toISOString());
-}
-
-function computeSourceHash(content: Buffer): string {
-  // Cheap, stable identity for the source markdown — used by future
-  // incremental fast-paths that skip re-validation when content is unchanged.
-  // Not security-sensitive; FNV-1a over the bytes is sufficient.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < content.length; i++) {
-    hash ^= content[i];
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
 }
 
 function buildIndexSummaryMessage(options: {
@@ -1266,43 +1540,109 @@ async function enhanceStashWithLlm(
   files: string[],
   summary: LlmEnhancementSummary,
   signal?: AbortSignal,
+  db?: Database,
+  entryKeys?: string[],
+  reEnrich?: boolean,
+  akmConfig?: AkmConfig,
+  onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" }) => void,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
+  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db.js");
 
-  const enhanced: StashEntry[] = [];
-  for (const entry of stash.entries) {
-    throwIfAborted(signal);
-    summary.attempted++;
-    try {
-      const entryFile = entry.filename
-        ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0])
-        : files[0];
-      let fileContent: string | undefined;
-      if (entryFile) {
-        try {
-          fileContent = fs.readFileSync(entryFile, "utf8");
-        } catch {
-          /* ignore unreadable files */
+  const results = await concurrentMap(
+    stash.entries,
+    async (entry, idx) => {
+      if (signal?.aborted) return entry;
+      summary.attempted++;
+      try {
+        const entryFile = entry.filename
+          ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0])
+          : files[0];
+        let fileContent: string | undefined;
+        if (entryFile) {
+          try {
+            fileContent = fs.readFileSync(entryFile, "utf8");
+          } catch {
+            warn(`Could not read file for LLM enrichment: ${entry.filename ?? entry.name}`);
+          }
         }
-      }
 
-      const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal);
-      const updated = { ...entry };
-      if (improvements.description) updated.description = improvements.description;
-      if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;
-      if (improvements.tags?.length) updated.tags = improvements.tags;
-      enhanced.push(updated);
-      summary.succeeded++;
-    } catch (err) {
-      enhanced.push(entry);
-      const msg = toErrorMessage(err);
-      // failureSamples is bounded to 3 items, so a linear scan is cheaper
-      // than maintaining a parallel Set for membership checks (#177 review).
-      if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
-        summary.failureSamples.push(msg);
+        // Incremental cache: skip LLM call when file body is unchanged and
+        // --re-enrich was not requested. The cache key is the entry_key
+        // (stashDir:type:name) which is stable across index runs.
+        const cacheBody = fileContent ?? `${entry.name}\n${entry.description ?? ""}`;
+        const bodyHash = computeBodyHash(cacheBody);
+        const cacheKey = entryKeys?.[idx] ?? `${entry.type}:${entry.name}`;
+
+        if (db && !reEnrich) {
+          const cached = getLlmCacheEntry(db, cacheKey, bodyHash);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached.resultJson) as {
+                description?: string;
+                searchHints?: string[];
+                tags?: string[];
+              };
+              const updated = { ...entry };
+              if (parsed.description) updated.description = parsed.description;
+              if (parsed.searchHints?.length) updated.searchHints = parsed.searchHints;
+              if (parsed.tags?.length) updated.tags = parsed.tags;
+              updated.quality = "enriched";
+              summary.succeeded++;
+              onEntryDone?.({ entryName: entry.name, outcome: "cache-hit" });
+              return updated;
+            } catch {
+              warn(`LLM enrichment cache entry corrupt for ${entry.name}; re-running enrichment`);
+            }
+          }
+        }
+
+        const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal, akmConfig);
+        const updated = { ...entry };
+        if (improvements.description) updated.description = improvements.description;
+        if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;
+        if (improvements.tags?.length) updated.tags = improvements.tags;
+        // Mark as enriched so subsequent index runs skip re-enrichment (P2)
+        updated.quality = "enriched";
+
+        // Persist to cache so the next run can skip the LLM call when the
+        // file body has not changed.
+        if (db) {
+          upsertLlmCacheEntry(
+            db,
+            cacheKey,
+            bodyHash,
+            JSON.stringify({
+              description: improvements.description,
+              searchHints: improvements.searchHints,
+              tags: improvements.tags,
+            }),
+          );
+        }
+
+        summary.succeeded++;
+        onEntryDone?.({ entryName: entry.name, outcome: "llm" });
+        return updated;
+      } catch (err) {
+        const msg = toErrorMessage(err);
+        // failureSamples is bounded to 3 items, so a linear scan is cheaper
+        // than maintaining a parallel Set for membership checks (#177 review).
+        if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
+          summary.failureSamples.push(msg);
+        }
+        onEntryDone?.({ entryName: entry.name, outcome: "failed" });
+        return entry;
       }
-    }
-  }
+    },
+    // Default concurrency of 4 works well for cloud LLM APIs. Set
+    // `llm.concurrency: 1` in config.json for local model servers.
+    getDefaultLlmConcurrency(llmConfig),
+  );
+
+  // concurrentMap returns Array<T | undefined>; filter out undefined slots
+  // (which can only occur if the callback itself returned undefined, which
+  // it never does above — but TypeScript needs the filter for type safety).
+  const enhanced: StashEntry[] = results.map((r, i) => r ?? stash.entries[i]);
   return { entries: enhanced };
 }
 
@@ -1526,14 +1866,17 @@ export function recomputeUtilityScores(db: Database): void {
   }
 
   // Batch-load existing utility scores
-  const existingScores = new Map<number, number>();
-  const scoreRows = db.prepare("SELECT entry_id, utility FROM utility_scores").all() as Array<{
+  const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();
+  const scoreRows = db.prepare("SELECT entry_id, utility, last_used_at FROM utility_scores").all() as Array<{
     entry_id: number;
     utility: number;
+    last_used_at: string | null;
   }>;
   for (const row of scoreRows) {
-    existingScores.set(row.entry_id, row.utility);
+    existingScores.set(row.entry_id, { utility: row.utility, lastUsedAt: row.last_used_at ?? undefined });
   }
+
+  const now = new Date().toISOString();
 
   for (const row of usageRows) {
     const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
@@ -1541,15 +1884,17 @@ export function recomputeUtilityScores(db: Database): void {
     const feedbackRate =
       feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
     const effectiveRate = Math.max(selectRate, feedbackRate);
-    const prevUtility = existingScores.get(row.entry_id) ?? 0;
+    const existing = existingScores.get(row.entry_id);
+    const prevUtility = existing?.utility ?? 0;
     const utility = prevUtility * emaDecay + effectiveRate * emaNew;
+    const lastUsedAt = effectiveRate > 0.5 ? now : (existing?.lastUsedAt ?? undefined);
 
     upsertUtilityScore(db, row.entry_id, {
       utility,
       showCount: row.show_count,
       searchCount: row.search_count,
       selectRate,
-      lastUsedAt: row.last_used_at ?? undefined,
+      lastUsedAt,
     });
   }
 

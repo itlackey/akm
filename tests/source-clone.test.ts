@@ -9,8 +9,12 @@ import { UsageError } from "../src/core/errors";
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 let testConfigDir = "";
 let testCacheDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let stashDir = "";
 let searchPathDir = "";
 
@@ -30,10 +34,16 @@ function createStashDir(prefix: string): string {
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-config-"));
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-cache-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-state-"));
   stashDir = createStashDir("akm-clone-working-");
   searchPathDir = createStashDir("akm-clone-searchpath-");
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
+  // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
+  // write-guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 
   saveConfig({
@@ -48,7 +58,11 @@ afterEach(() => {
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  for (const dir of [testConfigDir, testCacheDir, stashDir, searchPathDir]) {
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
+  for (const dir of [testConfigDir, testCacheDir, testDataDir, testStateDir, stashDir, searchPathDir]) {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 });

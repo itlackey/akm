@@ -4,13 +4,17 @@ import { CONFIG_DOC_PATH, extractSection, readDoc, SPEC_PATH } from "./spec-help
 
 // Pins v1 spec §14 — `llm.features.*` (Planned for v1).
 //
-// The locked feature keys cannot be renamed after v1.0. New keys may be
-// added; these must not move. Spec §14 retains the historical phantom keys
-// (`tag_dedup`, `memory_consolidation`, `embedding_fallback_score`) so the
-// spec text continues to compile, but they are not in the runtime schema or
-// in user-facing configuration.md (issue #284 phantom-flag cleanup).
+// The locked feature keys cannot be renamed after v1.0.
 
-const LOCKED_FEATURE_KEYS = ["curate_rerank", "feedback_distillation", "memory_inference", "graph_extraction"];
+const LOCKED_FEATURE_KEYS = [
+  "curate_rerank",
+  "memory_consolidation",
+  "feedback_distillation",
+  "memory_inference",
+  "graph_extraction",
+  "lesson_quality_gate",
+  "metadata_enhance",
+];
 
 describe("v1 spec §14 — llm.features.*", () => {
   const spec = readDoc(SPEC_PATH);
@@ -27,8 +31,14 @@ describe("v1 spec §14 — llm.features.*", () => {
     }
   });
 
-  test("§14.1 declares all defaults are false", () => {
-    expect(section).toMatch(/defaults are\s*`false`|all defaults are\s*`false`|defaults\s*`false`/i);
+  test("§14.1 declares mixed defaults with memory/graph enabled by default", () => {
+    expect(section).toMatch(/memory_inference.*default.*`true`/is);
+    expect(section).toMatch(/graph_extraction.*default.*`true`/is);
+    expect(section).toMatch(/curate_rerank.*default.*`false`/is);
+    expect(section).toMatch(/memory_consolidation.*default.*`false`/is);
+    expect(section).toMatch(/feedback_distillation.*default.*`false`/is);
+    expect(section).toMatch(/lesson_quality_gate.*default.*`false`/is);
+    expect(section).toMatch(/metadata_enhance.*default.*`false`/is);
   });
 
   test("§14.2 defines mandatory failure-mode rules", () => {
@@ -42,10 +52,11 @@ describe("v1 spec §14 — llm.features.*", () => {
     expect(section).toMatch(/no streaming sessions/i);
   });
 
-  test("§14.5 routes distill output through the proposal queue", () => {
+  test("§14.5 routes improve output through the proposal queue", () => {
     const flat = section.replace(/\s+/g, " ");
     expect(flat).toMatch(/`lesson` \*\*proposal\*\*/i);
-    expect(section).toContain("distill_invoked");
+    expect(section).toContain("improve_invoked");
+    expect(section).toContain("akm improve");
   });
 
   test("§14 documents orthogonality between llm.features.* and index.<pass>.llm", () => {
@@ -65,21 +76,29 @@ describe("v1 spec §14 — llm.features.*", () => {
 });
 
 describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
+  // v2: llm.features.* replaced by unified features.<section>.<process> tree.
+  // Process names are documented in the "Known process names" section.
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## `llm.features.*` map");
+  const block = extractSection(config, "## Known process names");
 
-  test("configuration.md has the llm.features section", () => {
+  test("configuration.md has the known process names section", () => {
     expect(block).not.toBe("");
+    expect(block).toContain("features.");
   });
 
-  test("configuration.md lists every locked feature key", () => {
-    for (const k of LOCKED_FEATURE_KEYS) {
+  test("configuration.md lists the feature process names", () => {
+    // All former llm.features keys survive as process names in the v2 features tree
+    const v2ProcessNames = LOCKED_FEATURE_KEYS.filter((k) => k !== "lesson_quality_gate");
+    for (const k of v2ProcessNames) {
       expect(block).toContain(k);
     }
   });
 
-  test("configuration.md says unknown llm.features keys are warn-and-ignore", () => {
-    expect(block).toMatch(/Unknown keys.*warn-and-ignore/i);
+  test("configuration.md documents the process entry shape section", () => {
+    // warn-and-ignore contract is documented in Process entry shape
+    const shape = extractSection(config, "## Process entry shape");
+    expect(shape).not.toBe("");
+    expect(shape).toMatch(/warn.and.ignore|unknown.*keys/i);
   });
 });
 

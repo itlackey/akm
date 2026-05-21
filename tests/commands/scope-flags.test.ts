@@ -18,7 +18,7 @@ import path from "node:path";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/search";
 import { akmShowUnified } from "../../src/commands/show";
-import { saveConfig } from "../../src/core/config";
+import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -55,15 +55,26 @@ afterAll(() => {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeEach(() => {
+  resetConfigCache();
   testCacheDir = createTmpDir("akm-scope-cache-");
   testConfigDir = createTmpDir("akm-scope-config-");
+  testDataDir = createTmpDir("akm-scope-data-");
+  testStateDir = createTmpDir("akm-scope-state-");
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  // Pair AKM_STASH_DIR (set inline by individual tests) with XDG_DATA_HOME /
+  // XDG_STATE_HOME so the test-isolation guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 });
 
 afterEach(() => {
@@ -71,8 +82,13 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  resetConfigCache();
 });
 
 // ── Pure-function tests (no spawn) ────────────────────────────────────────
@@ -135,6 +151,8 @@ describe("parseScopeFilterFlags", () => {
         AKM_STASH_DIR: tmpStash(),
         AKM_CONFIG_DIR: path.join(createTmpDir("akm-scope-config-"), "akm"),
         XDG_CACHE_HOME: createTmpDir("akm-scope-cache-"),
+        XDG_DATA_HOME: createTmpDir("akm-scope-data-"),
+        XDG_STATE_HOME: createTmpDir("akm-scope-state-"),
       },
     });
     expect(result.status).toBe(2); // EXIT_USAGE
@@ -328,6 +346,8 @@ describe("akm remember --user / --agent / --run / --channel (CLI)", () => {
     const stashDir = tmpStash();
     const configDir = createTmpDir("akm-scope-config-");
     const xdgCache = createTmpDir("akm-scope-cache-");
+    const xdgData = createTmpDir("akm-scope-data-");
+    const xdgState = createTmpDir("akm-scope-state-");
 
     const result = spawnSync(
       "bun",
@@ -352,6 +372,8 @@ describe("akm remember --user / --agent / --run / --channel (CLI)", () => {
           AKM_STASH_DIR: stashDir,
           AKM_CONFIG_DIR: path.join(configDir, "akm"),
           XDG_CACHE_HOME: xdgCache,
+          XDG_DATA_HOME: xdgData,
+          XDG_STATE_HOME: xdgState,
         },
       },
     );

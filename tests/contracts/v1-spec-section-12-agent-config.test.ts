@@ -11,9 +11,9 @@ describe("v1 spec §12 — agent CLI integration", () => {
   const spec = readDoc(SPEC_PATH);
   const section = extractSection(spec, "## 12. Agent CLI integration");
 
-  test("§12 exists and is marked Planned for v1", () => {
+  test("§12 exists and is marked shipped", () => {
     expect(section).not.toBe("");
-    expect(section).toContain("Planned for v1");
+    expect(section).toContain("(shipped)");
   });
 
   test("§12.1 lists every built-in profile", () => {
@@ -35,8 +35,8 @@ describe("v1 spec §12 — agent CLI integration", () => {
     }
   });
 
-  test("§12.4 declares reflect/propose write only to the proposal queue", () => {
-    expect(section).toMatch(/write\s*\*\*only\*\*\s*to the proposal queue/i);
+  test("§12.4 declares improve write only to the proposal queue", () => {
+    expect(section).toMatch(/writes\s*\*\*only\*\*\s*to the proposal queue/i);
   });
 
   test("§12 stops before §13 (helper boundary check)", () => {
@@ -50,21 +50,23 @@ describe("v1 spec §12 — agent CLI integration", () => {
 });
 
 describe("v1 spec §12 — configuration.md mirrors the agent block", () => {
+  // v2: agent.profiles moved to profiles.agent under "Profile types" section.
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## `agent.*` block");
+  const block = extractSection(config, "## Profile types");
 
-  test("configuration.md has the agent block section", () => {
+  test("configuration.md has the agent profiles section", () => {
     expect(block).not.toBe("");
+    expect(block).toContain("profiles.agent");
   });
 
-  test("configuration.md declares the three top-level agent keys", () => {
-    expect(block).toContain("`agent.default`");
-    expect(block).toContain("`agent.timeoutMs`");
-    expect(block).toContain("`agent.profiles[<name>]`");
+  test("configuration.md declares the three platform values for agent profiles", () => {
+    expect(block).toContain("opencode");
+    expect(block).toContain("claude");
+    expect(block).toContain("opencode-sdk");
   });
 
-  test("configuration.md says missing `agent` block raises ConfigError with hint", () => {
-    expect(block).toMatch(/ConfigError/);
-    expect(block).toMatch(/hint/i);
+  test("configuration.md documents the platform field for agent profiles", () => {
+    expect(block).toMatch(/platform/i);
+    expect(block).toMatch(/profiles\.agent/);
   });
 });

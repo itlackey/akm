@@ -24,7 +24,16 @@ export type ConfigErrorCode =
   | "STASH_DIR_UNREADABLE"
   | "EMBEDDING_NOT_CONFIGURED"
   | "LLM_NOT_CONFIGURED"
-  | "INVALID_CONFIG_FILE";
+  | "INVALID_CONFIG_FILE"
+  // Defense-in-depth sentinel raised by `akm init` under `bun test` to
+  // refuse persisting a temp-dir stashDir to the user's real config.
+  // See src/commands/init.ts.
+  | "INIT_TMP_STASH_REFUSED"
+  // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
+  // when a test sets AKM_STASH_DIR but forgets to also point
+  // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
+  // at temp directories. See src/core/paths.ts.
+  | "TEST_ISOLATION_MISSING";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
@@ -39,7 +48,8 @@ export type UsageErrorCode =
   | "MISSING_OR_AMBIGUOUS_TARGET"
   | "TARGET_NOT_UPDATABLE"
   | "PATH_ESCAPE_VIOLATION"
-  | "RESOURCE_ALREADY_EXISTS";
+  | "RESOURCE_ALREADY_EXISTS"
+  | "INVALID_PROPOSAL";
 
 /** Stable, machine-readable codes for NotFoundError. */
 export type NotFoundErrorCode =
@@ -59,7 +69,10 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "The configured stashDir exists but isn't a directory. Update stashDir to point at a folder.",
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update stashDir.",
   EMBEDDING_NOT_CONFIGURED: 'Run `akm config set embedding \'{"endpoint":"...","model":"..."}\'` to enable embeddings.',
-  LLM_NOT_CONFIGURED: 'Run `akm config set llm \'{"endpoint":"...","model":"..."}\'` to configure the LLM.',
+  LLM_NOT_CONFIGURED:
+    'Run `akm setup` or `akm config set profiles.llm.default \'{"endpoint":"...","model":"..."}\' to configure an LLM profile.',
+  TEST_ISOLATION_MISSING:
+    "Under bun test, when AKM_STASH_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
 };
 
 /** Default hint for each UsageError code. */
@@ -132,5 +145,39 @@ export class NotFoundError extends Error {
   }
   hint(): string | undefined {
     return this._hint ?? NOT_FOUND_HINTS[this.code];
+  }
+}
+
+/**
+ * Test-isolation guard helper.
+ *
+ * `src/core/paths.ts` throws `ConfigError("TEST_ISOLATION_MISSING")` under
+ * `bun test` when `AKM_STASH_DIR` is set without a paired data-dir or
+ * state-dir override. That throw must never be swallowed by best-effort
+ * catches around DB/data-dir operations — otherwise the guard's loud failure
+ * silently degrades into a "no result" outcome (cold cache, missing snapshot,
+ * etc.) and the underlying test leak goes undetected.
+ *
+ * Call `rethrowIfTestIsolationError(err)` from any catch block that returns
+ * a fallback value (null, [], empty result) after touching DB or data-dir
+ * paths. It re-throws when the caught error is the guard violation, otherwise
+ * does nothing so the existing benign-fallback path can proceed unchanged.
+ *
+ * Usage:
+ *   try {
+ *     const db = openDatabase();
+ *     // ...
+ *   } catch (err) {
+ *     rethrowIfTestIsolationError(err);
+ *     // existing benign-fallback handling
+ *   }
+ */
+export function isTestIsolationError(err: unknown): boolean {
+  return err instanceof ConfigError && err.code === "TEST_ISOLATION_MISSING";
+}
+
+export function rethrowIfTestIsolationError(err: unknown): void {
+  if (isTestIsolationError(err)) {
+    throw err;
   }
 }

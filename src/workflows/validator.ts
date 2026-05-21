@@ -9,7 +9,7 @@
 import type { WorkflowDocument, WorkflowError } from "./schema";
 
 const STEP_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const ALLOWED_FRONTMATTER_KEYS = new Set(["description", "tags", "params"]);
+const ALLOWED_FRONTMATTER_KEYS = new Set(["description", "tags", "params", "name", "updated"]);
 
 export function runSemanticChecks(
   draft: WorkflowDocument,

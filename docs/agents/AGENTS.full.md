@@ -61,9 +61,11 @@ entries.
 ```sh
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
+akm remember "note" --target my-stash          # Route write to a named writable stash source
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL into knowledge/
+akm import ./doc.md --target my-stash          # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
 akm workflow validate workflow:ship-release    # Validate a workflow file or ref; lists every error
 akm workflow next workflow:ship-release        # Resume the active run or start a new one
@@ -74,33 +76,38 @@ akm feedback agent:reviewer --negative         # Record that an asset missed the
 Use `akm feedback` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
 
-## Proposals & reflection (0.7.0+)
+## Proposals & improvement (0.8.0+)
 
 Reflective edits, new asset drafts, and feedback-distilled lessons land
-in a durable proposal queue first — `akm proposal accept` is the only
+in a durable proposal queue first — `akm accept` is the only
 path that mutates the live stash.
 
 ```sh
-akm reflect <ref>                              # Produce a reflection proposal for an existing asset
-akm reflect <ref> --task "tighten the description"
-akm propose <type> <name> --task "..."         # Draft a new asset proposal from a description
-akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
-akm distill <ref>                              # Summarise feedback events into a lesson proposal
-akm proposal list                              # List pending proposals
-akm proposal list --status pending|accepted|rejected
-akm proposal show <id>                         # Render the proposal body and metadata
-akm proposal diff <id>                         # Show the proposed delta vs. the live ref
-akm proposal accept <id>                       # Validate and promote via writeAssetToSource
-akm proposal reject <id> --reason "..."        # Archive with a reason; body is preserved
+akm improve <ref>                              # Produce an improvement proposal for an existing asset
+akm improve <ref> --task "tighten the description"
+akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
+akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
+akm proposals                                  # List pending proposals
+akm proposals --status pending|accepted|rejected
+akm show proposal <id>                         # Render the proposal body and metadata
+akm diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
+akm diff skill:akm-dream                       # diff accepts full asset ref
+akm accept 7c115132                            # Accept by UUID prefix
+akm accept <id>                                # Validate and promote via writeAssetToSource
+akm reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm reject <id> --reason "..."                 # Archive with a reason; body is preserved
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history                                    # Per-asset (or stash-wide) state-change trail
 akm history --ref <ref>
 ```
 
-`akm distill` is gated by `llm.features.feedback_distillation` — when the
-flag is `false` (the default), the command exits with a `ConfigError`.
-The five `proposal` subcommands are `list`, `show`, `diff`, `accept`, and
-`reject`.
+The `akm improve` command replaces both `akm reflect` and `akm distill` workflows.
+The five proposal subcommands are now accessed via:
+- `akm proposals` (list)
+- `akm show proposal` (show)
+- `akm diff proposal` (diff)
+- `akm accept` (accept)
+- `akm reject` (reject)
 
 ## Wikis
 
@@ -117,6 +124,7 @@ akm wiki pages research                        # Page refs + descriptions (exclu
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
 akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
 akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug>.md
+akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index, broken sources
 akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
@@ -163,7 +171,7 @@ akm clone <ref> --force                       # Overwrite existing
 akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 ```
 
-When `--dest` is provided, `akm init` is not required first.
+When `--dest` is provided, `akm setup` is not required first.
 
 ## Save
 
@@ -222,9 +230,9 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 ```sh
-akm setup                                     # Guided config, init, and index
-akm init                                      # Initialize working stash
-akm init --dir ~/custom-stash                 # Initialize at a custom path
+akm setup                                     # Interactive setup (creates stash + configures connections)
+akm setup --dir ~/custom-stash                # Initialize at a custom path
+akm setup --yes                               # Non-interactive, accepts all defaults
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm list                                      # List all sources
@@ -232,6 +240,20 @@ akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference
 ```
+
+## Tasks — Per-task timeoutMs
+
+Task markdown frontmatter supports `timeoutMs` to override `config.agent.timeoutMs`
+for a single task:
+
+- `timeoutMs: null` — disable the agent kill timer (useful for long-running local-model tasks)
+- `timeoutMs: 120000` — override with a specific value in milliseconds
+
+## Events — Accepted Types
+
+`akm events list --type <type>` accepts: `add`, `remove`, `update`, `remember`,
+`import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`,
+`select`, `improve_skipped`, `reflect_completed`.
 
 ## Output Control
 

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "../core/common";
 import type { SourceConfigEntry, SourceSpec } from "../core/config";
-import { loadConfig, loadUserConfig, saveConfig } from "../core/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
@@ -115,7 +115,7 @@ async function addLocalSource(
   const derivedName = explicitName ?? wikiName ?? toReadableId(resolvedPath);
 
   // Check for duplicates in sources[]
-  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const sources = [...getSources(config)];
   const existing = sources.find((s) => s.type === "filesystem" && s.path && path.resolve(s.path) === resolvedPath);
   let persistedEntry: SourceConfigEntry;
   if (!existing) {
@@ -126,7 +126,7 @@ async function addLocalSource(
       ...(wikiName ? { wikiName } : {}),
     };
     sources.push(persistedEntry);
-    saveConfig({ ...config, sources, stashes: undefined });
+    saveConfig({ ...config, sources });
   } else {
     let changed = false;
     // If --name was explicitly supplied, update the persisted name.
@@ -138,7 +138,7 @@ async function addLocalSource(
       existing.wikiName = wikiName;
       changed = true;
     }
-    if (changed) saveConfig({ ...config, sources, stashes: undefined });
+    if (changed) saveConfig({ ...config, sources });
     persistedEntry = existing;
   }
 
@@ -157,7 +157,7 @@ async function addLocalSource(
       ...(persistedEntry.wikiName ? { wiki: persistedEntry.wikiName } : {}),
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -179,7 +179,7 @@ async function addWebsiteSource(
 ): Promise<AddResponse> {
   const normalizedUrl = validateWebsiteInputUrl(ref);
   const config = loadUserConfig();
-  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const sources = [...getSources(config)];
   let entry = sources.find(
     (stash): stash is SourceConfigEntry => stash.type === "website" && stash.url === normalizedUrl,
   );
@@ -193,7 +193,7 @@ async function addWebsiteSource(
       ...(wikiName ? { wikiName } : {}),
     };
     sources.push(entry);
-    saveConfig({ ...config, sources, stashes: undefined });
+    saveConfig({ ...config, sources });
   } else {
     let changed = false;
     if (options && Object.keys(options).length > 0) {
@@ -204,7 +204,7 @@ async function addWebsiteSource(
       entry.wikiName = wikiName;
       changed = true;
     }
-    if (changed) saveConfig({ ...config, sources, stashes: undefined });
+    if (changed) saveConfig({ ...config, sources });
   }
 
   const cachePaths = await ensureWebsiteMirror(entry, { requireStashDir: true });
@@ -223,7 +223,7 @@ async function addWebsiteSource(
       ...(entry.wikiName ? { wiki: entry.wikiName } : {}),
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -332,7 +332,7 @@ async function addRegistryStash(
       audit,
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {

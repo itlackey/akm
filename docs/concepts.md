@@ -20,8 +20,8 @@ search index. Each source has a **kind** inferred from the input:
 | Input | Kind | Behavior |
 | --- | --- | --- |
 | `~/.claude/skills` | `filesystem` | Indexed in place. Not updatable. Writable by default. |
-| `github:owner/repo` | `git` | Cloned into `~/.cache/akm/`. Updatable via `akm update`. Read-only by default. |
-| `npm:@scope/stash` | `npm` | Installed into `~/.cache/akm/`. Updatable via `akm update`. Read-only. |
+| `github:owner/repo` | `git` | Cloned into `~/.cache/akm/registry/`. Updatable via `akm update`. Read-only by default. |
+| `npm:@scope/stash` | `npm` | Installed into `~/.cache/akm/registry/`. Updatable via `akm update`. Read-only. |
 | `https://docs.example.com` | `website` | Crawled, converted to markdown, cached. Refreshed every 12 hours. Read-only. |
 
 The user never picks the kind. `akm add` infers it from the input shape.
@@ -36,7 +36,7 @@ The user never picks the kind. `akm add` infers it from the input shape.
    scripts, skills, commands, agents, knowledge documents, vaults,
    workflows, wikis, and memories.
 
-Your **working stash** (`~/akm`) is created by `akm init` — it's the
+Your **working stash** (`~/akm`) is created by `akm setup` — it's the
 primary directory for your personal, editable assets, and is registered as
 a `filesystem` source automatically.
 
@@ -49,7 +49,7 @@ The two terms come up often:
 
 - **Source** is the configuration concept (`sources[]` in your config file).
   It's any directory akm has been told to index. Configured via `akm add`.
-- **Working stash** is the special source created by `akm init` — the
+- **Working stash** is the special source created by `akm setup` — the
   default destination for `akm remember`, `akm import`, and other writes.
   Tracked as `stashDir` in config and registered automatically as a
   `filesystem` source.
@@ -78,7 +78,7 @@ my-stash/
   vaults/         # Environment vaults (.env)
   workflows/      # Step-by-step workflow documents (.md)
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
-  lessons/        # Distilled lessons (.md, see akm distill / proposals)
+   lessons/        # Distilled lessons (.md, see akm improve / proposals)
   memories/       # Recalled context fragments (.md)
 ```
 
@@ -93,10 +93,10 @@ There are ten asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
-| **vault** | A key/value environment vault | Key names and comments, never secret values |
+| **vault** | A key/value environment vault | Key names and comments, never secret values. Key names are intentionally discoverable — they appear in `vault list`, `vault show`, search results, and agent context by design. Only values are secret |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
-| **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm distill`](cli.md#distill)) |
+| **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |
 | **memory** | Context from external systems | Background information the agent should consider |
 
 ### Classification Taxonomy
@@ -136,6 +136,45 @@ the indexer uses for ranking. Supply those fields explicitly with
 `--auto`, or have the configured LLM propose them with `--enrich`. See
 [`akm remember`](cli.md#remember) for the full flag list.
 
+Hot-path memories (those written via `akm remember`) also receive
+`captureMode: hot` and `beliefState: asserted` in their frontmatter
+automatically. Background-derived memories (those inferred from other assets
+by `akm improve`) receive `captureMode: background`. The indexer applies a
+small ranking boost to hot-captured memories so explicit user-recorded context
+ranks above passive inference when both match a query.
+
+### Belief states
+
+Memories carry a `beliefState` field that signals how the indexer should weigh
+them in search. The supported values, from strongest to weakest authority:
+
+| State | When it's set | Ranking effect |
+|-------|---------------|----------------|
+| `asserted` | Written directly by `akm remember` (user-explicit) | strongest active boost |
+| `active` | Default for memories with no explicit state | active boost |
+| `deprecated` | Marked as no-longer-current but not yet superseded | small penalty; frozen (never auto-refreshed) |
+| `superseded` | Replaced by another memory via the `supersededBy` field | larger penalty |
+| `contradicted` | Marked as contradicted by other evidence | strong penalty |
+| `archived` | Soft-deleted; retained for audit | strongest penalty |
+
+`akm search` filters via `--belief current|historical|all`:
+- `current` (default for memory search) → `active` + `asserted`
+- `historical` → `deprecated` + `superseded` + `contradicted` + `archived`
+- `all` → no filter
+
+### Derived memories as retrieval shortcuts
+
+When `akm improve` infers a derived memory from a parent (e.g. distilling a
+verbose memory into a focused summary), the derived memory is written with a
+`source: memory:<parent>` frontmatter field and the indexer records the
+parent/child link in the `derived_from` column.
+
+Search hits for the parent memory are then enriched in-place: the parent's
+description and tags are swapped with the derived child's surface text, and an
+`expandTo: memory:<derived>` field on the hit points at the richer derived
+ref. The parent ref itself is preserved on the hit, so existing automation
+keeps working — agents that want the deeper summary follow `expandTo`.
+
 ## Refs
 
 Assets are identified by a **ref** -- a compact handle returned by
@@ -165,6 +204,38 @@ provide the same information in a parseable form.
 Source locators like `github:owner/repo` and `npm:@scope/pkg` are **install
 refs**, accepted only by `akm add` and `akm clone`. They are not asset refs.
 
+### Namespacing assets across projects and teams
+
+AKM already supports **physical-subdirectory namespacing** today — no extra
+flags required. Drop assets under nested directories beneath the type folder
+and the path becomes part of the ref's name. Examples:
+
+```text
+memories/projectA/auth-tip.md    →  memory:projectA/auth-tip
+memories/teamA/clientX/notes.md  →  memory:teamA/clientX/notes
+skills/projectB/lint-fix.md      →  skill:projectB/lint-fix
+knowledge/clientX/api-guide.md   →  knowledge:clientX/api-guide
+```
+
+This works for **any** asset type. Search and show treat the prefixed name
+like any other ref, so `akm search "memory:projectA/"` narrows results to
+that subtree.
+
+**Recommendation:** use physical subdirectories now to organize multi-project
+or multi-team stashes. They survive renames, sort cleanly on disk, and
+require no configuration.
+
+Future iterations (no committed dates):
+
+- A `--namespace <ns>` flag will provide a thin name-prefix normalizer on
+  `search`, `remember`, `improve`, `distill`, and `feedback` so the same
+  prefix doesn't have to be typed every time.
+- A `::` delimiter (for example `projectA::memory:auth-tip`) will provide
+  strict isolation so refs from different namespaces never collide in
+  ranking or recall.
+
+Until those land, physical subdirectories remain the recommended pattern.
+
 ## Search Priority
 
 `akm search` and `akm show` query a single local FTS5 index that covers every
@@ -179,13 +250,10 @@ override the upstream copy in subsequent searches.
 
 ## Metadata
 
-In this pre-release line, `.stash.json` is a deprecated legacy compatibility
-sidecar for older curated stashes, not the preferred authoring format for new
-content. It will be removed in v0.8.0. Prefer metadata that lives with the
-asset itself: frontmatter for markdown assets, and structured comments for
-scripts. When no `.stash.json` exists, the indexer derives metadata in memory
-for the search index from filenames, code comments, frontmatter, and
-package.json.
+`.stash.json` support was removed in v0.8.0. Prefer metadata that lives with
+the asset itself: frontmatter for markdown assets, and structured comments for
+scripts. The indexer derives metadata from filenames, code comments,
+frontmatter, and package.json.
 
 See [technical/filesystem.md](technical/filesystem.md) for the full field reference.
 
@@ -193,9 +261,8 @@ See [technical/filesystem.md](technical/filesystem.md) for the full field refere
 
 For script assets, akm resolves execution hints in this order:
 
-1. Legacy `.stash.json` fields (`run`, `setup`, `cwd`) while 0.7.x compatibility lasts
-2. Header comment tags (`@run`, `@setup`, `@cwd`)
-3. Auto-detection from extension and nearby dependency files
+1. Header comment tags (`@run`, `@setup`, `@cwd`)
+2. Auto-detection from extension and nearby dependency files
 
 ## Writable sources and write targets
 
@@ -211,10 +278,37 @@ this precedence:
 
 1. `--target <name>` flag (must name a writable source)
 2. The root-level `defaultWriteTarget` field in config
-3. The working stash (`stashDir` from `akm init`)
+3. The working stash (`stashDir` from `akm setup`)
 
 If none are configured, write commands raise a `ConfigError` pointing at
-`akm init`.
+`akm setup`.
+
+`akm improve` and `akm lint` only operate on writable sources. Read-only
+registry caches (`git`, `npm`, `website`) are excluded from improvement and
+lint passes even if they are indexed.
+
+## Storage
+
+akm uses four XDG-compliant directories:
+
+| Location | What lives there |
+| --- | --- |
+| `~/.local/share/akm/index.db` | Search index, embeddings, LLM cache, registry index cache |
+| `~/.local/share/akm/workflow.db` | Workflow run state |
+| `~/.local/share/akm/state.db` | Events, proposals, and task history |
+| `~/.local/share/akm/akm.lock` | Installed stash lockfile |
+| `~/.cache/akm/registry/` | Downloaded stash packages (regenerable) |
+| `~/.config/akm/config.json` | User configuration |
+| `~/akm` (or custom `stashDir`) | Your writable working stash |
+
+Events, proposals, and task history are stored in `state.db` — not in flat
+files or in the search index. The search index (`index.db`) is derived from
+the asset directories and is rebuildable with `akm index`.
+
+Users upgrading from v0.7 should run `bun scripts/migrate-storage.ts --yes`
+once to move `index.db`, `workflow.db`, and flat-file state to their new
+locations. See [migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md) for
+the full guide.
 
 ## Glossary
 
@@ -227,7 +321,7 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 | **git source** | A git repo cloned into akm's cache, updatable | A GitHub repo |
 | **npm source** | An npm package installed into akm's cache, updatable | `@scope/my-stash` |
 | **website source** | A crawled website stored as knowledge | `https://docs.example.com` |
-| **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm init` |
+| **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm setup` |
 | **registry** | A discovery index for finding sources | The official registry, skills.sh |
 | **ref** (asset ref) | A `type:name` handle for an asset | `script:deploy.sh` |
 | **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |

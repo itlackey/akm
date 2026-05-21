@@ -16,16 +16,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseAssetRef } from "../core/asset-ref";
+import { parseAssetRef } from "../core/asset-ref";
+import { asNonEmptyString } from "../core/common";
 import { loadConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
+import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
-import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { parseFrontmatter } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
+import { listRelatedPathsForFile } from "../indexer/graph-boost";
 import { lookup } from "../indexer/indexer";
 import type { StashEntryScope } from "../indexer/metadata";
+import { resolveAssetPath } from "../indexer/path-resolver";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -120,6 +123,12 @@ export async function akmShowUnified(input: {
    * out of scope" from "asset truly absent" via the standard error envelope.
    */
   scope?: StashEntryScope;
+  /**
+   * Event source for usage logging. Defaults to `"user"`. Set to
+   * `"improve"` when called from improve's reflect/distill agents
+   * so events can be filtered out of user-facing history.
+   */
+  eventSource?: "user" | "improve";
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
@@ -165,7 +174,7 @@ export async function akmShowUnified(input: {
   }
   // Count prior shows of this ref before logging the current one.
   const priorShowCount = recentShowCount(ref);
-  logShowEvent(ref);
+  logShowEvent(ref, undefined, input.eventSource);
   if (priorShowCount >= 2) {
     // Agent has shown this same asset 3+ times — inject a loop-break hint.
     (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
@@ -203,7 +212,7 @@ function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntrySco
   ];
   for (const [key, expectedValue] of expected) {
     if (expectedValue === undefined) continue;
-    const actual = toStringOrUndefined(fm[`scope_${key}`]);
+    const actual = asNonEmptyString(fm[`scope_${key}`]);
     if (actual !== expectedValue) {
       throw new NotFoundError(`Asset "${ref}" exists but is out of scope (expected scope_${key}="${expectedValue}").`);
     }
@@ -216,18 +225,54 @@ function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntrySco
  */
 function recentShowCount(ref: string): number {
   try {
-    const { events } = readEvents({ type: "show", ref });
+    const { events } = readEvents({
+      type: "show",
+      ref,
+      since: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
     return events.length;
   } catch {
     return 0;
   }
 }
 
-function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {
+function logShowEvent(
+  ref: string,
+  existingDb?: import("bun:sqlite").Database,
+  eventSource: "user" | "improve" = "user",
+): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
   const parsed = parseAssetRef(ref);
   appendEvent({ eventType: "show", ref, metadata: { type: parsed.type, name: parsed.name } });
+
+  // Detect if this show is a selection from a recent search result.
+  try {
+    // D7: bound the query to the last 60 s so we never scan unbounded history
+    const { events: recentSearches } = readEvents({
+      type: "search",
+      since: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const cutoffMs = Date.now() - 60_000;
+    const matchingSearch = [...recentSearches].reverse().find((e) => {
+      if (!e.ts || new Date(e.ts).getTime() < cutoffMs) return false;
+      const refs = (e.metadata?.resultRefs as string[] | undefined) ?? [];
+      return refs.includes(ref);
+    });
+    if (matchingSearch) {
+      appendEvent({
+        eventType: "select",
+        ref,
+        metadata: {
+          query: matchingSearch.metadata?.query as string | undefined,
+          searchTs: matchingSearch.ts,
+          rankPosition: ((matchingSearch.metadata?.resultRefs as string[] | undefined) ?? []).indexOf(ref),
+        },
+      });
+    }
+  } catch {
+    /* fire-and-forget — select is best-effort */
+  }
 
   try {
     const db = existingDb ?? openExistingDatabase();
@@ -236,26 +281,15 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
         event_type: "show",
         entry_ref: ref,
         entry_id: findEntryIdByRef(db, ref),
+        source: eventSource,
       });
     } finally {
       if (!existingDb) closeDatabase(db);
     }
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     /* fire-and-forget */
   }
-}
-
-/**
- * Resolve an asset path via the FTS5 index only. Spec §6.2's primary path.
- *
- * Returns `undefined` if the index has no matching row.
- */
-async function resolvePathViaIndex(parsed: AssetRef): Promise<{ assetPath: string } | undefined> {
-  const entry = await lookup(parsed);
-  if (entry) {
-    return { assetPath: entry.filePath };
-  }
-  return undefined;
 }
 
 /** @internal Use akmShowUnified() for all external callers. */
@@ -285,10 +319,11 @@ export async function showLocal(input: {
     }
   }
   if (!assetPath) {
-    const resolved = await resolvePathViaIndex(parsed);
-    if (resolved?.assetPath) {
-      assetPath = resolved.assetPath;
-    }
+    const resolvedAssetPath = await resolveAssetPath(parsed, {
+      stashDir: input.stashDir,
+      mode: "index-first",
+    });
+    assetPath = resolvedAssetPath ?? undefined;
   }
 
   if (!assetPath && parsed.origin && searchSources.length === 0) {
@@ -345,9 +380,22 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
+    related: (() => {
+      let db: import("bun:sqlite").Database | undefined;
+      try {
+        db = openExistingDatabase();
+        const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
+        return { total: related.length, hits: related };
+      } catch (err) {
+        rethrowIfTestIsolationError(err);
+        return { total: 0, hits: [] };
+      } finally {
+        if (db) closeDatabase(db);
+      }
+    })(),
   };
 
-  const activeRun = getActiveWorkflowRun(getCurrentWorkflowScopeKey());
+  const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
   if (activeRun) {
     (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
   }
@@ -414,7 +462,7 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     const textContent = full.content ?? full.template ?? full.prompt;
     if (textContent && !description) {
       const parsed = parseFrontmatter(textContent);
-      description = toStringOrUndefined(parsed.data.description);
+      description = asNonEmptyString(parsed.data.description);
     }
   }
 
@@ -432,4 +480,85 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
   };
 
   return summary;
+}
+
+// ── argv normalisation ───────────────────────────────────────────────────────
+
+const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
+
+/**
+ * Normalize argv so positional view-mode arguments after the asset ref
+ * are rewritten into internal flags that citty can parse.
+ *
+ * Converts:
+ *   akm show knowledge:guide.md toc          → akm show knowledge:guide.md --akmView toc
+ *   akm show knowledge:guide.md section Auth → akm show knowledge:guide.md --akmView section --akmHeading Auth
+ *   akm show knowledge:guide.md lines 1 50   → akm show knowledge:guide.md --akmView lines --akmStart 1 --akmEnd 50
+ *
+ * Legacy `--view` is intentionally unsupported.
+ * Returns a new array; the input is never modified.
+ */
+export function normalizeShowArgv(argv: string[]): string[] {
+  // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
+  if (argv[2] !== "show") return argv;
+  if (argv[3] === "proposal") return argv;
+  if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
+    throw new UsageError(
+      'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',
+    );
+  }
+
+  // Separate global flags from positional/show-specific args
+  const prefix = argv.slice(0, 3); // [bun, script, show]
+  const rest = argv.slice(3);
+
+  const globalFlags: string[] = [];
+  const showArgs: string[] = [];
+
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg === "--format" || arg === "--detail") {
+      globalFlags.push(arg);
+      if (rest[i + 1] !== undefined) {
+        globalFlags.push(rest[i + 1]);
+        i++;
+      }
+      continue;
+    }
+    showArgs.push(arg);
+  }
+
+  // showArgs[0] = ref, showArgs[1] = potential view mode, showArgs[2..] = view params
+  const ref = showArgs[0];
+  const viewMode = showArgs[1];
+
+  if (!ref || !viewMode || !SHOW_VIEW_MODES.has(viewMode)) {
+    return argv;
+  }
+
+  const result = [...prefix, ref, "--akmView", viewMode];
+
+  if (viewMode === "section") {
+    // Next arg is the heading name; pass empty string when missing so the
+    // show handler can produce a clear "section not found" error.
+    const heading = showArgs[2] ?? "";
+    result.push("--akmHeading", heading);
+  } else if (viewMode === "lines") {
+    // Next two args are start and end
+    const start = showArgs[2];
+    const end = showArgs[3];
+    if (start) result.push("--akmStart", start);
+    if (end) result.push("--akmEnd", end);
+  }
+
+  result.push(...globalFlags);
+  return result;
 }

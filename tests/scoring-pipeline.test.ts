@@ -69,15 +69,27 @@ function expectDefined<T>(value: T | null | undefined): T {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalAkmDataDir = process.env.AKM_DATA_DIR;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testAkmDataDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-scoring-cache-");
   testConfigDir = createTmpDir("akm-scoring-config-");
+  testAkmDataDir = createTmpDir("akm-scoring-akm-data-");
+  testDataDir = createTmpDir("akm-scoring-data-");
+  testStateDir = createTmpDir("akm-scoring-state-");
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.AKM_DATA_DIR = testAkmDataDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 });
 
 afterEach(() => {
@@ -91,6 +103,21 @@ afterEach(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalAkmDataDir === undefined) {
+    delete process.env.AKM_DATA_DIR;
+  } else {
+    process.env.AKM_DATA_DIR = originalAkmDataDir;
+  }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (originalAkmStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -103,6 +130,18 @@ afterEach(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testAkmDataDir) {
+    fs.rmSync(testAkmDataDir, { recursive: true, force: true });
+    testAkmDataDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 
@@ -576,6 +615,38 @@ describe("Issue #12: buildWhyMatched includes description matches", () => {
     );
 
     expect(reasons).not.toContain("matched description");
+  });
+
+  // Phase 1A widening: ensure buildWhyMatched emits reasons for the full
+  // belief-state union (active, asserted, contradicted, superseded,
+  // deprecated, archived).
+  test("buildWhyMatched emits reason for every belief state", () => {
+    const expected: Record<string, string> = {
+      active: "active belief state",
+      asserted: "asserted belief state",
+      contradicted: "contradicted belief state",
+      superseded: "superseded belief state",
+      deprecated: "deprecated belief state",
+      archived: "archived belief state",
+    };
+
+    for (const [state, reason] of Object.entries(expected)) {
+      const reasons = buildWhyMatched(
+        {
+          name: `m-${state}`,
+          type: "memory",
+          description: "irrelevant",
+          tags: [],
+          beliefState: state as "active" | "asserted" | "contradicted" | "superseded" | "deprecated" | "archived",
+        },
+        "irrelevant",
+        "fts",
+        0,
+        0,
+      );
+
+      expect(reasons).toContain(reason);
+    }
   });
 });
 

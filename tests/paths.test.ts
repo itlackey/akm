@@ -5,10 +5,15 @@ import {
   getCacheDir,
   getConfigDir,
   getConfigPath,
+  getDataDir,
   getDbPath,
   getDefaultStashDir,
+  getLockfileLockPath,
+  getLockfilePath,
   getRegistryCacheDir,
   getRegistryIndexCacheDir,
+  getStateDir,
+  getTaskHistoryStateDir,
   getWorkflowDbPath,
 } from "../src/core/paths";
 
@@ -19,12 +24,16 @@ const savedEnv: Record<string, string | undefined> = {};
 const envKeys = [
   "XDG_CONFIG_HOME",
   "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
   "HOME",
   "APPDATA",
   "LOCALAPPDATA",
   "USERPROFILE",
   "AKM_CONFIG_DIR",
   "AKM_CACHE_DIR",
+  "AKM_DATA_DIR",
+  "AKM_STATE_DIR",
   "AKM_STASH_DIR",
 ];
 
@@ -164,19 +173,248 @@ describe("getCacheDir", () => {
   });
 });
 
+// ── getDataDir ──────────────────────────────────────────────────────────────
+
+describe("getDataDir", () => {
+  test("uses XDG_DATA_HOME on Unix", () => {
+    const result = getDataDir({ XDG_DATA_HOME: "/custom/data" }, "linux");
+    expect(result).toBe(path.join("/custom/data", "akm"));
+  });
+
+  test("falls back to HOME/.local/share on Unix when XDG_DATA_HOME is unset", () => {
+    const result = getDataDir({ HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/home/user", ".local", "share", "akm"));
+  });
+
+  test("falls back to /tmp/akm-data when HOME is also unset", () => {
+    const result = getDataDir({}, "linux");
+    expect(result).toBe(path.join("/tmp", "akm-data"));
+  });
+
+  test("uses LOCALAPPDATA on Windows", () => {
+    const result = getDataDir({ LOCALAPPDATA: String.raw`C:\Users\user\AppData\Local` }, "win32");
+    expect(result).toBe(path.join(String.raw`C:\Users\user\AppData\Local`, "akm", "data"));
+  });
+
+  test("AKM_DATA_DIR overrides all other paths", () => {
+    const result = getDataDir({ AKM_DATA_DIR: "/override/data", HOME: "/home/user" }, "linux");
+    expect(result).toBe("/override/data");
+  });
+
+  test("ignores empty XDG_DATA_HOME and falls back to HOME", () => {
+    const result = getDataDir({ XDG_DATA_HOME: "  ", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/home/user", ".local", "share", "akm"));
+  });
+
+  test("uses default process.env when env argument omitted", () => {
+    process.env.XDG_DATA_HOME = "/test-data-xdg";
+    delete process.env.AKM_DATA_DIR;
+    const result = getDataDir();
+    expect(result).toBe(path.join("/test-data-xdg", "akm"));
+  });
+
+  // ── Test-isolation write-guard ────────────────────────────────────────────
+  //
+  // Defense-in-depth: under `bun test` / NODE_ENV=test, every call to
+  // getDataDir() must resolve through an explicit XDG_DATA_HOME or
+  // AKM_DATA_DIR override. Falling through to the developer's real
+  // ~/.local/share/akm silently writes SQLite databases, lockfiles, and
+  // snapshots into their personal data dir (observed: 4,183-row
+  // registry-cache pollution). The guard catches that by throwing
+  // TEST_ISOLATION_MISSING regardless of whether AKM_STASH_DIR is set.
+
+  test("test-isolation guard fires when BUN_TEST=1 and XDG_DATA_HOME missing", () => {
+    expect(() => getDataDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve data directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard fires when NODE_ENV=test and XDG_DATA_HOME missing", () => {
+    expect(() => getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve data directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard fires under bun test even when AKM_STASH_DIR is unset", () => {
+    // Previously the carve-out skipped this case, letting tests silently
+    // write into ~/.local/share/akm/index.db. The tightened guard refuses.
+    expect(() => getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve data directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard does NOT fire when both AKM_STASH_DIR and XDG_DATA_HOME are set", () => {
+    const result = getDataDir(
+      { NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" },
+      "linux",
+    );
+    expect(result).toBe(path.join("/tmp/xdg-data", "akm"));
+  });
+
+  test("test-isolation guard does NOT fire when XDG_DATA_HOME alone is set", () => {
+    const result = getDataDir({ NODE_ENV: "test", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/tmp/xdg-data", "akm"));
+  });
+
+  test("test-isolation guard does NOT fire when AKM_DATA_DIR override is set", () => {
+    const result = getDataDir(
+      { NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", AKM_DATA_DIR: "/tmp/akm-data", HOME: "/home/user" },
+      "linux",
+    );
+    expect(result).toBe("/tmp/akm-data");
+  });
+
+  test("test-isolation guard does NOT fire outside tests (no BUN_TEST / NODE_ENV=test)", () => {
+    // Real CLI invocation with custom stash but no XDG override is legal.
+    const result = getDataDir({ AKM_STASH_DIR: "/home/user/my-stash", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/home/user", ".local", "share", "akm"));
+  });
+
+  test("test-isolation guard surfaces the TEST_ISOLATION_MISSING code", () => {
+    try {
+      getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux");
+      throw new Error("expected guard to throw");
+    } catch (err) {
+      // ConfigError carries a stable machine-readable code.
+      expect((err as { code?: string }).code).toBe("TEST_ISOLATION_MISSING");
+    }
+  });
+});
+
+// ── getStateDir ─────────────────────────────────────────────────────────────
+
+describe("getStateDir", () => {
+  test("uses XDG_STATE_HOME on Unix", () => {
+    const result = getStateDir({ XDG_STATE_HOME: "/custom/state" }, "linux");
+    expect(result).toBe(path.join("/custom/state", "akm"));
+  });
+
+  test("falls back to HOME/.local/state on Unix when XDG_STATE_HOME is unset", () => {
+    const result = getStateDir({ HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/home/user", ".local", "state", "akm"));
+  });
+
+  test("falls back to /tmp/akm-state when HOME is also unset", () => {
+    const result = getStateDir({}, "linux");
+    expect(result).toBe(path.join("/tmp", "akm-state"));
+  });
+
+  test("uses LOCALAPPDATA on Windows", () => {
+    const result = getStateDir({ LOCALAPPDATA: String.raw`C:\Users\user\AppData\Local` }, "win32");
+    expect(result).toBe(path.join(String.raw`C:\Users\user\AppData\Local`, "akm", "state"));
+  });
+
+  test("AKM_STATE_DIR overrides all other paths", () => {
+    const result = getStateDir({ AKM_STATE_DIR: "/override/state", HOME: "/home/user" }, "linux");
+    expect(result).toBe("/override/state");
+  });
+
+  test("uses default process.env when env argument omitted", () => {
+    process.env.XDG_STATE_HOME = "/test-state-xdg";
+    delete process.env.AKM_STATE_DIR;
+    const result = getStateDir();
+    expect(result).toBe(path.join("/test-state-xdg", "akm"));
+  });
+
+  // ── Test-isolation write-guard ────────────────────────────────────────────
+
+  test("test-isolation guard fires when BUN_TEST=1 and XDG_STATE_HOME missing", () => {
+    expect(() => getStateDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve state directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard fires when NODE_ENV=test and XDG_STATE_HOME missing", () => {
+    expect(() => getStateDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve state directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard fires under bun test even when AKM_STASH_DIR is unset", () => {
+    expect(() => getStateDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve state directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard does NOT fire when both AKM_STASH_DIR and XDG_STATE_HOME are set", () => {
+    const result = getStateDir(
+      { NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", XDG_STATE_HOME: "/tmp/xdg-state", HOME: "/home/user" },
+      "linux",
+    );
+    expect(result).toBe(path.join("/tmp/xdg-state", "akm"));
+  });
+
+  test("test-isolation guard does NOT fire when XDG_STATE_HOME alone is set", () => {
+    const result = getStateDir({ NODE_ENV: "test", XDG_STATE_HOME: "/tmp/xdg-state", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/tmp/xdg-state", "akm"));
+  });
+
+  test("test-isolation guard does NOT fire when AKM_STATE_DIR override is set", () => {
+    const result = getStateDir(
+      { NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", AKM_STATE_DIR: "/tmp/akm-state", HOME: "/home/user" },
+      "linux",
+    );
+    expect(result).toBe("/tmp/akm-state");
+  });
+
+  test("test-isolation guard does NOT fire outside tests for state dir", () => {
+    const result = getStateDir({ AKM_STASH_DIR: "/home/user/my-stash", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/home/user", ".local", "state", "akm"));
+  });
+
+  test("test-isolation guard surfaces TEST_ISOLATION_MISSING code for state dir", () => {
+    try {
+      getStateDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux");
+      throw new Error("expected guard to throw");
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe("TEST_ISOLATION_MISSING");
+    }
+  });
+});
+
 // ── getDbPath ───────────────────────────────────────────────────────────────
 
 describe("getDbPath", () => {
-  test("returns index.db under cache dir", () => {
-    process.env.XDG_CACHE_HOME = "/cache";
-    expect(getDbPath()).toBe(path.join("/cache", "akm", "index.db"));
+  test("returns index.db under data dir", () => {
+    process.env.XDG_DATA_HOME = "/data";
+    delete process.env.AKM_DATA_DIR;
+    expect(getDbPath()).toBe(path.join("/data", "akm", "index.db"));
   });
 });
 
 describe("getWorkflowDbPath", () => {
-  test("returns workflow.db under cache dir", () => {
-    process.env.XDG_CACHE_HOME = "/cache";
-    expect(getWorkflowDbPath()).toBe(path.join("/cache", "akm", "workflow.db"));
+  test("returns workflow.db under data dir", () => {
+    process.env.XDG_DATA_HOME = "/data";
+    delete process.env.AKM_DATA_DIR;
+    expect(getWorkflowDbPath()).toBe(path.join("/data", "akm", "workflow.db"));
+  });
+});
+
+// ── getLockfilePath / getLockfileLockPath ───────────────────────────────────
+
+describe("getLockfilePath", () => {
+  test("returns akm.lock under data dir", () => {
+    process.env.XDG_DATA_HOME = "/data";
+    delete process.env.AKM_DATA_DIR;
+    expect(getLockfilePath()).toBe(path.join("/data", "akm", "akm.lock"));
+  });
+});
+
+describe("getLockfileLockPath", () => {
+  test("returns akm.lock.lck under data dir", () => {
+    process.env.XDG_DATA_HOME = "/data";
+    delete process.env.AKM_DATA_DIR;
+    expect(getLockfileLockPath()).toBe(path.join("/data", "akm", "akm.lock.lck"));
+  });
+});
+
+// ── getTaskHistoryStateDir ──────────────────────────────────────────────────
+
+describe("getTaskHistoryStateDir", () => {
+  test("returns tasks/history under state dir", () => {
+    process.env.XDG_STATE_HOME = "/state";
+    delete process.env.AKM_STATE_DIR;
+    expect(getTaskHistoryStateDir()).toBe(path.join("/state", "akm", "tasks", "history"));
   });
 });
 

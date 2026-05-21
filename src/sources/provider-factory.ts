@@ -11,6 +11,7 @@
  */
 
 import type { AkmConfig } from "../core/config";
+import { getSources } from "../core/config";
 import { createProviderRegistry } from "../registry/create-provider-registry";
 import type { SourceProvider, SourceProviderFactory } from "./provider";
 
@@ -33,7 +34,7 @@ export function resolveSourceProviderFactory(type: string): SourceProviderFactor
 export function resolveSourceProviders(config: AkmConfig): SourceProvider[] {
   const providers: SourceProvider[] = [];
 
-  for (const entry of config.sources ?? config.stashes ?? []) {
+  for (const entry of getSources(config)) {
     if (entry.enabled === false) continue;
     const factory = registry.resolve(entry.type);
     if (factory) {

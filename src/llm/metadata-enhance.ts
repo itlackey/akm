@@ -6,28 +6,38 @@
  * transport client in `client.ts`.
  */
 
-import type { LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import type { StashEntry } from "../indexer/metadata";
 import { chatCompletion, parseJsonResponse } from "./client";
+import { tryLlmFeature } from "./feature-gate";
 
 const SYSTEM_PROMPT = `You are a metadata generator for a developer asset registry. Given a script/skill/command/agent entry, generate improved metadata. Respond with ONLY valid JSON, no markdown fencing.`;
+
+export type EnhancedMetadata = { description?: string; searchHints?: string[]; tags?: string[] };
 
 /**
  * Use an LLM to enhance a stash entry's metadata: improve description,
  * generate searchHints, and suggest tags.
+ *
+ * When `akmConfig` is provided, routes through
+ * `tryLlmFeature("metadata_enhance", ...)` so the feature gate is honoured and
+ * errors are swallowed to `{}`. When `akmConfig` is `undefined` the gate is
+ * bypassed entirely — the LLM call runs unconditionally and errors propagate to
+ * the caller (pre-gate behaviour, used by direct callers such as tests).
  */
 export async function enhanceMetadata(
   config: LlmConnectionConfig,
   entry: StashEntry,
   fileContent?: string,
   signal?: AbortSignal,
-): Promise<{ description?: string; searchHints?: string[]; tags?: string[] }> {
+  akmConfig?: AkmConfig,
+): Promise<EnhancedMetadata> {
   const contextParts = [`Name: ${entry.name}`, `Type: ${entry.type}`];
   if (entry.description) contextParts.push(`Current description: ${entry.description}`);
   if (entry.tags?.length) contextParts.push(`Current tags: ${entry.tags.join(", ")}`);
   if (fileContent) {
-    // Limit content to first 2000 chars to stay within token limits
-    const truncated = fileContent.length > 2000 ? `${fileContent.slice(0, 2000)}\n... (truncated)` : fileContent;
+    // Limit content to first 4000 chars to stay within token limits (matches other modules)
+    const truncated = fileContent.length > 4000 ? `${fileContent.slice(0, 4000)}\n... (truncated)` : fileContent;
     contextParts.push(`File content:\n${truncated}`);
   }
 
@@ -40,31 +50,43 @@ Generate improved metadata for this ${entry.type}. Return JSON with these fields
 
 Return ONLY the JSON object, no explanation.`;
 
-  const raw = await chatCompletion(
-    config,
-    [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-    { signal },
-  );
+  const runLlm = async (): Promise<EnhancedMetadata> => {
+    const raw = await chatCompletion(
+      config,
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      { signal },
+    );
 
-  const parsed = parseJsonResponse<Record<string, unknown>>(raw);
-  if (!parsed) return {};
+    const parsed = parseJsonResponse<Record<string, unknown>>(raw);
+    if (!parsed) return {};
 
-  const result: { description?: string; searchHints?: string[]; tags?: string[] } = {};
+    const result: EnhancedMetadata = {};
 
-  if (typeof parsed.description === "string" && parsed.description) {
-    result.description = parsed.description;
+    if (typeof parsed.description === "string" && parsed.description) {
+      result.description = parsed.description;
+    }
+    if (Array.isArray(parsed.searchHints)) {
+      result.searchHints = parsed.searchHints
+        .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        .slice(0, 8);
+    }
+    if (Array.isArray(parsed.tags)) {
+      result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
+    }
+
+    return result;
+  };
+
+  // When no akmConfig is provided, bypass the feature gate entirely: run the
+  // LLM call directly and let errors propagate to the caller (pre-gate
+  // behaviour). When akmConfig is present, honour the feature flag and swallow
+  // errors to {} via tryLlmFeature.
+  if (akmConfig === undefined) {
+    return runLlm();
   }
-  if (Array.isArray(parsed.searchHints)) {
-    result.searchHints = parsed.searchHints
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .slice(0, 8);
-  }
-  if (Array.isArray(parsed.tags)) {
-    result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
-  }
 
-  return result;
+  return tryLlmFeature("metadata_enhance", akmConfig, runLlm, {}, { timeoutMs: config.timeoutMs });
 }

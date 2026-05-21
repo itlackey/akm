@@ -71,6 +71,8 @@ describe("akm add website", () => {
       const stashDir = createWorkingStash();
       const xdgCache = makeTempDir("akm-add-website-cache-");
       const xdgConfig = makeTempDir("akm-add-website-config-");
+      const xdgData = makeTempDir("akm-add-website-data-");
+      const xdgState = makeTempDir("akm-add-website-state-");
       const websiteUrl = serveWebsite();
       const configDir = path.join(xdgConfig, "akm");
       fs.mkdirSync(configDir, { recursive: true });
@@ -86,6 +88,8 @@ describe("akm add website", () => {
           AKM_STASH_DIR: stashDir,
           XDG_CACHE_HOME: xdgCache,
           XDG_CONFIG_HOME: xdgConfig,
+          XDG_DATA_HOME: xdgData,
+          XDG_STATE_HOME: xdgState,
         },
       });
 

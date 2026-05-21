@@ -15,7 +15,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { getConfigPath, loadConfig, resetConfigCache } from "../src/core/config";
+import { loadConfig, resetConfigCache } from "../src/core/config";
+import { getConfigPath } from "../src/core/paths";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalHome = process.env.HOME;
@@ -51,30 +52,42 @@ afterEach(() => {
 });
 
 describe("loadConfig — llm.features (v1 spec §14)", () => {
+  // These tests use configVersion: "0.8.0" to suppress auto-migration.
+  // Auto-migration rewrites llm.features.* → features.{index,improve,search}.* on first load
+  // of a v1 config; these tests verify the parser behaviour for already-migrated files where
+  // llm.features is still present for backward-compat reads.
   test("parses all locked feature keys with runtime consumers", () => {
     writeConfig({
+      configVersion: "0.8.0",
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
         model: "llama3.2",
         features: {
           curate_rerank: true,
+          memory_consolidation: true,
           feedback_distillation: true,
           memory_inference: true,
           graph_extraction: true,
+          lesson_quality_gate: true,
+          metadata_enhance: true,
         },
       },
     });
     const cfg = loadConfig();
     expect(cfg.llm?.features).toEqual({
       curate_rerank: true,
+      memory_consolidation: true,
       feedback_distillation: true,
       memory_inference: true,
       graph_extraction: true,
+      lesson_quality_gate: true,
+      metadata_enhance: true,
     });
   });
 
   test("absent keys remain absent (default-false at call sites)", () => {
     writeConfig({
+      configVersion: "0.8.0",
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
         model: "llama3.2",
@@ -83,15 +96,19 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     });
     const cfg = loadConfig();
     expect(cfg.llm?.features?.curate_rerank).toBe(true);
+    expect(cfg.llm?.features?.memory_consolidation).toBeUndefined();
     expect(cfg.llm?.features?.feedback_distillation).toBeUndefined();
     expect(cfg.llm?.features?.memory_inference).toBeUndefined();
     expect(cfg.llm?.features?.graph_extraction).toBeUndefined();
+    expect(cfg.llm?.features?.lesson_quality_gate).toBeUndefined();
+    expect(cfg.llm?.features?.metadata_enhance).toBeUndefined();
   });
 
   test("non-boolean values warn and are skipped without breaking siblings", () => {
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     try {
       writeConfig({
+        configVersion: "0.8.0",
         llm: {
           endpoint: "http://localhost:11434/v1/chat/completions",
           model: "llama3.2",
@@ -119,6 +136,7 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     try {
       writeConfig({
+        configVersion: "0.8.0",
         llm: {
           endpoint: "http://localhost:11434/v1/chat/completions",
           model: "llama3.2",

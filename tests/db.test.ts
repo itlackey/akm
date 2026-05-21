@@ -8,10 +8,12 @@ import {
   DB_VERSION,
   deleteEntriesByDir,
   getAllEntries,
+  getDerivedForParent,
   getEntriesByDir,
   getEntryById,
   getEntryCount,
   getMeta,
+  getPositiveFeedbackCountsByIds,
   isVecAvailable,
   openDatabase,
   openExistingDatabase,
@@ -23,6 +25,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
+import { insertUsageEvent } from "../src/indexer/usage-events";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -52,8 +55,12 @@ const savedEnv: Record<string, string | undefined> = {};
 beforeEach(() => {
   savedEnv.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
   savedEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
+  savedEnv.XDG_DATA_HOME = process.env.XDG_DATA_HOME;
+  savedEnv.XDG_STATE_HOME = process.env.XDG_STATE_HOME;
   process.env.XDG_CACHE_HOME = tmpDir("cache");
   process.env.XDG_CONFIG_HOME = tmpDir("config");
+  process.env.XDG_DATA_HOME = tmpDir("data");
+  process.env.XDG_STATE_HOME = tmpDir("state");
 });
 
 afterEach(() => {
@@ -131,6 +138,347 @@ describe("Schema", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+
+  test("openDatabase writes a data-dir backup BEFORE the destructive version upgrade", () => {
+    // Seed a data dir at an older version with a known entry, then reopen
+    // with the current binary and verify a backup directory was created
+    // under <dataDir>/backups/ that still contains the pre-upgrade DB.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-backup-trigger-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath);
+    insertTestEntry(db, "pre-upgrade-entry");
+    expect(getEntryCount(db)).toBe(1);
+    setMeta(db, "version", "0");
+    closeDatabase(db);
+
+    // Reopen — must trigger the upgrade path AND the backup hook.
+    db = openDatabase(dbPath);
+    try {
+      // Post-upgrade the entry is gone (existing behavior).
+      expect(getEntryCount(db)).toBe(0);
+      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
+    } finally {
+      closeDatabase(db);
+    }
+
+    // A backup directory should exist with the pre-upgrade index.db inside.
+    const backupsRoot = path.join(dataDir, "backups");
+    expect(fs.existsSync(backupsRoot)).toBe(true);
+    const snapshots = fs
+      .readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(snapshots.length).toBeGreaterThanOrEqual(1);
+    expect(snapshots[0]).toContain(`pre-v${DB_VERSION}`);
+
+    const snapshotDir = path.join(backupsRoot, snapshots[0] as string);
+    expect(fs.existsSync(path.join(snapshotDir, "index.db"))).toBe(true);
+    expect(fs.existsSync(path.join(snapshotDir, "backup.meta.json"))).toBe(true);
+
+    // Open the snapshot DB read-only and confirm it still carries the
+    // pre-upgrade row — proving the backup was taken BEFORE the drop.
+    const { Database: SqliteDB } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const snapshotDb = new SqliteDB(path.join(snapshotDir, "index.db"), { readonly: true });
+    try {
+      const row = snapshotDb
+        .prepare("SELECT COUNT(*) AS cnt FROM entries WHERE entry_key = 'pre-upgrade-entry'")
+        .get() as { cnt: number };
+      expect(row.cnt).toBe(1);
+    } finally {
+      snapshotDb.close();
+    }
+  });
+
+  test("AKM_DB_BACKUP=0 skips the pre-upgrade snapshot", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-backup-optout-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath);
+    insertTestEntry(db, "pre-upgrade-entry");
+    setMeta(db, "version", "0");
+    closeDatabase(db);
+
+    const previous = process.env.AKM_DB_BACKUP;
+    process.env.AKM_DB_BACKUP = "0";
+    try {
+      db = openDatabase(dbPath);
+      closeDatabase(db);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AKM_DB_BACKUP;
+      } else {
+        process.env.AKM_DB_BACKUP = previous;
+      }
+    }
+
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs.readdirSync(backupsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      expect(snapshots.length).toBe(0);
+    }
+  });
+
+  test("embedding-dim change backs up the data dir BEFORE wiping embeddings", () => {
+    // Open with one dimension, write a known embeddings row, then reopen with
+    // a different dimension and verify a backup directory tagged
+    // `embedding-dim-change` was created with the OLD embeddings row still
+    // inside — proof the backup ran BEFORE the destructive DELETE/DROP.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-trigger-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    const id = insertTestEntry(db, "embdim-entry", { searchText: "embdim test" });
+    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    // Confirm the embedding is materialized before the dim change.
+    const preCount = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+    expect(preCount.cnt).toBe(1);
+    closeDatabase(db);
+
+    db = openDatabase(dbPath, { embeddingDim: 8 });
+    try {
+      expect(getMeta(db, "embeddingDim")).toBe("8");
+      // Post-dim-change the embeddings table has been wiped.
+      const postCount = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+      expect(postCount.cnt).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+
+    // A backup tagged `embedding-dim-change` should exist.
+    const backupsRoot = path.join(dataDir, "backups");
+    expect(fs.existsSync(backupsRoot)).toBe(true);
+    const snapshots = fs
+      .readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(snapshots.length).toBe(1);
+    expect(snapshots[0]).toContain("embedding-dim-change");
+    expect(snapshots[0]).not.toContain("pre-v");
+
+    const snapshotDir = path.join(backupsRoot, snapshots[0] as string);
+    expect(fs.existsSync(path.join(snapshotDir, "index.db"))).toBe(true);
+
+    // backup.meta.json should carry the `embedding-dim-change` reason.
+    const metaPath = path.join(snapshotDir, "backup.meta.json");
+    expect(fs.existsSync(metaPath)).toBe(true);
+    const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+    expect(meta.reason).toBe("embedding-dim-change");
+
+    // The snapshot DB must STILL contain the pre-change embedding row.
+    const { Database: SqliteDB } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const snapshotDb = new SqliteDB(path.join(snapshotDir, "index.db"), { readonly: true });
+    try {
+      const row = snapshotDb.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+      expect(row.cnt).toBe(1);
+    } finally {
+      snapshotDb.close();
+    }
+  });
+
+  test("AKM_DB_BACKUP=0 skips the embedding-dim-change snapshot but still wipes embeddings", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-optout-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    const id = insertTestEntry(db, "embdim-optout", { searchText: "optout" });
+    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    closeDatabase(db);
+
+    const previous = process.env.AKM_DB_BACKUP;
+    process.env.AKM_DB_BACKUP = "0";
+    try {
+      db = openDatabase(dbPath, { embeddingDim: 8 });
+      try {
+        expect(getMeta(db, "embeddingDim")).toBe("8");
+        // Destructive op still runs even when backup is opted out.
+        const postCount = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+        expect(postCount.cnt).toBe(0);
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AKM_DB_BACKUP;
+      } else {
+        process.env.AKM_DB_BACKUP = previous;
+      }
+    }
+
+    // No snapshot directories should have been created.
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs.readdirSync(backupsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      expect(snapshots.length).toBe(0);
+    }
+  });
+
+  test("no backup is taken when the embedding dim is unchanged across opens", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-noop-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    insertTestEntry(db, "embdim-noop");
+    closeDatabase(db);
+
+    // Reopen with the SAME dimension — no backup should be created.
+    db = openDatabase(dbPath, { embeddingDim: 4 });
+    closeDatabase(db);
+
+    const backupsRoot = path.join(dataDir, "backups");
+    if (fs.existsSync(backupsRoot)) {
+      const snapshots = fs.readdirSync(backupsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      expect(snapshots.length).toBe(0);
+    }
+  });
+
+  test("openDatabase() without embeddingDim honours config embedding.dimension", () => {
+    // Regression: registry-side and other dim-unaware callers
+    // (static-index.ts, skills-sh.ts, graph.ts) call `openDatabase()` with
+    // no `embeddingDim`. Before this fix they silently wrote the static
+    // `EMBEDDING_DIM = 384` default into `index_meta`, racing dim-aware
+    // callers and triggering repeat backup/wipe cycles. The contract is
+    // now: an unparameterised open resolves dim from
+    // `config.embedding.dimension`, so all call sites — explicit or not —
+    // converge on the operator-declared value.
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-cfg-"));
+    createdTmpDirs.push(cfgDir);
+    const akmCfgDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmCfgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(akmCfgDir, "config.json"),
+      JSON.stringify({
+        embedding: {
+          endpoint: "http://localhost:11434/v1/embeddings",
+          model: "nomic-embed-text",
+          dimension: 384,
+        },
+      }),
+    );
+
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-cfg-data-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    const origAKMCFG = process.env.AKM_CONFIG_DIR;
+    try {
+      // Seed dim=768 via an explicit dim-aware open.
+      let db = openDatabase(dbPath, { embeddingDim: 768 });
+      insertTestEntry(db, "cfg-entry");
+      if (isVecAvailable(db)) {
+        expect(getMeta(db, "embeddingDim")).toBe("768");
+      }
+      closeDatabase(db);
+
+      // Point config resolution at our test config (dimension=384).
+      process.env.AKM_CONFIG_DIR = akmCfgDir;
+      delete process.env.XDG_CONFIG_HOME;
+
+      db = openDatabase(dbPath);
+      try {
+        if (isVecAvailable(db)) {
+          expect(getMeta(db, "embeddingDim")).toBe("384");
+        }
+      } finally {
+        closeDatabase(db);
+      }
+
+      // A dim-change snapshot SHOULD exist: 768 → 384 transition.
+      const backupsRoot = path.join(dataDir, "backups");
+      expect(fs.existsSync(backupsRoot)).toBe(true);
+      const snapshots = fs
+        .readdirSync(backupsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+      expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(true);
+    } finally {
+      if (origXDG === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origXDG;
+      if (origAKMCFG === undefined) delete process.env.AKM_CONFIG_DIR;
+      else process.env.AKM_CONFIG_DIR = origAKMCFG;
+    }
+  });
+
+  test("openDatabase() without embeddingDim AND no config preserves the stored dim", () => {
+    // When no config can be resolved (e.g. inside an isolated test fixture
+    // with AKM_CONFIG_DIR pointed at an empty directory), the
+    // unparameterised open MUST keep its hands off `index_meta.embeddingDim`
+    // rather than clobbering it with the static EMBEDDING_DIM default.
+    const emptyCfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-nocfg-"));
+    createdTmpDirs.push(emptyCfgDir);
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-nocfg-data-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    const origAKMCFG = process.env.AKM_CONFIG_DIR;
+    try {
+      let db = openDatabase(dbPath, { embeddingDim: 768 });
+      insertTestEntry(db, "nocfg-entry");
+      closeDatabase(db);
+
+      // Point config dir at an empty location so loadConfig finds no file.
+      process.env.AKM_CONFIG_DIR = emptyCfgDir;
+      delete process.env.XDG_CONFIG_HOME;
+
+      db = openDatabase(dbPath);
+      try {
+        expect(getMeta(db, "embeddingDim")).toBe("768");
+      } finally {
+        closeDatabase(db);
+      }
+
+      const backupsRoot = path.join(dataDir, "backups");
+      if (fs.existsSync(backupsRoot)) {
+        const snapshots = fs
+          .readdirSync(backupsRoot, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+        expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(false);
+      }
+    } finally {
+      if (origXDG === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origXDG;
+      if (origAKMCFG === undefined) delete process.env.AKM_CONFIG_DIR;
+      else process.env.AKM_CONFIG_DIR = origAKMCFG;
+    }
+  });
+
+  test("embedding-dim-change backup directory name is distinct from version-upgrade", () => {
+    // Seed two backups under the same data dir — one from a version upgrade,
+    // one from an embedding-dim change — and verify their directory names
+    // carry the different suffixes so operators can tell them apart.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-tag-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    // Version-upgrade backup.
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    insertTestEntry(db, "version-row");
+    setMeta(db, "version", "0");
+    closeDatabase(db);
+    db = openDatabase(dbPath, { embeddingDim: 4 });
+    closeDatabase(db);
+
+    // Embedding-dim-change backup.
+    db = openDatabase(dbPath, { embeddingDim: 8 });
+    closeDatabase(db);
+
+    const backupsRoot = path.join(dataDir, "backups");
+    const snapshots = fs
+      .readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+
+    expect(snapshots.some((n) => n.includes(`pre-v${DB_VERSION}`))).toBe(true);
+    expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(true);
   });
 
   test("openDatabase creates FTS5 table", () => {
@@ -777,6 +1125,145 @@ describe("rebuildFts incremental", () => {
 
       rebuildFts(db, { incremental: true });
       expect(ftsCount(db)).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Phase 5A / DB v17: derived_from index ──────────────────────────────────
+
+describe("derived_from column (Phase 5A)", () => {
+  test("DB_VERSION is at least 17 — derived_from column shipped at v17", () => {
+    expect(DB_VERSION).toBeGreaterThanOrEqual(17);
+  });
+
+  test("entries table has a derived_from column on a freshly opened DB", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const cols = (db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((c) => c.name);
+      expect(cols).toContain("derived_from");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("idx_entries_derived_from index is created", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const idx = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_entries_derived_from'")
+        .get() as { name: string } | undefined;
+      expect(idx?.name).toBe("idx_entries_derived_from");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsertEntry writes derived_from when entry carries derivedFrom", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const child: StashEntry = {
+        name: "parent.derived",
+        type: "memory",
+        description: "Distilled child.",
+        derivedFrom: "memory:parent",
+      };
+      upsertEntry(db, "k:memory:parent.derived", "/d", "/d/child.md", "/stash", child, "search text");
+
+      const row = db.prepare("SELECT derived_from FROM entries WHERE entry_key = ?").get("k:memory:parent.derived") as
+        | { derived_from: string | null }
+        | undefined;
+      expect(row?.derived_from).toBe("memory:parent");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getDerivedForParent returns the derived row keyed by parent ref", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const parent: StashEntry = { name: "alpha", type: "memory", description: "Parent." };
+      const child: StashEntry = {
+        name: "alpha.derived",
+        type: "memory",
+        description: "Distilled alpha.",
+        derivedFrom: "memory:alpha",
+      };
+      upsertEntry(db, "k:memory:alpha", "/d", "/d/alpha.md", "/stash", parent, "alpha");
+      upsertEntry(db, "k:memory:alpha.derived", "/d", "/d/alpha.derived.md", "/stash", child, "alpha derived");
+
+      const found = getDerivedForParent(db, "memory:alpha");
+      expect(found).not.toBeNull();
+      expect(found?.entry.name).toBe("alpha.derived");
+      expect(found?.entry.derivedFrom).toBe("memory:alpha");
+
+      // No derived child for "beta": returns null.
+      expect(getDerivedForParent(db, "memory:beta")).toBeNull();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Phase 2A: positive feedback counts ─────────────────────────────────────
+
+describe("getPositiveFeedbackCountsByIds (Phase 2A)", () => {
+  test("returns counts of positive feedback events grouped by entry id", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const id1 = insertTestEntry(db, "asset-1");
+      const id2 = insertTestEntry(db, "asset-2");
+
+      // 3× positive feedback for id1, 0 for id2.
+      for (let i = 0; i < 3; i++) {
+        insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id1, entry_ref: "ref:1" });
+      }
+      // A negative feedback event must NOT count toward the positive total.
+      insertUsageEvent(db, { event_type: "feedback", signal: "negative", entry_id: id1, entry_ref: "ref:1" });
+      // A "show" event must NOT count toward feedback counts.
+      insertUsageEvent(db, { event_type: "show", entry_id: id1, entry_ref: "ref:1" });
+
+      const counts = getPositiveFeedbackCountsByIds(db, [id1, id2]);
+      expect(counts.get(id1)).toBe(3);
+      // id2 has no positive feedback at all → absent from the map.
+      expect(counts.has(id2)).toBe(false);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("returns empty map for empty id list (no SQL issued)", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const counts = getPositiveFeedbackCountsByIds(db, []);
+      expect(counts.size).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("chunks at 500 ids — exercises the SQLITE_CHUNK_SIZE path without crashing", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      const targetIds: number[] = [];
+      // Seed two entries with positive feedback so we can assert non-empty
+      // results across a >500-id query.
+      const id1 = insertTestEntry(db, "chunked-1");
+      const id2 = insertTestEntry(db, "chunked-2");
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id1 });
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id1 });
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_id: id2 });
+
+      // Pad to 700 ids — must split into 500 + 200 chunks.
+      for (let i = 0; i < 700; i++) targetIds.push(100_000 + i);
+      // Include the real ids near both chunk boundaries.
+      targetIds[0] = id1;
+      targetIds[600] = id2;
+
+      const counts = getPositiveFeedbackCountsByIds(db, targetIds);
+      expect(counts.get(id1)).toBe(2);
+      expect(counts.get(id2)).toBe(1);
     } finally {
       closeDatabase(db);
     }

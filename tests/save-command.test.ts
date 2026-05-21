@@ -24,6 +24,8 @@ afterEach(() => {
 function runCli(args: string[], stashDir: string) {
   const xdgCache = makeTempDir("akm-save-cache-");
   const xdgConfig = makeTempDir("akm-save-cfg-");
+  const xdgData = makeTempDir("akm-save-data-");
+  const xdgState = makeTempDir("akm-save-state-");
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -32,6 +34,8 @@ function runCli(args: string[], stashDir: string) {
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
 }
@@ -39,6 +43,8 @@ function runCli(args: string[], stashDir: string) {
 function runCliWithEnv(args: string[], stashDir: string, extraEnv: Record<string, string | undefined> = {}) {
   const xdgCache = makeTempDir("akm-save-cache-");
   const xdgConfig = makeTempDir("akm-save-cfg-");
+  const xdgData = makeTempDir("akm-save-data-");
+  const xdgState = makeTempDir("akm-save-state-");
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -47,6 +53,8 @@ function runCliWithEnv(args: string[], stashDir: string, extraEnv: Record<string
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       ...extraEnv,
     },
   });
@@ -215,6 +223,8 @@ describe("akm save", () => {
         AKM_STASH_DIR: primaryStashDir,
         XDG_CACHE_HOME: xdgCacheHome,
         XDG_CONFIG_HOME: configRoot,
+        XDG_DATA_HOME: makeTempDir("akm-save-data-"),
+        XDG_STATE_HOME: makeTempDir("akm-save-state-"),
       },
     });
 
@@ -261,6 +271,8 @@ describe("akm save", () => {
         AKM_STASH_DIR: primaryStashDir,
         XDG_CONFIG_HOME: configRoot,
         XDG_CACHE_HOME: makeTempDir("akm-save-cache-installed-"),
+        XDG_DATA_HOME: makeTempDir("akm-save-data-installed-"),
+        XDG_STATE_HOME: makeTempDir("akm-save-state-installed-"),
       },
     });
 

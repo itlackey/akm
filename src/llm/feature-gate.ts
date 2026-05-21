@@ -8,16 +8,15 @@
  * The seam is intentionally tiny:
  *
  *   - `isLlmFeatureEnabled(config, feature)` — pure predicate, no side
- *     effects, no I/O. Returns `true` only when the feature flag is the
- *     literal boolean `true` in config. Defaults are `false` per v1
- *     spec §14 — adding a flag to the schema is a non-event until the user
- *     opts in.
+ *     effects, no I/O. Returns `true` when the feature flag is explicitly
+ *     `true`, or when the feature has a non-false default (currently
+ *     `graph_extraction`).
  *   - `tryLlmFeature(feature, config, fn, fallback, opts?)` — single-call
  *     wrapper that runs `fn()` only when the gate is open, enforces a hard
- *     timeout (default 30s — overridable per call), and returns `fallback`
- *     on disablement, throw, or timeout. The wrapper is referentially
- *     transparent for any given (gate-state, fn-result) pair: no module
- *     state is mutated.
+ *     timeout (default 600s — overridable per call via `opts.timeoutMs`),
+ *     and returns `fallback` on disablement, throw, or timeout. The wrapper
+ *     is referentially transparent for any given (gate-state, fn-result)
+ *     pair: no module state is mutated.
  *
  * Statelessness invariant (v1 spec §14.4): nothing in this module holds
  * state across calls. There are no caches, no module-level singletons, no
@@ -35,24 +34,137 @@ export type LlmFeatureKey = keyof LlmFeatureFlags;
 /**
  * Pure predicate: is the named feature gate explicitly enabled in `config`?
  *
- * Returns `false` when:
- *   - the LLM block is missing,
- *   - the `features` block is missing,
- *   - the key is absent (defaults are `false`),
- *   - the key is set to `false`.
+ * Returns `false` only when the key is explicitly set to `false`, or when
+ * the key is absent and its default is `false`.
  */
+const FEATURE_DEFAULTS: Partial<Record<LlmFeatureKey, boolean>> = {
+  memory_inference: true,
+  graph_extraction: true,
+};
+
+/**
+ * Reverse map: which v2 section owns each v1 feature key. Used by
+ * `isLlmFeatureEnabled` to honour the v2 `features.<section>.<process>` gate
+ * even when callers use the legacy `LlmFeatureKey` API.
+ *
+ * Mirrors the forward map in `isProcessEnabled` (line ~111-122). Keep in sync.
+ */
+const FEATURE_KEY_TO_SECTION: Partial<Record<LlmFeatureKey, string>> = {
+  memory_inference: "index",
+  graph_extraction: "index",
+  feedback_distillation: "improve",
+  curate_rerank: "search",
+};
+
 export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmFeatureKey): boolean {
-  if (!config?.llm?.features) return false;
-  return config.llm.features[feature] === true;
+  if (!config) return false;
+
+  // v2 first: if a `features.<section>.<process>` entry exists for this key,
+  // honour it. Without this, configs that set `features.improve.feedback_distillation: true`
+  // (the canonical v2 way to enable distill) get ignored by callers that use
+  // the legacy `tryLlmFeature(key, ...)` API.
+  const section = FEATURE_KEY_TO_SECTION[feature];
+  if (section) {
+    const featuresSection = (config as Record<string, unknown> & AkmConfig).features as
+      | Record<string, unknown>
+      | undefined;
+    const sectionValue = featuresSection?.[section];
+    if (sectionValue !== undefined) {
+      // Section present — `isProcessEnabled` is the authoritative reader.
+      return isProcessEnabled(section, feature, config);
+    }
+  }
+
+  // v1 fallback: section absent → read legacy `llm.features.<key>`.
+  const configured = config.llm?.features?.[feature];
+  if (configured === true) return true;
+  if (configured === false) return false;
+  return FEATURE_DEFAULTS[feature] === true;
+}
+
+/**
+ * Feature processes that default to `true` when absent from the v1
+ * `llm.features` block. These mirror the original `=== false` guard semantics:
+ * blocking only on explicit `false`, not on absence.
+ */
+const V1_DEFAULT_ENABLED: ReadonlySet<LlmFeatureKey> = new Set<LlmFeatureKey>(["memory_inference", "graph_extraction"]);
+
+/**
+ * Read the v1 `llm.features` gate for a known feature key, honouring the
+ * per-key default: `true` for keys in {@link V1_DEFAULT_ENABLED}, `false` for
+ * all others (opt-in).
+ */
+function isV1FeatureEnabled(config: AkmConfig, key: LlmFeatureKey): boolean {
+  const configured = config.llm?.features?.[key];
+  if (configured === true) return true;
+  if (configured === false) return false;
+  // Key absent — return the per-feature default.
+  return V1_DEFAULT_ENABLED.has(key);
+}
+
+/**
+ * v2 replacement for `isLlmFeatureEnabled`. Reads from the unified
+ * `config.features[section][processName]` tree introduced in v2 config.
+ *
+ * Falls back to v1 `llm.features.*` when the specific `section` is absent
+ * from the v2 features tree, enabling transparent backward compatibility with
+ * v1 configs that still use `llm.features.*`.
+ *
+ * Bug fix: the fallback triggers on a missing *section*, not just a missing
+ * top-level `features` object — so a partial v2 config (e.g. only
+ * `features.improve` is present) still falls back to v1 for unregistered
+ * sections like `features.search`.
+ */
+export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
+  if (!config) return false;
+
+  // Check v2 features tree for this specific section.
+  const featuresSection = (config as Record<string, unknown> & AkmConfig).features as
+    | Record<string, unknown>
+    | undefined;
+  const sectionValue = featuresSection?.[section];
+  if (sectionValue !== undefined) {
+    // Section exists in the v2 tree — resolve through the v2 object.
+    if (typeof sectionValue === "object" && sectionValue !== null && !Array.isArray(sectionValue)) {
+      const entry = (sectionValue as Record<string, unknown>)[processName];
+      // A process entry may be a plain boolean or an object with an `enabled` field.
+      if (typeof entry === "boolean") return entry;
+      if (typeof entry === "object" && entry !== null) {
+        const enabled = (entry as Record<string, unknown>).enabled;
+        if (typeof enabled === "boolean") return enabled;
+        return true; // object present but no `enabled` key → treat as enabled
+      }
+      // Process not present in the section → disabled by default in v2.
+      return false;
+    }
+    return false;
+  }
+
+  // Section absent from v2 tree — fall back to v1 llm.features gate for known v1 keys.
+  const v1KeyMap: Record<string, Record<string, LlmFeatureKey>> = {
+    index: {
+      memory_inference: "memory_inference",
+      graph_extraction: "graph_extraction",
+    },
+    improve: {
+      feedback_distillation: "feedback_distillation",
+    },
+    search: {
+      curate_rerank: "curate_rerank",
+    },
+  };
+  const v1Key = v1KeyMap[section]?.[processName];
+  if (v1Key) return isV1FeatureEnabled(config, v1Key);
+  return false;
 }
 
 /** Optional knobs for `tryLlmFeature`. */
 export interface TryLlmFeatureOptions {
   /**
-   * Hard timeout in milliseconds. Defaults to 30_000 (30s) per the v1 spec
-   * §14.2 "every LLM call site must enforce a hard timeout" rule. Pass `0`
-   * or a negative value to disable the wrapper-level timeout (the underlying
-   * `fn` may still time out via its own transport timeout).
+   * Hard timeout in milliseconds. Defaults to 600_000 (10 minutes) — generous
+   * enough for any local model on a single-threaded server. Pass `0` or a
+   * negative value to disable the wrapper-level timeout (the underlying `fn`
+   * may still time out via its own transport timeout).
    */
   timeoutMs?: number;
   /**
@@ -75,7 +187,15 @@ export interface TryLlmFeatureFallbackEvent {
   error?: Error;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * Default hard timeout for every bounded in-tree LLM call. Set to 10 minutes
+ * (600 000 ms) — generous enough for a slow local model on a single-threaded
+ * server. Override per-call via `TryLlmFeatureOptions.timeoutMs`.
+ *
+ * Do NOT reduce this default without a documented user-facing reason — local
+ * model users need the headroom.
+ */
+const DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
  * Run `fn()` only if `isLlmFeatureEnabled(config, feature)` is `true`. On

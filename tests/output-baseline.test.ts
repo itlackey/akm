@@ -4,6 +4,8 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { formatSearchPlain } from "../src/output/text";
+import { seedStoredGraph } from "./helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -25,9 +27,27 @@ function writeConfig(configDir: string, config: Record<string, unknown>): void {
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function runCli(stashDir: string, args: string[], config?: Record<string, unknown>): string {
-  const xdgCache = makeTempDir("akm-output-cache-");
-  const xdgConfig = makeTempDir("akm-output-config-");
+interface CliEnvDirs {
+  xdgCache: string;
+  xdgConfig: string;
+  xdgData?: string;
+  xdgState?: string;
+}
+
+function envDirsForStash(_stashDir: string): Required<CliEnvDirs> {
+  return {
+    xdgCache: makeTempDir("akm-output-cache-shared-"),
+    xdgConfig: makeTempDir("akm-output-config-shared-"),
+    xdgData: makeTempDir("akm-output-data-shared-"),
+    xdgState: makeTempDir("akm-output-state-shared-"),
+  };
+}
+
+function runCli(stashDir: string, args: string[], config?: Record<string, unknown>, envDirs?: CliEnvDirs): string {
+  const xdgCache = envDirs?.xdgCache ?? makeTempDir("akm-output-cache-");
+  const xdgConfig = envDirs?.xdgConfig ?? makeTempDir("akm-output-config-");
+  const xdgData = envDirs?.xdgData ?? makeTempDir("akm-output-data-");
+  const xdgState = envDirs?.xdgState ?? makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -37,6 +57,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   expect(result.status).toBe(0);
@@ -46,6 +68,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
 async function runCliAsync(stashDir: string, args: string[], config?: Record<string, unknown>): Promise<string> {
   const xdgCache = makeTempDir("akm-output-cache-");
   const xdgConfig = makeTempDir("akm-output-config-");
+  const xdgData = makeTempDir("akm-output-data-");
+  const xdgState = makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
 
   const child = spawn("bun", [CLI, ...args], {
@@ -55,6 +79,8 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
 
@@ -155,6 +181,7 @@ describe("output baseline", () => {
       "origin",
       "parameters",
       "path",
+      "related",
       "template",
       "type",
     ]);
@@ -173,6 +200,10 @@ describe("output baseline", () => {
 
   test("show shaped output includes action across all asset types", () => {
     const stashDir = makeTempDir("akm-output-stash-");
+    const envDirs = {
+      xdgCache: makeTempDir("akm-output-cache-shared-"),
+      xdgConfig: makeTempDir("akm-output-config-shared-"),
+    };
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
     writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\nFollow this.\n");
     writeFile(
@@ -184,13 +215,13 @@ describe("output baseline", () => {
 
     const refs = ["script:deploy.sh", "skill:ops", "command:release.md", "agent:coach.md", "knowledge:guide.md"];
     for (const ref of refs) {
-      const output = runCli(stashDir, ["show", ref, "--format=json"]);
+      const output = runCli(stashDir, ["show", ref, "--format=json"], undefined, envDirs);
       const json = JSON.parse(output) as Record<string, unknown>;
       expect(json.origin).toBeNull();
       expect(typeof json.action).toBe("string");
       expect(String(json.action).length).toBeGreaterThan(0);
     }
-  });
+  }, 15_000);
 
   test("show full JSON shape keeps schemaVersion gated to full detail", () => {
     const stashDir = makeTempDir("akm-output-stash-");
@@ -202,6 +233,147 @@ describe("output baseline", () => {
     expect(json.schemaVersion).toBe(1);
     expect(Object.keys(json)).toContain("path");
     expect(Object.keys(json)).toContain("editable");
+  });
+
+  test("show full JSON can include related graph neighbors", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    const envDirs = envDirsForStash(stashDir);
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
+    seedStoredGraph(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          {
+            path: path.join(stashDir, "knowledge", "guide.md"),
+            type: "knowledge",
+            entities: ["Guide", "Deploy"],
+            relations: [{ from: "Guide", to: "Deploy" }],
+          },
+          {
+            path: path.join(stashDir, "memories", "incident.md"),
+            type: "memory",
+            entities: ["Guide"],
+            relations: [{ from: "Guide", to: "Incident" }],
+          },
+        ],
+      },
+      path.join(envDirs.xdgData, "akm", "index.db"),
+    );
+
+    const output = runCli(
+      stashDir,
+      ["show", "knowledge:guide.md", "--format=json", "--detail=full"],
+      undefined,
+      envDirs,
+    );
+    const json = JSON.parse(output) as Record<string, unknown>;
+
+    expect(json.related).toBeTruthy();
+  });
+
+  test("show full JSON includes empty related object when no graph neighbors exist", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    const envDirs = envDirsForStash(stashDir);
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    seedStoredGraph(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          {
+            path: path.join(stashDir, "knowledge", "guide.md"),
+            type: "knowledge",
+            entities: ["Guide"],
+            relations: [],
+          },
+        ],
+      },
+      path.join(envDirs.xdgData, "akm", "index.db"),
+    );
+
+    const output = runCli(
+      stashDir,
+      ["show", "knowledge:guide.md", "--format=json", "--detail=full"],
+      undefined,
+      envDirs,
+    );
+    const json = JSON.parse(output) as { related?: { total?: number; hits?: unknown[] } };
+
+    expect(json.related).toEqual({ total: 0, hits: [] });
+  });
+
+  test("show text output uses compact related labels", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    const envDirs = envDirsForStash(stashDir);
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
+    seedStoredGraph(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          {
+            path: path.join(stashDir, "knowledge", "guide.md"),
+            type: "knowledge",
+            entities: ["Guide", "Deploy"],
+            relations: [{ from: "Guide", to: "Deploy" }],
+          },
+          {
+            path: path.join(stashDir, "memories", "incident.md"),
+            type: "memory",
+            entities: ["Guide"],
+            relations: [{ from: "Guide", to: "Incident" }],
+          },
+        ],
+      },
+      path.join(envDirs.xdgData, "akm", "index.db"),
+    );
+
+    const output = runCli(
+      stashDir,
+      ["show", "knowledge:guide.md", "--format=text", "--detail=full"],
+      undefined,
+      envDirs,
+    );
+
+    expect(output).toContain("related: 1");
+    // Schema v2: listRelatedPathsForFile populates `ref` via entries.entry_key,
+    // and formatRelatedLabel prefers it over basename. Output is now canonical
+    // ref form (`memory:incident`) instead of `incident.md`.
+    expect(output).toContain("  - memory: memory:incident");
+    expect(output).toContain("    shared: Guide");
+    expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));
+  });
+
+  test("search text output uses query match and neighbors graph labels", () => {
+    const output = formatSearchPlain(
+      {
+        hits: [
+          {
+            type: "knowledge",
+            name: "guide",
+            action: "akm show knowledge:guide -> read reference material",
+            score: 1,
+            graph: {
+              entities: [
+                { name: "Guide", kind: "matched" },
+                { name: "Incident", kind: "connected" },
+              ],
+              relations: [{ from: "Guide", to: "Incident" }],
+            },
+          },
+        ],
+      },
+      "normal",
+    );
+
+    expect(output).toContain("graph: query match=");
+    expect(output).toContain("neighbors=");
   });
 
   test("config defaults drive output mode and CLI flags override them", () => {

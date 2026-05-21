@@ -14,18 +14,28 @@ function createTmpDir(prefix = "akm-src-mgmt-"): string {
 }
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let testStashDir = "";
 
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-src-cache-");
   testConfigDir = createTmpDir("akm-src-config-");
+  testDataDir = createTmpDir("akm-src-data-");
+  testStateDir = createTmpDir("akm-src-state-");
   testStashDir = createTmpDir("akm-src-stash-");
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
+  // test-isolation guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = testStashDir;
   // Write initial config so loadConfig doesn't return defaults with stale caches
   saveConfig({ semanticSearchMode: "auto" });
@@ -36,6 +46,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
   for (const dir of createdTmpDirs) {
@@ -44,6 +58,8 @@ afterEach(() => {
     } catch {}
   }
   createdTmpDirs.length = 0;
+  testDataDir = "";
+  testStateDir = "";
 });
 
 // ── addStash ──────────────────────────────────────────────────────────

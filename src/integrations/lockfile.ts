@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigDir } from "../core/config";
+import { isProcessAlive, writeFileAtomic } from "../core/common";
+import { rethrowIfTestIsolationError } from "../core/errors";
+import { getDataDir } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
 // ("npm" | "github" | "git" | "local"). It is now derived from
@@ -35,7 +37,7 @@ export interface LockfileEntry {
 const LOCKFILE_NAME = "akm.lock";
 
 function getLockfilePath(): string {
-  return path.join(getConfigDir(), LOCKFILE_NAME);
+  return path.join(getDataDir(), LOCKFILE_NAME);
 }
 
 // ── Lock sentinel ────────────────────────────────────────────────────────────
@@ -44,10 +46,12 @@ const LOCK_MAX_RETRIES = 3;
 const LOCK_RETRY_DELAY_MS = 100;
 
 function getLockSentinelPath(): string {
-  return `${getLockfilePath()}.lck`;
+  // The sentinel always lives next to the lock file it guards.
+  return `${path.join(getDataDir(), LOCKFILE_NAME)}.lck`;
 }
 
 async function acquireLockSentinel(): Promise<boolean> {
+  // TODO(refactor): see improve.ts acquireLock and vault.ts withVaultLock — three implementations of the same O_EXCL+PID-staleness pattern.
   const sentinelPath = getLockSentinelPath();
   // Ensure the directory exists before attempting to create the sentinel
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
@@ -85,14 +89,12 @@ function tryReclaimStaleSentinel(sentinelPath: string): boolean {
       return true;
     }
     // Check if the process is still alive (signal 0 doesn't kill, just checks)
-    try {
-      process.kill(pid, 0);
+    if (isProcessAlive(pid)) {
       return false; // Process is alive — lock is valid
-    } catch {
-      // Process is dead — reclaim the stale lock
-      fs.unlinkSync(sentinelPath);
-      return true;
     }
+    // Process is dead — reclaim the stale lock
+    fs.unlinkSync(sentinelPath);
+    return true;
   } catch {
     return false; // Can't read or remove — leave it alone
   }
@@ -114,27 +116,21 @@ export function readLockfile(): LockfileEntry[] {
     const raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
     if (!Array.isArray(raw)) return [];
     return raw.filter(isValidLockfileEntry);
-  } catch {
+  } catch (err) {
+    // Defense-in-depth: getLockfilePath() is outside this try block, but a
+    // future refactor that pushes a getDataDir() call inside must not mask
+    // the bun-test isolation guard as "empty lockfile".
+    rethrowIfTestIsolationError(err);
     return [];
   }
 }
 
 export function writeLockfile(entries: LockfileEntry[]): void {
-  const lockfilePath = getLockfilePath();
+  // Always write to $DATA — never to the legacy $CONFIG location.
+  const lockfilePath = path.join(getDataDir(), LOCKFILE_NAME);
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${lockfilePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, lockfilePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(lockfilePath, `${JSON.stringify(entries, null, 2)}\n`);
 }
 
 export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
@@ -149,6 +145,7 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
 }
 
 export async function removeLockEntry(id: string): Promise<void> {
+  if (!fs.existsSync(getDataDir())) return;
   const acquired = await acquireLockSentinel();
   try {
     const entries = readLockfile();
