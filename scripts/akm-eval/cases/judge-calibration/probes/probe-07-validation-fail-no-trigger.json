@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-07-validation-fail-no-trigger",
+  "assetType": "memory",
+  "assetRef": "memory:probe-07-bare-bullet-list",
+  "asset": {
+    "frontmatter": {
+      "description": "Bullet list of unrelated observations that share no trigger condition.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["misc", "notes"],
+      "createdAt": "2026-04-08T10:00:00.000Z"
+    },
+    "body": "- The build is slow on Tuesdays.\n- The kitchen coffee machine needs descaling.\n- @kira prefers PRs split into commits of <300 lines.\n- The hot-path benchmark sometimes errors out under high load.\n- Reminder to update the team OKR doc before the next planning.\n- The legacy queue worker still uses Redis 6.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-04T09:00:00.000Z",
+      "signal": "positive",
+      "reason": "Useful as a junk drawer of notes",
+      "note": "Not really a lesson, more a sticky note."
+    },
+    {
+      "ts": "2026-05-09T11:00:00.000Z",
+      "signal": "negative",
+      "reason": "When distilled, the resulting lesson description and when_to_use cannot be made coherent because the observations have no shared trigger",
+      "failureMode": "incomplete"
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "validation_failed",
+    "expectedScoreBand": [1.0, 2.5],
+    "rationale": "The asset is a bag of unrelated observations. A well-instructed LLM following the LESSON prompt cannot produce a single coherent `when_to_use` — the prompt explicitly forbids circular `When working with <asset>` phrasings. The most likely failure mode is the LLM emits an invalid frontmatter (e.g. missing description or when_to_use), which trips lesson-lint and produces `validation_failed`. Score range reflects that a strict judge would also catch this before validation, but the modal failure here is structural."
+  }
+}

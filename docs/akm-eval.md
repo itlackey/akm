@@ -12,11 +12,11 @@ The toolkit is shell + Bun TypeScript with no extra dependencies beyond
 what the `akm` repo already requires. It lives at `scripts/akm-eval/`
 and mirrors the established `scripts/improve-stats/` pattern.
 
-This page documents Phases 1 and 2 (read-only deterministic runner, plus
-paired mode, compare, trend, regression, and run-envelope ingestion).
-See `docs/technical/akm-eval-implementation-plan.md` for the full
-eight-phase plan and `scripts/akm-eval/README.md` for the operator
-quick-start.
+This page documents Phases 1–4 (read-only deterministic runner, paired
+mode, compare/trend, regression diffing, memory-safety + workflow
+compliance suites, and the judge-calibration probe). See
+`docs/technical/akm-eval-implementation-plan.md` for the full eight-phase
+plan and `scripts/akm-eval/README.md` for the operator quick-start.
 
 ## Quick start
 
@@ -166,9 +166,82 @@ and edit the JSON.
 }
 ```
 
-Other types (`memory-safety`, `workflow-compliance`,
-`lesson-application`) are accepted in case files but produce a
-`skipped` result until Phase 3. `regression` is implemented.
+`memory-safety` and `workflow-compliance` ship in Phase 3.
+`judge-calibration` ships in Phase 4 (see below). `lesson-application` is
+the only type that still produces a `skipped` result.
+
+## Judge calibration
+
+The judge-calibration runner (Phase 4, roadmap R3) measures how often
+the distill judge agrees with hand-graded probes and how stable its
+verdicts are across resamples — MT-Bench (arXiv:2306.05685) reports
+~±0.5 judge variance, and D-5 / #388 introduced the `review_needed`
+band specifically to absorb that wobble.
+
+Each probe is a JSON file describing an asset (memory, lesson, or skill)
+plus feedback events plus a human-graded expected outcome:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "probe-01-queued-clear-lesson",
+  "assetType": "memory",
+  "assetRef": "memory:probe-01-deploy-secret-rotation",
+  "asset": {
+    "frontmatter": { "description": "...", "captureMode": "hot", "...": "..." },
+    "body": "..."
+  },
+  "feedback": [
+    { "ts": "2026-05-11T...", "signal": "positive", "reason": "..." }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "queued",
+    "expectedScoreBand": [4.0, 5.0],
+    "rationale": "Concrete asset with positive signal — judge should queue."
+  }
+}
+```
+
+The runner, per probe:
+
+1. Creates a fresh sandbox (`createSandbox()`) so the real stash and
+   data dir are never touched.
+2. Writes the probe's asset file under the sandbox stash
+   (`memories/<name>.md`, `lessons/<name>.md`, or
+   `skills/<name>/SKILL.md`).
+3. Runs `akm feedback <ref> --positive|--negative ...` once per
+   feedback entry.
+4. Runs `akm index` so the new asset enters the index.
+5. Runs `akm improve --json-to-stdout` and harvests the most recent
+   `distill_invoked` event for the probe's ref from the sandbox's
+   `state.db`.
+6. Cleans up the sandbox.
+7. Repeats `samplesPerProbe` (default 3) times in fresh sandboxes so
+   cross-resample variance is measurable.
+
+Aggregate metrics — surfaced both in the case result and at
+`eval-result.json` → `metrics.judgeCalibration`:
+
+| Field | Meaning |
+| --- | --- |
+| `agreementRate` | (sum of agreed samples) / (probes × samples). |
+| `perBand` | Per-expected-outcome probe count and agreement rate. |
+| `medianVariance` / `meanVariance` | `1 - mode-fraction` across samples per probe. 0 = all agree, 1 = perfectly split. |
+| `flipRate` | Fraction of probes where any two samples disagreed. |
+| `perProbe` | Per-probe `{ probeId, expected, actual[], agreementCount, variance }`. |
+
+Scoring blends agreement (0.6) and inverse variance (0.4). The probe
+suite ships eight probes spread evenly across the four
+`humanGrade.expectedOutcome` bands. Example invocation:
+
+```sh
+scripts/akm-eval/bin/akm-eval-run --suite judge-calibration \
+  --akm /path/to/akm/dist/cli.js --format md
+```
+
+When `llm.features.feedback_distillation` is disabled in the test env
+the judge returns `skipped` for every probe — that's expected; the case
+scores low but the runner machinery and the metrics block still work.
 
 ## Result envelope
 
@@ -220,13 +293,14 @@ never collide with the main `runs/` namespace. See
 [`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md#graph-ab-harness)
 for usage, the full metric list, and the verdict heuristic.
 
-## What Phases 1 + 2 do not do
+## What Phases 1–5 do not do
 
-- No mutation of the real stash (paired mode mutates only a tmpdir copy
-  unless you pass `--no-sandbox` / `--allow-mutate`).
-- No memory-safety eval (lands in Phase 3 with a mandatory sandbox).
-- No workflow-compliance eval (lands in Phase 3).
-- No LLM judging (lands in Phase 7).
+- No mutation of the real stash (paired mode and the
+  judge-calibration / memory-safety runners all sandbox to a tmpdir).
+- No replay / capture-and-replay determinism check (Phase 6).
+- No optional LLM judging of free-form outputs (Phase 7) — Phase 4 only
+  measures the existing distill judge's calibration; it does not add a
+  new judge.
 
 ## See also
 

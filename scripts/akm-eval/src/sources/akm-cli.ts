@@ -72,6 +72,25 @@ export class AkmCli {
     return this.run(["index", ...extraArgs]);
   }
 
+  /**
+   * Record feedback against a stash asset. Used by the judge-calibration
+   * runner to materialize probe feedback events inside a sandbox.
+   *
+   * `signal` maps to `--positive` / `--negative`. `--reason` is required for
+   * negative feedback (F-3 / #384); the runner always supplies one when
+   * shelling out for negative signals to avoid hitting that gate.
+   */
+  feedback(
+    ref: string,
+    opts: { signal: "positive" | "negative"; reason?: string; note?: string; failureMode?: string },
+  ): { stdout: string; stderr: string; status: number | null } {
+    const args = ["feedback", ref, opts.signal === "positive" ? "--positive" : "--negative"];
+    if (opts.reason) args.push("--reason", opts.reason);
+    if (opts.note) args.push("--note", opts.note);
+    if (opts.failureMode) args.push("--failure-mode", opts.failureMode);
+    return this.run(args);
+  }
+
   search(query: string, opts: { limit?: number; type?: string } = {}): SearchHit[] {
     const args = ["search", query, "--format", "jsonl", "--detail", "agent"];
     if (opts.limit !== undefined) args.push("--limit", String(opts.limit));

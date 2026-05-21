@@ -30,6 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { compareResultsInMemory } from "./compare";
 import { diffCaseResults } from "./runners/regression";
+import { runJudgeCalibrationCase } from "./runners/judge-calibration";
 import { runMemorySafetyCase } from "./runners/memory-safety";
 import { runProposalQualityCase } from "./runners/proposal-quality";
 import { runRegressionCase } from "./runners/regression";
@@ -265,6 +266,8 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
       return runProposalQualityCase(c, ctx);
     case "regression":
       return runRegressionCase(c, ctx);
+    case "judge-calibration":
+      return runJudgeCalibrationCase(c, ctx);
     case "memory-safety":
       return runMemorySafetyCase(c, ctx);
     case "workflow-compliance":
@@ -474,6 +477,21 @@ async function main(): Promise<number> {
     }));
   }
 
+  // Phase 4 (R3): hoist any judge-calibration case's `metrics.judgeCalibration`
+  // block into the run envelope's top-level metrics so external consumers
+  // (CI dashboards, trend command) don't have to inspect case-results.jsonl.
+  // When multiple judge-calibration cases ran, the most recent wins; suites
+  // are expected to ship at most one aggregator case per run.
+  const judgeCalibrationMetrics = results
+    .filter((r) => r.type === "judge-calibration" && !r.skipped)
+    .map((r) => (r.metrics as { judgeCalibration?: unknown }).judgeCalibration)
+    .filter((v): v is Record<string, unknown> => v !== undefined && typeof v === "object")
+    .pop();
+
+  const envelopeMetrics: Record<string, unknown> = {};
+  if (pairedImproveSummary) envelopeMetrics.pairedImprove = pairedImproveSummary;
+  if (judgeCalibrationMetrics) envelopeMetrics.judgeCalibration = judgeCalibrationMetrics;
+
   const envelope: EvalRunResult = {
     schemaVersion: 1,
     evalRunId,
@@ -487,7 +505,7 @@ async function main(): Promise<number> {
     inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite) },
     scores,
     countsByType,
-    metrics: pairedImproveSummary ? { pairedImprove: pairedImproveSummary } : {},
+    metrics: envelopeMetrics,
     regressions: regressionsForEnvelope,
     errors,
     artifacts: {

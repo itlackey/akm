@@ -7,12 +7,22 @@
 
 import type { EvalCaseResult, EvalCaseType, EvalRunResult } from "./types";
 
+/**
+ * Default per-type weights. Sum to 1.0.
+ *
+ * Phase 4 introduced `judge-calibration` (0.10) by reducing `retrieval` from
+ * 0.25 → 0.15 (-0.10). All other weights kept verbatim. Suites that only
+ * exercise retrieval/proposal-quality cases still see a sensible weighted
+ * average because aggregation only counts types that actually contributed
+ * scores (zero-result types are excluded from `weightTotal`).
+ */
 const DEFAULT_TYPE_WEIGHTS: Record<EvalCaseType, number> = {
-  retrieval: 0.25,
+  retrieval: 0.15,
   "lesson-application": 0.2,
   "proposal-quality": 0.2,
   "memory-safety": 0.2,
   "workflow-compliance": 0.1,
+  "judge-calibration": 0.10,
   regression: 0.05,
 };
 
@@ -27,6 +37,7 @@ export function aggregateScores(results: EvalCaseResult[]): {
     "proposal-quality": { run: 0, passed: 0, skipped: 0, scores: [] },
     "memory-safety": { run: 0, passed: 0, skipped: 0, scores: [] },
     "workflow-compliance": { run: 0, passed: 0, skipped: 0, scores: [] },
+    "judge-calibration": { run: 0, passed: 0, skipped: 0, scores: [] },
     regression: { run: 0, passed: 0, skipped: 0, scores: [] },
   };
 
@@ -47,6 +58,7 @@ export function aggregateScores(results: EvalCaseResult[]): {
     "proposal-quality": { run: 0, passed: 0, skipped: 0, score: 0 },
     "memory-safety": { run: 0, passed: 0, skipped: 0, score: 0 },
     "workflow-compliance": { run: 0, passed: 0, skipped: 0, score: 0 },
+    "judge-calibration": { run: 0, passed: 0, skipped: 0, score: 0 },
     regression: { run: 0, passed: 0, skipped: 0, score: 0 },
   };
 
@@ -74,6 +86,7 @@ export function buildCountsByType(results: EvalCaseResult[]): EvalRunResult["cou
     "proposal-quality": { run: 0, passed: 0, skipped: 0 },
     "memory-safety": { run: 0, passed: 0, skipped: 0 },
     "workflow-compliance": { run: 0, passed: 0, skipped: 0 },
+    "judge-calibration": { run: 0, passed: 0, skipped: 0 },
     regression: { run: 0, passed: 0, skipped: 0 },
   };
   for (const r of results) {

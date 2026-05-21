@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-08-validation-fail-malformed-source",
+  "assetType": "memory",
+  "assetRef": "memory:probe-08-half-fenced-snippet",
+  "asset": {
+    "frontmatter": {
+      "description": "Captured half of a chat transcript with embedded code fences that often trip downstream content validators.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["transcript", "chat"],
+      "createdAt": "2026-04-12T16:00:00.000Z"
+    },
+    "body": "Chat fragment captured mid-debug:\n\n> alice: did you ever fix the deploy thing?\n> me: not really\n> alice: ```\n> alice: maybe try restarting the worker?\n\nSome of the code I was testing:\n\n```python\ndef foo(x):\n    return x +\n\n# never finished pasting this\n```\n\nand a stray heading\n## description\n\nthen more text without context.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-06T12:00:00.000Z",
+      "signal": "negative",
+      "reason": "Unfinished code snippets and a stray `## description` heading make this prone to producing malformed lesson output",
+      "failureMode": "incorrect",
+      "note": "Last time it was distilled the description field was a heading reference rather than a sentence."
+    },
+    {
+      "ts": "2026-05-13T08:30:00.000Z",
+      "signal": "negative",
+      "reason": "Embedded `## description` heading is the exact antipattern the LESSON_SYSTEM_PROMPT calls out (BAD: 'Key pitfalls')",
+      "failureMode": "incorrect"
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "validation_failed",
+    "expectedScoreBand": [1.0, 2.5],
+    "rationale": "Source contains the documented antipattern (a heading literally named `description`). A model that follows the structured prompt will likely copy the heading into the description field, which the lesson lint rejects. validation_failed is the most likely realized outcome; a quality_rejected within the same low band is acceptable variance."
+  }
+}
