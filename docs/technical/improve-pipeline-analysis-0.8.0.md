@@ -573,6 +573,60 @@ Sprint plan:
   `release/0.8.0` inherit the prior code-grounded audit. The validations
   in §3 above were performed against the actual code.
 
+## 10a. Update — what's shipped since this document was written
+
+This document was originally written as a roadmap. Five of the twelve
+items are now implemented and shipping, all via the
+`scripts/akm-eval/` standalone toolkit (see
+`docs/technical/akm-eval-implementation-plan.md` and
+`docs/akm-eval.md`). The CI gate in `.github/workflows/akm-eval-smoke.yml`
+runs the smoke suite, deterministic replay, and memory-regression suite
+on every PR touching the toolkit, `src/`, or `docs/example-stash/`.
+
+| Roadmap item | Status | Implementation |
+|---|---|---|
+| **R1** Versioned benchmark suite with frozen golden traces | **Done** (smoke surface) | `scripts/akm-eval/cases/{improve-smoke,memory-regression,workflow-compliance,judge-calibration}/` — 5 retrieval + 3 proposal-quality + 5 memory-safety + 4 workflow-compliance + 8 judge-calibration probes shipping today; deterministic replay (R8) supplies the "frozen trace" property without paying for LLM tokens on re-run. |
+| **R2** Risk-tier proposal classes (Tier 0–3) with per-tier auto-accept | **Pending** — akm-side change | Toolkit prepared via heuristic source→tier mapping (`docs/technical/akm-eval-implementation-plan.md` §8). Awaits a `Proposal.riskTier` field in `src/core/proposals.ts` and a per-tier `--auto-accept` policy in `src/commands/improve.ts`. |
+| **R3** Judge calibration as a published metric | **Done** | `scripts/akm-eval/src/runners/judge-calibration.ts` + 8 hand-graded probes across the four MT-Bench bands (queued / review_needed / quality_rejected / validation_failed). Reports `metrics.judgeCalibration.{agreementRate, perBand, medianVariance, flipRate, perProbe}` in the run envelope. |
+| **R4** Replace pure-Jaccard Self-Consistency with weighted scoring | **Pending** — akm-side change | Awaits domain scorers (`lintLessonContent`, frontmatter validators, schema parsers) wired into the Self-Consistency vote in `src/commands/improve.ts`. Toolkit can measure the impact via paired-mode runs once the change ships. |
+| **R5** Graph A/B harness with on/off comparison | **Done** | `scripts/akm-eval/bin/akm-eval-graph-ablation` drives two sandboxes (graph-on vs graph-off via planted config) and reports retrieval / contradiction / latency / token-cost deltas plus a verdict heuristic. |
+| **R6** Publish event-schema.md and run-envelope-schema.md | **Pending** — akm-side change | Toolkit already consumes both schemas as a stable contract (refuses unknown `schemaVersion`); promoting them to public docs is an akm doc-tree task. |
+| **R7** Publish the ambition ladder in `docs/concepts.md` | **Pending** — akm-side change | Independent doc edit. |
+| **R8** Deterministic replay mode for `akm improve` | **Done** (for the eval loop) | `scripts/akm-eval/bin/akm-eval-replay` records every `AkmCli` invocation, `state.db` query, and `improve-result.json` read into `<run-dir>/artifacts/replay/*.jsonl`, then re-plays them to assert `deterministic: true`. CI gate in Phase 8 wires this in via `--record` then `akm-eval-replay latest`. The complementary `akm improve --replay` (which would replay LLM-subprocess seams inside akm itself) remains an akm-side feature. |
+| **R9** `--review-needed` as a first-class proposal queue filter | **Pending** — akm-side change | Awaits a flag on `akm proposals` and (post-R2) tier-filter integration. |
+| **R10** Accept-rate-by-source views | **Done** | Computed by `scripts/akm-eval/src/runners/proposal-quality.ts` on every eval run; surfaced as `metrics.bySource[<source>].acceptRate` in the case result and rendered in the Markdown report's "Accept-rate by source" table. |
+| **R11** Promote the three-class memory model to first-class docs | **Pending** — akm-side change | Independent doc edit. |
+| **R12** Expand the 0.8.0 release notes for late-cycle changes | **Pending** — akm-side change | Independent doc edit. |
+
+The pattern is clear: every item that could be addressed from *outside*
+the akm core (R1, R3, R5, R8, R10) is now shipped through the eval
+toolkit. The remaining seven items (R2, R4, R6, R7, R9, R11, R12) all
+require edits to akm itself — proposal-substrate fields, orchestrator
+flags, doc-tree additions, or release-notes prose. The eval toolkit is
+positioned to *measure* the impact of each one as it lands.
+
+**Toolkit observability artifacts you can use today:**
+
+- `<stash>/.akm/evals/runs/<eval-run-id>/eval-result.json` — full run
+  envelope with deterministic and (optional) LLM-judged scores.
+- `<stash>/.akm/evals/runs/<eval-run-id>/case-results.jsonl` — one line
+  per case, JSONL-friendly for streaming aggregation.
+- `<stash>/.akm/evals/runs/<eval-run-id>/report.md` — operator-readable
+  Markdown summary.
+- `<stash>/.akm/evals/ablations/<eval-run-id>/graph-ablation-result.json`
+  — per-metric on/off delta for graph extraction.
+- `<stash>/.akm/evals/collected/<improve-run-id>.json` — paired-mode
+  ingestion of an `akm improve` run envelope.
+- `<run-dir>/artifacts/llm-judgements.jsonl` — provenance trail
+  (model, provider, prompt hash, artifact hash) for any LLM judgments.
+- `<run-dir>/artifacts/replay/*.jsonl` — captured I/O for deterministic
+  replay.
+
+**CI gate**: `.github/workflows/akm-eval-smoke.yml` runs typecheck →
+baseline smoke (`--fail-below-score 0.75`) → record-then-replay
+(`deterministic: true` asserted via `jq`) → memory-regression
+(`--fail-below-score 0.5`) on every PR. Failures block merge.
+
 ## 11. Bottom line
 
 The earlier external review's central thesis — that `akm` needed an

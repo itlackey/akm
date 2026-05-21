@@ -892,6 +892,71 @@ each has a reasonable default.
   is stable. Keep the directory layout identical to `improve-stats/` so
   graduation is just a `git mv`.
 
+## 13a. Update — what shipped against this plan
+
+All eight phases described above are now implemented on
+`claude/akm-improve-pipeline-analysis-CyTz8` in PR #438. Each phase shipped
+as its own commit (Phases 1–3 sequentially, Phases 4–7 in parallel
+worktrees that were merged in, Phase 8 inline). The decisions and
+deviations recorded below override the corresponding plan text where
+they conflict; the plan above is preserved as the intent.
+
+### Phase-by-phase outcome
+
+| Phase | Commit | Shipped | Deviations |
+|---|---|---|---|
+| 1 — Read-only deterministic runner | `cccb907` | `bin/akm-eval-run`, `_lib.sh`, `src/{run,types,scoring,report}.ts`, `src/runners/{retrieval,proposal-quality}.ts`, `src/sources/{paths,state-db,stash-fs,akm-cli}.ts`, 8 smoke cases (5 retrieval + 3 proposal-quality). 7/8 pass on a minimal synthetic fixture; 8/8 against `docs/example-stash`. | None. |
+| 2 — Paired mode + compare/trend/collect/regression | `7d582a2` | `bin/akm-eval-{compare,trend,collect}`, `src/{compare,trend,collect}.ts`, `src/runners/regression.ts`, `src/sources/{eval-runs,improve-result}.ts`, `--mode paired` in run.ts with default `--sandbox`. | `akm improve --format json` rejected by akm's CLI; toolkit reads the run envelope from disk instead. Sandbox cleanup is automatic unless `--keep-sandbox`. |
+| 3 — Memory-safety + workflow-compliance + sandbox helper | `6a2478a` | `src/sources/sandbox.ts` (`createSandbox()` with XDG carve-outs reused by Phase 5), `src/runners/{memory-safety,workflow-compliance}.ts`, 5 memory-regression fixtures + cases (`hot-memory-preservation`, `relative-date-resolution`, `contradiction-edge-detection`, `superseded-memory-behaviour`, `stale-memory-exclusion`), 4 workflow-compliance cases. 5/5 memory + 4/4 workflow (skip on empty `state.db`). | `improveResult.memoryCleanup.relativeDatesResolved` is not surfaced by akm 0.8.0; the relative-date case uses a new `bodyMustNotContain` expectation instead of `minRelativeDatesResolved`. Anti-regression check synthetic-fixture style rather than dist-cli-patching. |
+| 4 — Judge calibration probe (R3) | `bba654c` | `src/runners/judge-calibration.ts`, 8 hand-graded probes spread across all four bands (queued / review_needed / quality_rejected / validation_failed), `metrics.judgeCalibration` block hoisted into the run envelope. | Added `feedback()` method to `AkmCli` to materialize probe feedback events. `DEFAULT_TYPE_WEIGHTS.retrieval` reduced 0.25→0.15 to make room for `judge-calibration: 0.10`; all other weights kept verbatim. In this env LLM features are off, so the probe results are uniformly `skipped` — the runner machinery is fully exercised; agreement/variance metrics will be meaningful once a provider is configured. |
+| 5 — Graph A/B ablation (R5) | `537f048` | `bin/akm-eval-graph-ablation`, `src/graph-ablation.ts` (862 LOC). Standalone driver; does NOT touch `run.ts`/`types.ts`/`scoring.ts`. Reuses Phase 3's `createSandbox()`. Reports retrieval / precision / contradiction / latency / token-proxy deltas with a verdict heuristic. Outputs land at `<stash>/.akm/evals/ablations/<run-id>/` (separate namespace from `runs/`). | Optional `cases/graph-ablation/` suite deliberately omitted — the smoke suite's retrieval cases are sufficient, per the plan's "if existing suite has retrieval cases, those are sufficient" carve-out. |
+| 6 — Deterministic replay (R8) | `7ab0836` | `bin/akm-eval-replay`, `src/replay.ts`, `src/sources/replay-log.ts` (`ReplayRecorder`, `ReplayPlayer`, singleton accessors, `deepEqual`, `scoresClose`). `RecordingAkmCli` / `PlaybackAkmCli` / `RecordingStateDbSources` / `PlaybackStateDbSources` factories; `loadImproveResult` accepts recorder/player. Runners switched to factory calls. New `--record` flag in `run.ts`. Three captured JSONL streams: `akm-invocations`, `state-db-queries`, `improve-results`. | Recorder/player held as process-level singletons in `replay-log.ts` rather than threaded through `EvalContext` (the spec said add only `recording?: boolean` to `EvalContext`). Added a `state-db-available` record kind so playback picks the same branch (state-db vs stash-fs fallback). Replay engine normalizes JSON round-trip to avoid `undefined` evidence-field phantom divergences. |
+| 7 — Optional LLM judge (R3 guardrail) | `ec4d6e8` | `src/sources/llm-judge.ts` (OpenAI-compatible HTTP client with provider defaults for openai/openrouter/ollama/llamacpp/lmstudio; SHA-256 prompt+artifact hashing; JSON-repair pass; rubric cap 4 KB, artifact cap 16 KB). `--llm-judge` / `--judge-model` / `--judge-provider` / `--judge-temperature` flags in `run.ts`. `EvalCase.scoring.llmJudge` + `EvalCaseResult.llmJudgement`. `metrics.llmJudged` aggregation that is **never folded into deterministic scores** (verified via mock-server test: `overall=1.0`, `deterministic=1.0`, `llmJudged=0.82`). | `retrieval` runner emits a pre-formatted `evidence.topHitArtifact` so judge cases can target it without runner changes. |
+| 8 — CI integration | `3624304` | `.github/workflows/akm-eval-smoke.yml` runs typecheck → baseline smoke (`--fail-below-score 0.75`) → record-then-replay (`jq -e '.deterministic == true'`) → memory-regression (`--fail-below-score 0.5`) on every PR touching the toolkit, `src/`, or `docs/example-stash/`. Uploads eval/replay/memory summaries + `runs/` tree as a 7-day artifact. | None. |
+
+### Cross-cutting integration
+
+After all worktrees merged, an end-to-end sweep against
+`docs/example-stash` confirmed every surface still works:
+
+```
+Smoke baseline (improve-smoke)            → exit 0, 8/8 pass
+Smoke with --record                       → exit 0, all three replay JSONL streams written
+akm-eval-replay latest                    → exit 0, deterministic: true
+Memory regression (5 cases)               → exit 0, 5/5 pass
+Graph ablation (--seeds 1, --dry-run)     → exit 0, envelope + verdict written
+bunx tsc -p scripts/akm-eval/tsconfig.json → exit 0
+bunx tsc --noEmit  (whole repo)           → exit 0   (after merging release/0.8.0 tsc fix)
+bun run lint                              → exit 0   (2 pre-existing template-string warnings, no errors)
+```
+
+### Files added by the plan (final tally)
+
+Six bin scripts, sixteen TypeScript modules (run, types, scoring, report,
+compare, trend, collect, graph-ablation, replay, four runners + regression,
+six sources), one shared shell helper, one tsconfig, plus the case
+suites: `improve-smoke/` (8 cases), `memory-regression/` (5 cases +
+fixtures), `workflow-compliance/` (4 cases), `judge-calibration/` (8
+probes + entry case). Total `scripts/akm-eval/` footprint: ≈ 5 800 LOC
+TypeScript + JSON cases + Markdown docs.
+
+### Mapping back to the analysis-doc roadmap
+
+The five eval-side roadmap items from
+`docs/technical/improve-pipeline-analysis-0.8.0.md` §8 are all shipped:
+
+- **R10** (accept-rate-by-source) — Phase 1 proposal-quality runner.
+- **R1** (versioned benchmark suite) — Phases 1–5 cases + replay.
+- **R3** (judge calibration) — Phase 4 probe set + metrics block.
+- **R5** (graph A/B) — Phase 5 ablation driver.
+- **R8** (replay mode) — Phase 6 record/replay.
+
+The seven remaining items (R2 risk-tier proposals, R4 weighted
+Self-Consistency, R6 public schemas, R7 ambition ladder, R9
+review-needed filter, R11 memory-classes doc, R12 release-notes
+expansion) require akm-core changes outside this toolkit. The toolkit
+will measure their impact when they ship via paired-mode runs.
+
 ## 14. Bottom line
 
 A standalone toolkit at `scripts/akm-eval/` is the right vehicle. It
