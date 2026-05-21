@@ -17,6 +17,7 @@ const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
 const originalXdgStateHome = process.env.XDG_STATE_HOME;
+const originalAkmStashDir = process.env.AKM_STASH_DIR;
 
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-config-"));
@@ -58,6 +59,15 @@ afterEach(() => {
     delete process.env.XDG_STATE_HOME;
   } else {
     process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
+  // Test 9 ("indexed command entries include parameters in search text")
+  // sets AKM_STASH_DIR but had no restore — leaking the stash dir to
+  // subsequent files where it tripped the test-isolation guard and
+  // silently broke registry-search / skills-sh caching tests.
+  if (originalAkmStashDir === undefined) {
+    delete process.env.AKM_STASH_DIR;
+  } else {
+    process.env.AKM_STASH_DIR = originalAkmStashDir;
   }
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });

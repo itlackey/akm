@@ -87,9 +87,17 @@ function makeProvider(url: string, name = "skills.sh"): RegistryProvider {
 }
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 
 beforeEach(() => {
+  // The skills-sh registry cache lives in index.db under XDG_DATA_HOME, not
+  // XDG_CACHE_HOME. Without overriding DATA_HOME, every test writes localhost
+  // URLs into the user's real ~/.local/share/akm/index.db and concurrent
+  // openDatabase() calls trip SQLite lock contention.
   process.env.XDG_CACHE_HOME = createTmpDir("akm-skills-cache-");
+  process.env.XDG_DATA_HOME = createTmpDir("akm-skills-data-");
+  process.env.XDG_STATE_HOME = createTmpDir("akm-skills-state-");
 });
 
 afterEach(() => {
@@ -106,6 +114,16 @@ afterEach(() => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
 });
 
