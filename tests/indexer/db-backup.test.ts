@@ -65,19 +65,20 @@ describe("backupDataDir", () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result?.path.startsWith(path.join(dataDir, "backups"))).toBe(true);
-    expect(result?.name).toContain("pre-v17");
-    expect(result?.sourceVersion).toBe(16);
-    expect(result?.targetVersion).toBe(17);
+    if (!result) throw new Error("expected backupDataDir to return a result");
+    expect(result.path.startsWith(path.join(dataDir, "backups"))).toBe(true);
+    expect(result.name).toContain("pre-v17");
+    expect(result.sourceVersion).toBe(16);
+    expect(result.targetVersion).toBe(17);
 
     // Files should be copied 1:1.
-    expect(fs.readFileSync(path.join(result?.path, "index.db"), "utf8")).toBe("fake-index-db-bytes");
-    expect(fs.existsSync(path.join(result?.path, "workflow.db"))).toBe(true);
-    expect(fs.existsSync(path.join(result?.path, "state.db"))).toBe(true);
+    expect(fs.readFileSync(path.join(result.path, "index.db"), "utf8")).toBe("fake-index-db-bytes");
+    expect(fs.existsSync(path.join(result.path, "workflow.db"))).toBe(true);
+    expect(fs.existsSync(path.join(result.path, "state.db"))).toBe(true);
 
     // sizeBytes is the source size, not the destination size (avoids
     // recursing into our own freshly-written backup).
-    expect(result?.sizeBytes).toBeGreaterThan(0);
+    expect(result.sizeBytes).toBeGreaterThan(0);
   });
 
   test("writes a backup.meta.json sidecar with sourceVersion, targetVersion, createdAt", () => {
@@ -90,7 +91,8 @@ describe("backupDataDir", () => {
     });
 
     expect(result).not.toBeNull();
-    const metaPath = path.join(result?.path, "backup.meta.json");
+    if (!result) throw new Error("expected backupDataDir to return a result");
+    const metaPath = path.join(result.path, "backup.meta.json");
     expect(fs.existsSync(metaPath)).toBe(true);
     const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
     expect(meta.sourceVersion).toBe(16);
@@ -105,7 +107,8 @@ describe("backupDataDir", () => {
     // skipping the backups dir.
     const firstRun = backupDataDir({ dataDir, sourceVersion: 16, targetVersion: 17, env: freshEnv() });
     expect(firstRun).not.toBeNull();
-    fs.writeFileSync(path.join(firstRun?.path, "marker.txt"), "noise");
+    if (!firstRun) throw new Error("expected first backupDataDir to return a result");
+    fs.writeFileSync(path.join(firstRun.path, "marker.txt"), "noise");
 
     // Run again with a different stamp.
     const secondRun = backupDataDir({
@@ -116,7 +119,8 @@ describe("backupDataDir", () => {
       now: () => new Date("2099-01-01T00:00:00Z"),
     });
     expect(secondRun).not.toBeNull();
-    expect(fs.existsSync(path.join(secondRun?.path, "backups"))).toBe(false);
+    if (!secondRun) throw new Error("expected second backupDataDir to return a result");
+    expect(fs.existsSync(path.join(secondRun.path, "backups"))).toBe(false);
   });
 
   test("honors AKM_DB_BACKUP=0 opt-out and returns null without writing", () => {
@@ -259,8 +263,9 @@ describe("backupDataDir", () => {
       env: freshEnv(),
     });
     expect(result).not.toBeNull();
-    expect(fs.existsSync(path.join(result?.path, "akm.lock"))).toBe(false);
-    expect(fs.existsSync(path.join(result?.path, "akm.lock.lck"))).toBe(false);
+    if (!result) throw new Error("expected backupDataDir to return a result");
+    expect(fs.existsSync(path.join(result.path, "akm.lock"))).toBe(false);
+    expect(fs.existsSync(path.join(result.path, "akm.lock.lck"))).toBe(false);
   });
 });
 
