@@ -12,9 +12,10 @@ The toolkit is shell + Bun TypeScript with no extra dependencies beyond
 what the `akm` repo already requires. It lives at `scripts/akm-eval/`
 and mirrors the established `scripts/improve-stats/` pattern.
 
-This page documents Phases 1–4 (read-only deterministic runner, paired
-mode, compare/trend, regression diffing, memory-safety + workflow
-compliance suites, and the judge-calibration probe). See
+This page documents Phases 1–7 (read-only deterministic runner, paired
+mode, compare/trend/collect, regression diffing, memory-safety +
+workflow-compliance suites, judge-calibration probe, graph A/B ablation,
+deterministic replay, and optional LLM judging with guardrails). See
 `docs/technical/akm-eval-implementation-plan.md` for the full eight-phase
 plan and `scripts/akm-eval/README.md` for the operator quick-start.
 
@@ -108,6 +109,39 @@ Sandbox semantics:
   the real stash is never touched. Cleaned up on success unless
   `--keep-sandbox`.
 - `--no-sandbox` / `--allow-mutate` — opt into mutating the real stash.
+
+## Replay mode (Phase 6)
+
+```sh
+# Record every akm CLI invocation, state.db query, and improve-result read
+# made during an eval-run, into <run-dir>/artifacts/replay/.
+scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --record
+
+# Re-run the same eval against those captured I/O surfaces. Compares
+# per-case score / passed / metrics / evidence against the original
+# case-results.jsonl. Exit 0 if deterministic, 1 on any divergence.
+scripts/akm-eval/bin/akm-eval-replay latest
+```
+
+Replay mode is the implementation of roadmap item R8. It exists so a CI
+gate can prove that a given eval-run's results are reproducible from
+captured I/O alone — useful for debugging flaky cases, for re-running
+historical evals against a refactored runner, and for distinguishing
+"the akm CLI changed its output" from "the eval runner has a bug".
+
+Three JSONL logs land under `<run-dir>/artifacts/replay/`:
+
+| File | Contents |
+| --- | --- |
+| `akm-invocations.jsonl` | one record per `AkmCli.run()` call: args, stdout, stderr, status, durationMs. |
+| `state-db-queries.jsonl` | one record per `readEvents` / `readProposals` / `available()` call, plus the captured rows. |
+| `improve-results.jsonl` | one record per `<stash>/.akm/runs/<id>/improve-result.json` read. |
+| `replay-result.json` | written by `akm-eval-replay`: `{ deterministic, divergentCases, missingCases, extraCases }`. |
+
+These three surfaces are sufficient because every Phase 1 + Phase 3
+runner bottoms out on them. `--strict` additionally fails on missing or
+extra cases (the default fails only on per-case divergences). Score
+comparison uses `1e-9` tolerance; metrics and evidence are deep-equal.
 
 ## Compare, trend, collect
 

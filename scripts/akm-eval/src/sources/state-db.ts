@@ -9,11 +9,25 @@
  *              metadata_json TEXT
  *
  * The toolkit only reads. It never writes.
+ *
+ * Phase 6: `RecordingStateDbSources` wraps a live reader and captures every
+ * `readEvents` / `readProposals` call (inputs and outputs) into a
+ * `ReplayRecorder`. `PlaybackStateDbSources` is the symmetric replay path:
+ * it returns previously-captured rows in FIFO order without touching disk.
+ * Use `makeStateDbSources()` from `src/run.ts` and `src/replay.ts` so the
+ * choice is one line and the runners stay variant-agnostic.
  */
 
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { resolveStateDbPath } from "./paths";
+import {
+  getCurrentPlayer,
+  getCurrentRecorder,
+  ReplayDivergenceError,
+  type ReplayPlayer,
+  type ReplayRecorder,
+} from "./replay-log";
 
 export interface EventRow {
   id: number;
@@ -192,3 +206,133 @@ export class StateDbSources {
     }));
   }
 }
+
+/**
+ * Shared interface that runners use. Both the live `StateDbSources` and the
+ * Phase 6 wrappers below conform to it; runners only need `readEvents`,
+ * `readProposals`, `available`, and `close`.
+ */
+export interface StateDbReader {
+  available(): boolean;
+  readEvents(opts?: ReadEventsOptions): EventRow[];
+  readProposals(opts?: ReadProposalsOptions): ProposalRow[];
+  close(): void;
+}
+
+/**
+ * Records every query (inputs + outputs) into a `ReplayRecorder` while
+ * still delegating to the live SQLite reader. Behaviour is otherwise
+ * identical to `StateDbSources`.
+ */
+export class RecordingStateDbSources implements StateDbReader {
+  private availableRecorded = false;
+
+  constructor(
+    private readonly inner: StateDbSources,
+    private readonly recorder: ReplayRecorder,
+  ) {}
+
+  available(): boolean {
+    const result = this.inner.available();
+    // Record on first call so the player can return the same answer and the
+    // runner picks the same branch (state-db vs stash-fs fallback). Only
+    // recorded once per source — `available()` is a pure existence check
+    // on a path that doesn't change during a run.
+    if (!this.availableRecorded) {
+      this.recorder.recordStateDbAvailable(result);
+      this.availableRecorded = true;
+    }
+    return result;
+  }
+
+  close(): void {
+    this.inner.close();
+  }
+
+  readEvents(opts: ReadEventsOptions = {}): EventRow[] {
+    const result = this.inner.readEvents(opts);
+    this.recorder.recordStateDbEvents(optsToPlain(opts), result);
+    return result;
+  }
+
+  readProposals(opts: ReadProposalsOptions = {}): ProposalRow[] {
+    const result = this.inner.readProposals(opts);
+    this.recorder.recordStateDbProposals(optsToPlain(opts), result);
+    return result;
+  }
+}
+
+/**
+ * Returns recorded rows in FIFO order; never opens a database. The Phase 6
+ * `available()` contract is "true" so runners that gate on it (proposal-
+ * quality, workflow-compliance) take the same code path as in the live
+ * run that produced the recording.
+ */
+export class PlaybackStateDbSources implements StateDbReader {
+  constructor(private readonly player: ReplayPlayer) {}
+
+  available(): boolean {
+    return this.player.nextStateDbAvailable();
+  }
+
+  close(): void {
+    // no-op
+  }
+
+  readEvents(opts: ReadEventsOptions = {}): EventRow[] {
+    return this.player.nextStateDbEvents(optsToPlain(opts)) as EventRow[];
+  }
+
+  readProposals(opts: ReadProposalsOptions = {}): ProposalRow[] {
+    return this.player.nextStateDbProposals(optsToPlain(opts)) as ProposalRow[];
+  }
+}
+
+export interface MakeStateDbOptions {
+  /** Override the database path (live mode only). */
+  dbPath?: string;
+  /**
+   * Opt into the process-level recording/playback singletons in
+   * `replay-log.ts`. See `MakeAkmCliOptions.record` for the same semantics.
+   */
+  record?: boolean;
+  /** Explicit override; bypasses the process singleton. */
+  recorder?: ReplayRecorder;
+  /** Explicit override; bypasses the process singleton. */
+  player?: ReplayPlayer;
+}
+
+/**
+ * Single factory used by `src/run.ts`, `src/replay.ts`, and every runner
+ * that needs `state.db` access. The default returns a plain live reader,
+ * preserving the pre-Phase-6 behaviour.
+ */
+export function makeStateDbSources(opts: MakeStateDbOptions = {}): StateDbReader {
+  const player = opts.player ?? (opts.record ? getCurrentPlayer() : undefined);
+  const recorder = opts.recorder ?? (opts.record ? getCurrentRecorder() : undefined);
+  if (recorder && player) {
+    throw new Error("makeStateDbSources: cannot record and play back simultaneously");
+  }
+  if (player) return new PlaybackStateDbSources(player);
+  const live = new StateDbSources(opts.dbPath);
+  if (recorder) return new RecordingStateDbSources(live, recorder);
+  return live;
+}
+
+/**
+ * Normalise an options bag for recording. We strip `undefined` values so the
+ * recorded JSON matches what the replay player sees when the same options
+ * are passed back in — `JSON.stringify` already drops `undefined`, but the
+ * deep-equal we do on replay would distinguish `{ ref: undefined }` from
+ * `{}`. Explicit normalisation makes that invariant defensive.
+ */
+function optsToPlain(opts: ReadEventsOptions | ReadProposalsOptions): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(opts as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+export { ReplayDivergenceError };

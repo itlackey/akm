@@ -19,7 +19,7 @@
  * sandbox stash and is not a failure.
  */
 
-import { StateDbSources, type EventRow } from "../sources/state-db";
+import { makeStateDbSources, type EventRow } from "../sources/state-db";
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
 
 interface WorkflowExpected {
@@ -37,7 +37,7 @@ export async function runWorkflowComplianceCase(c: EvalCase, ctx: EvalContext): 
   const refs = Array.isArray(c.input.refs) ? (c.input.refs as string[]) : undefined;
   const expected = c.expected as WorkflowExpected;
 
-  const stateDb = new StateDbSources(`${ctx.dataDir}/state.db`);
+  const stateDb = makeStateDbSources({ dbPath: `${ctx.dataDir}/state.db`, record: ctx.recording });
   if (!stateDb.available()) {
     return {
       caseId: c.id,

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# akm-eval-replay — Phase 6 deterministic replay entry point.
+#
+# Thin wrapper around scripts/akm-eval/src/replay.ts. Forwards every argument
+# unchanged; replay.ts owns argument parsing.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/replay.ts" "$@"

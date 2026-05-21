@@ -13,7 +13,7 @@
  */
 
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
-import { StateDbSources, type ProposalRow } from "../sources/state-db";
+import { makeStateDbSources, type ProposalRow } from "../sources/state-db";
 import { StashFsSources } from "../sources/stash-fs";
 
 export async function runProposalQualityCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
@@ -21,7 +21,7 @@ export async function runProposalQualityCase(c: EvalCase, ctx: EvalContext): Pro
   const since = c.input.since as string | undefined;
   const filterSource = c.input.source as string | undefined;
 
-  const stateDb = new StateDbSources();
+  const stateDb = makeStateDbSources({ record: ctx.recording });
   let proposals: ProposalRow[] = [];
   let creationRejected = 0;
   let dbAvailable = stateDb.available();

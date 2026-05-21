@@ -177,4 +177,10 @@ export interface EvalContext {
   currentRunId?: string;
   /** Phase 7: optional LLM-judge context (only present when `--llm-judge` is on). */
   judge?: LlmJudgeContext;
+  /**
+   * Phase 6: when `true`, runners route their AkmCli / StateDb /
+   * improve-result reads through the process-level recorder/player held by
+   * `src/sources/replay-log.ts` (`getCurrentRecorder()` / `getCurrentPlayer()`).
+   */
+  recording?: boolean;
 }

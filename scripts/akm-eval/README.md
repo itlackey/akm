@@ -56,6 +56,50 @@ left untouched.
 - `bun` >= 1.0 on `$PATH` (same as the rest of the repo).
 - `akm` on `$PATH` (or override with `--akm <bin>` / `AKM_BIN`).
 
+## Replay mode (Phase 6)
+
+```sh
+# 1. Run the suite with --record to capture every akm / state-db / improve-result I/O.
+scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --record
+
+# 2. Replay the recorded run deterministically. Compares per-case score,
+#    passed, metrics, and evidence against the original case-results.jsonl;
+#    exits 0 if all match (within 1e-9 for scores), 1 on any divergence.
+scripts/akm-eval/bin/akm-eval-replay latest
+```
+
+Recording lands under `<run-dir>/artifacts/replay/`:
+
+```
+artifacts/replay/
+  akm-invocations.jsonl   one record per AkmCli.run() call (search, version,
+                          improve, index — whatever the runners shelled out).
+  state-db-queries.jsonl  one record per readEvents / readProposals /
+                          available() call, plus the captured result rows.
+  improve-results.jsonl   one record per <stash>/.akm/runs/<id>/improve-result.json
+                          read.
+  replay-result.json      written by akm-eval-replay; reports
+                          { deterministic, divergentCases, missingCases,
+                            extraCases }.
+```
+
+Replay flags:
+
+- `--strict` — also fail on missing or extra cases (default fails only on
+  per-case divergences).
+- `--format json|md|none` — summary format on stdout (default: md).
+- `--stash <path>` / `--out <path>` — same semantics as `akm-eval-run`.
+
+Replay is intentionally narrow: it swaps the three I/O surfaces
+(`AkmCli`, `StateDbSources`, `improve-result.json` loader) for playback
+wrappers and re-runs the unchanged runners. Determinism therefore holds
+for any runner whose only external I/O is those three surfaces —
+retrieval and proposal-quality in Phase 1, workflow-compliance in
+Phase 3. Memory-safety touches the sandboxed filesystem after `akm
+improve` mutates it, so its replay determinism depends on rerunning
+against the same fixture (a future filesystem-capture step lands in
+Phase 8 if needed).
+
 ## Coverage
 
 Phase 1 + Phase 2 runner types:
@@ -350,8 +394,10 @@ scripts/akm-eval/
     akm-eval-trend         dispatches to src/trend.ts
     akm-eval-collect       dispatches to src/collect.ts
     akm-eval-graph-ablation dispatches to src/graph-ablation.ts (Phase 5, R5)
+    akm-eval-replay        dispatches to src/replay.ts (Phase 6)
   src/
     run.ts                 orchestrator (baseline | akm | paired)
+    replay.ts              deterministic replay orchestrator (Phase 6)
     compare.ts             two-run diff command
     trend.ts               N-run trend command
     collect.ts             improve-result.json ingestion command
@@ -364,11 +410,12 @@ scripts/akm-eval/
       regression.ts        case-results.jsonl diff
     sources/
       paths.ts             stash + data-dir + state.db path resolution
-      state-db.ts          read-only SQLite reader
+      state-db.ts          read-only SQLite reader (+ Phase 6 record/playback)
       stash-fs.ts          filesystem fallback for proposals
-      akm-cli.ts           shell wrapper for `akm search/improve/index/--version`
+      akm-cli.ts           shell wrapper (+ Phase 6 record/playback)
+      replay-log.ts        Phase 6 recorder/player + JSONL log helpers
       eval-runs.ts         resolver + loader for <stash>/.akm/evals/runs/
-      improve-result.ts    loader for <stash>/.akm/runs/<id>/improve-result.json
+      improve-result.ts    loader for <stash>/.akm/runs/<id>/improve-result.json (+ Phase 6 record/playback)
   cases/
     improve-smoke/         starter cases
 ```

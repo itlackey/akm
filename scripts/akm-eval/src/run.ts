@@ -38,7 +38,7 @@ import { runRetrievalCase } from "./runners/retrieval";
 import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
 import { renderMarkdown } from "./report";
 import { aggregateScores, buildCountsByType } from "./scoring";
-import { AkmCli } from "./sources/akm-cli";
+import { AkmCli, makeAkmCli } from "./sources/akm-cli";
 import {
   DEFAULT_JUDGE_MODEL,
   llmJudge,
@@ -46,6 +46,7 @@ import {
   resolveJudgeEndpoint,
 } from "./sources/llm-judge";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
+import { ReplayRecorder, setCurrentRecorder } from "./sources/replay-log";
 import { createSandbox, type Sandbox } from "./sources/sandbox";
 import type {
   EvalCase,
@@ -76,6 +77,8 @@ interface CliOptions {
   judgeModel?: string;
   judgeProvider?: string;
   judgeTemperature: number;
+  /** Phase 6: opt-in capture of every AkmCli/state-db/improve-result read for deterministic replay. */
+  record: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -91,6 +94,7 @@ function parseArgs(argv: string[]): CliOptions {
     threshold: 0.1,
     llmJudge: false,
     judgeTemperature: 0.0,
+    record: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -173,6 +177,9 @@ function parseArgs(argv: string[]): CliOptions {
         opts.judgeTemperature = v;
         break;
       }
+      case "--record":
+        opts.record = true;
+        break;
       case "-h":
       case "--help":
         printHelp();
@@ -256,6 +263,9 @@ Options:
                               "openai"). Supported: openai, openrouter, ollama,
                               llamacpp, lmstudio. Endpoint override: \$AKM_EVAL_JUDGE_ENDPOINT.
   --judge-temperature <0..1> Judge temperature (default: 0.0 — deterministic-as-possible).
+  --record                   Capture every akm/state-db/improve-result I/O
+                             into <run-dir>/artifacts/replay/ for use with
+                             akm-eval-replay (Phase 6).
 `);
 }
 
@@ -584,7 +594,15 @@ async function main(): Promise<number> {
   const evalRunId = buildEvalRunId();
   const runDir = path.join(runsDir, evalRunId);
 
-  const akmCli = new AkmCli(opts.akmBin, env);
+  // Phase 6: install the process-level recorder before any AkmCli or
+  // StateDbSources factory call so every I/O lands in the same log. The
+  // recorder is held by `src/sources/replay-log.ts`; runners see it via
+  // `makeAkmCli({ record: ctx.recording })` etc. Cleared in the `finally`
+  // below so test harnesses that re-import this module don't bleed state.
+  const recorder = opts.record ? new ReplayRecorder() : undefined;
+  if (recorder) setCurrentRecorder(recorder);
+
+  const akmCli = makeAkmCli(opts.akmBin, env, { record: opts.record });
   const akmVersion = akmCli.version();
 
   const baseCtx: EvalContext = {
@@ -597,6 +615,7 @@ async function main(): Promise<number> {
     env,
     currentRunId: evalRunId,
     judge: judgeCtx,
+    recording: opts.record || undefined,
   };
 
   const cases = loadCases(casesRoot, opts.suite);
@@ -742,6 +761,13 @@ async function main(): Promise<number> {
     baselineResults,
     pairedComparison,
   });
+  // Phase 6: flush the recorder to artifacts/replay/ alongside the rest of
+  // the run output. Done after writeArtifacts so the replay logs are
+  // guaranteed to land in a real on-disk run dir.
+  if (recorder) {
+    recorder.flushTo(path.join(runDir, "artifacts", "replay"));
+    setCurrentRecorder(undefined);
+  }
   updateLatestSymlink(runsDir, evalRunId);
 
   if (opts.format === "json") {

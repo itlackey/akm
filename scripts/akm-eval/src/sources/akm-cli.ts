@@ -14,9 +14,21 @@
  *   - `akm improve ...` → mutates the stash; run-id mints under
  *     `<stash>/.akm/runs/<run-id>/improve-result.json` (Phase 2 paired
  *     mode invokes this against a sandboxed stash copy by default).
+ *
+ * Phase 6: every `run([args])` may be recorded (`RecordingAkmCli`) or
+ * replayed (`PlaybackAkmCli`). The base `AkmCli` is the live path and stays
+ * the default. Use `makeAkmCli()` from the orchestrator so the choice is
+ * one-line and runners never have to know which variant they got.
  */
 
 import { spawnSync } from "node:child_process";
+import {
+  getCurrentPlayer,
+  getCurrentRecorder,
+  ReplayDivergenceError,
+  type ReplayPlayer,
+  type ReplayRecorder,
+} from "./replay-log";
 
 export interface SearchHit {
   ref: string;
@@ -29,13 +41,19 @@ export interface SearchHit {
   snippet?: string;
 }
 
+export interface AkmCliRunResult {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+}
+
 export class AkmCli {
   constructor(
-    private readonly bin: string,
-    private readonly env: Record<string, string>,
+    protected readonly bin: string,
+    protected readonly env: Record<string, string>,
   ) {}
 
-  private run(args: string[]): { stdout: string; stderr: string; status: number | null } {
+  protected run(args: string[]): AkmCliRunResult {
     const res = spawnSync(this.bin, args, { encoding: "utf8", env: this.env });
     if (res.error) {
       throw new Error(`failed to spawn ${this.bin}: ${res.error.message}`);
@@ -63,12 +81,12 @@ export class AkmCli {
    * how to surface errors so paired mode can still write a partial envelope
    * when `akm improve` exits non-zero mid-run.
    */
-  improve(extraArgs: string[]): { stdout: string; stderr: string; status: number | null } {
+  improve(extraArgs: string[]): AkmCliRunResult {
     return this.run(["improve", ...extraArgs]);
   }
 
   /** Run `akm index` against the wrapper's env; used to seed sandbox stashes. */
-  index(extraArgs: string[] = []): { stdout: string; stderr: string; status: number | null } {
+  index(extraArgs: string[] = []): AkmCliRunResult {
     return this.run(["index", ...extraArgs]);
   }
 
@@ -115,3 +133,78 @@ export class AkmCli {
     return hits;
   }
 }
+
+/**
+ * Drop-in subclass that times each live invocation and reports it to a
+ * `ReplayRecorder`. Behaviour is otherwise identical to `AkmCli`.
+ */
+export class RecordingAkmCli extends AkmCli {
+  constructor(bin: string, env: Record<string, string>, private readonly recorder: ReplayRecorder) {
+    super(bin, env);
+  }
+
+  protected override run(args: string[]): AkmCliRunResult {
+    const start = Date.now();
+    const res = super.run(args);
+    this.recorder.recordAkm(args, res.stdout, res.stderr, res.status, Date.now() - start);
+    return res;
+  }
+}
+
+/**
+ * Drop-in subclass that never spawns; every `run([args])` dequeues the next
+ * recorded invocation from a `ReplayPlayer`. Args-mismatch triggers a
+ * `ReplayDivergenceError` so the case fails loudly during replay rather
+ * than silently re-aligning on a different recorded call.
+ */
+export class PlaybackAkmCli extends AkmCli {
+  constructor(bin: string, env: Record<string, string>, private readonly player: ReplayPlayer) {
+    super(bin, env);
+  }
+
+  protected override run(args: string[]): AkmCliRunResult {
+    const rec = this.player.nextAkm(args);
+    return { stdout: rec.stdout, stderr: rec.stderr, status: rec.status };
+  }
+}
+
+export interface MakeAkmCliOptions {
+  /**
+   * Opt into the process-level recording/playback singletons in
+   * `replay-log.ts`. When false (default), returns a plain live `AkmCli`.
+   * When true:
+   *   - if `getCurrentPlayer()` is set, returns a `PlaybackAkmCli`,
+   *   - else if `getCurrentRecorder()` is set, returns a `RecordingAkmCli`,
+   *   - else returns a plain `AkmCli` (graceful no-op so callers can pass
+   *     `record: ctx.recording` without first checking the singleton).
+   */
+  record?: boolean;
+  /** Explicit override; bypasses the process singleton. */
+  recorder?: ReplayRecorder;
+  /** Explicit override; bypasses the process singleton. */
+  player?: ReplayPlayer;
+}
+
+/**
+ * Single factory used by `src/run.ts` and every runner so the recording /
+ * playback choice is one line. When `record` is omitted (and no explicit
+ * recorder/player passed), returns the live `AkmCli` — preserving the
+ * pre-Phase-6 behaviour.
+ */
+export function makeAkmCli(
+  bin: string,
+  env: Record<string, string>,
+  opts: MakeAkmCliOptions = {},
+): AkmCli {
+  const player = opts.player ?? (opts.record ? getCurrentPlayer() : undefined);
+  const recorder = opts.recorder ?? (opts.record ? getCurrentRecorder() : undefined);
+  if (recorder && player) {
+    throw new Error("makeAkmCli: cannot record and play back simultaneously");
+  }
+  if (player) return new PlaybackAkmCli(bin, env, player);
+  if (recorder) return new RecordingAkmCli(bin, env, recorder);
+  return new AkmCli(bin, env);
+}
+
+// Re-exported so callers don't need a second import to catch divergences.
+export { ReplayDivergenceError };
