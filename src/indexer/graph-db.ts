@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
+import { rethrowIfTestIsolationError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { GraphRelation } from "../llm/graph-extract";
@@ -335,7 +336,9 @@ export function loadGraphFilesOnly(
         return [];
       }
     });
-  } catch {
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "no stored graph files".
+    rethrowIfTestIsolationError(err);
     return [];
   }
 }
@@ -434,7 +437,9 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
         return null;
       }
     });
-  } catch {
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "no stored graph meta".
+    rethrowIfTestIsolationError(err);
     return null;
   }
 }
@@ -541,7 +546,9 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
         return null;
       }
     });
-  } catch {
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "no stored graph snapshot".
+    rethrowIfTestIsolationError(err);
     return null;
   }
 }

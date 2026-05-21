@@ -1,5 +1,6 @@
 import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
+import { rethrowIfTestIsolationError } from "../../core/errors";
 import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { asString } from "../../integrations/github";
 import { registerProvider } from "../factory";
@@ -173,7 +174,12 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
   try {
     db = openDatabase();
     dbCacheResult = getRegistryIndexCache(db, entry.url, CACHE_TTL_MS);
-  } catch {
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "DB unavailable" — see
+    // rethrowIfTestIsolationError in src/core/errors.ts. Without this, a
+    // leaky test silently gets a cold cache instead of the loud
+    // TEST_ISOLATION_MISSING failure the guard intends.
+    rethrowIfTestIsolationError(err);
     // index.db not available yet (pre-migration install or test env) — fall through
   }
 

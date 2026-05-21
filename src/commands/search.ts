@@ -10,7 +10,7 @@
  */
 
 import { loadConfig } from "../core/config";
-import { UsageError } from "../core/errors";
+import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { bumpUtilityScoresBatch, closeDatabase, openExistingDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
@@ -285,7 +285,8 @@ function logSearchEvent(
     } finally {
       if (!existingDb) closeDatabase(db);
     }
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     /* fire-and-forget */
   }
 }

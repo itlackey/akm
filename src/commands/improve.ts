@@ -5,7 +5,7 @@ import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import { daysToMs, isAssetType, isProcessAlive } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
-import { ConfigError, NotFoundError, UsageError } from "../core/errors";
+import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { detectAndWriteContradictions } from "../core/memory-contradiction-detect";
@@ -424,6 +424,8 @@ async function collectEligibleRefs(
       memorySummary: { eligible: memoryEligible, derived: memoryDerived },
     };
   } catch (error) {
+    // The bun-test isolation guard must never be downgraded to "empty plan".
+    rethrowIfTestIsolationError(error);
     if (error instanceof NotFoundError || error instanceof Error) {
       return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
     }
@@ -549,7 +551,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           closeDatabase(probeDb);
         }
       }
-    } catch {
+    } catch (err) {
+      rethrowIfTestIsolationError(err);
       // best-effort; leave preEnsureEntryCount undefined
     }
 
@@ -576,7 +579,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         if (postCount > 0) {
           warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
         }
-      } catch {
+      } catch (err) {
+        rethrowIfTestIsolationError(err);
         // best-effort
       }
     }
@@ -734,7 +738,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   try {
     eventsDb = openStateDatabase();
     eventsCtx = { db: eventsDb };
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     // If we cannot open state.db up-front, fall back to per-call opens.
     eventsCtx = {};
   }
@@ -1491,7 +1496,8 @@ async function runImprovePreparationStage(args: {
     highRetrievalRefs = noFeedbackCandidates.filter(
       (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
     );
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     // best-effort: if DB unavailable, highRetrievalRefs stays empty
   } finally {
     if (dbForRetrieval) closeDatabase(dbForRetrieval);
@@ -1544,7 +1550,8 @@ async function runImprovePreparationStage(args: {
     } finally {
       closeDatabase(dbForGaps);
     }
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     // best-effort
   }
 
@@ -2628,7 +2635,8 @@ function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
         if (ref) map.set(ref, score.utility);
       }
     }
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     // best-effort: if DB unavailable, all utilities default to 0
   } finally {
     if (db) closeDatabase(db);

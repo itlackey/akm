@@ -24,6 +24,7 @@
 
 import type { Database } from "bun:sqlite";
 import path from "node:path";
+import { rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
 import { insertEvent, openStateDatabase, readStateEvents } from "./state-db";
 import { error } from "./warn";
@@ -184,6 +185,8 @@ export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void 
       db.close();
     }
   } catch (err) {
+    // Never mask the bun-test isolation guard as a silent "events failed".
+    rethrowIfTestIsolationError(err);
     // Best-effort: events stream failures must not break the mutating verb.
     // Surface once to stderr so operators can diagnose.
     error(`akm: appendEvent failed: ${String(err)}`);
@@ -234,7 +237,9 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
   let db: import("bun:sqlite").Database | undefined;
   try {
     db = openStateDatabase(dbPath);
-  } catch {
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "no events".
+    rethrowIfTestIsolationError(err);
     // DB does not exist yet or cannot be opened — return empty result.
     return { events: [], nextOffset: 0 };
   }

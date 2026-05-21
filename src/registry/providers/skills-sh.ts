@@ -1,5 +1,6 @@
 import { fetchWithRetry } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
+import { rethrowIfTestIsolationError } from "../../core/errors";
 import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
@@ -124,7 +125,12 @@ class SkillsShProvider implements RegistryProvider {
     try {
       db = openDatabase();
       dbCacheResult = getRegistryIndexCache(db, dbCacheKey, QUERY_CACHE_TTL_MS);
-    } catch {
+    } catch (err) {
+      // Never mask the bun-test isolation guard as "DB unavailable" — see
+      // rethrowIfTestIsolationError in src/core/errors.ts. Without this,
+      // a leaky test silently gets a cold cache + fresh fetch instead of
+      // the loud TEST_ISOLATION_MISSING failure the guard intends.
+      rethrowIfTestIsolationError(err);
       // index.db not available yet (pre-migration install or test env) — fall through
     }
 

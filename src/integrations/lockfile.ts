@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isProcessAlive, writeFileAtomic } from "../core/common";
+import { rethrowIfTestIsolationError } from "../core/errors";
 import { getDataDir } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
@@ -115,7 +116,11 @@ export function readLockfile(): LockfileEntry[] {
     const raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
     if (!Array.isArray(raw)) return [];
     return raw.filter(isValidLockfileEntry);
-  } catch {
+  } catch (err) {
+    // Defense-in-depth: getLockfilePath() is outside this try block, but a
+    // future refactor that pushes a getDataDir() call inside must not mask
+    // the bun-test isolation guard as "empty lockfile".
+    rethrowIfTestIsolationError(err);
     return [];
   }
 }

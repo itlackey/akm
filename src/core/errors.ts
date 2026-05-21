@@ -147,3 +147,37 @@ export class NotFoundError extends Error {
     return this._hint ?? NOT_FOUND_HINTS[this.code];
   }
 }
+
+/**
+ * Test-isolation guard helper.
+ *
+ * `src/core/paths.ts` throws `ConfigError("TEST_ISOLATION_MISSING")` under
+ * `bun test` when `AKM_STASH_DIR` is set without a paired data-dir or
+ * state-dir override. That throw must never be swallowed by best-effort
+ * catches around DB/data-dir operations — otherwise the guard's loud failure
+ * silently degrades into a "no result" outcome (cold cache, missing snapshot,
+ * etc.) and the underlying test leak goes undetected.
+ *
+ * Call `rethrowIfTestIsolationError(err)` from any catch block that returns
+ * a fallback value (null, [], empty result) after touching DB or data-dir
+ * paths. It re-throws when the caught error is the guard violation, otherwise
+ * does nothing so the existing benign-fallback path can proceed unchanged.
+ *
+ * Usage:
+ *   try {
+ *     const db = openDatabase();
+ *     // ...
+ *   } catch (err) {
+ *     rethrowIfTestIsolationError(err);
+ *     // existing benign-fallback handling
+ *   }
+ */
+export function isTestIsolationError(err: unknown): boolean {
+  return err instanceof ConfigError && err.code === "TEST_ISOLATION_MISSING";
+}
+
+export function rethrowIfTestIsolationError(err: unknown): void {
+  if (isTestIsolationError(err)) {
+    throw err;
+  }
+}

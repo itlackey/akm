@@ -19,7 +19,7 @@ import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { asNonEmptyString } from "../core/common";
 import { loadConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
+import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
@@ -286,7 +286,8 @@ function logShowEvent(
     } finally {
       if (!existingDb) closeDatabase(db);
     }
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     /* fire-and-forget */
   }
 }
@@ -385,7 +386,8 @@ export async function showLocal(input: {
         db = openExistingDatabase();
         const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
         return { total: related.length, hits: related };
-      } catch {
+      } catch (err) {
+        rethrowIfTestIsolationError(err);
         return { total: 0, hits: [] };
       } finally {
         if (db) closeDatabase(db);

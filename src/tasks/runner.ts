@@ -25,7 +25,7 @@ import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
-import { NotFoundError } from "../core/errors";
+import { NotFoundError, rethrowIfTestIsolationError } from "../core/errors";
 import { getTaskLogDir } from "../core/paths";
 import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
 import { error } from "../core/warn";
@@ -471,6 +471,7 @@ function appendHistory(result: TaskRunResult): void {
       db.close();
     }
   } catch (err) {
+    rethrowIfTestIsolationError(err);
     error(`[akm] task history DB write failed: ${String(err)}`);
   }
 }

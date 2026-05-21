@@ -11,7 +11,7 @@
  * `deriveCurateFallbackQueries`) by importing them directly.
  */
 
-import { UsageError } from "../core/errors";
+import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import { insertUsageEvent } from "../indexer/usage-events";
@@ -116,7 +116,8 @@ function logCurateEvent(query: string, result: CurateResponse): void {
     } finally {
       closeDatabase(db);
     }
-  } catch {
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
     /* ignore logging failures */
   }
 }
