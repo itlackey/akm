@@ -68,18 +68,40 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
   // Try to load sqlite-vec extension
   loadVecExtension(db);
 
-  // Forward `undefined` (not the EMBEDDING_DIM default) when the caller did
-  // not specify a dim. ensureSchema uses the `undefined` signal to keep its
-  // hands off `index_meta.embeddingDim` — without this, every registry-side
-  // openDatabase() call would silently overwrite "768" → "384" and trigger
-  // the dim-change backup/wipe on the next dim-aware call. See investigation
-  // 2026-05-20: embedding-dim oscillation fires twice per improve run.
-  ensureSchema(db, options?.embeddingDim, { dataDir: dir });
+  // Dim resolution: explicit option wins; otherwise consult the on-disk
+  // config so unparameterised opens (registry providers, graph helpers,
+  // ad-hoc CLI subcommands) honour the operator-declared dimension. Only if
+  // both are absent do we fall through to the no-clobber path, which keeps
+  // ensureSchema from touching `index_meta.embeddingDim` at all.
+  const resolvedDim = options?.embeddingDim ?? resolveConfiguredEmbeddingDim();
+  ensureSchema(db, resolvedDim, { dataDir: dir });
 
   // Warn once at init if using JS fallback with many entries
   warnIfVecMissing(db, { once: true });
 
   return db;
+}
+
+/**
+ * Read the operator-configured embedding dimension from the on-disk config.
+ * Returns `undefined` when no config file is present, when the config has
+ * no `embedding.dimension` set, or when reading the config throws (e.g.
+ * inside isolated test fixtures with no XDG home). Failure is silent on
+ * purpose — every openDatabase() call would otherwise have to handle a
+ * config-not-found error path, and the fallback (no-clobber semantics) is
+ * already correct.
+ */
+function resolveConfiguredEmbeddingDim(): number | undefined {
+  try {
+    const { loadConfig } = require("../core/config") as typeof import("../core/config");
+    const dim = loadConfig().embedding?.dimension;
+    if (typeof dim === "number" && Number.isInteger(dim) && dim > 0 && dim <= 4096) {
+      return dim;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function openExistingDatabase(dbPath?: string): Database {

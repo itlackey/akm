@@ -338,42 +338,116 @@ describe("Schema", () => {
     }
   });
 
-  test("openDatabase() without embeddingDim does NOT overwrite a previously set dim", () => {
+  test("openDatabase() without embeddingDim honours config embedding.dimension", () => {
     // Regression: registry-side and other dim-unaware callers
-    // (static-index.ts:174, skills-sh.ts:125, graph.ts:550/591) call
-    // `openDatabase()` with no `embeddingDim`. Before the no-clobber fix
-    // this silently wrote `embeddingDim = "384"` (the EMBEDDING_DIM default)
-    // into `index_meta`, racing dim-aware callers and triggering repeat
-    // backup/wipe cycles. The contract is now: a caller that does not
-    // request a specific dim must not touch `index_meta.embeddingDim`.
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-noclobber-"));
+    // (static-index.ts, skills-sh.ts, graph.ts) call `openDatabase()` with
+    // no `embeddingDim`. Before this fix they silently wrote the static
+    // `EMBEDDING_DIM = 384` default into `index_meta`, racing dim-aware
+    // callers and triggering repeat backup/wipe cycles. The contract is
+    // now: an unparameterised open resolves dim from
+    // `config.embedding.dimension`, so all call sites — explicit or not —
+    // converge on the operator-declared value.
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-cfg-"));
+    createdTmpDirs.push(cfgDir);
+    const akmCfgDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmCfgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(akmCfgDir, "config.json"),
+      JSON.stringify({
+        embedding: {
+          endpoint: "http://localhost:11434/v1/embeddings",
+          model: "nomic-embed-text",
+          dimension: 384,
+        },
+      }),
+    );
+
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-cfg-data-"));
     createdTmpDirs.push(dataDir);
     const dbPath = path.join(dataDir, "index.db");
 
-    // Establish dim=768 via a dim-aware open.
-    let db = openDatabase(dbPath, { embeddingDim: 768 });
-    insertTestEntry(db, "noclobber-entry");
-    if (isVecAvailable(db)) {
-      expect(getMeta(db, "embeddingDim")).toBe("768");
-    }
-    closeDatabase(db);
-
-    // A dim-unaware open MUST leave the stored dim alone.
-    db = openDatabase(dbPath);
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    const origAKMCFG = process.env.AKM_CONFIG_DIR;
     try {
-      expect(getMeta(db, "embeddingDim")).toBe("768");
-    } finally {
+      // Seed dim=768 via an explicit dim-aware open.
+      let db = openDatabase(dbPath, { embeddingDim: 768 });
+      insertTestEntry(db, "cfg-entry");
+      if (isVecAvailable(db)) {
+        expect(getMeta(db, "embeddingDim")).toBe("768");
+      }
       closeDatabase(db);
-    }
 
-    // And it MUST NOT have produced a backup snapshot (no dim change → no wipe).
-    const backupsRoot = path.join(dataDir, "backups");
-    if (fs.existsSync(backupsRoot)) {
+      // Point config resolution at our test config (dimension=384).
+      process.env.AKM_CONFIG_DIR = akmCfgDir;
+      delete process.env.XDG_CONFIG_HOME;
+
+      db = openDatabase(dbPath);
+      try {
+        if (isVecAvailable(db)) {
+          expect(getMeta(db, "embeddingDim")).toBe("384");
+        }
+      } finally {
+        closeDatabase(db);
+      }
+
+      // A dim-change snapshot SHOULD exist: 768 → 384 transition.
+      const backupsRoot = path.join(dataDir, "backups");
+      expect(fs.existsSync(backupsRoot)).toBe(true);
       const snapshots = fs
         .readdirSync(backupsRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name);
-      expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(false);
+      expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(true);
+    } finally {
+      if (origXDG === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origXDG;
+      if (origAKMCFG === undefined) delete process.env.AKM_CONFIG_DIR;
+      else process.env.AKM_CONFIG_DIR = origAKMCFG;
+    }
+  });
+
+  test("openDatabase() without embeddingDim AND no config preserves the stored dim", () => {
+    // When no config can be resolved (e.g. inside an isolated test fixture
+    // with AKM_CONFIG_DIR pointed at an empty directory), the
+    // unparameterised open MUST keep its hands off `index_meta.embeddingDim`
+    // rather than clobbering it with the static EMBEDDING_DIM default.
+    const emptyCfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-nocfg-"));
+    createdTmpDirs.push(emptyCfgDir);
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-embdim-nocfg-data-"));
+    createdTmpDirs.push(dataDir);
+    const dbPath = path.join(dataDir, "index.db");
+
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    const origAKMCFG = process.env.AKM_CONFIG_DIR;
+    try {
+      let db = openDatabase(dbPath, { embeddingDim: 768 });
+      insertTestEntry(db, "nocfg-entry");
+      closeDatabase(db);
+
+      // Point config dir at an empty location so loadConfig finds no file.
+      process.env.AKM_CONFIG_DIR = emptyCfgDir;
+      delete process.env.XDG_CONFIG_HOME;
+
+      db = openDatabase(dbPath);
+      try {
+        expect(getMeta(db, "embeddingDim")).toBe("768");
+      } finally {
+        closeDatabase(db);
+      }
+
+      const backupsRoot = path.join(dataDir, "backups");
+      if (fs.existsSync(backupsRoot)) {
+        const snapshots = fs
+          .readdirSync(backupsRoot, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+        expect(snapshots.some((n) => n.includes("embedding-dim-change"))).toBe(false);
+      }
+    } finally {
+      if (origXDG === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origXDG;
+      if (origAKMCFG === undefined) delete process.env.AKM_CONFIG_DIR;
+      else process.env.AKM_CONFIG_DIR = origAKMCFG;
     }
   });
 
