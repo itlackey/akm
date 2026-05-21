@@ -18,7 +18,11 @@
  * `src/commands/consolidate.ts`.
  */
 import { describe, expect, it } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
+  isHotCapturedMemory,
   normalizeUpdatedField,
   sanitizeMergedContent,
   stripOuterCodeFence,
@@ -323,5 +327,84 @@ describe("sanitizeMergedContent — wires normalizeUpdatedField into the pipelin
     if (!result.ok) return;
     expect(result.result.frontmatter.updated).toBe("2026-05-19");
     expect(result.result.content).toContain("updated: 2026-05-19");
+  });
+});
+
+// ── isHotCapturedMemory — user-explicit memory guard ────────────────────────
+
+describe("isHotCapturedMemory — protects user-captured memories from auto-delete/auto-merge", () => {
+  // Background: 14 user memories with `captureMode: hot` were silent-deleted
+  // by the consolidate LLM between 2026-05-19 and 2026-05-20. This guard
+  // refuses any delete/merge whose participants include hot-captured memories.
+
+  function writeMemory(content: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-hot-guard-test-"));
+    const file = path.join(dir, "memory.md");
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  it("returns true for a memory with captureMode: hot in frontmatter", () => {
+    const file = writeMemory(`---
+description: A user-captured memo
+captureMode: hot
+beliefState: asserted
+tags: [important]
+---
+
+Body content.
+`);
+    expect(isHotCapturedMemory(file)).toBe(true);
+  });
+
+  it("returns false for a memory with captureMode: background (LLM-inferred)", () => {
+    const file = writeMemory(`---
+description: A derived memo
+captureMode: background
+inferred: true
+---
+
+Body content.
+`);
+    expect(isHotCapturedMemory(file)).toBe(false);
+  });
+
+  it("returns false for a memory with no captureMode field", () => {
+    const file = writeMemory(`---
+description: A pre-captureMode-era memo
+tags: [legacy]
+---
+
+Body content.
+`);
+    expect(isHotCapturedMemory(file)).toBe(false);
+  });
+
+  it("returns false for a non-existent file (fail-safe)", () => {
+    expect(isHotCapturedMemory("/tmp/does-not-exist-akm-hot-test.md")).toBe(false);
+  });
+
+  it("returns false for a malformed-frontmatter file (fail-safe)", () => {
+    const file = writeMemory("not actually markdown frontmatter\nno --- delimiters\n");
+    expect(isHotCapturedMemory(file)).toBe(false);
+  });
+
+  it("returns false for an empty file", () => {
+    const file = writeMemory("");
+    expect(isHotCapturedMemory(file)).toBe(false);
+  });
+
+  it("only the literal 'hot' string qualifies (case-sensitive)", () => {
+    const file = writeMemory(`---
+description: ambiguous case
+captureMode: HOT
+---
+
+Body.
+`);
+    // The frontmatter field requires exactly "hot" — uppercase/mixed-case
+    // do NOT trigger the guard. Documents the contract: the indexer only
+    // accepts the literal "hot" enum value.
+    expect(isHotCapturedMemory(file)).toBe(false);
   });
 });

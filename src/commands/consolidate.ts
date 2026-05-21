@@ -140,6 +140,37 @@ export function isConsolidationEligibleMemoryName(name: string): boolean {
   return !name.endsWith(".derived");
 }
 
+/**
+ * Returns true when the memory file has `captureMode: hot` in its frontmatter.
+ *
+ * Hot memories are USER-EXPLICIT (written via `akm remember` on the hot path).
+ * The consolidate LLM is forbidden from deleting or auto-merging them — the
+ * user wrote them on purpose and only the user can decide to retire them.
+ *
+ * Reads the file once per check; consolidate runs against ~10 memories per
+ * chunk so the IO cost is trivial. Returns false on any read/parse error
+ * (fail-safe: an unparseable file is treated as not-hot, but the broader
+ * consolidate flow already guards against unparseable memories elsewhere).
+ *
+ * Defends against four observed defect classes (see
+ * `memory:akm-improve-critical-review-2026-05-20`):
+ *   - LLM marks a memory contradicted then deletes (dangling contradictedBy)
+ *   - LLM merges two unrelated memories sharing a topic keyword
+ *   - LLM judges a recent durable design memo as "redundant"
+ *   - Cascade deletes (LLM uses ref:X as `contradictedBy` for ref:Y then deletes both)
+ */
+export function isHotCapturedMemory(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    const content = fs.readFileSync(filePath, "utf8");
+    const parsed = parseFrontmatter(content);
+    const fm = parsed.data as Record<string, unknown> | undefined;
+    return fm?.captureMode === "hot";
+  } catch {
+    return false;
+  }
+}
+
 // ── Chunk sizing ─────────────────────────────────────────────────────────────
 
 /**
@@ -898,6 +929,23 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
+      // captureMode:hot guard — refuse the merge if ANY participating memory
+      // (primary or secondary) was user-captured. Hot memories are user-
+      // explicit and must not be deleted/overwritten by the consolidate LLM.
+      // 14 user memories were silent-deleted by consolidate before this guard
+      // landed; recovery required copying from .akm/archive/ by hand.
+      const mergeParticipants: string[] = [op.primary, ...op.secondaries];
+      const hotParticipants = mergeParticipants.filter((ref) => {
+        const e = memoryByRef.get(ref);
+        return e ? isHotCapturedMemory(e.filePath) : false;
+      });
+      if (hotParticipants.length > 0) {
+        warnings.push(
+          `Merge: refused for ${op.primary} — ${hotParticipants.length} participant(s) have captureMode:hot (user-explicit, never auto-merge): ${hotParticipants.join(", ")}`,
+        );
+        continue;
+      }
+
       // Backup secondaries before deleting
       for (const secRef of op.secondaries) {
         const secEntry = memoryByRef.get(secRef);
@@ -937,6 +985,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const entry = memoryByRef.get(op.ref);
       if (!entry) {
         warnings.push(`Delete: ${op.ref} not found in loaded memories — skipping.`);
+        continue;
+      }
+
+      // captureMode:hot guard — refuse to delete user-captured memories.
+      // The consolidate LLM was deleting hot-captured user memos as
+      // "redundant" — 14 such deletes were silently archived between
+      // 2026-05-19 and 2026-05-20 before this guard. Hot memories are
+      // user-explicit and may only be deleted by the user.
+      if (isHotCapturedMemory(entry.filePath)) {
+        warnings.push(
+          `Delete: refused for ${op.ref} — captureMode:hot (user-explicit; never auto-delete). Reason from LLM: "${op.reason ?? "n/a"}"`,
+        );
         continue;
       }
 
