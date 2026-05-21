@@ -12,8 +12,17 @@ import { appendEvent } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { writeContradictEdge } from "../core/memory-belief";
 import { parseEmbeddedJsonResponse } from "../core/parse";
+import {
+  hasHotCaptureMode,
+  hasSupersededStatus,
+  validateProposalFrontmatter,
+} from "../core/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
 import { detectTruncatedDescription } from "../core/text-truncation";
+
+// Re-export the moved helpers so existing test imports continue to resolve.
+export { hasSupersededStatus, validateProposalFrontmatter };
+
 import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
@@ -164,29 +173,10 @@ export function isHotCapturedMemory(filePath: string): boolean {
     if (!fs.existsSync(filePath)) return false;
     const content = fs.readFileSync(filePath, "utf8");
     const parsed = parseFrontmatter(content);
-    const fm = parsed.data as Record<string, unknown> | undefined;
-    return fm?.captureMode === "hot";
+    return hasHotCaptureMode(parsed.data as Record<string, unknown> | undefined);
   } catch {
     return false;
   }
-}
-
-/**
- * Predicate over a parsed-frontmatter record: does it carry `status: superseded`?
- *
- * Added 2026-05-21 after triage found 5 consolidate-promoted proposals whose
- * source memories were marked superseded — the superseded frontmatter dragged
- * through verbatim into the new knowledge asset, producing broken-on-arrival
- * proposals that had to be hand-rejected. Superseded memories are by
- * definition no-longer-current; promoting them as fresh knowledge is incoherent.
- *
- * Pure / exported so tests can pin individual cases and the consolidate
- * promote site can call it with already-parsed frontmatter without redundant
- * file IO.
- */
-export function hasSupersededStatus(frontmatter: Record<string, unknown> | undefined): boolean {
-  const status = frontmatter?.status;
-  return typeof status === "string" && status.trim().toLowerCase() === "superseded";
 }
 
 // ── Chunk sizing ─────────────────────────────────────────────────────────────
@@ -1428,25 +1418,6 @@ export function normalizeUpdatedField(fm: Record<string, unknown>): void {
     fm.updated = todayIso;
     return;
   }
-}
-
-/**
- * Validate the frontmatter of a consolidate-bound asset. Required fields are
- * the bare minimum a reviewer needs to triage the proposal: `description`.
- * Additionally enforces that the description is not obviously truncated.
- *
- * Returns `null` on success, or an error code on failure.
- */
-export function validateProposalFrontmatter(fm: Record<string, unknown>): { ok: true } | { ok: false; reason: string } {
-  const desc = fm.description;
-  if (typeof desc !== "string" || desc.trim().length === 0) {
-    return { ok: false, reason: "MISSING_FRONTMATTER_DESCRIPTION" };
-  }
-  const truncReason = detectTruncatedDescription(desc);
-  if (truncReason) {
-    return { ok: false, reason: `TRUNCATED_DESCRIPTION (${truncReason})` };
-  }
-  return { ok: true };
 }
 
 /**

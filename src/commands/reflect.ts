@@ -30,6 +30,7 @@ import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
+import { checkReflectSize } from "../core/proposal-quality-validators";
 import {
   type CreateProposalInput,
   createProposal,
@@ -241,12 +242,6 @@ const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
  * `skill:openpalm-stack-diagnostics`'s `name` field to `"diagnostic-checklist"`.
  */
 const PROTECTED_FRONTMATTER_FIELDS: ReadonlySet<string> = new Set(["name", "ref", "id", "slug", "type"]);
-
-/** Safety-rail thresholds for reflect body size changes. */
-const REFLECT_SHRINK_RATIO_MIN = 0.5;
-const REFLECT_EXPAND_RATIO_MAX = 2.0;
-/** Below this byte count, ratio checks are too noisy — skip them. */
-const REFLECT_SIZE_GUARD_MIN_BYTES = 200;
 
 /**
  * Read the last 1–3 archived rejected proposals for a given ref from the
@@ -622,29 +617,25 @@ function sanitizeReflectPayload(
 
   const cleanedBody = rawLlmBody.replace(/^\s+/, "");
 
-  // Size guard — only when source body is meaningfully large.
-  if (sourceBody.trim().length >= REFLECT_SIZE_GUARD_MIN_BYTES) {
-    const ratio = cleanedBody.trim().length / sourceBody.trim().length;
-    if (ratio < REFLECT_SHRINK_RATIO_MIN) {
-      return {
-        content: payload.content,
-        warnings,
-        reject: {
-          reason: "parse_error" as AgentFailureReason,
-          error: `Reflect rejected: EXCESSIVE_SHRINKAGE — proposed body is ${(ratio * 100).toFixed(0)}% of source (minimum 50%) for ref ${targetRef}. Concrete content was likely deleted.`,
-        },
-      };
-    }
-    if (ratio > REFLECT_EXPAND_RATIO_MAX) {
-      return {
-        content: payload.content,
-        warnings,
-        reject: {
-          reason: "parse_error" as AgentFailureReason,
-          error: `Reflect rejected: EXCESSIVE_EXPANSION — proposed body is ${(ratio * 100).toFixed(0)}% of source (maximum 200%) for ref ${targetRef}. Speculative material was likely added.`,
-        },
-      };
-    }
+  // Size guard — only when source body is meaningfully large. The pure
+  // predicate lives in `core/proposal-quality-validators` so the same check
+  // also runs inside `runProposalValidators` on `proposal accept`.
+  const sizeOutcome = checkReflectSize(sourceBody, cleanedBody);
+  if (!sizeOutcome.ok) {
+    const pct = (sizeOutcome.ratio * 100).toFixed(0);
+    const limit = sizeOutcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 200%";
+    const cause =
+      sizeOutcome.code === "EXCESSIVE_SHRINKAGE"
+        ? "Concrete content was likely deleted."
+        : "Speculative material was likely added.";
+    return {
+      content: payload.content,
+      warnings,
+      reject: {
+        reason: "parse_error" as AgentFailureReason,
+        error: `Reflect rejected: ${sizeOutcome.code} — proposed body is ${pct}% of source (${limit}) for ref ${targetRef}. ${cause}`,
+      },
+    };
   }
 
   // Reassemble final content: merged frontmatter + cleaned body.

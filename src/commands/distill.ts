@@ -65,7 +65,6 @@ import {
   type Proposal,
   type ProposalsContext,
 } from "../core/proposals";
-import { TRUNCATION_TRAILING_WORDS } from "../core/text-truncation";
 import { warnVerbose } from "../core/warn";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -243,185 +242,13 @@ interface DistillValidationFinding {
 
 // ── Content quality validators ──────────────────────────────────────────────
 //
-// These validators run AFTER lesson-lint (which only checks "is the field
-// present and a non-empty string"). They reject the systematic failure modes
-// observed in 323 reviewed archived proposals:
-//   - `description` is a body fragment / section heading / placeholder string
-//   - `when_to_use` is the circular `"When working with <ref>"` fallback
-//   - `description` and `when_to_use` are identical
-//   - Body contains a second pseudo-frontmatter block (e.g. `**description:** ...`)
-//
-// Detection is intentionally conservative: any positive finding rejects the
-// generation. Improve's outer loop already treats validation_failed as a
-// recoverable per-ref outcome.
+// The actual implementations now live in `core/proposal-quality-validators.ts`
+// so the same checks run inside `runProposalValidators` on `proposal accept`.
+// We re-export the public-facing helpers here so existing imports
+// (`from "../src/commands/distill"`) continue to resolve.
+import { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse } from "../core/proposal-quality-validators";
 
-/**
- * Trailing tokens that indicate the description was truncated mid-clause.
- * See {@link TRUNCATION_TRAILING_WORDS} in `../core/text-truncation` for the
- * shared vocabulary (union of distill + consolidate hanging-connector words).
- * Observed examples:
- *   - "Always validate your setup with"
- *   - "Key fixes focus on"
- *   - "Disable the runtime hook before"
- */
-
-/** Headings / section labels that show up verbatim as "descriptions" in the bad samples. */
-const HEADING_FRAGMENT_PATTERNS = [
-  /^for example\b/i,
-  /^to reduce\b/i,
-  /^key (pitfalls|fixes|points|takeaways|considerations|steps|notes|tips|insights|features|benefits|risks)\b/i,
-  /^example[s]?$/i,
-  /^summary$/i,
-  /^overview$/i,
-  /^introduction$/i,
-  /^takeaways$/i,
-  /^conclusion$/i,
-  /^notes?$/i,
-  /^tips?$/i,
-];
-
-/**
- * Heuristic: looks like a coherent one-sentence description?
- *
- * Rejects the systematic failure modes observed across 323 archived rejected
- * proposals:
- *   - section-heading fragments ("Key pitfalls", "For example", "Takeaways")
- *   - mid-sentence prefixes ending with a preposition/conjunction
- *   - the literal placeholder string left by the old auto-repair fallback
- *   - pure-digit / pure-markdown content
- *   - descriptions that start with "When " (that pattern belongs in when_to_use)
- *
- * Does NOT require terminal punctuation — VALID_LESSON test fixtures and many
- * existing lessons describe themselves without a period. Truncation is detected
- * via the trailing-preposition rule, not via a sentence-ending punctuation rule.
- *
- * Pure / exported so tests can pin individual cases.
- */
-export function isValidDescription(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
-  if (typeof value !== "string") return { ok: false, reason: "description is not a string" };
-  const v = value.trim();
-  if (!v) return { ok: false, reason: "description is empty" };
-  if (v.length < 20) return { ok: false, reason: `description is too short (${v.length} chars; need ≥20)` };
-  if (v.length > 400) return { ok: false, reason: `description is too long (${v.length} chars; max 400)` };
-  // Pure-number or starts with markdown/structural marker.
-  if (/^\s*[\d#*\->`]/.test(v)) return { ok: false, reason: "description starts with a digit or markdown marker" };
-  // Ends with `:`, `;`, `,` — truncated mid-sentence.
-  const last = v.slice(-1);
-  if (last === ":" || last === ";" || last === ",") {
-    return { ok: false, reason: `description ends with truncation indicator "${last}"` };
-  }
-  // Trailing preposition / conjunction / auxiliary verb — sentence was sliced.
-  const lastWordMatch = v.match(/([A-Za-z']+)[.!?]*$/);
-  if (lastWordMatch) {
-    const lastWord = lastWordMatch[1].toLowerCase();
-    if (TRUNCATION_TRAILING_WORDS.has(lastWord)) {
-      return { ok: false, reason: `description ends with truncation-indicator word "${lastWord}"` };
-    }
-  }
-  // Literal placeholder text emitted by the previous auto-repair fallback.
-  if (/^lesson distilled from\b/i.test(v)) {
-    return { ok: false, reason: "description matches the auto-repair placeholder text" };
-  }
-  // Section-heading-like fragments.
-  for (const re of HEADING_FRAGMENT_PATTERNS) {
-    if (re.test(v)) return { ok: false, reason: `description looks like a section heading: "${v.slice(0, 40)}"` };
-  }
-  // Code-fragment shape — triage 2026-05-21 found a proposal with
-  // `description: "def _dedup_proposal(proposal)"`. The LLM had pasted a
-  // function signature from the source memory into the description field.
-  // Common shapes: language keyword followed by a non-prose character
-  // (identifier, `{`, `*`, etc. — anything that's not a normal sentence
-  // start). `\S` rather than `\w` so `import { ... }` and similar destructured
-  // forms also match.
-  if (
-    /^(def|function|async\s+def|async\s+function|class|const|let|var|export\s+function|export\s+const|export\s+default|import|public|private|protected|fn|func)\s+\S/i.test(
-      v,
-    )
-  ) {
-    const firstWord = v.split(/\s+/)[0] ?? "";
-    return {
-      ok: false,
-      reason: `description starts with code keyword "${firstWord}" — looks like a code fragment, not prose`,
-    };
-  }
-  // Unbalanced backticks — the LLM dropped a code fragment mid-string and
-  // forgot to close it.
-  const backtickCount = (v.match(/`/g) ?? []).length;
-  if (backtickCount % 2 !== 0) {
-    return {
-      ok: false,
-      reason: `description has ${backtickCount} backticks (unbalanced); likely contains a malformed code fragment`,
-    };
-  }
-  // Starts with `When ` — that pattern belongs in when_to_use.
-  if (/^when\b/i.test(v)) {
-    return { ok: false, reason: "description starts with 'When' — that pattern belongs in when_to_use" };
-  }
-  // Circular description that names the input ref's slug verbatim.
-  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
-  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40) {
-    return { ok: false, reason: "description appears to just name the input ref" };
-  }
-  return { ok: true };
-}
-
-/**
- * Heuristic: is when_to_use a real trigger sentence (not the circular
- * `"When working with <slug>"` fallback)?
- */
-export function isValidWhenToUse(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
-  if (typeof value !== "string") return { ok: false, reason: "when_to_use is not a string" };
-  const v = value.trim();
-  if (!v) return { ok: false, reason: "when_to_use is empty" };
-  if (v.length < 15) return { ok: false, reason: `when_to_use is too short (${v.length} chars; need ≥15)` };
-  if (v.length > 400) return { ok: false, reason: `when_to_use is too long (${v.length} chars; max 400)` };
-  // Circular pattern: "When working with <input-ref-slug>" (auto-repair fallback).
-  if (/^when working with\b/i.test(v)) {
-    return { ok: false, reason: "when_to_use is the circular 'When working with ...' fallback" };
-  }
-  // Naming the input ref tail with no other content is also circular.
-  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
-  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 25) {
-    return { ok: false, reason: "when_to_use appears to just name the input ref" };
-  }
-  return { ok: true };
-}
-
-/**
- * Detect the systematic "double frontmatter" defect: the LLM emits the
- * required YAML frontmatter AND then restates the same fields inside the
- * body using bold-markdown markers like `**description:** ...` or a second
- * `---` fence pair. These contradict the canonical frontmatter and confuse
- * reviewers.
- *
- * Exported as a pure function for testability.
- */
-export function detectDoubleFrontmatter(content: string): { kind: string; message: string } | null {
-  // Count `---` fence lines at column 0. The lesson contract is exactly two
-  // (the opening and closing of the single frontmatter block). Anything else
-  // is either pseudo-frontmatter inside the body or a malformed second block.
-  const fenceLines = content.split(/\r?\n/).filter((l) => /^---\s*$/.test(l));
-  if (fenceLines.length > 2) {
-    return {
-      kind: "double-frontmatter-fence",
-      message: `Content contains ${fenceLines.length} \`---\` fence lines; lessons must have exactly 2 (opening and closing of one frontmatter block).`,
-    };
-  }
-  // Pseudo-frontmatter markers in the body: lines like `**description:** ...`,
-  // `**when_to_use:** ...`, `__description__: ...`, or bare `description: ...` /
-  // `when_to_use: ...` outside any frontmatter block.
-  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, ""); // strip first frontmatter block, if any
-  const pseudoLine = body
-    .split(/\r?\n/)
-    .find((l) => /^\s*(\*\*|__)?\s*(description|when_to_use)\s*(\*\*|__)?\s*:/i.test(l));
-  if (pseudoLine) {
-    return {
-      kind: "pseudo-frontmatter-in-body",
-      message: `Body contains a pseudo-frontmatter restatement: "${pseudoLine.slice(0, 80)}". The fields belong in the YAML frontmatter only.`,
-    };
-  }
-  return null;
-}
+export { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse };
 
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 

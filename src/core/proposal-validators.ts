@@ -2,11 +2,25 @@ import type { AssetRef } from "./asset-ref";
 import { parseAssetRef } from "./asset-ref";
 import { parseFrontmatter } from "./frontmatter";
 import { lintLessonContent } from "./lesson-lint";
+import { defaultProposalQualityValidators } from "./proposal-quality-validators";
 import type { Proposal, ProposalValidationFinding, ProposalValidationReport } from "./proposals";
 
 export interface ProposalValidationContext {
   parsedRef?: AssetRef;
   stop?: boolean;
+  /**
+   * Optional source-asset context for validators that need to compare the
+   * proposed payload against the asset it was derived from (improve-stage
+   * validators: reflect size guard, consolidate source-superseded guard).
+   *
+   * Populated by improve-stage call sites before invoking
+   * {@link runProposalValidators}; the `proposal accept` path leaves this
+   * absent and source-context-aware validators no-op.
+   */
+  source?: {
+    content?: string;
+    frontmatter?: Record<string, unknown>;
+  };
 }
 
 export interface ProposalValidator {
@@ -64,14 +78,19 @@ const lessonProposalValidator: ProposalValidator = {
   },
 };
 
-export const defaultProposalValidators: ProposalValidator[] = [genericProposalValidator, lessonProposalValidator];
+export const defaultProposalValidators: ProposalValidator[] = [
+  genericProposalValidator,
+  lessonProposalValidator,
+  ...defaultProposalQualityValidators,
+];
 
 export function runProposalValidators(
   proposal: Proposal,
   validators: ProposalValidator[] = defaultProposalValidators,
+  initialContext: Partial<ProposalValidationContext> = {},
 ): ProposalValidationReport {
   const findings: ProposalValidationFinding[] = [];
-  const ctx: ProposalValidationContext = {};
+  const ctx: ProposalValidationContext = { ...initialContext };
 
   for (const validator of validators) {
     if (!validator.appliesTo(proposal, ctx)) continue;
