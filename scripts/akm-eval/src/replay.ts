@@ -358,6 +358,13 @@ async function main(): Promise<number> {
   setCurrentPlayer(player);
 
   const cases = loadCases(casesRoot, suite);
+  // Restore the recorded clock so runners that resolve a windowed `since`
+  // (e.g. proposal-quality) recompute the EXACT same ISO timestamp the
+  // record run sent to state-db. Without this, the replay's `new Date()`
+  // would skew the SQL parameter and the playback would fail to match the
+  // recorded query, producing a phantom divergence with no underlying
+  // logic change. The envelope's `startedAt` is always present and is the
+  // same instant the live runner saw via `ctx.runStartedAt`.
   const ctx: EvalContext = {
     stashRoot,
     dataDir: envelope.akm.dataDir ?? "",
@@ -368,6 +375,7 @@ async function main(): Promise<number> {
     env: { ...(process.env as Record<string, string>) },
     currentRunId: original.runId,
     recording: true,
+    runStartedAt: new Date(envelope.startedAt),
   };
 
   // Mirror the orchestrator: src/run.ts calls `akmCli.version()` once

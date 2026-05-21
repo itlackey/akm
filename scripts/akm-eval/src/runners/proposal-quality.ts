@@ -62,7 +62,10 @@ export function resolveSinceWindow(value: unknown, now: Date = new Date()): stri
 
 export async function runProposalQualityCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
   const start = Date.now();
-  const since = resolveSinceWindow(c.input.since);
+  // Anchor windowed `since` to the orchestrator's frozen run-start instant so
+  // record-vs-replay produce identical SQL parameters; falls back to a fresh
+  // `new Date()` for hand-built contexts (older tests, ad-hoc invocations).
+  const since = resolveSinceWindow(c.input.since, ctx.runStartedAt);
   const filterSource = c.input.source as string | undefined;
 
   const stateDb = makeStateDbSources({ dbPath: `${ctx.dataDir}/state.db`, record: ctx.recording });

@@ -190,4 +190,14 @@ export interface EvalContext {
    * `src/sources/replay-log.ts` (`getCurrentRecorder()` / `getCurrentPlayer()`).
    */
   recording?: boolean;
+  /**
+   * Phase 6: the wall-clock instant the run started, frozen at orchestrator
+   * entry. Runners that resolve a "since" / windowed view of state-db rows
+   * MUST anchor against this value rather than calling `new Date()` directly,
+   * so deterministic replay can re-derive the same SQL parameters from the
+   * recorded envelope's `startedAt` (see `src/replay.ts`). Optional purely so
+   * existing test fixtures that build a context by hand don't break — runners
+   * fall back to `new Date()` when unset.
+   */
+  runStartedAt?: Date;
 }

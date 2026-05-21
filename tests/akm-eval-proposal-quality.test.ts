@@ -257,3 +257,97 @@ describe("runProposalQualityCase — windowed validationPassRate", () => {
     expect(result.skipped).toBeUndefined();
   });
 });
+
+describe("runProposalQualityCase — deterministic clock injection (ctx.runStartedAt)", () => {
+  // Replay determinism guard: the same fixture + same `since` shorthand MUST
+  // produce identical results across runs as long as `ctx.runStartedAt` is
+  // pinned to the same instant. Conversely, advancing `runStartedAt` by an
+  // hour MUST slide the window forward (events that were in-window at T0
+  // drop out at T0+1h). Without the clock-injection fix on the runner side,
+  // this property held only by accident (`new Date()` happens to differ
+  // little between two calls inside the same second), and replay-vs-record
+  // would diverge whenever the gap exceeded the test's resolution.
+
+  const fixtures: Fixture[] = [];
+
+  afterEach(() => {
+    while (fixtures.length > 0) {
+      const f = fixtures.pop();
+      if (f) fs.rmSync(f.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  function freshFixture(): Fixture {
+    const f = makeFixture();
+    fixtures.push(f);
+    return f;
+  }
+
+  function ctxAt(f: Fixture, runStartedAt: Date): EvalContext {
+    return { ...makeContext(f), runStartedAt };
+  }
+
+  test("identical runStartedAt → identical resolved since + identical result", async () => {
+    const f = freshFixture();
+    const anchor = new Date("2026-05-21T12:00:00.000Z");
+    // Two events: one inside the 24h window (1h before anchor), one outside
+    // (48h before anchor). Both runs should see the same single in-window
+    // rejection.
+    const oneHourBefore = new Date(anchor.getTime() - 3_600_000).toISOString();
+    const fortyEightHoursBefore = new Date(anchor.getTime() - 48 * 3_600_000).toISOString();
+    buildStateDb({
+      dbPath: f.dbPath,
+      proposals: [],
+      events: [
+        { type: "proposal_creation_rejected", ts: oneHourBefore },
+        { type: "proposal_creation_rejected", ts: fortyEightHoursBefore },
+      ],
+    });
+
+    const r1 = await runProposalQualityCase(makeCase({ since: "24h" }), ctxAt(f, anchor));
+    const r2 = await runProposalQualityCase(makeCase({ since: "24h" }), ctxAt(f, anchor));
+
+    // Same since-ISO surfaces in evidence, same counts, same score/passed.
+    expect(r1.evidence.since).toBe("2026-05-20T12:00:00.000Z");
+    expect(r2.evidence.since).toBe(r1.evidence.since);
+    expect((r1.metrics.counts as { creationRejected: number }).creationRejected).toBe(1);
+    expect((r2.metrics.counts as { creationRejected: number }).creationRejected).toBe(1);
+    expect(r1.score).toBe(r2.score);
+    expect(r1.passed).toBe(r2.passed);
+  });
+
+  test("different runStartedAt 1h apart → different since + (here) different in-window count", async () => {
+    const f = freshFixture();
+    // Plant a single rejection at a known instant. Anchor A sees it in
+    // the 24h window; anchor B (25h later) does not. The resolved `since`
+    // values must differ, and the in-window count must reflect that.
+    const eventTs = "2026-05-20T13:00:00.000Z";
+    buildStateDb({
+      dbPath: f.dbPath,
+      proposals: [],
+      events: [{ type: "proposal_creation_rejected", ts: eventTs }],
+    });
+
+    const anchorA = new Date("2026-05-21T12:00:00.000Z"); // 23h after event → IN window
+    const anchorB = new Date("2026-05-21T14:00:00.000Z"); // 25h after event → OUT of window
+
+    const rA = await runProposalQualityCase(makeCase({ since: "24h" }), ctxAt(f, anchorA));
+    const rB = await runProposalQualityCase(makeCase({ since: "24h" }), ctxAt(f, anchorB));
+
+    expect(rA.evidence.since).toBe("2026-05-20T12:00:00.000Z");
+    expect(rB.evidence.since).toBe("2026-05-20T14:00:00.000Z");
+    expect(rA.evidence.since).not.toBe(rB.evidence.since);
+
+    // A sees the event, B does not — proves the runner consults ctx.runStartedAt.
+    expect((rA.metrics.counts as { creationRejected: number }).creationRejected).toBe(1);
+    expect((rB.metrics.counts as { creationRejected: number }).creationRejected).toBe(0);
+
+    // And the score/passed wiring tracks accordingly: A trips the floor
+    // (0/(0+1)=0), B is the skip-when-no-traffic case.
+    expect(rA.metrics.validationPassRate).toBe(0);
+    expect(rA.passed).toBe(false);
+    expect(rB.metrics.validationPassRate).toBeNull();
+    expect(rB.passed).toBe(true);
+    expect(rB.skipped).toBe(true);
+  });
+});
