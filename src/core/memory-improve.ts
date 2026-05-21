@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { stringify as yamlStringify } from "yaml";
 import { makeAssetRef, parseAssetRef } from "./asset-ref";
+import { assembleAsset } from "./asset-serialize";
 import { firstString, groupBy, stringArray } from "./common";
 import { parseFrontmatter } from "./frontmatter";
 
@@ -320,8 +320,7 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
       }
       const resolvedBody = resolveRelativeDates(fm.content ?? "", referenceDate);
       if (resolvedBody === (fm.content ?? "")) continue; // no change
-      const fmStr = yamlStringify(fm.data).trimEnd();
-      const newContent = `---\n${fmStr}\n---\n${resolvedBody}`;
+      const newContent = assembleAsset(fm.data, resolvedBody);
       fs.writeFileSync(candidate.filePath, newContent, "utf8");
       relativeDatesResolved++;
     } catch (error) {
@@ -609,24 +608,23 @@ function archiveCleanupCandidate(
   const archiveRef = path.relative(stashDir, archivedPath).replace(/\\/g, "/");
   const auditPath = path.join(archiveDir, "cleanup.md");
   const auditRef = path.relative(stashDir, auditPath).replace(/\\/g, "/");
-  const auditFrontmatter = yamlStringify({
-    schemaVersion: 1,
-    kind: "memory-cleanup-archive",
-    archivedAt,
-    beliefState: "archived",
-    previousBeliefState: priorBeliefStateForArchive(candidate),
-    ref: candidate.ref,
-    parentRef: candidate.parentRef,
-    reason: candidate.reason,
-    ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
-    originalPath,
-    archivedPath: archiveRef,
-  }).trimEnd();
-  fs.writeFileSync(
-    auditPath,
-    `---\n${auditFrontmatter}\n---\n\nArchived derived memory for recoverable cleanup.\n`,
-    "utf8",
+  const auditAsset = assembleAsset(
+    {
+      schemaVersion: 1,
+      kind: "memory-cleanup-archive",
+      archivedAt,
+      beliefState: "archived",
+      previousBeliefState: priorBeliefStateForArchive(candidate),
+      ref: candidate.ref,
+      parentRef: candidate.parentRef,
+      reason: candidate.reason,
+      ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
+      originalPath,
+      archivedPath: archiveRef,
+    },
+    "Archived derived memory for recoverable cleanup.\n",
   );
+  fs.writeFileSync(auditPath, auditAsset, "utf8");
 
   return {
     ref: candidate.ref,
@@ -663,9 +661,7 @@ function persistBeliefStateTransition(filePath: string, transition: MemoryBelief
   if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
   else delete nextFrontmatter.currentBeliefRefs;
 
-  const frontmatter = yamlStringify(nextFrontmatter).trimEnd();
-  const body = parsed.content.replace(/^\n+/, "");
-  fs.writeFileSync(filePath, `---\n${frontmatter}\n---\n\n${body}`, "utf8");
+  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
 }
 
 function appendBeliefStateTransitionLog(stashDir: string, transitions: MemoryBeliefStateTransition[]): string {

@@ -1,5 +1,5 @@
-import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
+import { assembleAsset } from "../core/asset-serialize";
 import { parseFrontmatter } from "../core/frontmatter";
 
 export interface PromotionFeedbackEvent {
@@ -245,8 +245,7 @@ function buildKnowledgeContent(input: PromotionPolicyInput): string {
     ...(typeof fm.observed_at === "string" && fm.observed_at.trim() ? { observed_at: fm.observed_at.trim() } : {}),
     sources,
   };
-  const frontmatter = yamlStringify(knowledgeFrontmatter).trimEnd();
-  return `---\n${frontmatter}\n---\n\n${body}\n`;
+  return assembleAsset(knowledgeFrontmatter, body);
 }
 
 function assessWithWeightedModel(

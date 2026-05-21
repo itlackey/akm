@@ -87,6 +87,7 @@ import {
   parseTaskRef,
 } from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
+import { assembleAsset } from "./core/asset-serialize";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
 import { isHttpUrl, isWithin, resolveStashDir, writeFileAtomic } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
@@ -1905,10 +1906,9 @@ function appendLessonStrength(type: string, name: string, feedbackRef: string): 
   strengthList.push(feedbackRef);
   data.lessonStrength = strengthList;
 
-  const yaml = yamlStringify(data).trimEnd();
   const block = parseFrontmatterBlock(raw);
   const body = block?.content ?? raw;
-  const next = `---\n${yaml}\n---\n${body.startsWith("\n") ? "" : "\n"}${body}`;
+  const next = assembleAsset(data, body);
   try {
     // Preserve the existing file's permission bits (markdown assets are
     // typically 0o644); writeFileAtomic defaults to 0o600 otherwise.

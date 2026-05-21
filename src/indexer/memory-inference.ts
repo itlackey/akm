@@ -33,8 +33,8 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
+import { assembleAsset } from "../core/asset-serialize";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, SourceConfigEntry } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
@@ -348,8 +348,7 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
     title: derived.title,
     derivedFrom: parent.name,
   };
-  const yaml = yamlStringify(fm).trimEnd();
-  return `---\n${yaml}\n---\n\n# ${derived.title.trim()}\n\n${derived.content.trim()}\n`;
+  return assembleAsset(fm, `# ${derived.title.trim()}\n\n${derived.content.trim()}\n`);
 }
 
 function markParentProcessed(parent: MemoryRecord): void {
@@ -369,10 +368,9 @@ function markParentProcessed(parent: MemoryRecord): void {
   }
 
   const updatedFm: Record<string, unknown> = { ...parent.data, [FM_INFERENCE_PROCESSED]: true };
-  const yaml = yamlStringify(updatedFm).trimEnd();
   const block = parseFrontmatterBlock(raw);
   const body = block?.content ?? raw;
-  const next = `---\n${yaml}\n---\n${body.startsWith("\n") ? "" : "\n"}${body}`;
+  const next = assembleAsset(updatedFm, body);
   try {
     fs.writeFileSync(parent.filePath, next, "utf8");
   } catch (err) {

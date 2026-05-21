@@ -43,7 +43,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { stringify as yamlStringify } from "yaml";
+import { assembleAsset } from "../core/asset-serialize";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
@@ -560,9 +560,7 @@ function writeLastConfirmed(candidate: CandidateMemory, nowIso: string): void {
 }
 
 function writeFrontmatterAtomic(filePath: string, frontmatter: Record<string, unknown>, body: string): void {
-  const yaml = yamlStringify(frontmatter).trimEnd();
-  const next = `---\n${yaml}\n---\n${body.startsWith("\n") ? "" : "\n"}${body}`;
-  fs.writeFileSync(filePath, next, "utf8");
+  fs.writeFileSync(filePath, assembleAsset(frontmatter, body), "utf8");
 }
 
 function stringArrayOrEmpty(value: unknown): string[] {

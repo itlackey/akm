@@ -26,7 +26,7 @@
  */
 
 import fs from "node:fs";
-import { stringify as yamlStringify } from "yaml";
+import { assembleAsset } from "./asset-serialize";
 import { parseFrontmatter } from "./frontmatter";
 
 // ── Re-exported belief-state types ───────────────────────────────────────────
@@ -68,7 +68,5 @@ export function writeContradictEdge(filePath: string, contradictedByRef: string)
     beliefState: "contradicted",
   };
 
-  const fmStr = yamlStringify(nextFrontmatter).trimEnd();
-  const body = parsed.content;
-  fs.writeFileSync(filePath, `---\n${fmStr}\n---\n${body}`, "utf8");
+  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
 }
