@@ -87,6 +87,13 @@ let tmpStash = "";
 let tmpDbPath = "";
 let db: Database;
 
+// Pair the tmpStash with XDG_DATA_HOME / XDG_STATE_HOME so any code path that
+// calls getDbPath() / getDataDir() under bun test resolves into a temp dir
+// instead of being refused by the TEST_ISOLATION_MISSING write-guard in
+// src/core/paths.ts.
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
+
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   return {
     semanticSearchMode: "auto",
@@ -152,6 +159,11 @@ beforeEach(() => {
   fs.mkdirSync(path.join(tmpStash, "memories"), { recursive: true });
   fs.mkdirSync(path.join(tmpStash, "knowledge"), { recursive: true });
 
+  // Redirect $DATA / $STATE into temp dirs so getDbPath() callers downstream
+  // do not trip TEST_ISOLATION_MISSING.
+  process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-llm-cache-data-"));
+  process.env.XDG_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-llm-cache-state-"));
+
   tmpDbPath = path.join(tmpStash, "test.db");
   db = openDatabase(tmpDbPath);
 
@@ -167,6 +179,10 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
 });
 
 afterAll(() => {

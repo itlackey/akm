@@ -215,29 +215,32 @@ describe("getDataDir", () => {
 
   // ── Test-isolation write-guard ────────────────────────────────────────────
   //
-  // Defense-in-depth: under `bun test` / NODE_ENV=test, a test that points
-  // AKM_STASH_DIR at a temp directory but forgets to also point
-  // XDG_DATA_HOME / AKM_DATA_DIR at a temp dir would silently fall through
-  // to the developer's real ~/.local/share/akm — writing SQLite databases,
-  // lockfiles, and snapshots into their personal data dir. The guard
-  // catches that by throwing TEST_ISOLATION_MISSING.
+  // Defense-in-depth: under `bun test` / NODE_ENV=test, every call to
+  // getDataDir() must resolve through an explicit XDG_DATA_HOME or
+  // AKM_DATA_DIR override. Falling through to the developer's real
+  // ~/.local/share/akm silently writes SQLite databases, lockfiles, and
+  // snapshots into their personal data dir (observed: 4,183-row
+  // registry-cache pollution). The guard catches that by throwing
+  // TEST_ISOLATION_MISSING regardless of whether AKM_STASH_DIR is set.
 
-  test("test-isolation guard fires when BUN_TEST=1, AKM_STASH_DIR set, XDG_DATA_HOME missing", () => {
-    expect(() =>
-      getDataDir({ BUN_TEST: "1", AKM_STASH_DIR: "/tmp/some-test-stash", HOME: "/home/user" }, "linux"),
-    ).toThrow(/Refusing to resolve data directory under bun test/);
+  test("test-isolation guard fires when BUN_TEST=1 and XDG_DATA_HOME missing", () => {
+    expect(() => getDataDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve data directory under bun test/,
+    );
   });
 
-  test("test-isolation guard fires when NODE_ENV=test, AKM_STASH_DIR set, XDG_DATA_HOME missing", () => {
-    expect(() =>
-      getDataDir({ NODE_ENV: "test", AKM_STASH_DIR: "/tmp/some-test-stash", HOME: "/home/user" }, "linux"),
-    ).toThrow(/Refusing to resolve data directory under bun test/);
+  test("test-isolation guard fires when NODE_ENV=test and XDG_DATA_HOME missing", () => {
+    expect(() => getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve data directory under bun test/,
+    );
   });
 
-  test("test-isolation guard does NOT fire when AKM_STASH_DIR is unset (production CLI)", () => {
-    // No AKM_STASH_DIR → user is invoking akm normally; no isolation expected.
-    const result = getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux");
-    expect(result).toBe(path.join("/home/user", ".local", "share", "akm"));
+  test("test-isolation guard fires under bun test even when AKM_STASH_DIR is unset", () => {
+    // Previously the carve-out skipped this case, letting tests silently
+    // write into ~/.local/share/akm/index.db. The tightened guard refuses.
+    expect(() => getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve data directory under bun test/,
+    );
   });
 
   test("test-isolation guard does NOT fire when both AKM_STASH_DIR and XDG_DATA_HOME are set", () => {
@@ -245,6 +248,11 @@ describe("getDataDir", () => {
       { NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" },
       "linux",
     );
+    expect(result).toBe(path.join("/tmp/xdg-data", "akm"));
+  });
+
+  test("test-isolation guard does NOT fire when XDG_DATA_HOME alone is set", () => {
+    const result = getDataDir({ NODE_ENV: "test", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" }, "linux");
     expect(result).toBe(path.join("/tmp/xdg-data", "akm"));
   });
 
@@ -264,7 +272,7 @@ describe("getDataDir", () => {
 
   test("test-isolation guard surfaces the TEST_ISOLATION_MISSING code", () => {
     try {
-      getDataDir({ NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", HOME: "/home/user" }, "linux");
+      getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux");
       throw new Error("expected guard to throw");
     } catch (err) {
       // ConfigError carries a stable machine-readable code.
@@ -310,16 +318,22 @@ describe("getStateDir", () => {
 
   // ── Test-isolation write-guard ────────────────────────────────────────────
 
-  test("test-isolation guard fires when BUN_TEST=1, AKM_STASH_DIR set, XDG_STATE_HOME missing", () => {
-    expect(() =>
-      getStateDir({ BUN_TEST: "1", AKM_STASH_DIR: "/tmp/some-test-stash", HOME: "/home/user" }, "linux"),
-    ).toThrow(/Refusing to resolve state directory under bun test/);
+  test("test-isolation guard fires when BUN_TEST=1 and XDG_STATE_HOME missing", () => {
+    expect(() => getStateDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve state directory under bun test/,
+    );
   });
 
-  test("test-isolation guard fires when NODE_ENV=test, AKM_STASH_DIR set, XDG_STATE_HOME missing", () => {
-    expect(() =>
-      getStateDir({ NODE_ENV: "test", AKM_STASH_DIR: "/tmp/some-test-stash", HOME: "/home/user" }, "linux"),
-    ).toThrow(/Refusing to resolve state directory under bun test/);
+  test("test-isolation guard fires when NODE_ENV=test and XDG_STATE_HOME missing", () => {
+    expect(() => getStateDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve state directory under bun test/,
+    );
+  });
+
+  test("test-isolation guard fires under bun test even when AKM_STASH_DIR is unset", () => {
+    expect(() => getStateDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
+      /Refusing to resolve state directory under bun test/,
+    );
   });
 
   test("test-isolation guard does NOT fire when both AKM_STASH_DIR and XDG_STATE_HOME are set", () => {
@@ -327,6 +341,11 @@ describe("getStateDir", () => {
       { NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", XDG_STATE_HOME: "/tmp/xdg-state", HOME: "/home/user" },
       "linux",
     );
+    expect(result).toBe(path.join("/tmp/xdg-state", "akm"));
+  });
+
+  test("test-isolation guard does NOT fire when XDG_STATE_HOME alone is set", () => {
+    const result = getStateDir({ NODE_ENV: "test", XDG_STATE_HOME: "/tmp/xdg-state", HOME: "/home/user" }, "linux");
     expect(result).toBe(path.join("/tmp/xdg-state", "akm"));
   });
 
@@ -345,7 +364,7 @@ describe("getStateDir", () => {
 
   test("test-isolation guard surfaces TEST_ISOLATION_MISSING code for state dir", () => {
     try {
-      getStateDir({ NODE_ENV: "test", AKM_STASH_DIR: "/tmp/stash", HOME: "/home/user" }, "linux");
+      getStateDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux");
       throw new Error("expected guard to throw");
     } catch (err) {
       expect((err as { code?: string }).code).toBe("TEST_ISOLATION_MISSING");
