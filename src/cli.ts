@@ -3995,7 +3995,7 @@ const improveCommand = defineCommand({
     },
     "distill-cooldown-days": {
       type: "string",
-      description: "Override distill cooldown for this run only (default: 30, 0 to disable)",
+      description: "Override distill cooldown for this run only (default: 1, 0 to disable)",
     },
     "consolidate-cooldown-days": {
       type: "string",

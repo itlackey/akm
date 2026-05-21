@@ -123,7 +123,7 @@ export interface AkmImproveOptions {
    * Only for this run; does not persist to config.
    */
   reflectCooldownDays?: number;
-  /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. Only for this run; does not persist to config. */
+  /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 1. Set to 0 to disable. Only for this run; does not persist to config. */
   distillCooldownDays?: number;
   /** Cooldown in days before re-consolidating memories. Defaults to 14. Set to 0 to disable. Only for this run; does not persist to config. */
   consolidateCooldownDays?: number;
@@ -1267,7 +1267,7 @@ async function runImprovePreparationStage(args: {
     return REFLECT_COOLDOWN_BY_TYPE[type] ?? REFLECT_COOLDOWN_FALLBACK;
   };
 
-  const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
+  const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 1;
 
   const reflectCooledRefs = new Set<string>();
   const distillCooledRefs = new Set<string>();
@@ -1365,7 +1365,7 @@ async function runImprovePreparationStage(args: {
   // Bug B1: synthetic skip emissions for the fully-skipped bucket happen here so
   // telemetry (improve_skipped events with reason=reflect_cooldown/distill_cooldown)
   // remains accurate even though these refs do not enter ranking.
-  const DISTILL_COOLDOWN_DAYS_PREFILT = options.distillCooldownDays ?? 30;
+  const DISTILL_COOLDOWN_DAYS_PREFILT = options.distillCooldownDays ?? 1;
   const eligibleRefs: ImproveEligibleRef[] = [];
   const distillOnlyRefs: ImproveEligibleRef[] = [];
   let fullySkippedCount = 0;
@@ -2023,7 +2023,7 @@ async function runImproveLoopStage(args: {
           // asset, skip re-distillation for DISTILL_REJECT_COOLDOWN_DAYS.
           // Prevents the same rejected proposal from returning the next day.
           // References: ExpeL arXiv:2308.10144, STaR arXiv:2203.14465.
-          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(options.distillCooldownDays ?? 30);
+          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(options.distillCooldownDays ?? 1);
           const recentlyRejectedLesson =
             DISTILL_REJECT_COOLDOWN_MS > 0 &&
             !explicitRefScope && // O-2: bypass when --scope <ref> is explicit
@@ -2043,7 +2043,7 @@ async function runImproveLoopStage(args: {
                   ref: planned.ref,
                   metadata: {
                     reason: "distill_reject_cooldown",
-                    cooldownDays: options.distillCooldownDays ?? 30,
+                    cooldownDays: options.distillCooldownDays ?? 1,
                   },
                 },
                 eventsCtx,
