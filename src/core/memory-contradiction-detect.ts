@@ -33,9 +33,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stringify as yamlStringify } from "yaml";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { tryLlmFeature } from "../llm/feature-gate";
+import { assembleAsset } from "./asset-serialize";
 import type { AkmConfig, LlmConnectionConfig } from "./config";
 import { parseFrontmatter } from "./frontmatter";
 
@@ -182,10 +182,7 @@ function writeContradictedByEdge(filePath: string, contradictedByRef: string): b
     beliefState: "contradicted",
   };
 
-  const fmStr = yamlStringify(nextFrontmatter).trimEnd();
-  const body = parsed.content;
-  const next = `---\n${fmStr}\n---\n${body}`;
-  fs.writeFileSync(filePath, next, "utf8");
+  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
   return true;
 }
 

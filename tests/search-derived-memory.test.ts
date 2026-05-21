@@ -166,7 +166,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
     const result = await akmSearch({ query: "claude-prefs", source: "stash", limit: 10 });
     const parentHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs");
     expect(parentHit).toBeDefined();
-    if (!parentHit) return;
+    if (!parentHit || !("ref" in parentHit)) return;
 
     expect(parentHit.expandTo).toBe("memory:claude-prefs.derived");
     // Description swapped in from the derived child.
@@ -183,7 +183,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
     const result = await akmSearch({ query: "lonely-pref", source: "stash", limit: 10 });
     const hit = result.hits.find((h) => h.type === "memory" && h.name === "lonely-pref");
     expect(hit).toBeDefined();
-    if (!hit) return;
+    if (!hit || !("ref" in hit)) return;
 
     expect(hit.expandTo).toBeUndefined();
     expect(hit.description).toBe("Always prefix branch names with feat/.");
@@ -194,7 +194,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
     const result = await akmSearch({ query: "claude-prefs.derived", source: "stash", limit: 10 });
     const derivedHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs.derived");
     expect(derivedHit).toBeDefined();
-    if (!derivedHit) return;
+    if (!derivedHit || !("ref" in derivedHit)) return;
     expect(derivedHit.expandTo).toBeUndefined();
   });
 });

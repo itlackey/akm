@@ -12,8 +12,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
+import { assembleAsset } from "../core/asset-serialize";
 import type { LlmConnectionConfig } from "../core/config";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -190,8 +190,7 @@ export async function runSchemaRepairPass(
       const newFm = { ...fm.data };
       if (parsed.description) newFm.description = parsed.description;
       if (parsed.when_to_use) newFm.when_to_use = parsed.when_to_use;
-      const fmStr = yamlStringify(newFm).trimEnd();
-      const newContent = `---\n${fmStr}\n---\n${fm.content}`;
+      const newContent = assembleAsset(newFm, fm.content);
 
       // M-3 / #387: Route through proposal queue instead of writing directly to
       // disk. This restores akm's safety invariant — the proposal queue is the

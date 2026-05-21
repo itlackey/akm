@@ -6,7 +6,7 @@
  * CLI entry point stays focused on argument parsing + output routing.
  */
 
-import { stringify as yamlStringify } from "yaml";
+import { serializeFrontmatter } from "../core/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
@@ -104,7 +104,7 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   // No fields populated → emit a bare delimiter pair so callers don't
   // produce `---\n{}\n---` (the YAML serializer's empty-object form).
   if (Object.keys(obj).length === 0) return "---\n---";
-  const serialized = yamlStringify(obj).trimEnd();
+  const serialized = serializeFrontmatter(obj);
   return `---\n${serialized}\n---`;
 }
 
