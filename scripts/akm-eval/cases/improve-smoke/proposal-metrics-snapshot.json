@@ -3,8 +3,10 @@
   "id": "proposal-metrics-snapshot",
   "suite": "improve-smoke",
   "type": "proposal-quality",
-  "description": "Snapshot of proposal-queue health: counts, validation pass rate, accept rate, and accept-rate-by-source. Always passes; the metrics are the deliverable.",
-  "input": {},
+  "description": "Snapshot of proposal-queue health: counts, validation pass rate, accept rate, and accept-rate-by-source over a recent window. Always passes; the metrics are the deliverable. Set `since: null` to opt back into lifetime mode (see proposal-validation-floor for context).",
+  "input": {
+    "since": "24h"
+  },
   "expected": {},
   "scoring": {
     "deterministic": true,
