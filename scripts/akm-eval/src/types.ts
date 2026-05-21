@@ -10,6 +10,7 @@ export type EvalCaseType =
   | "lesson-application"
   | "memory-safety"
   | "workflow-compliance"
+  | "judge-calibration"
   | "regression";
 
 export interface EvalCase {
@@ -74,6 +75,8 @@ export interface EvalRunResult {
     delta?: number;
   };
   countsByType: Record<EvalCaseType, { run: number; passed: number; skipped: number }>;
+  // Note: countsByType always lists every EvalCaseType — see buildCountsByType
+  // in src/scoring.ts for the canonical init.
   metrics: Record<string, unknown>;
   regressions?: Array<{
     caseId: string;

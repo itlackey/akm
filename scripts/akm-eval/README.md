@@ -1,8 +1,8 @@
 # akm-eval — lightweight standalone evaluation toolkit
 
 Read-only-by-default, deterministic measurement of `akm` over the existing
-run envelopes, events table, and proposal queue. Implements Phases 1 and 2
-of `docs/technical/akm-eval-implementation-plan.md`.
+run envelopes, events table, and proposal queue. Implements Phases 1–4 of
+`docs/technical/akm-eval-implementation-plan.md`.
 
 Mirrors `scripts/improve-stats/`: shell entry points under `bin/`,
 TypeScript runners under `src/`, no `akm` subcommand integration.
@@ -75,9 +75,19 @@ The toolkit is **read-only by default**. The only mutation path is
 `--mode paired` without `--no-sandbox`, which copies the stash to a
 tmpdir and runs `akm improve` against the copy.
 
-Other case types declared in `src/types.ts` (`memory-safety`,
-`workflow-compliance`, `lesson-application`) are accepted in case files
-but produce a `skipped` result. They land in Phase 3.
+Phase 3 added two more runner types — both mandatory-sandbox and zero
+mutation of the real stash:
+
+- **memory-safety** — copies a fixture stash into a sandbox, runs `akm
+  index` + `akm improve --json-to-stdout`, and scores the resulting
+  belief-state transitions against per-case allow / forbid lists.
+- **workflow-compliance** — reads `state.db` events directly and scores
+  required event types, event-count bounds, required ordering, and
+  forbidden event types over a window.
+
+Phase 4 added the **judge-calibration** runner (R3 — see "Judge
+calibration" below). `lesson-application` is the only declared type that
+still produces a `skipped` result.
 
 ## Paired mode
 
@@ -124,11 +134,66 @@ metrics paired-mode comparison cares about — proposals emitted that
 run, validation failures, consolidation, memory cleanup. Writes the
 summary to `<stash>/.akm/evals/collected/<improve-run-id>.json`.
 
+## Judge calibration
+
+Phase 4 (R3) ships a probe-based runner that measures the distill
+judge's agreement with hand-graded proposals and its MT-Bench-style
+variance across resamples (D-5 / #388 — `review_needed` band).
+
+Probe shape (under `cases/judge-calibration/probes/*.json`):
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "probe-01",
+  "assetType": "memory" | "skill" | "lesson",
+  "assetRef": "memory:probe-01-example",
+  "asset": {
+    "frontmatter": { "description": "...", "captureMode": "hot", "...": "..." },
+    "body": "..."
+  },
+  "feedback": [
+    { "ts": "2026-05-01T...", "signal": "positive", "reason": "...", "note": "..." }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "queued" | "review_needed" | "quality_rejected" | "validation_failed",
+    "expectedScoreBand": [low, high],
+    "rationale": "..."
+  }
+}
+```
+
+The runner builds a fresh sandbox per probe, materializes the asset
+file, replays the feedback via `akm feedback ...`, runs `akm index`,
+then runs `akm improve --json-to-stdout` `samplesPerProbe` times. Each
+sample's `distill_invoked` outcome is harvested from the sandbox's
+`state.db` events table. Aggregates: agreement rate, per-band agreement
+counts, median + mean across-resample variance (mode-fraction-based),
+and an MT-Bench-style flip rate (probes where any two samples
+disagree).
+
+The aggregate block is hoisted into `eval-result.json` at
+`metrics.judgeCalibration`. Example invocation:
+
+```sh
+scripts/akm-eval/bin/akm-eval-run --suite judge-calibration \
+  --akm /path/to/akm/dist/cli.js \
+  --format md
+```
+
+When `llm.features.feedback_distillation` is disabled in the test env
+every probe will return `skipped`, the case scores low, but the runner
+machinery is verified and the metrics block is still emitted.
+
 ## Suites
 
 - `cases/improve-smoke/` — the smoke suite. Five retrieval + three
   proposal-quality cases. Designed to run on any populated stash without
   per-stash customization.
+- `cases/memory-regression/` — Phase 3 memory-safety regression suite.
+- `cases/workflow-compliance/` — Phase 3 event-trace compliance suite.
+- `cases/judge-calibration/` — Phase 4 probe suite (8 hand-graded
+  probes spread across all four `expectedOutcome` bands).
 
 Author your own suite by creating a sibling directory. Each case is a
 JSON file matching the `EvalCase` shape in `src/types.ts`.

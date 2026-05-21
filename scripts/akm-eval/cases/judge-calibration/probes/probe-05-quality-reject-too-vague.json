@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-05-quality-reject-too-vague",
+  "assetType": "memory",
+  "assetRef": "memory:probe-05-vague-tooling-note",
+  "asset": {
+    "frontmatter": {
+      "description": "Tooling can be tricky sometimes; be careful.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["misc"],
+      "createdAt": "2026-04-01T08:00:00.000Z"
+    },
+    "body": "Tools are sometimes tricky.\n\nBe careful when using them.\n\nIf something breaks, try again or ask someone.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-02T08:00:00.000Z",
+      "signal": "negative",
+      "reason": "Not actionable — does not say which tools, what to be careful of, or who to ask",
+      "failureMode": "incomplete",
+      "note": "Reads like a placeholder; provides zero retrieval value."
+    },
+    {
+      "ts": "2026-05-07T11:00:00.000Z",
+      "signal": "negative",
+      "reason": "Pulled into a retrieval for `deploy tooling` and was useless",
+      "failureMode": "incorrect"
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "quality_rejected",
+    "expectedScoreBand": [1.0, 2.5],
+    "rationale": "Vacuous content (`be careful`, `ask someone`) with no specifics. A calibrated judge should score this under 2.5 and emit `quality_rejected`. Two unambiguous negatives reinforce the signal."
+  }
+}
