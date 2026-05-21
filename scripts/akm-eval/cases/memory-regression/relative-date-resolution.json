@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "relative-date-resolution",
+  "suite": "memory-regression",
+  "type": "memory-safety",
+  "description": "Verifies M-5 / #396 — akm improve resolves relative-date expressions (`yesterday`, `3 days ago`, `last week`) in derived-memory bodies to absolute ISO dates. Asserts the relative tokens no longer appear in the post-improve bodies. (`memoryCleanup.relativeDatesResolved` is not surfaced in the public envelope as of 0.8.0, so we verify the on-disk mutation directly.)",
+  "input": {
+    "fixture": "fixtures/relative-date-resolution"
+  },
+  "expected": {
+    "preservedRefs": [
+      "memory:yesterday-event",
+      "memory:three-days-ago",
+      "memory:last-week"
+    ],
+    "bodyMustNotContain": {
+      "memory:yesterday-event": ["yesterday"],
+      "memory:three-days-ago": ["3 days ago"],
+      "memory:last-week": ["last week"]
+    }
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 0.9
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["memory", "safety", "relative-dates"]
+}

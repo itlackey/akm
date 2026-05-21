@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "stale-memory-exclusion",
+  "suite": "memory-regression",
+  "type": "memory-safety",
+  "description": "Verifies stale-memory exclusion — a memory tagged outdated and frontmatter `staleness: stale` + `beliefState: deprecated` should not surface for a query targeting the current (2026) onboarding ritual. Runs `akm search` against the sandboxed stash after akm improve and asserts the outdated ref is absent from the top-K results.",
+  "input": {
+    "fixture": "fixtures/stale-memory-exclusion"
+  },
+  "expected": {
+    "preservedRefs": ["memory:current-process"],
+    "mustNotRetrieve": {
+      "query": "2026 onboarding ritual",
+      "topK": 3,
+      "forbiddenRefs": ["memory:outdated-process"]
+    }
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 0.8
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["memory", "safety", "staleness", "retrieval"]
+}

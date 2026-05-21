@@ -27,17 +27,19 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { compareResultsInMemory } from "./compare";
 import { diffCaseResults } from "./runners/regression";
+import { runMemorySafetyCase } from "./runners/memory-safety";
 import { runProposalQualityCase } from "./runners/proposal-quality";
 import { runRegressionCase } from "./runners/regression";
 import { runRetrievalCase } from "./runners/retrieval";
+import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
 import { renderMarkdown } from "./report";
 import { aggregateScores, buildCountsByType } from "./scoring";
 import { AkmCli } from "./sources/akm-cli";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
+import { createSandbox, type Sandbox } from "./sources/sandbox";
 import type { EvalCase, EvalCaseResult, EvalContext, EvalMode, EvalRunResult } from "./types";
 
 interface CliOptions {
@@ -263,6 +265,10 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
       return runProposalQualityCase(c, ctx);
     case "regression":
       return runRegressionCase(c, ctx);
+    case "memory-safety":
+      return runMemorySafetyCase(c, ctx);
+    case "workflow-compliance":
+      return runWorkflowComplianceCase(c, ctx);
     default:
       return {
         caseId: c.id,
@@ -328,28 +334,6 @@ function updateLatestSymlink(outRoot: string, runId: string): void {
   }
 }
 
-/**
- * Create a sandbox copy of the stash + an empty data dir. Returns the
- * sandbox root plus a cleanup function. The sandbox layout is:
- *   <sandbox>/stash  — full recursive copy of stashRoot
- *   <sandbox>/data   — fresh data dir (state.db will be (re)built by akm)
- */
-function makeSandbox(stashRoot: string): { sandbox: string; stash: string; data: string; cleanup: () => void } {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "akm-eval-paired-"));
-  const stash = path.join(sandbox, "stash");
-  const data = path.join(sandbox, "data");
-  fs.cpSync(stashRoot, stash, { recursive: true });
-  fs.mkdirSync(data, { recursive: true });
-  const cleanup = () => {
-    try {
-      fs.rmSync(sandbox, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
-  };
-  return { sandbox, stash, data, cleanup };
-}
-
 async function main(): Promise<number> {
   const opts = parseArgs(process.argv.slice(2));
 
@@ -360,16 +344,16 @@ async function main(): Promise<number> {
   // For paired mode with --sandbox: copy stash to tmpdir and redirect env.
   let activeStashRoot = realStashRoot;
   let activeDataDir = realDataDir;
-  let sandbox: ReturnType<typeof makeSandbox> | undefined;
+  let sandbox: Sandbox | undefined;
   const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 
   if (opts.mode === "paired" && opts.sandbox) {
-    sandbox = makeSandbox(realStashRoot);
-    activeStashRoot = sandbox.stash;
-    activeDataDir = sandbox.data;
-    env.AKM_STASH_DIR = sandbox.stash;
-    env.AKM_DATA_DIR = sandbox.data;
-    env.HOME = sandbox.sandbox;
+    sandbox = createSandbox({ fixture: realStashRoot, prefix: "akm-eval-paired-" });
+    activeStashRoot = sandbox.stashDir;
+    activeDataDir = sandbox.dataDir;
+    env.AKM_STASH_DIR = sandbox.env.AKM_STASH_DIR;
+    env.AKM_DATA_DIR = sandbox.env.AKM_DATA_DIR;
+    env.HOME = sandbox.env.HOME;
     // The sandbox starts without a state.db; index it so retrieval runs find content.
     const seed = new AkmCli(opts.akmBin, env).index();
     if (seed.status !== 0) {
@@ -419,7 +403,7 @@ async function main(): Promise<number> {
       status: imp.status,
       stderr: imp.stderr.split("\n").slice(-50).join("\n"),
       stdoutBytes: imp.stdout.length,
-      sandbox: opts.sandbox ? sandbox?.sandbox : null,
+      sandbox: opts.sandbox ? sandbox?.root : null,
     };
     if (imp.status !== 0) {
       process.stderr.write(`[akm-eval] akm improve failed (exit ${imp.status}); continuing with re-eval\n`);
@@ -531,7 +515,7 @@ async function main(): Promise<number> {
   if (sandbox && !opts.keepSandbox) {
     sandbox.cleanup();
   } else if (sandbox) {
-    process.stderr.write(`[akm-eval] kept sandbox at ${sandbox.sandbox}\n`);
+    process.stderr.write(`[akm-eval] kept sandbox at ${sandbox.root}\n`);
   }
 
   if (opts.failBelowScore !== undefined && overall < opts.failBelowScore) {
