@@ -55,7 +55,7 @@ import { runStalenessDetectionPass, type StalenessDetectionResult } from "../ind
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
-import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
+import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { akmLint } from "./lint/index";
@@ -507,6 +507,32 @@ function isLessonCandidate(ref: string): boolean {
   // Memories have their own distill path via shouldDistillMemoryRef.
   // All other types go through reflect, not distill.
   return parseAssetRef(ref).type === "lesson";
+}
+
+/**
+ * Planner-side check: should this ref enter the distill queue?
+ *
+ * Distill produces lessons from non-lesson sources. Two cases are eligible:
+ *
+ *   1. Memory refs that pass {@link shouldDistillMemoryRef} (the existing
+ *      memory→lesson/knowledge promotion path).
+ *
+ * Refs whose `type` is in {@link DISTILL_REFUSED_INPUT_TYPES} (currently
+ * `lesson:*`) are explicitly excluded — distill refuses them at runtime and
+ * queuing them just produces a no-op `skipped` outcome per ref per hour. That
+ * planner waste was the bug fixed in commit
+ * fix(improve): drop distill-refused types from planner.
+ *
+ * Note: prior to this fix the gate used `isLessonCandidate(ref)` directly,
+ * which was true *only* for `lesson:*` refs — exactly the set distill refuses.
+ * The result: every hourly run re-queued the same lesson refs, the same skip
+ * message returned, and no work was ever done. See
+ * `tests/commands/improve-distill-planner-skip-lessons.test.ts`.
+ */
+function isDistillCandidateRef(ref: string, stashDir?: string): boolean {
+  const parsed = parseAssetRef(ref);
+  if (isDistillRefusedInputType(parsed.type)) return false;
+  return shouldDistillMemoryRef(ref, stashDir);
 }
 
 function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
@@ -1401,7 +1427,11 @@ async function runImprovePreparationStage(args: {
 
     const onReflectCooldown = reflectCooledRefs.has(r.ref);
     const onDistillCooldown = DISTILL_COOLDOWN_DAYS_PREFILT > 0 && distillCooledRefs.has(r.ref);
-    const isDistillCandidate = isLessonCandidate(r.ref) || shouldDistillMemoryRef(r.ref, options.stashDir);
+    // Pre-fix this read `isLessonCandidate(r.ref) || shouldDistillMemoryRef(...)`,
+    // which queued `lesson:*` refs into the distill path even though distill
+    // refuses them at runtime (DISTILL_REFUSED_INPUT_TYPES). That was pure
+    // planner waste — observed re-queuing the same 19 lessons every hourly run.
+    const isDistillCandidate = isDistillCandidateRef(r.ref, options.stashDir);
 
     if (!onReflectCooldown) {
       if (onDistillCooldown && isDistillCandidate) {
@@ -1992,8 +2022,10 @@ async function runImproveLoopStage(args: {
       // isDistillOnly refs: no reflect action emitted — proceed directly to distill path below.
       const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
       const explicitRefScope = scope.mode === "ref";
-      const shouldAttemptDistill =
-        isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir);
+      // See `isDistillCandidateRef` — excludes `lesson:*` (and anything else in
+      // DISTILL_REFUSED_INPUT_TYPES) so distill never gets queued for an input
+      // it will refuse.
+      const shouldAttemptDistill = isDistillCandidateRef(planned.ref, options.stashDir);
       const skipMemoryDistillForWeakSignal =
         !isDistillOnly && parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
 
