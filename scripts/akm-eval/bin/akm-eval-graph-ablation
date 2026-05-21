@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# akm-eval-graph-ablation — Phase 5 entry point.
+#
+# Drives the graph A/B ablation: indexes + improves the same source stash
+# twice in two parallel sandboxes (graph extraction on / off), runs the
+# retrieval cases against each, and computes per-metric deltas. Mirrors
+# bin/akm-eval-run; thin shell wrapper around src/graph-ablation.ts.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/graph-ablation.ts" "$@"

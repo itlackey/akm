@@ -101,6 +101,48 @@ Flags:
 - `--threshold 0.1` — score-drop threshold for the regression diff.
 - `--fail-on-regression` — exit non-zero if any regressions are surfaced.
 
+## Graph A/B harness
+
+Phase 5 ships `bin/akm-eval-graph-ablation` (roadmap R5). Drives a single-source
+two-sandbox ablation: builds two copies of the stash, runs the same suite
+against each with graph extraction on vs. off, and reports per-metric deltas.
+
+```sh
+scripts/akm-eval/bin/akm-eval-graph-ablation \
+  --suite improve-smoke \
+  --stash /path/to/stash \
+  --akm /path/to/akm \
+  --seeds 1 \
+  --improve-args "--dry-run"
+```
+
+How the off side is gated: the harness plants `<sandbox>/.config/akm/config.json`
+under the sandbox `HOME` carve-out with both `llm.features.graph_extraction:
+false` and `index.graph.llm: false` set. This is the dual gate documented in
+`src/indexer/graph-extraction.ts`; together they block extraction at both the
+v1 feature-gate layer and the per-pass opt-out.
+
+Reports (per side; median + range when `--seeds > 1`):
+
+- retrieval hit@K (mean overall score across retrieval cases)
+- retrieval precision@K (mustIncludeRefs returned / topK)
+- contradiction-detection precision/recall (counts `contradictedBy` edges in
+  surviving memory frontmatter; recall vs an `expectedContradictions` declared
+  on `contradiction-detection`-tagged cases — `null` otherwise)
+- staleness telemetry from `improveResult.stalenessDetection`
+- latency delta (wall-clock index + improve per side)
+- **proxy** token-cost delta (`graphExtraction.quality.entityCount +
+  relationCount`; clearly labelled as a proxy in the report)
+
+Outputs land under `<stash>/.akm/evals/ablations/<eval-run-id>/` —
+namespaced separately from the main `runs/` tree so ablations never collide
+with regular eval runs.
+
+Verdict heuristic: `graphEarnsItsCost = true` when retrieval delta ≥ 0.05 AND
+improve-duration delta ≤ 5× the off-baseline; `false` otherwise; `inconclusive`
+when |Δ| < 0.01 on a single seed (re-run with `--seeds 3` or more for a
+decision-quality result).
+
 ## Compare and trend
 
 `akm-eval-compare <baseline-id|latest> <current-id|latest>` prints score
@@ -152,6 +194,7 @@ scripts/akm-eval/
     akm-eval-compare       dispatches to src/compare.ts
     akm-eval-trend         dispatches to src/trend.ts
     akm-eval-collect       dispatches to src/collect.ts
+    akm-eval-graph-ablation dispatches to src/graph-ablation.ts (Phase 5, R5)
   src/
     run.ts                 orchestrator (baseline | akm | paired)
     compare.ts             two-run diff command

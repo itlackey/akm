@@ -206,6 +206,20 @@ Other types (`memory-safety`, `workflow-compliance`,
 | 1 | Overall score below `--fail-below-score`. |
 | 2 | Case error(s) or invocation failure (missing suite, malformed JSON, missing `bun`, etc.). |
 
+## Graph A/B ablation (Phase 5)
+
+`scripts/akm-eval/bin/akm-eval-graph-ablation` (roadmap R5) drives a
+two-sandbox ablation against the same source stash — graph extraction on
+vs. off — and reports per-metric deltas (retrieval hit@K, precision@K,
+contradiction precision/recall, latency, and a proxy token-cost). The off
+side is gated via a planted `config.json` that sets both
+`llm.features.graph_extraction: false` and `index.graph.llm: false`.
+
+Outputs land under `<stash>/.akm/evals/ablations/<eval-run-id>/` so they
+never collide with the main `runs/` namespace. See
+[`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md#graph-ab-harness)
+for usage, the full metric list, and the verdict heuristic.
+
 ## What Phases 1 + 2 do not do
 
 - No mutation of the real stash (paired mode mutates only a tmpdir copy
