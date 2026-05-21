@@ -1,8 +1,8 @@
 # akm-eval — lightweight standalone evaluation toolkit
 
-Read-only, deterministic measurement of `akm` over the existing run
-envelopes, events table, and proposal queue. This is the Phase 1
-implementation per `docs/technical/akm-eval-implementation-plan.md`.
+Read-only-by-default, deterministic measurement of `akm` over the existing
+run envelopes, events table, and proposal queue. Implements Phases 1 and 2
+of `docs/technical/akm-eval-implementation-plan.md`.
 
 Mirrors `scripts/improve-stats/`: shell entry points under `bin/`,
 TypeScript runners under `src/`, no `akm` subcommand integration.
@@ -21,6 +21,19 @@ scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --format json
 
 # CI gate: fail when overall score drops below 0.75
 scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --fail-below-score 0.75
+
+# Paired mode: snapshot → akm improve → re-eval, with deltas. Sandboxed by default.
+scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --mode paired \
+  --improve-args "--limit 10 --dry-run"
+
+# Compare two completed eval runs
+scripts/akm-eval/bin/akm-eval-compare <baseline-id|latest> <current-id|latest>
+
+# TSV trend across the last N runs (pipe to `column -t` for a table)
+scripts/akm-eval/bin/akm-eval-trend --limit 20 --metric overall
+
+# Ingest a stash's improve-result.json into a paired-mode-ready summary
+scripts/akm-eval/bin/akm-eval-collect --from-improve-run latest
 ```
 
 Outputs land in `<stash>/.akm/evals/runs/<eval-run-id>/`:
@@ -43,9 +56,9 @@ left untouched.
 - `bun` >= 1.0 on `$PATH` (same as the rest of the repo).
 - `akm` on `$PATH` (or override with `--akm <bin>` / `AKM_BIN`).
 
-## What Phase 1 covers
+## Coverage
 
-Two runner types:
+Phase 1 + Phase 2 runner types:
 
 - **retrieval** — shells out to `akm search <query> --format jsonl
   --detail agent` and scores against `mustIncludeRefs`,
@@ -53,14 +66,63 @@ Two runner types:
 - **proposal-quality** — reads `state.db` (or `<stash>/.akm/proposals/`
   as fallback) and reports counts, validation pass rate, accept rate,
   reject rate, and accept-rate-per-source.
+- **regression** — diffs the current `case-results.jsonl` against a
+  previous eval-run-id (literal or `latest`). Surfaces newly-failing
+  cases, newly-passing cases, score drops above a configurable
+  threshold (default 0.1), and cases that disappeared.
 
-Phase 1 is **read-only and deterministic**. It does not mutate the
-stash, never runs `akm improve`, never calls an LLM.
+The toolkit is **read-only by default**. The only mutation path is
+`--mode paired` without `--no-sandbox`, which copies the stash to a
+tmpdir and runs `akm improve` against the copy.
 
 Other case types declared in `src/types.ts` (`memory-safety`,
-`workflow-compliance`, `lesson-application`, `regression`) are accepted
-in case files but produce a `skipped` result with reason "runner not
-implemented in Phase 1". They land in Phases 2–3 per the plan.
+`workflow-compliance`, `lesson-application`) are accepted in case files
+but produce a `skipped` result. They land in Phase 3.
+
+## Paired mode
+
+```sh
+scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --mode paired \
+  --improve-args "--limit 10 --timeout-ms 600000"
+```
+
+Paired mode orchestrates: (1) baseline pass, (2) `akm improve` shell-out
+with the forwarded args, (3) re-run of the same suite, (4) delta
+computation, (5) merged envelope. The result envelope's `scores.baseline`
+and `scores.delta` are populated, and `artifacts/paired-comparison.json`
+holds the full per-case diff.
+
+Flags:
+
+- `--sandbox` (default) — copy the stash to a tmpdir; `akm improve`
+  mutates only the copy. Cleans up on success unless `--keep-sandbox`.
+- `--no-sandbox` / `--allow-mutate` — opt into mutating the real stash.
+- `--improve-args "<...>"` — verbatim args forwarded to `akm improve`.
+- `--threshold 0.1` — score-drop threshold for the regression diff.
+- `--fail-on-regression` — exit non-zero if any regressions are surfaced.
+
+## Compare and trend
+
+`akm-eval-compare <baseline-id|latest> <current-id|latest>` prints score
+deltas, regressions, newly-passing/newly-failing per case, and writes a
+JSON comparison artifact under
+`<current-run>/compare-vs-<baseline>.json` (override with `--out`).
+Exits non-zero if any regressions are surfaced.
+
+`akm-eval-trend [--suite name] [--limit 20] [--metric overall]` walks
+`<stash>/.akm/evals/runs/*` oldest-first and prints a TSV with
+`ts | suite | mode | label | <metric>`. `--metric` accepts `overall`,
+`deterministic`, or any dot-separated path into the envelope (e.g.
+`scores.delta`, `countsByType.retrieval.passed`). Pipe to `column -t`
+for a pretty table.
+
+## Collect (improve-run ingestion)
+
+`akm-eval-collect --from-improve-run <run-id|latest>` reads
+`<stash>/.akm/runs/<run-id>/improve-result.json` and surfaces the
+metrics paired-mode comparison cares about — proposals emitted that
+run, validation failures, consolidation, memory cleanup. Writes the
+summary to `<stash>/.akm/evals/collected/<improve-run-id>.json`.
 
 ## Suites
 
@@ -86,22 +148,31 @@ scripts/akm-eval/
   README.md                this file
   _lib.sh                  shared shell helpers
   bin/
-    akm-eval-run           Phase 1 entry: invokes src/run.ts
+    akm-eval-run           dispatches to src/run.ts
+    akm-eval-compare       dispatches to src/compare.ts
+    akm-eval-trend         dispatches to src/trend.ts
+    akm-eval-collect       dispatches to src/collect.ts
   src/
-    run.ts                 orchestrator
+    run.ts                 orchestrator (baseline | akm | paired)
+    compare.ts             two-run diff command
+    trend.ts               N-run trend command
+    collect.ts             improve-result.json ingestion command
     types.ts               EvalCase, EvalCaseResult, EvalRunResult
     scoring.ts             weighted aggregation
     report.ts              Markdown renderer
     runners/
       retrieval.ts         akm search → score
       proposal-quality.ts  state.db / .akm/proposals → score
+      regression.ts        case-results.jsonl diff
     sources/
       paths.ts             stash + data-dir + state.db path resolution
       state-db.ts          read-only SQLite reader
       stash-fs.ts          filesystem fallback for proposals
-      akm-cli.ts           shell wrapper for `akm search`, `akm --version`
+      akm-cli.ts           shell wrapper for `akm search/improve/index/--version`
+      eval-runs.ts         resolver + loader for <stash>/.akm/evals/runs/
+      improve-result.ts    loader for <stash>/.akm/runs/<id>/improve-result.json
   cases/
-    improve-smoke/         Phase-1 starter cases
+    improve-smoke/         starter cases
 ```
 
 ## See also

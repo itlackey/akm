@@ -93,4 +93,12 @@ export interface EvalContext {
   outRoot: string;
   keepSandbox: boolean;
   env: Record<string, string>;
+  /**
+   * Phase 2: the case-results collected so far in the current eval run.
+   * Used by the regression runner to diff against a previous run from
+   * inside the same orchestrator pass.
+   */
+  currentResults?: EvalCaseResult[];
+  /** Phase 2: the in-flight eval run id; lets the regression runner skip self-diffs. */
+  currentRunId?: string;
 }

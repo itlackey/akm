@@ -12,9 +12,11 @@ The toolkit is shell + Bun TypeScript with no extra dependencies beyond
 what the `akm` repo already requires. It lives at `scripts/akm-eval/`
 and mirrors the established `scripts/improve-stats/` pattern.
 
-This page documents Phase 1 (read-only deterministic runner). See
-`docs/technical/akm-eval-implementation-plan.md` for the full eight-phase
-plan and `scripts/akm-eval/README.md` for the operator quick-start.
+This page documents Phases 1 and 2 (read-only deterministic runner, plus
+paired mode, compare, trend, regression, and run-envelope ingestion).
+See `docs/technical/akm-eval-implementation-plan.md` for the full
+eight-phase plan and `scripts/akm-eval/README.md` for the operator
+quick-start.
 
 ## Quick start
 
@@ -35,9 +37,9 @@ Outputs land under `<stash>/.akm/evals/runs/<eval-run-id>/`:
 By default the runner reads from `$AKM_STASH_DIR` (falling back to
 `~/akm`). Override with `--stash <path>` per invocation.
 
-## What it measures (Phase 1)
+## What it measures
 
-Two runner types ship in Phase 1:
+Three runner types ship in Phases 1 + 2:
 
 ### Retrieval
 
@@ -68,6 +70,63 @@ for `proposal_creation_rejected` events. Reports:
 Tells you whether `akm improve`'s output is actually being kept, broken
 down by `reflect` / `distill` / `consolidate` / `schema-repair` /
 `propose` / etc.
+
+### Regression
+
+Diffs the current `case-results.jsonl` against a previously-stored
+eval-run-id (resolved like `latest` or a literal id). Surfaces:
+
+- newly-failing cases (passed before, fail now),
+- newly-passing cases (failed before, pass now),
+- score drops above a configurable delta (default 0.1),
+- cases that disappeared between runs.
+
+Available both as an `EvalCase` of `type: "regression"` embedded in a
+suite (with `input.previousRunId` and optional `input.threshold`) and
+as a standalone command via `akm-eval-compare`.
+
+## Paired mode
+
+```sh
+scripts/akm-eval/bin/akm-eval-run --suite improve-smoke --mode paired \
+  --improve-args "--limit 10 --timeout-ms 600000"
+```
+
+Orchestrates four steps:
+
+1. **Baseline pass** — run the suite against the current stash.
+2. **`akm improve`** — shell out with the forwarded `--improve-args`.
+3. **Re-eval** — run the suite again against the post-improve state.
+4. **Merged envelope** — write a single `eval-result.json` with
+   `scores.baseline` and `scores.delta` populated, plus
+   `artifacts/baseline-case-results.jsonl` and
+   `artifacts/paired-comparison.json` for the per-case diff.
+
+Sandbox semantics:
+
+- `--sandbox` (default) — copy the stash to a tmpdir and run there;
+  the real stash is never touched. Cleaned up on success unless
+  `--keep-sandbox`.
+- `--no-sandbox` / `--allow-mutate` — opt into mutating the real stash.
+
+## Compare, trend, collect
+
+`akm-eval-compare <baseline-id|latest> <current-id|latest>` prints
+overall + per-type score deltas, regression list, newly-passing and
+newly-failing per case, and writes a JSON comparison artifact next to
+the current run (`--out` overrides). Exits non-zero if any regressions.
+
+`akm-eval-trend [--suite name] [--limit 20] [--metric overall]` walks
+`<stash>/.akm/evals/runs/*` oldest-first and prints a TSV with
+`ts | suite | mode | label | <metric>`. `--metric` accepts `overall`,
+`deterministic`, or any dot-separated path into the envelope. Pipe to
+`column -t` for a pretty table.
+
+`akm-eval-collect --from-improve-run <run-id|latest>` reads
+`<stash>/.akm/runs/<run-id>/improve-result.json` and surfaces the
+metrics paired-mode comparison cares about: proposals emitted, actions
+by mode and outcome, validation failures, consolidation, memory cleanup.
+Writes a summary to `<stash>/.akm/evals/collected/<improve-run-id>.json`.
 
 ## Suites
 
@@ -108,8 +167,8 @@ and edit the JSON.
 ```
 
 Other types (`memory-safety`, `workflow-compliance`,
-`lesson-application`, `regression`) are accepted in case files but
-produce a `skipped` result in Phase 1.
+`lesson-application`) are accepted in case files but produce a
+`skipped` result until Phase 3. `regression` is implemented.
 
 ## Result envelope
 
@@ -147,14 +206,13 @@ produce a `skipped` result in Phase 1.
 | 1 | Overall score below `--fail-below-score`. |
 | 2 | Case error(s) or invocation failure (missing suite, malformed JSON, missing `bun`, etc.). |
 
-## What Phase 1 does not do
+## What Phases 1 + 2 do not do
 
-- No mutation of the stash.
-- No `akm improve` invocation (`--mode paired` lands in Phase 2).
+- No mutation of the real stash (paired mode mutates only a tmpdir copy
+  unless you pass `--no-sandbox` / `--allow-mutate`).
 - No memory-safety eval (lands in Phase 3 with a mandatory sandbox).
 - No workflow-compliance eval (lands in Phase 3).
 - No LLM judging (lands in Phase 7).
-- No regression diffing across runs (lands in Phase 2).
 
 ## See also
 

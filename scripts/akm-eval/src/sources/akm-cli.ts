@@ -11,6 +11,9 @@
  *   - `akm events list --format jsonl --type T --since S`
  *     → one event per line.
  *   - `akm --version` → version string on stdout.
+ *   - `akm improve ...` → mutates the stash; run-id mints under
+ *     `<stash>/.akm/runs/<run-id>/improve-result.json` (Phase 2 paired
+ *     mode invokes this against a sandboxed stash copy by default).
  */
 
 import { spawnSync } from "node:child_process";
@@ -52,6 +55,21 @@ export class AkmCli {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Invoke `akm improve`, forwarding raw arguments. Inherits the stash/data
+   * dir from the AkmCli's env. Returns stdout/stderr/status; caller decides
+   * how to surface errors so paired mode can still write a partial envelope
+   * when `akm improve` exits non-zero mid-run.
+   */
+  improve(extraArgs: string[]): { stdout: string; stderr: string; status: number | null } {
+    return this.run(["improve", ...extraArgs]);
+  }
+
+  /** Run `akm index` against the wrapper's env; used to seed sandbox stashes. */
+  index(extraArgs: string[] = []): { stdout: string; stderr: string; status: number | null } {
+    return this.run(["index", ...extraArgs]);
   }
 
   search(query: string, opts: { limit?: number; type?: string } = {}): SearchHit[] {
