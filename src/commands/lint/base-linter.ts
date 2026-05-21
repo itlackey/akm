@@ -1,3 +1,30 @@
+// CONTRACT: ref-resolver
+// ----------------------------------------------------------------------------
+// The `refExistsInAnyStash` and `refToRelPath` helpers below are contract-
+// locked: a sister copy lives in the akm-plugins repo at
+// `shared/ref-extraction.ts` (and the runtime-shipped duplicate at
+// `claude/shared/ref-extraction.ts`). Both implementations resolve the same
+// `<type>:<slug>` -> on-disk-asset question and MUST agree on the set of
+// reachable refs for any given stash layout.
+//
+// The lock is enforced by `tests/contracts/ref-resolver-contract.test.ts`,
+// which drives this implementation through a canonical fixture set. The
+// akm-plugins repo ships an equivalent test that drives its copy through the
+// SAME inputs and asserts identical outcomes. Any change to the resolver
+// behavior on either side MUST update both contract tests in lockstep, or one
+// will fail.
+//
+// Cases the contract covers (see fixture in the contract test):
+//   - existing memory / knowledge / agent / workflow / skill / vault refs
+//   - knowledge subdirectory layout (knowledge/<category>/<slug>.md)
+//   - skill multi-file layout (skills/<slug>/SKILL.md)
+//   - memory `.derived.md` sibling
+//   - vault default vs named (.env vs <name>.env)
+//   - namespaced slugs containing `/`
+//   - non-existent refs
+//   - script type (unresolvable by design — both must return false)
+// ----------------------------------------------------------------------------
+
 import fs from "node:fs";
 import path from "node:path";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
@@ -67,8 +94,12 @@ function checkStalePath(body: string): string | null {
 const REF_RE =
   /(?:^|[\s`"'(])((agent|command|knowledge|memory|script|skill|workflow|lesson|task|wiki|vault):[^\s"'`)\]>,\n]+)/gm;
 
-/** Map from ref type to relative path pattern within stashRoot. Returns null to skip. */
-function refToRelPath(refType: string, refName: string): string | null {
+/**
+ * Map from ref type to relative path pattern within stashRoot. Returns null to skip.
+ *
+ * Exported for contract testing — see header CONTRACT block.
+ */
+export function refToRelPath(refType: string, refName: string): string | null {
   switch (refType) {
     case "agent":
       return path.join("agents", `${refName}.md`);
@@ -106,8 +137,10 @@ function refToRelPath(refType: string, refName: string): string | null {
 /**
  * Returns true if `relPath` resolves to a real file (or multi-file directory
  * primary) in ANY of the provided stash roots.
+ *
+ * Exported for contract testing — see header CONTRACT block.
  */
-function refExistsInAnyStash(relPath: string, refType: string, refName: string, stashRoots: string[]): boolean {
+export function refExistsInAnyStash(relPath: string, refType: string, refName: string, stashRoots: string[]): boolean {
   for (const root of stashRoots) {
     const absPath = path.join(root, relPath);
     if (fs.existsSync(absPath)) return true;
