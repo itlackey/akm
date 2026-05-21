@@ -615,6 +615,12 @@ async function main(): Promise<number> {
   const akmCli = makeAkmCli(opts.akmBin, env, { record: opts.record });
   const akmVersion = akmCli.version();
 
+  // Hoisted above baseCtx so the runners' windowed-view resolution
+  // (proposal-quality `since`) anchors against the same instant we persist
+  // into the envelope at `startedAt`. Without this, record-vs-replay would
+  // resolve different `since` values and miss the recorded state-db queries.
+  const startedAt = new Date();
+
   const baseCtx: EvalContext = {
     stashRoot: activeStashRoot,
     dataDir: activeDataDir,
@@ -626,10 +632,10 @@ async function main(): Promise<number> {
     currentRunId: evalRunId,
     judge: judgeCtx,
     recording: opts.record || undefined,
+    runStartedAt: startedAt,
   };
 
   const cases = loadCases(casesRoot, opts.suite);
-  const startedAt = new Date();
   let baselineResults: EvalCaseResult[] | undefined;
   let pairedImproveSummary: Record<string, unknown> | undefined;
   let pairedComparison: ReturnType<typeof compareResultsInMemory> | undefined;
