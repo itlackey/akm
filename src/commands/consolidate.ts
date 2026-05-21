@@ -135,6 +135,88 @@ Return ONLY JSON (no prose, no code fences):
 
 When the merged content includes an \`updated\` frontmatter field, the value MUST be a real ISO date string (e.g. \`updated: 2026-05-20\`). NEVER emit \`updated: today\`, \`updated: {today}\`, \`updated: {today: null}\`, \`updated: now\`, or any other literal placeholder/template-variable. If you do not have a real source-of-truth date, OMIT the \`updated\` field entirely — the post-processor will not invent one for you.`;
 
+/**
+ * JSON Schema for structured consolidate plans (PR 1 of the asset-writers
+ * decision — see knowledge:projects/akm/asset-writers-investigation/00-synthesis).
+ * Mirrors the {ops[], warnings?[]} shape currently described in
+ * CONSOLIDATE_SYSTEM_PROMPT. Providers with `supportsJsonSchema: true` enforce
+ * the shape upstream so the chunk-level "invalid plan from AI — skipping"
+ * branch in `runConsolidate` becomes unreachable on schema-honouring providers.
+ *
+ * The four operation variants (merge / delete / promote / contradict) are
+ * modeled as a oneOf so a structured-output provider can still tell them apart
+ * by the required `op` discriminator. `parseEmbeddedJsonResponse` keeps
+ * working as a fallback parser for providers that ignore the schema.
+ */
+export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["operations"],
+  additionalProperties: false,
+  properties: {
+    operations: {
+      type: "array",
+      description: "Ordered list of consolidate operations the planner proposes.",
+      items: {
+        oneOf: [
+          {
+            type: "object",
+            required: ["op", "primary", "secondaries", "mergeStrategy"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["merge"] },
+              primary: { type: "string", minLength: 1 },
+              secondaries: {
+                type: "array",
+                minItems: 1,
+                items: { type: "string", minLength: 1 },
+              },
+              mergeStrategy: { type: "string", minLength: 1 },
+            },
+          },
+          {
+            type: "object",
+            required: ["op", "ref", "reason"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["delete"] },
+              ref: { type: "string", minLength: 1 },
+              reason: { type: "string", minLength: 1 },
+            },
+          },
+          {
+            type: "object",
+            required: ["op", "ref", "knowledgeRef", "reason"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["promote"] },
+              ref: { type: "string", minLength: 1 },
+              knowledgeRef: { type: "string", minLength: 1 },
+              reason: { type: "string", minLength: 1 },
+              description: { type: "string" },
+            },
+          },
+          {
+            type: "object",
+            required: ["op", "ref", "contradictedByRef", "reason"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["contradict"] },
+              ref: { type: "string", minLength: 1 },
+              contradictedByRef: { type: "string", minLength: 1 },
+              reason: { type: "string", minLength: 1 },
+            },
+          },
+        ],
+      },
+    },
+    warnings: {
+      type: "array",
+      description: "Optional list of human-readable concerns the planner wants to surface.",
+      items: { type: "string" },
+    },
+  },
+};
+
 // ── Memory loading ───────────────────────────────────────────────────────────
 
 export interface MemoryEntry {
@@ -730,10 +812,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       async () => {
         if (!config.llm) return { ok: false as const, error: "No LLM configured for consolidation" };
         try {
-          const content = await chatCompletion(config.llm, [
-            { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
-            { role: "user", content: userPrompt },
-          ]);
+          // responseSchema lift (PR 1, asset-writers-investigation §5): pass
+          // the consolidate plan schema so providers with
+          // `supportsJsonSchema: true` enforce shape upstream. Providers that
+          // ignore the option fall through to the existing
+          // `parseEmbeddedJsonResponse` path on the response side.
+          const content = await chatCompletion(
+            config.llm,
+            [
+              { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
+              { role: "user", content: userPrompt },
+            ],
+            { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA },
+          );
           return { ok: true as const, content };
         } catch (e) {
           return { ok: false as const, error: String(e) };

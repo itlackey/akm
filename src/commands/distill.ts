@@ -316,6 +316,145 @@ const KNOWLEDGE_SYSTEM_PROMPT = [
   "- Output ONLY the knowledge file. No preamble, no code fences, no trailing prose.",
 ].join("\n");
 
+// ── Structured-output schemas (responseSchema lift) ─────────────────────────
+//
+// PR 1 of the asset-writers decision (see knowledge:projects/akm/
+// asset-writers-investigation/00-synthesis): on providers that honour
+// `response_format: json_schema`, ask the LLM for a typed JSON object and
+// re-assemble the markdown locally. The previous "emit raw markdown with
+// embedded frontmatter" path remains as a fallback for providers that ignore
+// the schema (and for the `chat` test seam, which is wired to return strings
+// today). Shape-level rejection codes — MALFORMED_FRONTMATTER_BLOCK,
+// FRONTMATTER_NOT_OBJECT, INVALID_YAML, UNBALANCED_CODE_FENCE — become
+// unreachable on the structured path. Content-quality validators
+// (isValidDescription / isValidWhenToUse) keep firing post-assembly because
+// the LLM still controls the string contents of typed fields.
+
+/**
+ * JSON Schema for structured lesson distillation. Mirrors the LESSON_SYSTEM_PROMPT
+ * frontmatter contract. Required: description, when_to_use, body. Optional:
+ * tags (string array) so providers that volunteer categorisation hints survive
+ * the round-trip without being rejected as additionalProperties.
+ */
+export const DISTILL_LESSON_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["description", "when_to_use", "body"],
+  additionalProperties: false,
+  properties: {
+    description: {
+      type: "string",
+      minLength: 10,
+      description:
+        "Single complete sentence (80-200 chars) summarising what the lesson teaches. No markdown, no leading 'When'/'If'.",
+    },
+    when_to_use: {
+      type: "string",
+      minLength: 10,
+      description: "Single complete sentence describing the concrete trigger condition for the lesson.",
+    },
+    body: {
+      type: "string",
+      minLength: 1,
+      description: "Lesson body — plain markdown, 1-3 short paragraphs of practical guidance.",
+    },
+    tags: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional tag list. Empty array is allowed; the post-processor drops it if empty.",
+    },
+  },
+};
+
+/**
+ * JSON Schema for structured knowledge distillation. Mirrors the
+ * KNOWLEDGE_SYSTEM_PROMPT contract. Required: description, body. Optional:
+ * tags, sources.
+ */
+export const DISTILL_KNOWLEDGE_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["description", "body"],
+  additionalProperties: false,
+  properties: {
+    description: {
+      type: "string",
+      minLength: 1,
+      description: "One-line summary of the knowledge asset.",
+    },
+    body: {
+      type: "string",
+      minLength: 1,
+      description: "Knowledge body — structured markdown with a `# Title` heading and durable facts only.",
+    },
+    tags: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional tag list. Empty array is allowed; the post-processor drops it if empty.",
+    },
+    sources: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional list of source refs the knowledge was distilled from.",
+    },
+  },
+};
+
+/**
+ * Shape returned by a structured-output-honouring provider. Loose-typed so the
+ * caller can validate before consuming.
+ */
+interface StructuredDistillPayload {
+  description?: unknown;
+  when_to_use?: unknown;
+  body?: unknown;
+  tags?: unknown;
+  sources?: unknown;
+}
+
+/**
+ * Assemble a markdown asset from a structured-output payload. Returns `null`
+ * when the payload is missing required fields — the caller then falls through
+ * to the prompt-contract markdown path. We deliberately do NOT validate
+ * content quality here (isValidDescription / isValidWhenToUse run downstream
+ * on the assembled content); this helper only catches shape-level emptiness
+ * that the schema may not have rejected (e.g. a provider that ignored
+ * `minLength` but still returned the field).
+ */
+export function assembleStructuredDistillMarkdown(
+  payload: StructuredDistillPayload,
+  kind: "lesson" | "knowledge",
+): string | null {
+  if (payload === null || typeof payload !== "object") return null;
+  const description = typeof payload.description === "string" ? payload.description.trim() : "";
+  const body = typeof payload.body === "string" ? payload.body.trim() : "";
+  if (description.length === 0 || body.length === 0) return null;
+
+  const fm: Record<string, string | string[]> = { description };
+
+  if (kind === "lesson") {
+    const whenToUse = typeof payload.when_to_use === "string" ? payload.when_to_use.trim() : "";
+    if (whenToUse.length === 0) return null;
+    fm.when_to_use = whenToUse;
+  }
+
+  if (Array.isArray(payload.tags)) {
+    const tags = payload.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+    if (tags.length > 0) fm.tags = tags;
+  }
+
+  if (kind === "knowledge" && Array.isArray(payload.sources)) {
+    const sources = payload.sources.filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+    if (sources.length > 0) fm.sources = sources;
+  }
+
+  const fmLines = Object.entries(fm)
+    .map(([k, v]) => {
+      if (Array.isArray(v)) return `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]`;
+      return `${k}: ${JSON.stringify(v)}`;
+    })
+    .join("\n");
+  return `---\n${fmLines}\n---\n\n${body}\n`;
+}
+
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
   const parsed = parseFrontmatter(content);
   if (parsed.content.trim().length > 0) return [];
@@ -974,6 +1113,16 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // The previous conflated message ("disabled or the LLM call failed") gave
   // operators no signal to act on; a 108-run audit found 100% of skipped
   // outcomes were actually the config-gate-off branch.
+  //
+  // responseSchema lift (PR 1, asset-writers-investigation §5): on the
+  // production path (no test `chat` seam) we pass the lesson/knowledge JSON
+  // schema to `chatCompletion`. Providers with `supportsJsonSchema: true`
+  // return a typed JSON object the post-call code re-assembles into markdown,
+  // bypassing the four shape-level rejection codes the validator log catches.
+  // The test seam keeps its two-arg signature, so injected fakes still pin
+  // markdown responses verbatim and the existing assertion suite is unchanged.
+  const distillSchema =
+    effectiveProposalKind === "knowledge" ? DISTILL_KNOWLEDGE_JSON_SCHEMA : DISTILL_LESSON_JSON_SCHEMA;
   let fallbackReason: "disabled" | "timeout" | "error" | undefined;
   const raw = await tryLlmFeature(
     "feedback_distillation",
@@ -988,6 +1137,14 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           "LLM_NOT_CONFIGURED",
         );
       }
+      // Production path: pass the JSON schema so providers that honour
+      // `response_format: json_schema` enforce shape upstream. Providers that
+      // ignore the option fall through to the prompt-contract markdown path.
+      if (options.chat === undefined) {
+        return chatCompletion(config.llm, messages, { responseSchema: distillSchema });
+      }
+      // Test seam: preserve the two-arg signature so existing fake `chat`
+      // functions (which return markdown strings) continue to work.
       return chat(config.llm, messages);
     },
     null as string | null,
@@ -1046,8 +1203,24 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     };
   }
 
-  // Strip any stray fence the LLM might have added around the markdown.
-  let content = stripMarkdownFences(raw);
+  // Structured-output path: when the provider honoured the JSON schema, `raw`
+  // is a JSON object string (not a markdown blob). Try to parse it and assemble
+  // the canonical `---\nfm\n---\n\nbody` form before falling through to the
+  // legacy markdown pipeline. Failure here (non-JSON response, missing
+  // required field, unexpected types) is non-fatal — we drop down to the
+  // markdown path which has its own auto-repair + lint pass.
+  let content: string;
+  const structuredCandidate = parseEmbeddedJsonResponse<StructuredDistillPayload>(raw);
+  const structuredAssembled =
+    structuredCandidate && !Array.isArray(structuredCandidate)
+      ? assembleStructuredDistillMarkdown(structuredCandidate, effectiveProposalKind)
+      : null;
+  if (structuredAssembled !== null) {
+    content = structuredAssembled;
+  } else {
+    // Strip any stray fence the LLM might have added around the markdown.
+    content = stripMarkdownFences(raw);
+  }
 
   // Auto-repair missing frontmatter fields before hard-failing. Small models
   // frequently produce a good lesson body but omit the YAML header entirely.
