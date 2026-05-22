@@ -22,7 +22,7 @@
     },
     "profiles": {
       "type": "object",
-      "description": "v2: Named connection profiles. profiles.llm holds OpenAI-compatible LLM connections; profiles.agent holds CLI and in-process agent profiles.",
+      "description": "v2: Named connection profiles. profiles.llm holds OpenAI-compatible LLM connections; profiles.agent holds CLI and in-process agent profiles; profiles.improve holds improve pipeline profiles.",
       "properties": {
         "llm": {
           "type": "object",
@@ -36,6 +36,13 @@
           "description": "Named agent profiles. Each key is a profile name; value is an AgentProfileConfigV2.",
           "additionalProperties": {
             "$ref": "#/$defs/AgentProfileConfigV2"
+          }
+        },
+        "improve": {
+          "type": "object",
+          "description": "Named improve pipeline profiles. Each key is a profile name; value is an ImproveProfileConfig. Built-in profiles: default, quick, thorough, memory-focus.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ImproveProfileConfig"
           }
         }
       },
@@ -56,21 +63,9 @@
           "minLength": 1
         },
         "improve": {
-          "type": "object",
-          "description": "Default values for the improve pipeline.",
-          "properties": {
-            "limit": {
-              "type": "integer",
-              "description": "Default --limit for akm improve.",
-              "exclusiveMinimum": 0
-            },
-            "preset": {
-              "type": "string",
-              "description": "Default execution preset for akm improve.",
-              "enum": ["fast", "thorough", "mixed", "custom"]
-            }
-          },
-          "additionalProperties": false
+          "type": "string",
+          "description": "Name of the default improve profile from profiles.improve. Built-in options: default, quick, thorough, memory-focus.",
+          "minLength": 1
         }
       },
       "additionalProperties": false
@@ -329,6 +324,84 @@
           "type": "object",
           "description": "Process-specific tuning options. Schema varies by process name.",
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImproveProcessConfig": {
+      "type": "object",
+      "description": "Per-process configuration within an ImproveProfileConfig.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this process is enabled. Default: true.",
+          "default": true
+        },
+        "mode": {
+          "type": "string",
+          "description": "Dispatch mode: llm = direct HTTP call, agent = CLI subprocess, sdk = in-process opencode.",
+          "enum": ["llm", "agent", "sdk"]
+        },
+        "profile": {
+          "type": "string",
+          "description": "Named runner profile from profiles.llm or profiles.agent.",
+          "minLength": 1
+        },
+        "timeoutMs": {
+          "oneOf": [
+            { "type": "integer", "exclusiveMinimum": 0 },
+            { "type": "null", "description": "null = unlimited timeout" }
+          ],
+          "description": "Per-process timeout in milliseconds. null = unlimited."
+        },
+        "allowedTypes": {
+          "type": "array",
+          "description": "Whitelist of asset types for this process. Absent = built-in default applies.",
+          "items": { "type": "string" }
+        },
+        "cooldownByType": {
+          "type": "object",
+          "description": "Per-type cooldown overrides in days. Overrides improve.reflectCooldownByType for matching types.",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        },
+        "cooldownDays": {
+          "type": "number",
+          "description": "Uniform cooldown in days for types not covered by cooldownByType.",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImproveProfileConfig": {
+      "type": "object",
+      "description": "Named improve pipeline profile. Controls which sub-processes run, which asset types are processed, and default autoAccept/limit values.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of this profile."
+        },
+        "processes": {
+          "type": "object",
+          "description": "Per-process configuration.",
+          "properties": {
+            "reflect": { "$ref": "#/$defs/ImproveProcessConfig" },
+            "distill": { "$ref": "#/$defs/ImproveProcessConfig" },
+            "consolidate": { "$ref": "#/$defs/ImproveProcessConfig" },
+            "memoryInference": { "$ref": "#/$defs/ImproveProcessConfig" },
+            "graphExtraction": { "$ref": "#/$defs/ImproveProcessConfig" }
+          },
+          "additionalProperties": false
+        },
+        "autoAccept": {
+          "type": "number",
+          "description": "Default auto-accept confidence threshold (0-100) for this profile. CLI --auto-accept overrides.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default --limit for this profile. CLI --limit overrides.",
+          "exclusiveMinimum": 0
         }
       },
       "additionalProperties": false

@@ -975,15 +975,14 @@ describe("v2 config shape parsing", () => {
         defaults: {
           llm: "openai-mini",
           agent: "opencode-default",
-          improve: { limit: 25, preset: "custom" },
+          improve: "my-custom-profile",
         },
       }),
     );
     const loaded = loadConfig();
     expect(loaded.defaults?.llm).toBe("openai-mini");
     expect(loaded.defaults?.agent).toBe("opencode-default");
-    expect(loaded.defaults?.improve?.limit).toBe(25);
-    expect(loaded.defaults?.improve?.preset).toBe("custom");
+    expect(loaded.defaults?.improve).toBe("my-custom-profile");
   });
 
   test("parses features.improve with boolean and object entries", () => {

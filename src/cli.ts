@@ -4022,6 +4022,11 @@ const improveCommand = defineCommand({
         "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full JSON is written to .akm/runs/<run-id>/improve-result.json and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve | jq`.)",
       default: false,
     },
+    profile: {
+      type: "string",
+      description:
+        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus). Controls which sub-processes run and which asset types are processed.",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -4068,6 +4073,7 @@ const improveCommand = defineCommand({
       const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
+      const profileArg = getStringArg(args, "profile");
 
       const improveLogFile = path.join(
         getCacheDir(),
@@ -4092,6 +4098,7 @@ const improveCommand = defineCommand({
           ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
           ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
+          ...(profileArg !== undefined ? { profile: profileArg } : {}),
           consolidateOptions: {
             target: targetArg,
             dryRun,

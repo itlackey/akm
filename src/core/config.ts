@@ -151,6 +151,39 @@ export interface ProcessEntry {
   options?: Record<string, unknown>;
 }
 
+export interface ImproveProcessConfig {
+  enabled?: boolean;
+  mode?: "llm" | "agent" | "sdk";
+  /** Named runner profile from profiles.llm or profiles.agent. */
+  profile?: string;
+  timeoutMs?: number | null;
+  /**
+   * Whitelist of asset types for this process.
+   * Absent = built-in default applies.
+   *   reflect:     ["agent","command","knowledge","lesson","memory","skill","wiki","workflow"]
+   *   distill:     ["memory"]
+   *   consolidate: ["memory"]
+   */
+  allowedTypes?: string[];
+  /** Per-type cooldown overrides in days. Overrides improve.reflectCooldownByType for matching types. */
+  cooldownByType?: Partial<Record<string, number>>;
+  /** Uniform cooldown in days for types not covered by cooldownByType. */
+  cooldownDays?: number;
+}
+
+export interface ImproveProfileConfig {
+  description?: string;
+  processes?: {
+    reflect?: ImproveProcessConfig;
+    distill?: ImproveProcessConfig;
+    consolidate?: ImproveProcessConfig;
+    memoryInference?: ImproveProcessConfig;
+    graphExtraction?: ImproveProcessConfig;
+  };
+  autoAccept?: number;
+  limit?: number;
+}
+
 export interface FeaturesConfig {
   /**
    * Per-process runner overrides for the `improve` section (reflect, distill,
@@ -363,15 +396,14 @@ export interface AkmConfig {
   profiles?: {
     llm?: Record<string, LlmProfileConfig>;
     agent?: Record<string, AgentProfileConfigV2>;
+    improve?: Record<string, ImproveProfileConfig>;
   };
   /** v2: default profile names and improve pipeline defaults. */
   defaults?: {
     llm?: string;
     agent?: string;
-    improve?: {
-      limit?: number;
-      preset?: "fast" | "thorough" | "mixed" | "custom";
-    };
+    /** Name of the default improve profile from profiles.improve. */
+    improve?: string;
   };
   /** v2: unified features tree replacing the old top-level features flags. */
   features?: FeaturesConfig;
@@ -532,6 +564,7 @@ export interface AkmConfig {
  */
 export interface ImproveConfig {
   /**
+   * @deprecated Use profiles.improve[name].processes.reflect.cooldownByType instead.
    * Per-asset-type reflect cooldown in days. Overrides the built-in defaults
    * for any type listed. Types not listed continue to use their built-in default.
    *
@@ -1281,6 +1314,19 @@ function parseProfilesConfig(value: unknown): AkmConfig["profiles"] | undefined 
     if (Object.keys(agentMap).length > 0) result.agent = agentMap;
   }
 
+  if (typeof obj.improve === "object" && obj.improve !== null && !Array.isArray(obj.improve)) {
+    const improveMap: Record<string, ImproveProfileConfig> = {};
+    for (const [name, raw] of Object.entries(obj.improve as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        warn(`[akm] Ignoring profiles.improve["${name}"]: expected an object.`);
+        continue;
+      }
+      const parsed = parseImproveProfileConfig(raw as Record<string, unknown>);
+      if (parsed) improveMap[name] = parsed;
+    }
+    if (Object.keys(improveMap).length > 0) result.improve = improveMap;
+  }
+
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
@@ -1292,18 +1338,70 @@ function parseDefaultsConfig(value: unknown): AkmConfig["defaults"] | undefined 
   if (typeof obj.llm === "string" && obj.llm.trim()) result.llm = obj.llm.trim();
   if (typeof obj.agent === "string" && obj.agent.trim()) result.agent = obj.agent.trim();
 
-  if (typeof obj.improve === "object" && obj.improve !== null && !Array.isArray(obj.improve)) {
-    const improveRaw = obj.improve as Record<string, unknown>;
-    const improve: NonNullable<NonNullable<AkmConfig["defaults"]>["improve"]> = {};
-    const limit = parsePositiveInteger("defaults.improve.limit", improveRaw.limit);
-    if (limit !== undefined) improve.limit = limit;
-    if (isOneOf(improveRaw.preset, ["fast", "thorough", "mixed", "custom"] as const)) {
-      improve.preset = improveRaw.preset;
-    }
-    if (Object.keys(improve).length > 0) result.improve = improve;
+  // defaults.improve is now a plain string (the default profile name).
+  // Legacy object shape ({ limit, preset }) is silently ignored.
+  if (typeof obj.improve === "string" && obj.improve.trim()) {
+    result.improve = obj.improve.trim();
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseImproveProcessConfig(value: unknown): ImproveProcessConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const entry: ImproveProcessConfig = {};
+  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
+  if (isOneOf(obj.mode, ["llm", "agent", "sdk"] as const)) entry.mode = obj.mode;
+  if (typeof obj.profile === "string" && obj.profile.trim()) entry.profile = obj.profile.trim();
+  if (obj.timeoutMs === null) {
+    entry.timeoutMs = null;
+  } else if (typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0) {
+    entry.timeoutMs = obj.timeoutMs;
+  }
+  if (Array.isArray(obj.allowedTypes) && obj.allowedTypes.every((t) => typeof t === "string")) {
+    entry.allowedTypes = obj.allowedTypes as string[];
+  }
+  if (typeof obj.cooldownByType === "object" && obj.cooldownByType !== null && !Array.isArray(obj.cooldownByType)) {
+    const byType: Record<string, number> = {};
+    for (const [k, v] of Object.entries(obj.cooldownByType as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) byType[k] = v;
+    }
+    if (Object.keys(byType).length > 0) entry.cooldownByType = byType;
+  }
+  if (typeof obj.cooldownDays === "number" && Number.isFinite(obj.cooldownDays) && obj.cooldownDays >= 0) {
+    entry.cooldownDays = obj.cooldownDays;
+  }
+  return Object.keys(entry).length > 0 ? entry : undefined;
+}
+
+function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfileConfig | undefined {
+  const profile: ImproveProfileConfig = {};
+  if (typeof obj.description === "string" && obj.description.trim()) {
+    profile.description = obj.description.trim();
+  }
+  if (typeof obj.processes === "object" && obj.processes !== null && !Array.isArray(obj.processes)) {
+    const processesRaw = obj.processes as Record<string, unknown>;
+    const processes: NonNullable<ImproveProfileConfig["processes"]> = {};
+    const knownProcesses = ["reflect", "distill", "consolidate", "memoryInference", "graphExtraction"] as const;
+    for (const key of knownProcesses) {
+      if (key in processesRaw) {
+        const parsed = parseImproveProcessConfig(processesRaw[key]);
+        if (parsed) processes[key] = parsed;
+        else if (typeof processesRaw[key] === "object" && processesRaw[key] !== null) {
+          // Empty object is a valid no-op config; don't warn
+          processes[key] = {};
+        }
+      }
+    }
+    if (Object.keys(processes).length > 0) profile.processes = processes;
+  }
+  if (typeof obj.autoAccept === "number" && Number.isFinite(obj.autoAccept) && obj.autoAccept >= 0) {
+    profile.autoAccept = obj.autoAccept;
+  }
+  const limit = parsePositiveInteger("profiles.improve.limit", obj.limit);
+  if (limit !== undefined) profile.limit = limit;
+  return Object.keys(profile).length > 0 ? profile : undefined;
 }
 
 export function parseProcessEntry(value: unknown): ProcessEntry | boolean | undefined {
