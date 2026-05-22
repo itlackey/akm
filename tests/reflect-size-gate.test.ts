@@ -138,29 +138,29 @@ describe("checkReflectSize — small source expansion (blended ceiling)", () => 
     expect(result.code).toBe("EXCESSIVE_EXPANSION");
   });
 
-  test("p25 source (778 bytes), proposed at 200% (1556 bytes) → ok:true (ratio ceiling = max(1556, 2000)=2000)", () => {
-    // max(2*778=1556, 2000) = 2000; 1556 < 2000 → accepted.
-    const result = checkReflectSize(body(778), body(1556));
+  test("p25 source (778 bytes), proposed at 250% (1945 bytes) → ok:true (ratio ceiling = max(1945, 2500)=2500)", () => {
+    // max(2.5*778=1945, 2500) = 2500; 1945 < 2500 → accepted.
+    const result = checkReflectSize(body(778), body(1945));
     expect(result.ok).toBe(true);
   });
 
-  test("p25 source (778 bytes), proposed at 2001 bytes → EXCESSIVE_EXPANSION", () => {
-    // max(2*778=1556, 2000) = 2000; 2001 > 2000 → rejected.
-    const result = checkReflectSize(body(778), body(2001));
+  test("p25 source (778 bytes), proposed at 2501 bytes → EXCESSIVE_EXPANSION", () => {
+    // max(2.5*778=1945, 2500) = 2500; 2501 > 2500 → rejected.
+    const result = checkReflectSize(body(778), body(2501));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected rejection");
     expect(result.code).toBe("EXCESSIVE_EXPANSION");
   });
 
-  test("medium source (1100 bytes), proposed at 200% (2200 bytes) → ok:true (ratio ceiling 2200 > absolute 2000)", () => {
-    // max(2*1100=2200, 2000) = 2200; 2200 <= 2200 → accepted.
-    const result = checkReflectSize(body(1100), body(2200));
+  test("medium source (1100 bytes), proposed at 250% (2750 bytes) → ok:true (ratio ceiling 2750 > absolute 2500)", () => {
+    // max(2.5*1100=2750, 2500) = 2750; 2750 <= 2750 → accepted.
+    const result = checkReflectSize(body(1100), body(2750));
     expect(result.ok).toBe(true);
   });
 
-  test("medium source (1100 bytes), proposed at 2201 bytes → EXCESSIVE_EXPANSION", () => {
-    // max(2*1100=2200, 2000) = 2200; 2201 > 2200 → rejected.
-    const result = checkReflectSize(body(1100), body(2201));
+  test("medium source (1100 bytes), proposed at 2751 bytes → EXCESSIVE_EXPANSION", () => {
+    // max(2.5*1100=2750, 2500) = 2750; 2751 > 2750 → rejected.
+    const result = checkReflectSize(body(1100), body(2751));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected rejection");
     expect(result.code).toBe("EXCESSIVE_EXPANSION");
@@ -284,7 +284,7 @@ describe("checkReflectSize — exported constant sanity", () => {
   });
 
   test("REFLECT_EXPAND_RATIO_MAX is 2.0", () => {
-    expect(REFLECT_EXPAND_RATIO_MAX).toBe(2.0);
+    expect(REFLECT_EXPAND_RATIO_MAX).toBe(2.5);
   });
 
   test("REFLECT_SIZE_GUARD_MIN_BYTES is 200", () => {
@@ -296,7 +296,7 @@ describe("checkReflectSize — exported constant sanity", () => {
   });
 
   test("REFLECT_ABSOLUTE_CEILING_BYTES is 2000", () => {
-    expect(REFLECT_ABSOLUTE_CEILING_BYTES).toBe(2000);
+    expect(REFLECT_ABSOLUTE_CEILING_BYTES).toBe(2500);
   });
 
   test("REFLECT_ABSOLUTE_MAX_BYTES is 25000", () => {

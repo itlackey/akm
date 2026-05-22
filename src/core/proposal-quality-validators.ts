@@ -39,16 +39,20 @@
  *     Half of p10 (371) ≈ 185; we set 150 so even very aggressive condensation
  *     of a seed note is allowed down to roughly a two-sentence summary.
  *
- *   REFLECT_ABSOLUTE_CEILING_BYTES = 2000
- *     Slightly above p50 (1508). A small source (420 bytes) should be allowed to
- *     grow to a full reference note (~2KB) without tripping the gate.
+ *   REFLECT_ABSOLUTE_CEILING_BYTES = 2500
+ *     Raised from 2000 (2026-05-22): small-source rejections at 248–281% on
+ *     900–953 byte assets were borderline false positives. 2500 gives a short
+ *     lesson or command ~1.5KB of room to grow before the absolute kicks in.
  *
  *   REFLECT_ABSOLUTE_MAX_BYTES = 25000
  *     Below p99 (43463). Catches genuine LLM runaway (whole-chapter insertions)
  *     without blocking legitimate large rewrites of large sources.
  *
- *   REFLECT_EXPAND_RATIO_MAX = 2.0, REFLECT_SHRINK_RATIO_MIN = 0.5 (unchanged)
- *     Ratio bounds remain the same; the absolute overrides handle the edge cases.
+ *   REFLECT_EXPAND_RATIO_MAX = 2.5
+ *     Raised from 2.0 (2026-05-22): 2× was too tight for dense short assets
+ *     (lessons, commands) that have legitimate room to grow. 2.5× resolves
+ *     248% expansion on a 900-byte lesson while still catching 281%+ on ~1KB
+ *     assets where the absolute ceiling takes over.
  */
 
 // ── Reflect-size guard ───────────────────────────────────────────────────────
@@ -175,7 +179,7 @@ export function hasHotCaptureMode(frontmatter: Record<string, unknown> | undefin
 /** Ratio lower-bound: proposed body must be at least this fraction of source. */
 export const REFLECT_SHRINK_RATIO_MIN = 0.5;
 /** Ratio upper-bound: proposed body must not exceed this fraction of source. */
-export const REFLECT_EXPAND_RATIO_MAX = 2.0;
+export const REFLECT_EXPAND_RATIO_MAX = 2.5;
 
 /**
  * Below this byte count, ratio checks are too noisy — skip them entirely.
@@ -195,7 +199,7 @@ export const REFLECT_ABSOLUTE_FLOOR_BYTES = 150;
  * proposed body up to this many bytes is always accepted on the expansion side.
  * Protects against false positives when the source is small (≤778 bytes, p25).
  */
-export const REFLECT_ABSOLUTE_CEILING_BYTES = 2000;
+export const REFLECT_ABSOLUTE_CEILING_BYTES = 2500;
 
 /**
  * Hard expansion cap (bytes).  Regardless of ratio, a proposed body exceeding
