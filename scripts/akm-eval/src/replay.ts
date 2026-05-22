@@ -27,6 +27,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { runMemorySafetyCase } from "./runners/memory-safety";
+import { runPlannerWasteCase } from "./runners/planner-waste";
 import { runProposalQualityCase } from "./runners/proposal-quality";
 import { runReflectQualityCase } from "./runners/reflect-quality";
 import { runRegressionCase } from "./runners/regression";
@@ -177,6 +178,8 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
   switch (c.type) {
     case "retrieval":
       return runRetrievalCase(c, ctx);
+    case "planner-waste":
+      return runPlannerWasteCase(c, ctx);
     case "proposal-quality":
       return runProposalQualityCase(c, ctx);
     case "reflect-quality":

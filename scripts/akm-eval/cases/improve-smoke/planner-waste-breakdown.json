@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "planner-waste-breakdown",
+  "suite": "improve-smoke",
+  "type": "planner-waste",
+  "description": "Snapshot of planner-waste across recent improve runs — total actions, LLM-touched actions, no-op refuses, per-mode breakdown, and top refuse-reason histogram. Always passes; the breakdown is the deliverable. Catches the failure mode where the planner keeps re-queueing inputs the underlying command refuses upfront (e.g. distill on lesson refs).",
+  "input": {
+    "windowRuns": 20
+  },
+  "expected": {},
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["planner-waste", "smoke", "metrics-only"]
+}
