@@ -28,6 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runMemorySafetyCase } from "./runners/memory-safety";
 import { runProposalQualityCase } from "./runners/proposal-quality";
+import { runReflectQualityCase } from "./runners/reflect-quality";
 import { runRegressionCase } from "./runners/regression";
 import { runRetrievalCase } from "./runners/retrieval";
 import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
@@ -178,6 +179,8 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
       return runRetrievalCase(c, ctx);
     case "proposal-quality":
       return runProposalQualityCase(c, ctx);
+    case "reflect-quality":
+      return runReflectQualityCase(c, ctx);
     case "regression":
       return runRegressionCase(c, ctx);
     case "memory-safety":
