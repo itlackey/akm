@@ -220,7 +220,7 @@ const MAX_REJECTED_PROPOSALS = 3;
  * Observed regression: proposal `8737ab63` (May 2026) prepended frontmatter to
  * a `.ts` script file via reflect. This whitelist prevents that.
  */
-const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
+export const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
   "knowledge",
   "memory",
   "lesson",
