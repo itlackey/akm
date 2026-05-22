@@ -23,6 +23,8 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: true },
+      feedbackDistillation: { enabled: true },
+      // validation: deliberately undefined — third-tier classifier is opt-in.
     },
   },
   quick: {
@@ -33,6 +35,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: false },
       memoryInference: { enabled: false },
       graphExtraction: { enabled: false },
+      feedbackDistillation: { enabled: false },
     },
   },
   thorough: {
@@ -46,6 +49,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: true },
+      feedbackDistillation: { enabled: true },
     },
   },
   "memory-focus": {
@@ -56,9 +60,44 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: false },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: false },
+      feedbackDistillation: { enabled: false },
     },
   },
 };
+
+/**
+ * Default enabled-state for known improve processes when neither the user
+ * profile nor the built-in default profile specifies an override.
+ *
+ * These mirror the legacy `LlmFeatureFlags` defaults so callers that bypass
+ * the profile system (rare — most run through `resolveImproveProfile`) get
+ * the same answer.
+ */
+const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
+  reflect: true,
+  distill: true,
+  consolidate: true,
+  memoryInference: true,
+  graphExtraction: true,
+  feedbackDistillation: true,
+  validation: false,
+};
+
+/**
+ * Compute the effective enabled-state for a named improve process.
+ *
+ * Resolution order: explicit `profile.processes.<name>.enabled` (boolean) →
+ * the built-in {@link IMPROVE_PROCESS_DEFAULTS} fallback → `false`.
+ */
+export function resolveProcessEnabled(
+  processName: keyof NonNullable<ImproveProfileConfig["processes"]> | string,
+  profile: ImproveProfileConfig,
+): boolean {
+  const processes = profile.processes as Record<string, { enabled?: boolean } | undefined> | undefined;
+  const entry = processes?.[processName as string];
+  if (entry && typeof entry.enabled === "boolean") return entry.enabled;
+  return IMPROVE_PROCESS_DEFAULTS[processName as string] ?? false;
+}
 
 function deepMerge<T>(base: T, override: Partial<T>): T {
   if (typeof base !== "object" || base === null) return (override as T) ?? base;

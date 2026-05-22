@@ -55,7 +55,7 @@ import {
   parseAgentProposalPayload,
   type RejectedProposalContext,
 } from "../integrations/agent/prompts";
-import { type RunnerSpec, resolveProcessRunner } from "../integrations/agent/runner";
+import { type RunnerSpec, resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { runOpencodeSdk } from "../integrations/agent/sdk-runner";
 import { type ChatMessage, chatCompletion } from "../llm/client";
 import { isLlmFeatureEnabled } from "../llm/feature-gate";
@@ -885,23 +885,19 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       runnerSpec = options.runner;
     } else {
       const cfg = options.config ?? loadConfig();
-      if (cfg.features?.improve?.reflect !== undefined) {
-        // v2: resolve through the unified features tree
-        try {
-          runnerSpec = resolveProcessRunner("improve", "reflect", cfg);
-          if (resolvedTimeoutMs === undefined && runnerSpec.timeoutMs !== undefined) {
-            resolvedTimeoutMs = runnerSpec.timeoutMs;
-          }
-        } catch {
-          // Fall through to v1 resolution
+      const reflectProcess = cfg.profiles?.improve?.default?.processes?.reflect;
+      // Resolve the runner from the improve profile's reflect entry when present.
+      runnerSpec = resolveImproveProcessRunnerFromProfile(reflectProcess, cfg) ?? undefined;
+      if (runnerSpec) {
+        if (resolvedTimeoutMs === undefined && runnerSpec.timeoutMs !== undefined) {
+          resolvedTimeoutMs = runnerSpec.timeoutMs;
         }
-      }
-      if (!runnerSpec) {
+      } else {
         if (options.profile) {
           // Explicit --profile flag wins over process config.
           profile = resolveAgentProfile(options);
         } else {
-          // Use per-process config resolution (falls back to agent.default).
+          // Use per-process config resolution (falls back to defaults.agent).
           const agent = options.agentConfig ?? loadAgentConfigFromDisk();
           const processName = options.agentProcess ?? "reflect";
           const resolved = resolveProcessAgentProfile(processName, agent);

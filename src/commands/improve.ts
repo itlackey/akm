@@ -4,7 +4,7 @@ import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import { daysToMs, isAssetType, isProcessAlive } from "../core/common";
 import type { AkmConfig } from "../core/config";
-import { loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -1228,7 +1228,7 @@ async function runImprovePreparationStage(args: {
   // Schema repair pass: attempt to fix validation failures via LLM before skipping.
   if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
     const baseConfigForRepair = options.config ?? loadConfig();
-    const llmCfg = baseConfigForRepair.llm;
+    const llmCfg = getDefaultLlmConfig(baseConfigForRepair);
     if (llmCfg) {
       const result = await runSchemaRepairPass(validationFailures, {
         startMs,
@@ -2277,20 +2277,32 @@ async function runImprovePostLoopStage(args: {
 
   const baseConfig = options.config ?? loadConfig();
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
-  const hasLlm = !!(baseConfig.llm || baseConfig.agent);
+  const hasLlm = !!(baseConfig.defaults?.llm || baseConfig.defaults?.agent);
   const volumeTriggered =
     typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
+  // When volume triggers a consolidation pass, force-enable the consolidate
+  // process on the default improve profile so the gate accepts the run even
+  // if the user's config disabled it. We synthesise a new profile override
+  // rather than mutating connection settings.
   const consolidationConfig: AkmConfig = volumeTriggered
     ? {
         ...baseConfig,
-        ...(baseConfig.llm
-          ? {
-              llm: {
-                ...baseConfig.llm,
-                features: { ...baseConfig.llm.features, memory_consolidation: true },
+        profiles: {
+          ...(baseConfig.profiles ?? {}),
+          improve: {
+            ...(baseConfig.profiles?.improve ?? {}),
+            default: {
+              ...(baseConfig.profiles?.improve?.default ?? {}),
+              processes: {
+                ...(baseConfig.profiles?.improve?.default?.processes ?? {}),
+                consolidate: {
+                  ...(baseConfig.profiles?.improve?.default?.processes?.consolidate ?? {}),
+                  enabled: true,
+                },
               },
-            }
-          : {}),
+            },
+          },
+        },
       }
     : baseConfig;
 

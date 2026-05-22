@@ -97,11 +97,16 @@ const originalXdgStateHome = process.env.XDG_STATE_HOME;
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    llm: {
-      endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-      model: "test-model",
-      features: { graph_extraction: true },
+    profiles: {
+      llm: {
+        default: {
+          endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+          model: "test-model",
+        },
+      },
+      improve: { default: { processes: { graphExtraction: { enabled: true } } } },
     },
+    defaults: { llm: "default" },
     ...overrides,
   };
 }
@@ -343,11 +348,16 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
 
     await runGraphExtractionPass(
       configWithLlm({
-        llm: {
-          endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-          model: "different-model",
-          features: { graph_extraction: true },
+        profiles: {
+          llm: {
+            default: {
+              endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+              model: "different-model",
+            },
+          },
+          improve: { default: { processes: { graphExtraction: { enabled: true } } } },
         },
+        defaults: { llm: "default" },
       }),
       sources(),
       undefined,

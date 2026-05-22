@@ -931,7 +931,8 @@ describe("Scenario: CLI subprocess execution", () => {
   test("cli: startup applies --quiet before config-load warnings", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      llm: { endpoint: "http://localhost/v1", model: "gpt-4" },
+      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "gpt-4" } } },
+      defaults: { llm: "default" },
     });
 
     const result = runCli("config", "get", "llm", "--quiet");

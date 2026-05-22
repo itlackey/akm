@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking Changes
 
-- **Config v2 shape**: `config.llm`, `config.agent.profiles`, `config.agent.processes`, and the old `llm.features.*` flags are deprecated. Configs without `configVersion: "0.8.0"` are auto-migrated at first run with a one-time notice. A timestamped backup is written before any in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress.
+- **Unified 0.8.0 config shape**: The legacy top-level `llm`, `agent`, and `features` blocks are **removed**. LLM and agent connections now live exclusively under `profiles.llm.<name>` and `profiles.agent.<name>` (with `defaults.llm` / `defaults.agent` selecting the active entry). Per-process LLM/agent gates moved into `profiles.improve.<name>.processes.*`, and feature sections that are not improve-process-bound moved to first-class `index.metadataEnhance`, `index.stalenessDetection`, and `search.curateRerank` blocks. Configs without `configVersion: "0.8.0"` are auto-migrated at first run with a one-time notice; a timestamped backup is written before any in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress.
 
 - **`config.improve.reflectCooldownByType` removed**: Moved to `profiles.improve.default.processes.reflect.cooldownByType`. Migrated automatically.
 
@@ -53,11 +53,11 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
-- **Config v2: profiles + features tree**: Named LLM and agent profiles under `profiles.llm` and `profiles.agent`. All process-level config consolidated into `features.improve.*`, `features.index.*`, `features.search.*` with a unified `{mode, profile, timeoutMs, options}` shape. Replaces the old top-level `llm.features.*` boolean flags and the scattered `agent.processes` map. See [docs/configuration.md](docs/configuration.md) for the full v2 reference.
+- **Unified profiles tree**: Named LLM and agent profiles under `profiles.llm.<name>` and `profiles.agent.<name>`. Per-process LLM/agent bindings live on `profiles.improve.<name>.processes.{reflect,distill,consolidate,memoryInference,graphExtraction,feedbackDistillation,validation}` with a `{mode, profile, timeoutMs}` shape plus optional `qualityGate` / `contradictionDetection` sub-objects. Non-improve feature gates moved to first-class top-level sections (`index.metadataEnhance`, `index.stalenessDetection`, `search.curateRerank`). See [docs/configuration.md](docs/configuration.md) for the full 0.8.0 reference.
 
 - **reflect LLM mode**: `akm reflect` (and `akm improve`'s reflect pass) can now run as a direct LLM call — 3–5× faster than the agent subprocess path. Configure via `profiles.improve.<name>.processes.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
 
-- **`akm config migrate`**: New command to explicitly migrate v1 config to v2. Includes `--dry-run` and `--no-wait` flags. Acquires a file lock before write for safety. All config layers (user + project) are visited and rewritten in place; read-only layers print the migrated content for manual apply.
+- **`akm config migrate`**: New command to explicitly migrate pre-0.8.0 config shapes into the 0.8.0 unified shape. Includes `--dry-run` and `--no-wait` flags. Acquires a file lock before write for safety. All config layers (user + project) are visited and rewritten in place; read-only layers print the migrated content for manual apply.
 
 - **`--mode` and `--profile` flags on reflect/improve/propose**: `akm reflect`, `akm improve`, and `akm propose` now accept `--mode <llm|agent|sdk>` and `--profile <name>` to override the configured dispatch for a single run. `--dry-run-resolve` prints the resolved RunnerSpec without executing.
 

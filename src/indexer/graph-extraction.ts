@@ -37,7 +37,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { concurrentMap } from "../core/concurrent";
-import { type AkmConfig, resolveBatchSize } from "../core/config";
+import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn, warnVerbose } from "../core/warn";
 import { isProcessEnabled } from "../llm/feature-gate";
@@ -278,7 +278,7 @@ function buildLowQualityWarnings(quality: GraphQualityTelemetry, telemetry: Grap
 }
 
 export function getGraphExtractionIncludeTypes(config: AkmConfig): string[] {
-  const configured = config.index?.graph?.graphExtractionIncludeTypes;
+  const configured = getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes;
   if (!configured || configured.length === 0) return [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES];
 
   const out: string[] = [];
@@ -434,7 +434,9 @@ export async function runGraphExtractionPass(
   const llmConfig = resolveIndexPassLLM("graph", config);
   if (!llmConfig) {
     const reason =
-      config.index?.graph?.llm === false ? "index.graph.llm is false" : "no akm.llm provider is configured";
+      getIndexPassConfig(config.index, "graph")?.llm === false
+        ? "index.graph.llm is false"
+        : "no default LLM profile is configured";
     warnVerbose(`graph extraction: skipped because ${reason}.`);
     return { ...EMPTY_RESULT };
   }
@@ -492,7 +494,10 @@ export async function runGraphExtractionPass(
   // Resolve the effective batch size. Falls back to
   // DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE (4) when unset, and clamps against
   // `llm.contextLength` if the model's context window is configured.
-  const batchSize = resolveBatchSize(config.index?.graph?.graphExtractionBatchSize, llmConfig.contextLength);
+  const batchSize = resolveBatchSize(
+    getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
+    llmConfig.contextLength,
+  );
   const extractionRunId = crypto.randomUUID();
   const extractorId = getGraphExtractorId({ model: llmConfig.model, batchSize, includeTypes });
   const cacheVariant = extractorId;

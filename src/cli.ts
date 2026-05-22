@@ -3875,8 +3875,9 @@ const agentCommand = defineCommand({
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
 
       const config = loadConfig();
-      const { parseAgentConfig } = await import("./integrations/agent/config.js");
-      const agentConfig = parseAgentConfig(config.agent);
+      const { getDefaultLlmConfig } = await import("./core/config.js");
+      // After 0.8.0 the agent block IS the loaded AkmConfig.
+      const agentConfig = config;
 
       // Resolve agent asset ref → extract system prompt, model, and tool policy.
       const agentRef = getStringArg(args, "agent-ref");
@@ -3912,7 +3913,7 @@ const agentCommand = defineCommand({
         commandRef,
         workflowRef,
         agentConfig,
-        llmConfig: config.llm,
+        llmConfig: getDefaultLlmConfig(config),
         ...(hasDispatchContent
           ? {
               dispatch: {

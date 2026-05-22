@@ -2,23 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
   "title": "AKM Configuration",
-  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). v2 shape adds profiles, defaults, and features trees.",
+  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). The 0.8.0 shape uses profiles, defaults, and per-section process configs.",
   "type": "object",
   "properties": {
     "configVersion": {
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Schema version as app version string. \"0.8.0\" = v2 shape (profiles/defaults/features). Current format.",
-          "pattern": "^\\d+\\.\\d+\\.\\d+"
-        },
-        {
-          "type": "integer",
-          "description": "Legacy integer schema version. 2 = v2 shape. Accepted for backward compatibility.",
-          "minimum": 1
-        }
-      ],
-      "description": "Schema version marker. \"0.8.0\" (or legacy integer 2) = v2 shape (profiles/defaults/features). Absent or v1 shape = auto-migrated at load time."
+      "type": "string",
+      "description": "Schema version marker. \"0.8.0\" = current shape (profiles/defaults). Configs without this field are auto-migrated to the current shape at load time.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+"
     },
     "profiles": {
       "type": "object",
@@ -70,34 +60,6 @@
       },
       "additionalProperties": false
     },
-    "features": {
-      "type": "object",
-      "description": "v2: Unified features tree. Every named LLM/agent operation lives here, grouped by lifecycle section. Replaces the old top-level llm.features flags.",
-      "properties": {
-        "improve": {
-          "type": "object",
-          "description": "Process entries for akm improve operations.",
-          "additionalProperties": {
-            "$ref": "#/$defs/ProcessEntryOrBoolean"
-          }
-        },
-        "index": {
-          "type": "object",
-          "description": "Process entries for akm index operations.",
-          "additionalProperties": {
-            "$ref": "#/$defs/ProcessEntryOrBoolean"
-          }
-        },
-        "search": {
-          "type": "object",
-          "description": "Process entries for akm search / akm curate operations.",
-          "additionalProperties": {
-            "$ref": "#/$defs/ProcessEntryOrBoolean"
-          }
-        }
-      },
-      "additionalProperties": false
-    },
     "stashDir": {
       "type": "string",
       "description": "Path to the working stash directory.",
@@ -110,10 +72,6 @@
     },
     "embedding": {
       "$ref": "#/$defs/EmbeddingConnectionConfig"
-    },
-    "llm": {
-      "description": "v1 compat: single LLM connection. Use profiles.llm in v2.",
-      "$ref": "#/$defs/LlmConnectionConfig"
     },
     "output": {
       "$ref": "#/$defs/OutputConfig"
@@ -153,7 +111,26 @@
     },
     "index": {
       "type": "object",
-      "description": "Per-pass indexer and improve-maintenance configuration. Keys are pass names; values configure each pass.",
+      "description": "Per-pass indexer configuration. Reserved keys: `metadataEnhance` and `stalenessDetection` gate the corresponding passes. Other keys are pass names whose values are IndexPassConfig.",
+      "properties": {
+        "metadataEnhance": {
+          "type": "object",
+          "description": "Gates the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` flag. Default: enabled.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true }
+          },
+          "additionalProperties": false
+        },
+        "stalenessDetection": {
+          "type": "object",
+          "description": "Gates the `akm index` staleness-detection pass. Default: disabled.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "thresholdDays": { "type": "integer", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": true
     },
     "security": {
@@ -169,11 +146,6 @@
     "writable": {
       "type": "boolean",
       "description": "When true, the primary stash is treated as a writable git repo and `akm save` will push after committing."
-    },
-    "agent": {
-      "type": "object",
-      "description": "v1 compat: agent CLI integration block. Use profiles.agent in v2.",
-      "additionalProperties": true
     },
     "search": {
       "type": "object",
@@ -230,6 +202,14 @@
             }
           },
           "additionalProperties": false
+        },
+        "curateRerank": {
+          "type": "object",
+          "description": "Gates the `akm curate` LLM-rerank pass. Replaces the legacy `features.search.curate_rerank` flag. Default: disabled.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -282,47 +262,6 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "ProcessEntryOrBoolean": {
-      "oneOf": [
-        { "type": "boolean" },
-        { "$ref": "#/$defs/ProcessEntry" }
-      ],
-      "description": "A process entry: true = enabled with defaults, false = disabled, object = full configuration."
-    },
-    "ProcessEntry": {
-      "type": "object",
-      "description": "Configuration for a named LLM/agent process. Used in features.improve/index/search entries.",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Whether this process is enabled. Default: true.",
-          "default": true
-        },
-        "mode": {
-          "type": "string",
-          "description": "Dispatch mode: llm = direct HTTP call, agent = CLI subprocess, sdk = in-process opencode.",
-          "enum": ["llm", "agent", "sdk"]
-        },
-        "profile": {
-          "type": "string",
-          "description": "Profile name from profiles.llm (mode=llm) or profiles.agent (mode=agent|sdk). Falls back to defaults.llm / defaults.agent.",
-          "minLength": 1
-        },
-        "timeoutMs": {
-          "oneOf": [
-            { "type": "integer", "exclusiveMinimum": 0 },
-            { "type": "null", "description": "null = unlimited timeout" }
-          ],
-          "description": "Per-process timeout in milliseconds. null = unlimited."
-        },
-        "options": {
-          "type": "object",
-          "description": "Process-specific tuning options. Schema varies by process name.",
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": false
-    },
     "ImproveProcessConfig": {
       "type": "object",
       "description": "Per-process configuration within an ImproveProfileConfig.",
@@ -363,6 +302,22 @@
           "type": "number",
           "description": "Uniform cooldown in days for types not covered by cooldownByType.",
           "minimum": 0
+        },
+        "qualityGate": {
+          "type": "object",
+          "description": "LLM-as-judge quality gate. For distill: replaces lesson_quality_gate. For reflect: replaces proposal_quality_gate. Default: disabled.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
+        },
+        "contradictionDetection": {
+          "type": "object",
+          "description": "Pairwise contradiction-detection on derived memories. Only meaningful on `consolidate`. Default: disabled.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -383,7 +338,9 @@
             "distill": { "$ref": "#/$defs/ImproveProcessConfig" },
             "consolidate": { "$ref": "#/$defs/ImproveProcessConfig" },
             "memoryInference": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "graphExtraction": { "$ref": "#/$defs/ImproveProcessConfig" }
+            "graphExtraction": { "$ref": "#/$defs/ImproveProcessConfig" },
+            "feedbackDistillation": { "$ref": "#/$defs/ImproveProcessConfig" },
+            "validation": { "$ref": "#/$defs/ImproveProcessConfig" }
           },
           "additionalProperties": false
         },
@@ -551,22 +508,6 @@
                 }
               },
               "additionalProperties": false
-            },
-            "features": {
-              "type": "object",
-              "description": "v1 compat: bounded in-tree LLM feature gates. Use the top-level features tree in v2.",
-              "properties": {
-                "curate_rerank": { "type": "boolean", "default": false },
-                "feedback_distillation": { "type": "boolean", "default": false },
-                "memory_inference": { "type": "boolean", "default": true },
-                "graph_extraction": { "type": "boolean", "default": true },
-                "memory_consolidation": { "type": "boolean", "default": false },
-                "lesson_quality_gate": { "type": "boolean", "default": false },
-                "proposal_quality_gate": { "type": "boolean", "default": false },
-                "metadata_enhance": { "type": "boolean", "default": false },
-                "memory_contradiction_detection": { "type": "boolean", "default": false }
-              },
-              "additionalProperties": true
             },
             "extraParams": {
               "type": "object",
@@ -760,17 +701,32 @@
         },
         "agent": {
           "opencode-default": { "platform": "opencode", "bin": "opencode", "args": ["run"] }
+        },
+        "improve": {
+          "default": {
+            "processes": {
+              "reflect": { "enabled": true, "mode": "llm", "profile": "openai-mini", "timeoutMs": 60000 },
+              "distill": { "enabled": true, "qualityGate": { "enabled": false } },
+              "consolidate": { "enabled": true },
+              "memoryInference": { "enabled": true },
+              "graphExtraction": { "enabled": false },
+              "feedbackDistillation": { "enabled": true }
+            }
+          }
         }
       },
-      "defaults": { "llm": "openai-mini", "agent": "opencode-default" },
-      "features": {
-        "improve": { "reflect": { "mode": "llm", "profile": "openai-mini", "timeoutMs": 60000 } },
-        "index": { "memory_inference": true, "graph_extraction": false },
-        "search": { "curate_rerank": false }
+      "defaults": { "llm": "openai-mini", "agent": "opencode-default", "improve": "default" },
+      "index": {
+        "metadataEnhance": { "enabled": true },
+        "stalenessDetection": { "enabled": false, "thresholdDays": 90 }
+      },
+      "search": {
+        "curateRerank": { "enabled": false }
       },
       "semanticSearchMode": "auto"
     },
     {
+      "configVersion": "0.8.0",
       "semanticSearchMode": "auto",
       "stashDir": "/home/user/my-stash",
       "embedding": {
@@ -778,13 +734,18 @@
         "endpoint": "http://localhost:11434/v1/embeddings",
         "model": "nomic-embed-text"
       },
-      "llm": {
-        "provider": "ollama",
-        "endpoint": "http://localhost:11434/v1/chat/completions",
-        "model": "llama3.2",
-        "temperature": 0.3,
-        "maxTokens": 512
-      }
+      "profiles": {
+        "llm": {
+          "default": {
+            "provider": "ollama",
+            "endpoint": "http://localhost:11434/v1/chat/completions",
+            "model": "llama3.2",
+            "temperature": 0.3,
+            "maxTokens": 512
+          }
+        }
+      },
+      "defaults": { "llm": "default" }
     }
   ]
 }

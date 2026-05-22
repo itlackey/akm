@@ -8,7 +8,7 @@
 
 import { serializeFrontmatter } from "../core/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
-import { loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/metadata";
@@ -208,12 +208,11 @@ const LLM_ENRICH_TIMEOUT_MS = 10_000;
  */
 export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
   const config = loadConfig();
-  if (!config.llm) {
-    warn("Warning: --enrich requires an LLM to be configured. Run `akm config set llm` to configure one.");
+  const llmConfig = getDefaultLlmConfig(config);
+  if (!llmConfig) {
+    warn("Warning: --enrich requires an LLM to be configured. Run `akm setup` to configure one.");
     return { tags: [] };
   }
-
-  const llmConfig = config.llm;
   const { chatCompletion, parseEmbeddedJsonResponse: parseJsonResponse } = await import("../llm/client");
 
   const prompt = `You are a memory tagger for a developer knowledge base.

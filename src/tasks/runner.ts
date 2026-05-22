@@ -135,8 +135,8 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     now,
     runAgentImpl,
     agentOptions: options.agentOptions,
-    agentConfig: config.agent,
-    agentTimeoutMs: config.agent?.timeoutMs ?? undefined,
+    agentConfig: config,
+    agentTimeoutMs: undefined,
   });
 }
 
@@ -323,8 +323,8 @@ async function runPromptTask(input: {
   now: () => Date;
   runAgentImpl: (...args: Parameters<typeof runAgent>) => Promise<AgentRunResult>;
   agentOptions?: Partial<RunAgentOptions>;
-  /** Pre-resolved agent config (avoids re-reading config file per task in batch runs). */
-  agentConfig?: ReturnType<typeof loadConfig>["agent"];
+  /** Pre-resolved AkmConfig (avoids re-reading config file per task in batch runs). */
+  agentConfig?: ReturnType<typeof loadConfig>;
   /** Pre-resolved agent timeout (ms) from the calling context. null = no timeout. */
   agentTimeoutMs?: number | null;
 }): Promise<TaskRunResult> {
@@ -335,7 +335,7 @@ async function runPromptTask(input: {
   // calls in batch task runs (Fix C6). Fall back to loadConfig() for callers
   // that invoke runPromptTask directly without threading config.
   const fullConfig = loadConfig();
-  const agentCfg = input.agentConfig !== undefined ? input.agentConfig : fullConfig.agent;
+  const agentCfg = input.agentConfig !== undefined ? input.agentConfig : fullConfig;
 
   // Resolve the profile for this task. When the task doc specifies a profile,
   // use it directly. Otherwise fall back to the per-process config for "task"
@@ -377,7 +377,7 @@ async function runPromptTask(input: {
         ? processTimeoutMs
         : input.agentTimeoutMs !== undefined
           ? input.agentTimeoutMs
-          : agentCfg?.timeoutMs;
+          : undefined;
   const promptText = await resolvePromptText(task, stashDir);
 
   const result = await runAgentImpl(profile, promptText, {

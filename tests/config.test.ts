@@ -680,10 +680,12 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm).toEqual({
+    const cfg = loadConfig();
+    expect(cfg.profiles?.llm?.default).toMatchObject({
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     });
+    expect(cfg.defaults?.llm).toBe("default");
   });
 
   test("loads llm config with apiKey", () => {
@@ -697,7 +699,7 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm?.apiKey).toBe("sk-key");
+    expect(loadConfig().profiles?.llm?.default?.apiKey).toBe("sk-key");
   });
 
   test("loads llm config with provider, temperature, and maxTokens", () => {
@@ -713,7 +715,7 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm).toEqual({
+    expect(loadConfig().profiles?.llm?.default).toMatchObject({
       provider: "openai",
       endpoint: "https://api.openai.com/v1/chat/completions",
       model: "gpt-4o-mini",
@@ -742,7 +744,7 @@ describe("llm config", () => {
     // llm config with `model: ""`. The loader must accept this so the value
     // round-trips; downstream callers decide if it's usable.
     writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost" } }));
-    expect(loadConfig().llm).toEqual({ endpoint: "http://localhost", model: "" });
+    expect(loadConfig().profiles?.llm?.default).toMatchObject({ endpoint: "http://localhost", model: "" });
   });
 
   test("ignores llm config with non-integer maxTokens", () => {
@@ -756,16 +758,19 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm).toBeUndefined();
+    expect(loadConfig().profiles?.llm?.default).toBeUndefined();
   });
 
-  test("roundtrips llm config via updateConfig", () => {
+  test("roundtrips llm config via updateConfig profiles.llm", () => {
     const llmConfig = {
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     };
-    updateConfig({ llm: llmConfig });
-    expect(loadConfig().llm).toEqual(llmConfig);
+    updateConfig({
+      profiles: { llm: { default: llmConfig } },
+      defaults: { llm: "default" },
+    });
+    expect(loadConfig().profiles?.llm?.default).toMatchObject(llmConfig);
   });
 });
 
@@ -985,11 +990,10 @@ describe("v2 config shape parsing", () => {
     expect(loaded.defaults?.improve).toBe("my-custom-profile");
   });
 
-  test("parses features.improve with boolean and object entries", () => {
+  test("migrates legacy features.improve to profiles.improve.default.processes", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        configVersion: 2,
         features: {
           improve: {
             reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
@@ -1000,21 +1004,17 @@ describe("v2 config shape parsing", () => {
       }),
     );
     const loaded = loadConfig();
-    const reflect = loaded.features?.improve?.reflect;
-    expect(typeof reflect).toBe("object");
-    if (reflect && typeof reflect === "object") {
-      expect((reflect as { mode?: string }).mode).toBe("llm");
-      expect((reflect as { timeoutMs?: number }).timeoutMs).toBe(60000);
-    }
-    expect(loaded.features?.improve?.memory_consolidation).toBe(false);
-    expect(loaded.features?.improve?.feedback_distillation).toBe(true);
+    const processes = loaded.profiles?.improve?.default?.processes;
+    expect(processes?.reflect?.mode).toBe("llm");
+    expect(processes?.reflect?.timeoutMs).toBe(60000);
+    expect(processes?.consolidate?.enabled).toBe(false);
+    expect(processes?.feedbackDistillation?.enabled).toBe(true);
   });
 
-  test("parses features.index and features.search", () => {
+  test("migrates legacy features.index and features.search into new shape", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        configVersion: 2,
         features: {
           index: { memory_inference: true, graph_extraction: { profile: "openai-mini" }, metadata_enhance: false },
           search: { curate_rerank: true },
@@ -1022,9 +1022,9 @@ describe("v2 config shape parsing", () => {
       }),
     );
     const loaded = loadConfig();
-    expect(loaded.features?.index?.memory_inference).toBe(true);
-    expect(loaded.features?.index?.metadata_enhance).toBe(false);
-    expect(loaded.features?.search?.curate_rerank).toBe(true);
+    expect(loaded.profiles?.improve?.default?.processes?.memoryInference?.enabled).toBe(true);
+    expect(loaded.index?.metadataEnhance?.enabled).toBe(false);
+    expect(loaded.search?.curateRerank?.enabled).toBe(true);
   });
 
   test("sanitizeConfigForWrite strips apiKey from profiles.llm entries", () => {
@@ -1085,12 +1085,13 @@ describe("auto-migration in loadConfig", () => {
     const loaded = loadConfig();
 
     // In-memory config should reflect the migrated shape
-    expect(loaded.llm?.endpoint).toBe("http://localhost:11434");
+    expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
 
     // The file on disk should have been rewritten with configVersion
     const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
     expect(onDisk.configVersion).toBe("0.8.0");
-    expect(onDisk.llm?.features).toBeUndefined();
+    expect(onDisk.llm).toBeUndefined();
+    expect(onDisk.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
 
     // A backup should have been created in the cache dir
     const backupDir = path.join(getCacheDir(), "config-backups");
@@ -1127,7 +1128,8 @@ describe("auto-migration in loadConfig", () => {
     const configPath = getConfigPath();
     const currentConfig = {
       configVersion: "0.8.0",
-      llm: { endpoint: "http://localhost:11434", model: "qwen3" },
+      profiles: { llm: { default: { endpoint: "http://localhost:11434", model: "qwen3" } } },
+      defaults: { llm: "default" },
     };
     writeRawConfig(configPath, JSON.stringify(currentConfig));
 
@@ -1155,7 +1157,7 @@ describe("auto-migration in loadConfig", () => {
 
     // The LLM endpoint should still be available even though migration was suppressed
     const loaded = loadConfig();
-    expect(loaded.llm?.endpoint).toBe("http://localhost:11434");
+    expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
   });
 });
 

@@ -58,15 +58,16 @@ function makeStashDir(): string {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
+    semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    llm: {
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "test-model",
-      features: { feedback_distillation: true },
+    profiles: {
+      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+      improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
     },
-  } as AkmConfig;
+    defaults: { llm: "default" },
+  };
 }
 
 const noopLookup = async () => null;

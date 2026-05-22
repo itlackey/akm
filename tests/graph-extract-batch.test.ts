@@ -91,7 +91,8 @@ describe("extractGraphFromBodies — unit", () => {
 
     const result = await extractGraphFromBody(SAMPLE_LLM, "Alpha references Beta.", undefined, {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
     });
 
     expect(result.entities).toEqual(["Alpha", "Beta"]);
@@ -108,7 +109,11 @@ describe("extractGraphFromBodies — unit", () => {
       undefined,
       {
         semanticSearchMode: "auto",
-        llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
+        profiles: {
+          llm: { default: { ...SAMPLE_LLM } },
+          improve: { default: { processes: { graphExtraction: { enabled: false } } } },
+        },
+        defaults: { llm: "default" },
       },
       (evt) => fallbackEvents.push({ feature: evt.feature, reason: evt.reason }),
     );

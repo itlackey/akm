@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
 import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from "./config-migration";
@@ -9,6 +8,8 @@ import { ConfigError } from "./errors";
 import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
 
+// Re-export the AgentConfig alias (now `= AkmConfig`) for source-compat with
+// pre-0.8.0 callers that imported it from this module.
 export type { AgentConfig } from "../integrations/agent/config";
 
 // ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
@@ -100,14 +101,6 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
   /**
-   * v1 spec §14 — bounded in-tree LLM feature gates. Each call site is
-   * gated behind exactly one key. Unknown keys are warn-and-ignored at
-   * config-load time. Currently only `memory_inference` is parsed by this
-   * loader; remaining locked keys are accepted into the schema as later
-   * issues wire them in.
-   */
-  features?: LlmFeatureFlags;
-  /**
    * Arbitrary key-value pairs forwarded verbatim into every chat completions
    * request body. Use this for provider-specific parameters not covered by
    * first-class fields, e.g. `{ "reasoning_effort": "none" }` to disable
@@ -143,14 +136,6 @@ export interface AgentProfileConfigV2 {
   model?: string;
 }
 
-export interface ProcessEntry {
-  enabled?: boolean;
-  mode?: "llm" | "agent" | "sdk";
-  profile?: string;
-  timeoutMs?: number | null;
-  options?: Record<string, unknown>;
-}
-
 export interface ImproveProcessConfig {
   enabled?: boolean;
   mode?: "llm" | "agent" | "sdk";
@@ -174,6 +159,21 @@ export interface ImproveProcessConfig {
   cooldownByType?: Partial<Record<string, number>>;
   /** Uniform cooldown in days for types not covered by cooldownByType. */
   cooldownDays?: number;
+  /**
+   * Optional LLM-as-judge quality gate. When enabled, generated outputs are
+   * scored before entering the proposal queue. Fail-open: judge failures
+   * always pass.
+   *
+   * - For `distill`: gates lesson quality (replaces `lesson_quality_gate`).
+   * - For `reflect`: gates proposal quality (replaces `proposal_quality_gate`).
+   */
+  qualityGate?: { enabled?: boolean };
+  /**
+   * Optional contradiction-detection pass (M-1 / #367). Only meaningful on
+   * the `consolidate` process. When enabled, derived memories within the
+   * same parent family are checked pairwise for contradictions.
+   */
+  contradictionDetection?: { enabled?: boolean };
 }
 
 export interface ImproveProfileConfig {
@@ -184,89 +184,21 @@ export interface ImproveProfileConfig {
     consolidate?: ImproveProcessConfig;
     memoryInference?: ImproveProcessConfig;
     graphExtraction?: ImproveProcessConfig;
+    /**
+     * Gates the feedback-distillation pass run by `akm distill <ref>`.
+     * Replaces the legacy `features.improve.feedback_distillation` /
+     * `llm.features.feedback_distillation` flag. Default: enabled.
+     */
+    feedbackDistillation?: ImproveProcessConfig;
+    /**
+     * Third-tier classifier runner (Advantage D3). Used by staleness detection,
+     * confidence scoring, and lesson classification. When absent, callers fall
+     * back to the `defaults.llm` profile.
+     */
+    validation?: ImproveProcessConfig;
   };
   autoAccept?: number;
   limit?: number;
-}
-
-export interface FeaturesConfig {
-  /**
-   * Per-process runner overrides for the `improve` section (reflect, distill,
-   * propose, memory_consolidation, feedback_distillation, etc.).
-   *
-   * Known keys include:
-   *  - `validation`: third model tier (Advantage D3). A lower-cost classifier
-   *    runner used by staleness detection, confidence scoring, and lesson
-   *    classification. Default: off — callers fall back to `defaults.llm`
-   *    via {@link resolveValidationRunner}. Set this to point at a cheap
-   *    profile (for example a small local model) when running large
-   *    improvement passes where the primary model would be overkill.
-   */
-  improve?: Record<string, ProcessEntry | boolean>;
-  index?: Record<string, ProcessEntry | boolean>;
-  search?: Record<string, ProcessEntry | boolean>;
-}
-
-export interface LlmFeatureFlags {
-  /** Gates the `akm index` memory-inference pass (#201). Default: true. */
-  memory_inference?: boolean;
-  /**
-   * Gates the `akm index` graph-extraction pass (#207). Default: true (the
-   * pass is still off by default unless `akm.llm` is configured AND
-   * `index.graph.llm !== false`, per the orthogonal-gates rule in v1
-   * spec §14). Set to `false` to block every graph_extraction call site
-   * regardless of any per-pass setting.
-   */
-  graph_extraction?: boolean;
-  /**
-   * Gates the `akm curate` LLM-rerank pass (#227). Default: false.
-   * When false (or absent) curate falls back to the deterministic pipeline.
-   */
-  curate_rerank?: boolean;
-  /**
-   * Gates `akm distill <ref>` (§14.5, #227). Default: false.
-   * When false (or absent), `akm distill` is skipped as a no-op rather than
-   * failing with `ConfigError`.
-   */
-  feedback_distillation?: boolean;
-  /**
-   * Gates `akm consolidate` memory deduplication and promotion. Default: false.
-   * When false (or absent), `akm consolidate` throws a ConfigError.
-   */
-  memory_consolidation?: boolean;
-  /**
-   * Gates the LLM-as-judge quality gate in `akmDistill`. When enabled, each
-   * generated lesson is scored on novelty, actionability, and non-redundancy
-   * before entering the proposal queue. Fail-open: judge failures always pass.
-   * Default: false.
-   */
-  lesson_quality_gate?: boolean;
-  /**
-   * Gates the LLM-as-judge quality gate on reflect proposals (R-5 / #374).
-   *
-   * When true, each proposal from `akm reflect` is scored by the judge before
-   * entering the proposal queue. Fail-open: judge failures always pass. Uses the
-   * same `runLessonQualityJudge` infrastructure as `lesson_quality_gate`.
-   *
-   * Also extends `lesson_quality_gate` semantics — both flags are checked by
-   * the reflect quality gate. Set either to enable it on reflect proposals.
-   * Default: false.
-   */
-  proposal_quality_gate?: boolean;
-  /**
-   * Gates the `akm index` metadata-enhancement pass. Default: false.
-   * When false (or absent), metadata enhancement is skipped and falls back to
-   * returning an empty enrichment object (no description/searchHints/tags update).
-   */
-  metadata_enhance?: boolean;
-  /**
-   * Gates the M-1 contradiction-detection pass in `akm improve` (#367).
-   * Default: false. When enabled, derived memories within the same parent family
-   * are checked pairwise for contradictions using an LLM judge, and
-   * `contradictedBy` edges are written to their frontmatter so the SCC resolver
-   * in `resolveFamilyContradictions` has edges to work on.
-   */
-  memory_contradiction_detection?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -410,21 +342,17 @@ export interface AkmConfig {
     /** Name of the default improve profile from profiles.improve. */
     improve?: string;
   };
-  /** v2: unified features tree replacing the old top-level features flags. */
-  features?: FeaturesConfig;
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
   /** User preference for semantic search. "auto" means use semantic search whenever runtime prerequisites are healthy. */
   semanticSearchMode: "off" | "auto";
   /** OpenAI-compatible embedding endpoint config. If not set, uses local @huggingface/transformers */
   embedding?: EmbeddingConnectionConfig;
-  /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
-  llm?: LlmConnectionConfig;
   /**
-   * Per-pass `akm index` configuration. See {@link IndexPassConfig}. Each
-   * pass defaults to the top-level `akm.llm` block; setting
-   * `index.<pass>.llm = false` opts a pass out. Per-pass alternative provider
-   * configuration is intentionally not supported (#208).
+   * Per-pass `akm index` configuration. See {@link IndexConfig}. Each pass
+   * defaults to the default LLM profile; setting `index.<pass>.llm = false`
+   * opts a pass out. Per-pass alternative provider configuration is
+   * intentionally not supported (#208).
    */
   index?: IndexConfig;
   /** Installed stashes (from npm, GitHub, git, or local sources) */
@@ -470,14 +398,6 @@ export interface AkmConfig {
    */
   defaultWriteTarget?: string;
   /**
-   * Optional agent CLI integration block (v1 spec §12). Configures
-   * external agent CLIs that akm can shell out to. Missing block disables
-   * agent commands; unknown nested keys are warn-and-ignored. Built-in
-   * profiles ship for opencode, claude, codex, gemini, aider — users can
-   * override or add profiles via `agent.profiles[<name>]`.
-   */
-  agent?: AgentConfig;
-  /**
    * Search-specific tuning parameters.
    */
   search?: {
@@ -487,6 +407,13 @@ export interface AkmConfig {
      * hybrid hits are never filtered. Default: 0.2. Set to 0 to disable.
      */
     minScore?: number;
+    /**
+     * Gates the `akm curate` LLM-rerank pass. Replaces the legacy
+     * `features.search.curate_rerank` / `llm.features.curate_rerank` flag.
+     * Default: false. When disabled (or absent) curate falls back to the
+     * deterministic pipeline.
+     */
+    curateRerank?: { enabled?: boolean };
     /**
      * Search-time graph boost tuning knobs.
      *
@@ -640,11 +567,41 @@ export interface IndexPassConfig {
 }
 
 /**
- * Index-time configuration. The keys are pass names; values are
- * {@link IndexPassConfig}. Unknown pass names are accepted (so future passes
- * configure via the same shape) but their entries are validated for shape.
+ * Index-time configuration. Supports both well-known feature sections (e.g.
+ * {@link IndexConfig.metadataEnhance}, {@link IndexConfig.stalenessDetection})
+ * and per-pass overrides keyed by pass name (e.g. `index.graph`,
+ * `index.enrichment`). Per-pass entries are validated for shape; unknown keys
+ * fall through to the per-pass map.
+ *
+ * Feature-section keys take precedence over per-pass keys when reserved (i.e.
+ * `metadataEnhance` and `stalenessDetection` cannot also be used as pass
+ * names).
  */
-export type IndexConfig = Record<string, IndexPassConfig>;
+/** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */
+export interface IndexConfigReservedKeys {
+  /**
+   * Gates the `akm index` metadata-enhancement pass. Replaces the legacy
+   * `features.index.metadata_enhance` / `llm.features.metadata_enhance`
+   * flag. Default: enabled.
+   */
+  metadataEnhance?: { enabled?: boolean };
+  /**
+   * Gates the `akm index` staleness-detection pass. Replaces the legacy
+   * `features.index.staleness_detection` entry. Default: disabled.
+   */
+  stalenessDetection?: { enabled?: boolean; thresholdDays?: number };
+}
+
+/**
+ * Index-time configuration. Combines well-known feature sections
+ * ({@link IndexConfigReservedKeys}) with per-pass overrides keyed by pass name
+ * (e.g. `graph`, `enrichment`). Use {@link getIndexPassConfig} to read a
+ * pass-named entry safely (without confusing the reserved feature-section
+ * keys for a pass).
+ */
+export type IndexConfig = IndexConfigReservedKeys & {
+  [passName: string]: IndexPassConfig | IndexConfigReservedKeys[keyof IndexConfigReservedKeys] | undefined;
+};
 
 /**
  * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
@@ -870,10 +827,41 @@ export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[]
   return config.registries ?? DEFAULT_CONFIG.registries ?? [];
 }
 
+/**
+ * Resolve the default LLM connection from `profiles.llm[defaults.llm]`.
+ *
+ * Throws {@link ConfigError} when `defaults.llm` is unset or points at a
+ * profile that does not exist under `profiles.llm`. Use this in code paths
+ * that must have an LLM configured (per-pass index calls, distill,
+ * consolidate, etc).
+ */
 export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
-  if (!config.llm)
-    throw new ConfigError("LLM is not configured. Run `akm config set llm` to configure one.", "LLM_NOT_CONFIGURED");
-  return config.llm;
+  const defaultName = config.defaults?.llm;
+  if (!defaultName) {
+    throw new ConfigError(
+      "LLM is not configured. Run `akm setup` or set `defaults.llm` to a profile defined in `profiles.llm`.",
+      "LLM_NOT_CONFIGURED",
+    );
+  }
+  const profile = config.profiles?.llm?.[defaultName];
+  if (!profile) {
+    throw new ConfigError(
+      `LLM default profile "${defaultName}" not found in profiles.llm.`,
+      "LLM_NOT_CONFIGURED",
+      `Available profiles: ${Object.keys(config.profiles?.llm ?? {}).join(", ") || "none"}. Run \`akm setup\` to configure.`,
+    );
+  }
+  return profile;
+}
+
+/**
+ * Like {@link requireLlmConfig} but returns `undefined` instead of throwing
+ * when no LLM is configured. Use in code paths where the LLM is optional.
+ */
+export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | undefined {
+  const defaultName = config.defaults?.llm;
+  if (!defaultName) return undefined;
+  return config.profiles?.llm?.[defaultName];
 }
 
 /**
@@ -998,10 +986,6 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
     const { apiKey, ...rest } = config.embedding;
     sanitized.embedding = rest;
   }
-  if (config.llm) {
-    const { apiKey, ...rest } = config.llm;
-    sanitized.llm = rest;
-  }
   if (config.profiles?.llm) {
     const llmProfiles: Record<string, unknown> = {};
     for (const [name, profile] of Object.entries(config.profiles.llm)) {
@@ -1050,9 +1034,6 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
   const embedding = parseEmbeddingConfig(raw.embedding);
   if (embedding) config.embedding = embedding;
 
-  const llm = parseLlmConfig(raw.llm);
-  if (llm) config.llm = llm;
-
   const index = parseIndexConfig(raw.index);
   if (index) config.index = index;
 
@@ -1092,21 +1073,26 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
     config.defaultWriteTarget = raw.defaultWriteTarget.trim();
   }
 
-  if ("agent" in raw) {
-    const agent = parseAgentConfig(raw.agent);
-    if (agent) config.agent = agent;
-  }
-
   if (typeof raw.search === "object" && raw.search !== null && !Array.isArray(raw.search)) {
     const searchRaw = raw.search as Record<string, unknown>;
     const searchConfig: AkmConfig["search"] = {};
     for (const key of Object.keys(searchRaw)) {
-      if (key !== "minScore" && key !== "graphBoost") {
+      if (key !== "minScore" && key !== "graphBoost" && key !== "curateRerank") {
         warn(`[akm] Ignoring unknown search key "${key}".`);
       }
     }
     if (typeof searchRaw.minScore === "number" && Number.isFinite(searchRaw.minScore) && searchRaw.minScore >= 0) {
       searchConfig.minScore = searchRaw.minScore;
+    }
+    if (
+      typeof searchRaw.curateRerank === "object" &&
+      searchRaw.curateRerank !== null &&
+      !Array.isArray(searchRaw.curateRerank)
+    ) {
+      const cr = searchRaw.curateRerank as Record<string, unknown>;
+      const out: { enabled?: boolean } = {};
+      if (typeof cr.enabled === "boolean") out.enabled = cr.enabled;
+      if (Object.keys(out).length > 0) searchConfig.curateRerank = out;
     }
     if (
       typeof searchRaw.graphBoost === "object" &&
@@ -1221,9 +1207,6 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   const defaults = parseDefaultsConfig(raw.defaults);
   if (defaults) config.defaults = defaults;
-
-  const features = parseFeaturesConfig(raw.features);
-  if (features) config.features = features;
 
   return config;
 }
@@ -1357,6 +1340,22 @@ function parseImproveProcessConfig(value: unknown, processName?: string): Improv
   if (typeof obj.cooldownDays === "number" && Number.isFinite(obj.cooldownDays) && obj.cooldownDays >= 0) {
     entry.cooldownDays = obj.cooldownDays;
   }
+  if (typeof obj.qualityGate === "object" && obj.qualityGate !== null && !Array.isArray(obj.qualityGate)) {
+    const qg = obj.qualityGate as Record<string, unknown>;
+    const out: { enabled?: boolean } = {};
+    if (typeof qg.enabled === "boolean") out.enabled = qg.enabled;
+    if (Object.keys(out).length > 0) entry.qualityGate = out;
+  }
+  if (
+    typeof obj.contradictionDetection === "object" &&
+    obj.contradictionDetection !== null &&
+    !Array.isArray(obj.contradictionDetection)
+  ) {
+    const cd = obj.contradictionDetection as Record<string, unknown>;
+    const out: { enabled?: boolean } = {};
+    if (typeof cd.enabled === "boolean") out.enabled = cd.enabled;
+    if (Object.keys(out).length > 0) entry.contradictionDetection = out;
+  }
   return Object.keys(entry).length > 0 ? entry : undefined;
 }
 
@@ -1368,7 +1367,15 @@ function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfile
   if (typeof obj.processes === "object" && obj.processes !== null && !Array.isArray(obj.processes)) {
     const processesRaw = obj.processes as Record<string, unknown>;
     const processes: NonNullable<ImproveProfileConfig["processes"]> = {};
-    const knownProcesses = ["reflect", "distill", "consolidate", "memoryInference", "graphExtraction"] as const;
+    const knownProcesses = [
+      "reflect",
+      "distill",
+      "consolidate",
+      "memoryInference",
+      "graphExtraction",
+      "feedbackDistillation",
+      "validation",
+    ] as const;
     for (const key of knownProcesses) {
       if (key in processesRaw) {
         const parsed = parseImproveProcessConfig(processesRaw[key], key);
@@ -1387,57 +1394,6 @@ function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfile
   const limit = parsePositiveInteger("profiles.improve.limit", obj.limit);
   if (limit !== undefined) profile.limit = limit;
   return Object.keys(profile).length > 0 ? profile : undefined;
-}
-
-export function parseProcessEntry(value: unknown): ProcessEntry | boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const entry: ProcessEntry = {};
-  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
-  if (isOneOf(obj.mode, ["llm", "agent", "sdk"] as const)) entry.mode = obj.mode;
-  if (typeof obj.profile === "string" && obj.profile.trim()) entry.profile = obj.profile.trim();
-  if (obj.timeoutMs === null) {
-    entry.timeoutMs = null;
-  } else if (typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0) {
-    entry.timeoutMs = obj.timeoutMs;
-  }
-  if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-    entry.options = obj.options as Record<string, unknown>;
-  }
-  return entry;
-}
-
-function parseFeaturesSection(value: unknown, section: string): Record<string, ProcessEntry | boolean> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const result: Record<string, ProcessEntry | boolean> = {};
-  for (const [name, raw] of Object.entries(obj)) {
-    const parsed = parseProcessEntry(raw);
-    if (parsed === undefined) {
-      warn(`[akm] Ignoring features.${section}["${name}"]: expected a boolean or process entry object.`);
-      continue;
-    }
-    result[name] = parsed;
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function parseFeaturesConfig(value: unknown): FeaturesConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const result: FeaturesConfig = {};
-
-  const improve = parseFeaturesSection(obj.improve, "improve");
-  if (improve) result.improve = improve;
-
-  const index = parseFeaturesSection(obj.index, "index");
-  if (index) result.index = index;
-
-  const search = parseFeaturesSection(obj.search, "search");
-  if (search) result.search = search;
-
-  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function parseConfigText(text: string): Partial<AkmConfig> | undefined {
@@ -1716,10 +1672,6 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     if (typeof capsRaw.structuredOutput === "boolean") caps.structuredOutput = capsRaw.structuredOutput;
     if (Object.keys(caps).length > 0) result.capabilities = caps;
   }
-  if (typeof obj.features === "object" && obj.features !== null && !Array.isArray(obj.features)) {
-    const features = parseLlmFeatures(obj.features as Record<string, unknown>);
-    if (Object.keys(features).length > 0) result.features = features;
-  }
   if (typeof obj.judgeModel === "string" && obj.judgeModel.trim()) {
     result.judgeModel = obj.judgeModel.trim();
   }
@@ -1727,43 +1679,6 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     result.extraParams = obj.extraParams as Record<string, unknown>;
   }
   return result;
-}
-
-/**
- * v1 spec §14 — locked feature keys. Defined here so unknown keys can
- * be warn-and-ignored at load time (per spec §14.3 / §9.2). The set is
- * deliberately the *full* locked table even though only a subset has
- * runtime parsing today; this lets users author future-flagged configs
- * without spurious warnings.
- */
-const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
-  "curate_rerank",
-  "feedback_distillation",
-  "memory_inference",
-  "graph_extraction",
-  "memory_consolidation",
-  "lesson_quality_gate",
-  "proposal_quality_gate",
-  "metadata_enhance",
-  "memory_contradiction_detection",
-]);
-
-function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
-  const out: LlmFeatureFlags = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (!LOCKED_LLM_FEATURE_KEYS.has(key)) {
-      warn(`[akm] Ignoring unknown llm.features key "${key}".`);
-      continue;
-    }
-    if (typeof value !== "boolean") {
-      warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
-      continue;
-    }
-    if (LOCKED_LLM_FEATURE_KEYS.has(key as keyof LlmFeatureFlags)) {
-      (out as Record<string, boolean>)[key] = value as boolean;
-    }
-  }
-  return out;
 }
 
 /**
@@ -1801,6 +1716,9 @@ const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = new Set([
  * keys, non-boolean `llm`) throws `ConfigError("INVALID_CONFIG_FILE")` at
  * load time so the failure is visible at startup, not on the next index run.
  */
+/** Reserved top-level keys that are feature-config sections, NOT pass names. */
+const INDEX_RESERVED_KEYS = new Set(["metadataEnhance", "stalenessDetection"]);
+
 function parseIndexConfig(value: unknown): IndexConfig | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "object" || Array.isArray(value)) {
@@ -1820,15 +1738,31 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
     }
     const passRaw = raw as Record<string, unknown>;
 
+    // Handle reserved feature-section keys ────────────────────────────────
+    if (passName === "metadataEnhance") {
+      const cfg: { enabled?: boolean } = {};
+      if (typeof passRaw.enabled === "boolean") cfg.enabled = passRaw.enabled;
+      if (Object.keys(cfg).length > 0) out.metadataEnhance = cfg;
+      continue;
+    }
+    if (passName === "stalenessDetection") {
+      const cfg: { enabled?: boolean; thresholdDays?: number } = {};
+      if (typeof passRaw.enabled === "boolean") cfg.enabled = passRaw.enabled;
+      const td = parsePositiveInteger("index.stalenessDetection.thresholdDays", passRaw.thresholdDays);
+      if (td !== undefined) cfg.thresholdDays = td;
+      if (Object.keys(cfg).length > 0) out.stalenessDetection = cfg;
+      continue;
+    }
+
     // Reject any provider-shaped key — there must be exactly one place to
     // configure the LLM (#208). This is the duplicate-provider guard.
     for (const key of Object.keys(passRaw)) {
       if (PROVIDER_CONFIG_KEYS.has(key)) {
         throw new ConfigError(
           `Duplicate LLM provider configuration: \`index.${passName}.${key}\` is not allowed. ` +
-            "Configure provider/model/endpoint under top-level `llm` only; per-pass entries support `{ llm: false }` opt-out.",
+            "Configure provider/model/endpoint under `profiles.llm` only; per-pass entries support `{ llm: false }` opt-out.",
           "INVALID_CONFIG_FILE",
-          'Move provider settings to the top-level "llm" block, then set `index.<pass>.llm = false` to opt a single pass out.',
+          "Move provider settings to a profile under `profiles.llm`, then set `index.<pass>.llm = false` to opt a single pass out.",
         );
       }
       if (
@@ -1849,7 +1783,7 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
       const llmFlag = passRaw.llm;
       if (typeof llmFlag !== "boolean") {
         throw new ConfigError(
-          `Invalid \`index.${passName}.llm\`: expected a boolean (true to use \`akm.llm\`, false to opt out). Got ${typeof llmFlag}.`,
+          `Invalid \`index.${passName}.llm\`: expected a boolean (true to use the default LLM profile, false to opt out). Got ${typeof llmFlag}.`,
           "INVALID_CONFIG_FILE",
           "Per-pass alternative provider config is intentionally unsupported in v1 (#208). Use `false` to disable LLM for this pass.",
         );
@@ -1884,7 +1818,20 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
     }
     out[passName] = passConfig;
   }
-  return out;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Read a per-pass {@link IndexPassConfig} entry from {@link IndexConfig},
+ * filtering out the reserved feature-section keys so callers don't mistake
+ * `metadataEnhance` / `stalenessDetection` for a pass.
+ */
+export function getIndexPassConfig(config: IndexConfig | undefined, passName: string): IndexPassConfig | undefined {
+  if (!config) return undefined;
+  if (INDEX_RESERVED_KEYS.has(passName)) return undefined;
+  const entry = config[passName];
+  if (!entry || typeof entry !== "object") return undefined;
+  return entry as IndexPassConfig;
 }
 
 /**
@@ -2209,27 +2156,6 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
   return entry;
 }
 
-function mergeAgentConfig(base: AgentConfig, override: AgentConfig): AgentConfig {
-  const merged: AgentConfig = { ...base, ...override };
-  const baseProfiles = base.profiles;
-  const overrideProfiles = override.profiles;
-  if (baseProfiles && overrideProfiles) {
-    const profiles: NonNullable<AgentConfig["profiles"]> = { ...baseProfiles };
-    for (const [name, entry] of Object.entries(overrideProfiles)) {
-      const existing = baseProfiles[name];
-      profiles[name] = existing ? { ...existing, ...entry } : entry;
-    }
-    merged.profiles = profiles;
-  }
-  // Shallow merge per-key: later layer wins per process name (same as profiles).
-  const baseProcesses = base.processes;
-  const overrideProcesses = override.processes;
-  if (baseProcesses || overrideProcesses) {
-    merged.processes = { ...(baseProcesses ?? {}), ...(overrideProcesses ?? {}) };
-  }
-  return merged;
-}
-
 function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
   if (!base && !override) return undefined;
   const installAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
@@ -2270,23 +2196,40 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.embedding && override.embedding) {
     merged.embedding = { ...base.embedding, ...override.embedding };
   }
-  if (base.llm && override.llm) {
-    merged.llm = { ...base.llm, ...override.llm };
-  }
   if (base.index || override.index) {
     // Deep-merge per-pass entries so a project layer can opt one pass out
     // without dropping siblings configured in user config.
     const mergedIndex: IndexConfig = { ...(base.index ?? {}) };
     for (const [passName, passOverride] of Object.entries(override.index ?? {})) {
-      mergedIndex[passName] = { ...(mergedIndex[passName] ?? {}), ...passOverride };
+      const baseEntry = (mergedIndex as Record<string, unknown>)[passName];
+      const baseObj = baseEntry && typeof baseEntry === "object" ? (baseEntry as Record<string, unknown>) : {};
+      (mergedIndex as Record<string, unknown>)[passName] = {
+        ...baseObj,
+        ...(passOverride as Record<string, unknown> | undefined),
+      };
     }
     if (Object.keys(mergedIndex).length > 0) merged.index = mergedIndex;
   }
+  // Deep merge for the profiles tree so a later layer can override one profile
+  // entry without dropping siblings.
+  if (base.profiles || override.profiles) {
+    const mergedProfiles: NonNullable<AkmConfig["profiles"]> = { ...(base.profiles ?? {}) };
+    if (override.profiles?.llm) {
+      mergedProfiles.llm = { ...(mergedProfiles.llm ?? {}), ...override.profiles.llm };
+    }
+    if (override.profiles?.agent) {
+      mergedProfiles.agent = { ...(mergedProfiles.agent ?? {}), ...override.profiles.agent };
+    }
+    if (override.profiles?.improve) {
+      mergedProfiles.improve = { ...(mergedProfiles.improve ?? {}), ...override.profiles.improve };
+    }
+    if (Object.keys(mergedProfiles).length > 0) merged.profiles = mergedProfiles;
+  }
+  if (base.defaults || override.defaults) {
+    merged.defaults = { ...(base.defaults ?? {}), ...(override.defaults ?? {}) };
+  }
   if (base.security && override.security) {
     merged.security = mergeSecurityConfig(base.security, override.security);
-  }
-  if (base.agent && override.agent) {
-    merged.agent = mergeAgentConfig(base.agent, override.agent);
   }
   const replaceSources = override.stashInheritance === "replace";
   const overrideSources = override.sources ?? [];
@@ -2308,10 +2251,6 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
   if (next.embedding && !next.embedding.apiKey) {
     const envKey = process.env.AKM_EMBED_API_KEY?.trim();
     if (envKey) next.embedding = { ...next.embedding, apiKey: envKey };
-  }
-  if (next.llm && !next.llm.apiKey) {
-    const envKey = process.env.AKM_LLM_API_KEY?.trim();
-    if (envKey) next.llm = { ...next.llm, apiKey: envKey };
   }
 
   // v2: inject AKM_LLM_API_KEY into the default LLM profile

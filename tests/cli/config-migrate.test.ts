@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { migrateConfigShape } from "../../src/cli/config-migrate";
 
-describe("migrateConfigShape", () => {
-  test("is idempotent on v2 config", () => {
-    const input = { configVersion: 2, profiles: { llm: {} } };
+describe("migrateConfigShape (CLI wrapper)", () => {
+  test("is idempotent on already-migrated configs", () => {
+    const input = { configVersion: "0.8.0", profiles: { llm: {} } };
     const { changed } = migrateConfigShape(input);
     expect(changed).toBe(false);
   });
 
-  test("migrates memory_inference from llm.features to features.index", () => {
+  test("migrates memory_inference from llm.features → processes.memoryInference.enabled", () => {
     const input = {
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -19,33 +19,35 @@ describe("migrateConfigShape", () => {
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
     expect(result.configVersion).toBe("0.8.0");
-    const features = result.features as Record<string, unknown>;
-    const index = features.index as Record<string, unknown>;
-    expect(index.memory_inference).toBe(true);
-    // Stripped from llm.features
-    const llm = result.llm as Record<string, unknown>;
-    expect(llm.features).toBeUndefined();
+    const procs = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>).default as {
+      processes?: Record<string, { enabled?: boolean }>;
+    };
+    expect(procs.processes?.memoryInference?.enabled).toBe(true);
+    // Legacy llm block stripped.
+    expect(result.llm).toBeUndefined();
   });
 
-  test("migrates graph_extraction from llm.features to features.index", () => {
+  test("migrates graph_extraction → processes.graphExtraction.enabled", () => {
     const input = {
       llm: { endpoint: "http://x.com/v1/chat/completions", model: "m", features: { graph_extraction: false } },
     };
     const { result } = migrateConfigShape(input);
-    const index = (result.features as Record<string, unknown>).index as Record<string, unknown>;
-    expect(index.graph_extraction).toBe(false);
+    const procs = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>).default as {
+      processes?: Record<string, { enabled?: boolean }>;
+    };
+    expect(procs.processes?.graphExtraction?.enabled).toBe(false);
   });
 
-  test("migrates metadata_enhance from llm.features to features.index", () => {
+  test("migrates metadata_enhance → index.metadataEnhance.enabled", () => {
     const input = {
       llm: { endpoint: "http://x.com/v1/chat/completions", model: "m", features: { metadata_enhance: true } },
     };
     const { result } = migrateConfigShape(input);
-    const index = (result.features as Record<string, unknown>).index as Record<string, unknown>;
-    expect(index.metadata_enhance).toBe(true);
+    const index = result.index as { metadataEnhance?: { enabled?: boolean } };
+    expect(index.metadataEnhance?.enabled).toBe(true);
   });
 
-  test("migrates memory_consolidation from llm.features to features.improve", () => {
+  test("migrates memory_consolidation → processes.consolidate.enabled", () => {
     const input = {
       llm: {
         endpoint: "http://x.com/v1/chat/completions",
@@ -54,11 +56,13 @@ describe("migrateConfigShape", () => {
       },
     };
     const { result } = migrateConfigShape(input);
-    const improve = (result.features as Record<string, unknown>).improve as Record<string, unknown>;
-    expect(improve.memory_consolidation).toBe(true);
+    const procs = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>).default as {
+      processes?: Record<string, { enabled?: boolean }>;
+    };
+    expect(procs.processes?.consolidate?.enabled).toBe(true);
   });
 
-  test("migrates feedback_distillation from llm.features to features.improve", () => {
+  test("migrates feedback_distillation → processes.feedbackDistillation.enabled", () => {
     const input = {
       llm: {
         endpoint: "http://x.com/v1/chat/completions",
@@ -67,17 +71,19 @@ describe("migrateConfigShape", () => {
       },
     };
     const { result } = migrateConfigShape(input);
-    const improve = (result.features as Record<string, unknown>).improve as Record<string, unknown>;
-    expect(improve.feedback_distillation).toBe(false);
+    const procs = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>).default as {
+      processes?: Record<string, { enabled?: boolean }>;
+    };
+    expect(procs.processes?.feedbackDistillation?.enabled).toBe(false);
   });
 
-  test("migrates curate_rerank from llm.features to features.search", () => {
+  test("migrates curate_rerank → search.curateRerank.enabled", () => {
     const input = {
       llm: { endpoint: "http://x.com/v1/chat/completions", model: "m", features: { curate_rerank: true } },
     };
     const { result } = migrateConfigShape(input);
-    const search = (result.features as Record<string, unknown>).search as Record<string, unknown>;
-    expect(search.curate_rerank).toBe(true);
+    const search = result.search as { curateRerank?: { enabled?: boolean } };
+    expect(search.curateRerank?.enabled).toBe(true);
   });
 
   test("migrates reflectCooldownByType to profiles.improve.default.processes.reflect.cooldownByType", () => {
@@ -97,9 +103,8 @@ describe("migrateConfigShape", () => {
     const input = { improve: { limit: 50 } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const profiles = result.profiles as Record<string, unknown>;
-    const profilesImprove = profiles.improve as Record<string, unknown>;
-    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+      .default as Record<string, unknown>;
     expect(defaultProfile.limit).toBe(50);
   });
 
@@ -107,12 +112,10 @@ describe("migrateConfigShape", () => {
     const input = { improve: { reflectCooldownByType: { memory: 5 }, limit: 25 } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const profiles = result.profiles as Record<string, unknown>;
-    const profilesImprove = profiles.improve as Record<string, unknown>;
-    const defaultProfile = profilesImprove.default as Record<string, unknown>;
-    const processes = defaultProfile.processes as Record<string, unknown>;
-    const reflect = processes.reflect as Record<string, unknown>;
-    expect(reflect.cooldownByType).toEqual({ memory: 5 });
+    const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+      .default as Record<string, unknown>;
+    const processes = defaultProfile.processes as Record<string, { cooldownByType?: unknown }>;
+    expect(processes.reflect.cooldownByType).toEqual({ memory: 5 });
     expect(defaultProfile.limit).toBe(25);
     expect(result.improve).toBeUndefined();
   });
@@ -121,17 +124,13 @@ describe("migrateConfigShape", () => {
     const input = { defaults: { improve: { limit: 17 } } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const profiles = result.profiles as Record<string, unknown>;
-    const profilesImprove = profiles.improve as Record<string, unknown>;
-    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+      .default as Record<string, unknown>;
     expect(defaultProfile.limit).toBe(17);
-    // Object form should be removed so the parser doesn't see it.
-    expect(result.defaults).toBeUndefined();
   });
 
   test("warns and drops defaults.improve.preset (no longer supported)", () => {
     const input = { defaults: { improve: { preset: "fast", limit: 10 } } };
-    // Capture warning so it doesn't pollute test output and so we can assert it fires.
     const originalWarn = console.warn;
     const messages: string[] = [];
     console.warn = (...args: unknown[]) => {
@@ -140,11 +139,9 @@ describe("migrateConfigShape", () => {
     try {
       const { changed, result } = migrateConfigShape(input);
       expect(changed).toBe(true);
-      const profiles = result.profiles as Record<string, unknown>;
-      const profilesImprove = profiles.improve as Record<string, unknown>;
-      const defaultProfile = profilesImprove.default as Record<string, unknown>;
+      const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+        .default as Record<string, unknown>;
       expect(defaultProfile.limit).toBe(10);
-      expect(result.defaults).toBeUndefined();
       expect(messages.some((m) => m.includes("preset"))).toBe(true);
     } finally {
       console.warn = originalWarn;
@@ -155,37 +152,23 @@ describe("migrateConfigShape", () => {
     const input = { improve: { schedule: "0 * * * *", limit: 10 } };
     const { result } = migrateConfigShape(input);
     const improve = result.improve as Record<string, unknown> | undefined;
-    // schedule should be stripped; limit moved to defaults
-    expect((improve as Record<string, unknown> | undefined)?.schedule).toBeUndefined();
+    expect(improve?.schedule).toBeUndefined();
   });
 
-  test("strips sdkMode from agent profiles", () => {
+  test("migrates legacy agent.profiles + default into profiles.agent + defaults.agent", () => {
     const input = {
       agent: {
-        profiles: {
-          myprofile: { bin: "opencode", sdkMode: true, model: "claude-3" },
-        },
+        default: "opencode",
+        profiles: { opencode: { bin: "opencode" } },
       },
     };
     const { result } = migrateConfigShape(input);
-    const agent = result.agent as Record<string, unknown>;
-    const profiles = agent.profiles as Record<string, Record<string, unknown>>;
-    expect(profiles.myprofile.sdkMode).toBeUndefined();
-    expect(profiles.myprofile.bin).toBe("opencode");
-    expect(profiles.myprofile.model).toBe("claude-3");
-  });
-
-  test("strips config.agent.processes['task']", () => {
-    const input = {
-      agent: {
-        processes: { task: { profile: "opencode" }, reflect: { profile: "opencode" } },
-      },
-    };
-    const { result } = migrateConfigShape(input);
-    const agent = result.agent as Record<string, unknown>;
-    const processes = agent.processes as Record<string, unknown>;
-    expect(processes.task).toBeUndefined();
-    expect(processes.reflect).toBeDefined();
+    expect(result.agent).toBeUndefined();
+    const defaults = result.defaults as { agent?: string };
+    expect(defaults.agent).toBe("opencode");
+    const profiles = result.profiles as { agent?: Record<string, { platform?: string; bin?: string }> };
+    expect(profiles.agent?.opencode?.bin).toBe("opencode");
+    expect(profiles.agent?.opencode?.platform).toBe("opencode");
   });
 
   test('sets configVersion: "0.8.0" on migrated config', () => {
@@ -213,18 +196,21 @@ describe("migrateConfigShape", () => {
     };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const features = result.features as Record<string, Record<string, unknown>>;
-    expect(features.index.memory_inference).toBe(true);
-    expect(features.index.graph_extraction).toBe(false);
-    expect(features.index.metadata_enhance).toBe(true);
-    expect(features.improve.memory_consolidation).toBe(true);
-    expect(features.improve.feedback_distillation).toBe(false);
-    expect(features.search.curate_rerank).toBe(true);
+    const procs = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>).default as {
+      processes?: Record<string, { enabled?: boolean }>;
+    };
+    expect(procs.processes?.memoryInference?.enabled).toBe(true);
+    expect(procs.processes?.graphExtraction?.enabled).toBe(false);
+    expect(procs.processes?.consolidate?.enabled).toBe(true);
+    expect(procs.processes?.feedbackDistillation?.enabled).toBe(false);
+    expect((result.index as { metadataEnhance?: { enabled?: boolean } }).metadataEnhance?.enabled).toBe(true);
+    expect((result.search as { curateRerank?: { enabled?: boolean } }).curateRerank?.enabled).toBe(true);
   });
 
-  test("does not change config with no migratable keys", () => {
+  test("empty config with no migratable keys is a no-op", () => {
     const input = { stashDir: "/my/stash", semanticSearchMode: "auto" };
-    const { changed } = migrateConfigShape(input);
+    const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(false);
+    expect(result.configVersion).toBeUndefined();
   });
 });

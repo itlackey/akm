@@ -236,15 +236,25 @@ describe("§11 event metadata shape (runtime)", () => {
   test("distill_invoked metadata includes `outcome` (queued|skipped|validation_failed)", async () => {
     const stash = makeStashDir();
     const config: AkmConfig = {
+      semanticSearchMode: "auto",
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        features: { feedback_distillation: true },
+      profiles: {
+        llm: {
+          default: {
+            endpoint: "http://localhost:11434/v1/chat/completions",
+            model: "test-model",
+          },
+        },
+        improve: {
+          default: {
+            processes: { feedbackDistillation: { enabled: true } },
+          },
+        },
       },
-    } as AkmConfig;
+      defaults: { llm: "default" },
+    };
     await akmDistill({
       ref: "skill:deploy",
       config,

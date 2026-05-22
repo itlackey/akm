@@ -986,12 +986,12 @@ describe("R-5: proposal quality gate applied to reflect proposals (#374)", () =>
         stashDir: stash,
         sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
         defaultWriteTarget: "stash",
-        llm: {
-          endpoint: "http://localhost/v1/chat",
-          model: "test",
-          features: { proposal_quality_gate: true },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+          improve: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
         },
-      } as import("../src/core/config").AkmConfig,
+        defaults: { llm: "default" },
+      } as unknown as import("../src/core/config").AkmConfig,
       // Judge returns score=1 (below 3 threshold) — proposal should be rejected
       chat: async () => JSON.stringify({ score: 1, reason: "Too generic, no actionable content." }),
     });
@@ -1019,12 +1019,12 @@ describe("R-5: proposal quality gate applied to reflect proposals (#374)", () =>
         stashDir: stash,
         sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
         defaultWriteTarget: "stash",
-        llm: {
-          endpoint: "http://localhost/v1/chat",
-          model: "test",
-          features: { proposal_quality_gate: true },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+          improve: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
         },
-      } as import("../src/core/config").AkmConfig,
+        defaults: { llm: "default" },
+      } as unknown as import("../src/core/config").AkmConfig,
       // Judge returns score=4 (above threshold) — proposal should pass
       chat: async () => JSON.stringify({ score: 4, reason: "Clear and actionable." }),
     });

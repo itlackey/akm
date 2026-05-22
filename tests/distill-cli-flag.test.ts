@@ -140,12 +140,12 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        features: { feedback_distillation: true },
+      profiles: {
+        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+        improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
       },
-    } as AkmConfig;
+      defaults: { llm: "default" },
+    } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
       config,
@@ -165,12 +165,12 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        features: { feedback_distillation: true },
+      profiles: {
+        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+        improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
       },
-    } as AkmConfig;
+      defaults: { llm: "default" },
+    } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
       config,

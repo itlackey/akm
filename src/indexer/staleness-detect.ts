@@ -48,7 +48,7 @@ import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import { getProcessOptions, resolveValidationRunner } from "../integrations/agent/runner";
+import { resolveValidationRunner } from "../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../llm/client";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { findEntryIdByRef } from "./db";
@@ -149,11 +149,9 @@ export async function runStalenessDetectionPass(
     return result;
   }
 
-  const options = getProcessOptions<{ thresholdDays?: number }>("index", "staleness_detection", config);
+  const configuredThreshold = config.index?.stalenessDetection?.thresholdDays;
   const thresholdDays =
-    typeof options?.thresholdDays === "number" && options.thresholdDays >= 0
-      ? options.thresholdDays
-      : DEFAULT_THRESHOLD_DAYS;
+    typeof configuredThreshold === "number" && configuredThreshold >= 0 ? configuredThreshold : DEFAULT_THRESHOLD_DAYS;
   const thresholdMs = thresholdDays * 24 * 60 * 60 * 1000;
   const now = Date.now();
 

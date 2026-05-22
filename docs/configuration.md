@@ -38,18 +38,16 @@ akm config migrate                  # Apply config v2 migration
 `akm config set` / `unset` write the user config in your platform config
 directory. Project config files are meant to be edited directly in the project.
 
-## v2 Config Shape
+## 0.8.0 Config Shape
 
-0.8.0 introduces a unified config shape (`configVersion: "0.8.0"`) with three
-top-level sections that replace the scattered v1 keys:
+0.8.0 finalises the unified config shape (`configVersion: "0.8.0"`). The
+legacy top-level `llm`, `agent`, and `features` blocks have been **removed**.
+LLM and agent connections live exclusively under `profiles.*`, and per-process
+gating lives under `profiles.improve.<name>.processes.*`. Non-improve feature
+sections (`index.metadataEnhance`, `index.stalenessDetection`,
+`search.curateRerank`) are first-class top-level entries.
 
-- **`profiles`** — declare every LLM and agent connection once, referenced by
-  name from `features` entries.
-- **`defaults`** — fallback profile names and section-level defaults.
-- **`features`** — every named LLM/agent operation in the app, grouped by
-  lifecycle: `features.improve.*`, `features.index.*`, `features.search.*`.
-
-Configs without `configVersion` (or with a version predating `"0.8.0"`) are
+Configs without `configVersion` (or with a pre-0.8.0 version) are
 auto-migrated at first run. A timestamped backup is written before any
 in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 
@@ -71,30 +69,37 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
     },
     "agent": {
       "opencode-default": { "platform": "opencode", "bin": "opencode", "args": ["run"] }
+    },
+    "improve": {
+      "default": {
+        "processes": {
+          "reflect": {
+            "enabled": true,
+            "mode": "llm",
+            "profile": "openai-mini",
+            "timeoutMs": 90000,
+            "cooldownByType": { "memory": 2, "lesson": 7, "knowledge": 30 }
+          },
+          "distill": { "enabled": true, "mode": "llm", "profile": "openai-mini" },
+          "consolidate": { "enabled": true, "mode": "llm", "profile": "openai-mini" },
+          "memoryInference": { "enabled": true },
+          "graphExtraction": { "enabled": true, "profile": "openai-mini" },
+          "feedbackDistillation": { "enabled": true }
+        }
+      }
     }
   },
   "defaults": {
     "llm": "openai-mini",
     "agent": "opencode-default",
-    "improve": { "limit": 25, "preset": "custom" }
+    "improve": "default"
   },
-  "features": {
-    "improve": {
-      "reflect": { "mode": "llm", "profile": "openai-mini", "timeoutMs": 90000,
-                   "options": { "cooldown": { "memory": 2, "lesson": 7, "knowledge": 30 } } },
-      "distill": { "mode": "llm", "profile": "openai-mini" },
-      "memory_consolidation": { "mode": "llm", "profile": "openai-mini" },
-      "propose": { "mode": "agent", "profile": "opencode-default" },
-      "feedback_distillation": true
-    },
-    "index": {
-      "memory_inference": true,
-      "graph_extraction": { "profile": "openai-mini" },
-      "metadata_enhance": false
-    },
-    "search": {
-      "curate_rerank": true
-    }
+  "index": {
+    "metadataEnhance": { "enabled": true },
+    "stalenessDetection": { "enabled": false }
+  },
+  "search": {
+    "curateRerank": { "enabled": false }
   },
   "embedding": {
     "endpoint": "http://localhost:11434/v1/embeddings",
@@ -116,9 +121,11 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `defaults.agent` | string | — | Default agent profile name. Fallback for `mode: "agent"` or `mode: "sdk"` entries that omit `profile`. |
 | `defaults.improve` | string | `"default"` | Default improve profile name. Selects one of the built-ins (`default`, `quick`, `thorough`, `memory-focus`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
 | `profiles.improve.<name>` | object | — | Improve profile defining per-process gating, type filters, cooldowns, and run-level `autoAccept` / `limit` defaults. See [Improve profiles](#improve-profiles). |
-| `features.improve.<name>` | process entry | — | Operation during `akm improve`. Unified shape: `true\|false\|{mode, profile, timeoutMs, options}`. |
-| `features.index.<name>` | process entry | — | Operation during `akm index`. |
-| `features.search.<name>` | process entry | — | Operation during `akm search` / `akm curate`. |
+| `profiles.improve.<name>.processes.<process>` | object | — | Per-process binding (`reflect`, `distill`, `consolidate`, `memoryInference`, `graphExtraction`, `feedbackDistillation`, `validation`). Shape: `{ enabled, mode, profile, timeoutMs, qualityGate?, contradictionDetection?, cooldownByType?, allowedTypes? }`. |
+| `index.metadataEnhance.enabled` | boolean | `false` | Toggles the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` entry. |
+| `index.stalenessDetection.enabled` | boolean | `false` | Toggles the `akm index` staleness-detection pass. |
+| `index.stalenessDetection.thresholdDays` | integer | `90` | Days before a memory is re-evaluated for staleness. |
+| `search.curateRerank.enabled` | boolean | `false` | Toggles the `akm curate` LLM-rerank pass. Replaces the legacy `features.search.curate_rerank` entry. |
 | `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. |
 | `embedding` | object | null (local) | Embedding connection settings. Unchanged from v1. |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`, `jsonl`). |
@@ -142,7 +149,7 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `search.graphBoost.confidenceMode` | `"off"` \| `"blend"` \| `"multiply"` | `"blend"` | How extraction confidence values affect graph boosts. |
 | `search.graphBoost.confidenceWeight` | number | `0.2` | Blend strength in `[0,1]` when `confidenceMode` is `"blend"`. |
 
-> **v1 keys deprecated:** `config.llm` (top-level), `config.agent.profiles`, `config.agent.processes`, and `llm.features.*` flags are deprecated in 0.8.0. They are auto-migrated to the v2 shape at first run.
+> **Removed in 0.8.0:** `config.llm` (top-level), `config.agent.*`, `config.features.*`, and `llm.features.*` flags. Auto-migration rewrites any of these on first load into the new locations described above. See [Migrating from 0.7.x to 0.8.0](migration/v0.7-to-v0.8.md) for the complete old → new mapping.
 
 ## Profile types
 
@@ -258,24 +265,26 @@ shorthand forms are accepted:
 **`options`** holds process-specific tuning that doesn't fit the generic fields.
 Unknown keys under `options` warn-and-ignore.
 
-Reflect/distill cooldowns and per-process type filters now live under
-[`profiles.improve.<name>.processes.*`](#improve-profiles), not under
-`features.improve.*.options`.
+Reflect/distill cooldowns, per-process type filters, and per-process gating
+all live under [`profiles.improve.<name>.processes.*`](#improve-profiles)
+in 0.8.0.
 
 ## Known process names
 
-### `features.improve.*`
+### `profiles.improve.<name>.processes.*`
 
-The `features.improve.*` tree carries orthogonal feature gates that operate
-independently of the active improve profile. Per-process runner gating
-(enabled / mode / profile / cooldowns / type filters) for `reflect`,
-`distill`, `consolidate`, `memoryInference`, and `graphExtraction` lives
-under [`profiles.improve.<name>.processes.*`](#improve-profiles).
+Each entry under `processes` is either absent (use the built-in default
+for the named profile) or an object of the form
+`{ enabled?, mode?, profile?, timeoutMs?, allowedTypes?, cooldownByType?, cooldownDays?, qualityGate?, contradictionDetection? }`.
 
-| Process | Default | Description |
+| Process | Default (built-in `default` profile) | Description |
 | --- | --- | --- |
-| `memory_consolidation` | `false` | Global gate for memory deduplication. Must be `true` (or set to a process entry with `enabled: true`) for `akm consolidate` to run. The active improve profile additionally controls whether consolidation runs during `akm improve`. |
-| `feedback_distillation` | `false` | Global gate for turning collected feedback into lesson proposals. Must be `true` for `akm distill` to act on feedback events. |
+| `reflect` | enabled, all markdown types | Reflection pass — generates per-asset proposals. Optional `qualityGate.enabled` runs an LLM-as-judge check before queuing. |
+| `distill` | enabled, `memory` only | Turns feedback into lesson proposals. Optional `qualityGate.enabled`. |
+| `consolidate` | enabled, `memory` only | Memory deduplication / promotion. Optional `contradictionDetection.enabled` runs pairwise checks. |
+| `memoryInference` | enabled | Derives structured memories from pending memory files. |
+| `graphExtraction` | enabled | Extracts entities and relations for graph-boosted search. |
+| `feedbackDistillation` | enabled | Whether `akm distill` acts on feedback events. |
 | `validation` | unset → falls back to `defaults.llm` | Lower-tier classifier model used by staleness detection, confidence scoring, and lesson classification. Configure with a smaller/cheaper LLM profile to keep validation cycles cheap. |
 
 #### Tuning the forgetting curve
@@ -303,19 +312,19 @@ Leave the section absent to use the previous fixed 30-day formula
 unchanged — the feedback-count query is skipped entirely when `utilityDecay`
 is not configured, so there's zero overhead on the search hot path.
 
-### `features.index.*`
+### `index.*`
 
-| Process | Default | Description |
+| Section | Default | Description |
 | --- | --- | --- |
-| `memory_inference` | `true` | Derive structured memories from pending memory files |
-| `graph_extraction` | `true` | Extract entities and relations for graph-boosted search |
-| `metadata_enhance` | `false` | LLM-driven description/tag enrichment during `akm index` |
+| `index.metadataEnhance.enabled` | `false` | LLM-driven description/tag enrichment during `akm index`. |
+| `index.stalenessDetection.enabled` | `false` | Run the staleness-detection validator pass during `akm index`. |
+| `index.stalenessDetection.thresholdDays` | `90` | Days before a memory is re-evaluated for staleness. |
 
-### `features.search.*`
+### `search.*`
 
-| Process | Default | Description |
+| Section | Default | Description |
 | --- | --- | --- |
-| `curate_rerank` | `true` | LLM re-ranking during `akm curate` |
+| `search.curateRerank.enabled` | `false` | LLM re-ranking during `akm curate`. |
 
 ## Improve profiles
 
@@ -376,10 +385,10 @@ operations). Setting it on `consolidate`, `memoryInference`, or
 Profile name lookups search both built-ins and `profiles.improve.<name>`.
 An unknown name falls back to `default` with a warning.
 
-## Migration from v1
+## Migration from pre-0.8.0
 
-If your config uses the old `config.llm`, `config.agent.profiles`,
-`config.agent.processes`, or `llm.features.*` keys, run:
+If your config uses the old top-level `llm`, `agent`, or `features` blocks,
+run:
 
 ```sh
 # Preview changes without writing

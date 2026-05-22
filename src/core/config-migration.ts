@@ -4,6 +4,10 @@
  * This module is intentionally kept free of imports from `config.ts` to avoid
  * circular dependencies: `config.ts` imports `migrateConfigShape` from here,
  * and `config-migrate.ts` (the CLI command) also imports from here.
+ *
+ * Migration policy (0.8.0): every legacy field is migrated to its NEW final
+ * location and stripped from the raw config. Production code reads ONLY the
+ * new shape. There are no backward-compat shims after this migration.
  */
 
 /**
@@ -20,11 +24,6 @@ export const CURRENT_CONFIG_VERSION = "0.8.0";
  * value to a semver-like string of the form `0.N.0` (so legacy `2` ≈ `"0.2.0"`
  * is compared element-wise against the string form). Returns `undefined`
  * when either value cannot be parsed at all.
- *
- * This helper is intentionally tolerant: any unknown/garbage version value
- * is treated as "older or equal to whatever we know" rather than throwing,
- * so the read-path never breaks on a malformed `configVersion` field — that
- * is the job of the normal config parser.
  */
 export function compareConfigVersion(
   a: string | number | undefined,
@@ -45,14 +44,11 @@ export function compareConfigVersion(
 
 function normalizeVersion(v: string | number | undefined): number[] | undefined {
   if (typeof v === "number" && Number.isFinite(v)) {
-    // Legacy numeric scheme: treat `2` as `0.2.0` so it compares element-wise
-    // against the string form, ordering it correctly below any `0.8.0`-style value.
     return [0, Math.trunc(v), 0];
   }
   if (typeof v === "string") {
     const trimmed = v.trim();
     if (!trimmed) return undefined;
-    // Strip a leading `v` if present, drop any pre-release/build suffix.
     const cleaned = trimmed.replace(/^v/i, "").split(/[-+]/, 1)[0];
     const segments = cleaned.split(".").map((part) => Number.parseInt(part, 10));
     if (segments.length === 0 || segments.some((n) => !Number.isFinite(n))) return undefined;
@@ -61,226 +57,346 @@ function normalizeVersion(v: string | number | undefined): number[] | undefined 
   return undefined;
 }
 
+// ── Helpers for deep-merging into nested locations ──────────────────────────
+
+function getObj(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  const existing = parent[key];
+  if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+    return existing as Record<string, unknown>;
+  }
+  const next: Record<string, unknown> = {};
+  parent[key] = next;
+  return next;
+}
+
+/** Get the `profiles.improve.default.processes.<name>` object (creating intermediate nodes). */
+function getImproveProcess(result: Record<string, unknown>, processName: string): Record<string, unknown> {
+  const profiles = getObj(result, "profiles");
+  const improve = getObj(profiles, "improve");
+  const defaultProfile = getObj(improve, "default");
+  const processes = getObj(defaultProfile, "processes");
+  return getObj(processes, processName);
+}
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Migrate a single legacy ProcessEntry-like value (boolean or
+ * { enabled, mode, profile, timeoutMs, options }) into an ImproveProcessConfig
+ * at the target location. Merges shallowly with anything already present.
+ */
+function migrateProcessEntryToImprove(result: Record<string, unknown>, processName: string, legacy: unknown): void {
+  const target = getImproveProcess(result, processName);
+  if (typeof legacy === "boolean") {
+    target.enabled = legacy;
+    return;
+  }
+  if (!isObj(legacy)) return;
+  if (typeof legacy.enabled === "boolean") target.enabled = legacy.enabled;
+  if (typeof legacy.mode === "string") target.mode = legacy.mode;
+  if (typeof legacy.profile === "string") target.profile = legacy.profile;
+  if (legacy.timeoutMs === null || typeof legacy.timeoutMs === "number") target.timeoutMs = legacy.timeoutMs;
+  if (isObj(legacy.options)) {
+    const opts = legacy.options;
+    if (typeof opts.cooldown === "object" && opts.cooldown !== null) {
+      target.cooldownByType = opts.cooldown;
+    }
+    if (typeof opts.cooldownDays === "number") {
+      target.cooldownDays = opts.cooldownDays;
+    }
+    if (Array.isArray(opts.allowedTypes)) {
+      target.allowedTypes = opts.allowedTypes;
+    }
+  }
+}
+
 /**
  * Determine whether a raw config object needs migration to the 0.8.0 shape and
  * apply any necessary field renames or promotions.
  *
- * A config is considered already migrated when:
- *   - `configVersion === "0.8.0"` (canonical string sentinel for this release), OR
- *   - `configVersion` is a number ≥ 2 (legacy numeric versioning from pre-0.8.0 worktrees).
- *
- * Returns `{ changed: true, result }` when any field was renamed/promoted,
- * or `{ changed: false, result: raw }` when the config is already up to date.
- * The function is pure (no I/O) so callers control whether and how to persist
- * the migrated result.
+ * A config is considered already migrated when `configVersion === "0.8.0"`
+ * (canonical string sentinel for this release) or when `configVersion` is a
+ * number ≥ 2 AND the config carries no recognized legacy keys.
  */
 export function migrateConfigShape(raw: Record<string, unknown>): {
   changed: boolean;
   result: Record<string, unknown>;
 } {
-  // Already migrated — string sentinel "0.8.0"
-  if (raw.configVersion === CURRENT_CONFIG_VERSION) {
+  const hasLegacyKeys =
+    Object.hasOwn(raw, "features") ||
+    (isObj(raw.llm) && (Object.hasOwn(raw.llm, "endpoint") || Object.hasOwn(raw.llm, "features"))) ||
+    isObj(raw.agent);
+
+  // Already migrated — string sentinel "0.8.0" with no legacy keys present.
+  if (raw.configVersion === CURRENT_CONFIG_VERSION && !hasLegacyKeys) {
     return { changed: false, result: raw };
   }
-  // Legacy numeric versioning (number >= 2 means already at v2+ shape)
-  if (typeof raw.configVersion === "number" && raw.configVersion >= 2) {
+  // Legacy numeric versioning sentinel (>= 2) with no legacy keys present.
+  if (typeof raw.configVersion === "number" && raw.configVersion >= 2 && !hasLegacyKeys) {
     return { changed: false, result: raw };
   }
 
   const result: Record<string, unknown> = { ...raw };
   let changed = false;
 
-  // ── Migrate llm.features.* → top-level features tree ─────────────────────
-  // In pre-0.8.0 configs, feature flags lived under config.llm.features.
-  // In 0.8.0 they move to config.features.{index,improve,search}.
-  if (typeof raw.llm === "object" && raw.llm !== null && !Array.isArray(raw.llm)) {
-    const llm = raw.llm as Record<string, unknown>;
-    if (typeof llm.features === "object" && llm.features !== null && !Array.isArray(llm.features)) {
-      const llmFeatures = llm.features as Record<string, boolean>;
+  // ── 1) Migrate `llm.features.*` → new homes ────────────────────────────
+  if (isObj(result.llm)) {
+    const llm = { ...(result.llm as Record<string, unknown>) };
+    if (isObj(llm.features)) {
+      const llmFeatures = llm.features as Record<string, unknown>;
 
-      const features = (
-        typeof result.features === "object" && result.features !== null && !Array.isArray(result.features)
-          ? { ...(result.features as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
+      const setProcessEnabled = (processName: string, enabled: unknown): void => {
+        if (typeof enabled !== "boolean") return;
+        const target = getImproveProcess(result, processName);
+        target.enabled = enabled;
+      };
 
-      const featuresIndex = (
-        typeof features.index === "object" && features.index !== null && !Array.isArray(features.index)
-          ? { ...(features.index as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-
-      const featuresImprove = (
-        typeof features.improve === "object" && features.improve !== null && !Array.isArray(features.improve)
-          ? { ...(features.improve as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-
-      const featuresSearch = (
-        typeof features.search === "object" && features.search !== null && !Array.isArray(features.search)
-          ? { ...(features.search as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-
-      const indexKeys = ["memory_inference", "graph_extraction", "metadata_enhance"] as const;
-      for (const key of indexKeys) {
-        if (key in llmFeatures) {
-          featuresIndex[key] = llmFeatures[key];
-          changed = true;
-        }
+      if ("memory_consolidation" in llmFeatures) {
+        setProcessEnabled("consolidate", llmFeatures.memory_consolidation);
       }
-
-      const improveKeys = ["memory_consolidation", "feedback_distillation"] as const;
-      for (const key of improveKeys) {
-        if (key in llmFeatures) {
-          featuresImprove[key] = llmFeatures[key];
-          changed = true;
-        }
+      if ("feedback_distillation" in llmFeatures) {
+        setProcessEnabled("feedbackDistillation", llmFeatures.feedback_distillation);
       }
-
+      if ("memory_inference" in llmFeatures) {
+        setProcessEnabled("memoryInference", llmFeatures.memory_inference);
+      }
+      if ("graph_extraction" in llmFeatures) {
+        setProcessEnabled("graphExtraction", llmFeatures.graph_extraction);
+      }
+      if ("metadata_enhance" in llmFeatures) {
+        const index = getObj(result, "index");
+        const me = getObj(index, "metadataEnhance");
+        if (typeof llmFeatures.metadata_enhance === "boolean") me.enabled = llmFeatures.metadata_enhance;
+      }
       if ("curate_rerank" in llmFeatures) {
-        featuresSearch.curate_rerank = llmFeatures.curate_rerank;
-        changed = true;
+        const search = getObj(result, "search");
+        const cr = getObj(search, "curateRerank");
+        if (typeof llmFeatures.curate_rerank === "boolean") cr.enabled = llmFeatures.curate_rerank;
+      }
+      if ("lesson_quality_gate" in llmFeatures) {
+        const distill = getImproveProcess(result, "distill");
+        const qg = getObj(distill, "qualityGate");
+        if (typeof llmFeatures.lesson_quality_gate === "boolean") qg.enabled = llmFeatures.lesson_quality_gate;
+      }
+      if ("proposal_quality_gate" in llmFeatures) {
+        const reflect = getImproveProcess(result, "reflect");
+        const qg = getObj(reflect, "qualityGate");
+        if (typeof llmFeatures.proposal_quality_gate === "boolean") qg.enabled = llmFeatures.proposal_quality_gate;
+      }
+      if ("memory_contradiction_detection" in llmFeatures) {
+        const consolidate = getImproveProcess(result, "consolidate");
+        const cd = getObj(consolidate, "contradictionDetection");
+        if (typeof llmFeatures.memory_contradiction_detection === "boolean") {
+          cd.enabled = llmFeatures.memory_contradiction_detection;
+        }
       }
 
-      // Strip the old features block from llm
-      const { features: _features, ...llmRest } = llm;
-      result.llm = llmRest;
+      delete llm.features;
       changed = true;
-
-      // Reassemble features tree
-      const newFeatures: Record<string, unknown> = { ...features };
-      if (Object.keys(featuresIndex).length > 0) newFeatures.index = featuresIndex;
-      if (Object.keys(featuresImprove).length > 0) newFeatures.improve = featuresImprove;
-      if (Object.keys(featuresSearch).length > 0) newFeatures.search = featuresSearch;
-      if (Object.keys(newFeatures).length > 0) {
-        result.features = newFeatures;
-      }
     }
+
+    // 2) Migrate top-level `llm` (LlmConnectionConfig) → `profiles.llm.default`
+    //    + `defaults.llm = "default"` if it actually has connection fields.
+    if (typeof llm.endpoint === "string") {
+      const profiles = getObj(result, "profiles");
+      const llmProfiles = getObj(profiles, "llm");
+      // Don't overwrite if a "default" entry already exists.
+      if (!isObj(llmProfiles.default)) {
+        llmProfiles.default = { ...llm };
+      }
+      const defaults = getObj(result, "defaults");
+      if (typeof defaults.llm !== "string") defaults.llm = "default";
+      changed = true;
+    }
+
+    // Always strip the legacy `llm` block — its only remaining job was holding
+    // connection fields and `features`, both migrated.
+    delete result.llm;
   }
 
-  // ── Migrate config.improve.* → config.features.improve + config.defaults ──
-  if (typeof raw.improve === "object" && raw.improve !== null && !Array.isArray(raw.improve)) {
-    const improve = raw.improve as Record<string, unknown>;
+  // ── 3) Migrate `features.*` (top-level) → new homes ────────────────────
+  if (isObj(result.features)) {
+    const features = result.features as Record<string, unknown>;
 
-    if (typeof improve.reflectCooldownByType === "object" && improve.reflectCooldownByType !== null) {
-      // Migrate improve.reflectCooldownByType → profiles.improve.default.processes.reflect.cooldownByType
-      const profiles = (
-        typeof result.profiles === "object" && result.profiles !== null && !Array.isArray(result.profiles)
-          ? { ...(result.profiles as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-      const profilesImprove = (
-        typeof profiles.improve === "object" && profiles.improve !== null && !Array.isArray(profiles.improve)
-          ? { ...(profiles.improve as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-      const defaultProfile = (
-        typeof profilesImprove.default === "object" && profilesImprove.default !== null
-          ? { ...(profilesImprove.default as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-      const processes = (
-        typeof defaultProfile.processes === "object" && defaultProfile.processes !== null
-          ? { ...(defaultProfile.processes as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-      const reflect = (
-        typeof processes.reflect === "object" && processes.reflect !== null
-          ? { ...(processes.reflect as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
+    if (isObj(features.improve)) {
+      const fi = features.improve as Record<string, unknown>;
+      // memory_consolidation (bool or ProcessEntry) → processes.consolidate
+      if ("memory_consolidation" in fi) {
+        migrateProcessEntryToImprove(result, "consolidate", fi.memory_consolidation);
+      }
+      // feedback_distillation (bool) → processes.feedbackDistillation
+      if ("feedback_distillation" in fi) {
+        migrateProcessEntryToImprove(result, "feedbackDistillation", fi.feedback_distillation);
+      }
+      // validation (ProcessEntry) → processes.validation
+      if ("validation" in fi) {
+        migrateProcessEntryToImprove(result, "validation", fi.validation);
+      }
+      // reflect/distill/consolidate (ProcessEntry) — merged with .options.cooldown → cooldownByType
+      if ("reflect" in fi) migrateProcessEntryToImprove(result, "reflect", fi.reflect);
+      if ("distill" in fi) migrateProcessEntryToImprove(result, "distill", fi.distill);
+      if ("consolidate" in fi) migrateProcessEntryToImprove(result, "consolidate", fi.consolidate);
+      changed = true;
+    }
+
+    if (isObj(features.index)) {
+      const findex = features.index as Record<string, unknown>;
+      if ("memory_inference" in findex) {
+        migrateProcessEntryToImprove(result, "memoryInference", findex.memory_inference);
+      }
+      if ("graph_extraction" in findex) {
+        migrateProcessEntryToImprove(result, "graphExtraction", findex.graph_extraction);
+      }
+      if ("metadata_enhance" in findex) {
+        const index = getObj(result, "index");
+        const me = getObj(index, "metadataEnhance");
+        const val = findex.metadata_enhance;
+        if (typeof val === "boolean") me.enabled = val;
+        else if (isObj(val) && typeof val.enabled === "boolean") me.enabled = val.enabled;
+      }
+      if ("staleness_detection" in findex) {
+        const index = getObj(result, "index");
+        const sd = getObj(index, "stalenessDetection");
+        const val = findex.staleness_detection;
+        if (typeof val === "boolean") sd.enabled = val;
+        else if (isObj(val)) {
+          if (typeof val.enabled === "boolean") sd.enabled = val.enabled;
+          if (isObj(val.options) && typeof val.options.thresholdDays === "number") {
+            sd.thresholdDays = val.options.thresholdDays;
+          }
+        }
+      }
+      changed = true;
+    }
+
+    if (isObj(features.search)) {
+      const fsearch = features.search as Record<string, unknown>;
+      if ("curate_rerank" in fsearch) {
+        const search = getObj(result, "search");
+        const cr = getObj(search, "curateRerank");
+        const val = fsearch.curate_rerank;
+        if (typeof val === "boolean") cr.enabled = val;
+        else if (isObj(val) && typeof val.enabled === "boolean") cr.enabled = val.enabled;
+      }
+      changed = true;
+    }
+
+    delete result.features;
+  }
+
+  // ── 4) Migrate `agent.*` (v1) → `profiles.agent` + `defaults.agent` ──────
+  if (isObj(result.agent)) {
+    const agent = result.agent as Record<string, unknown>;
+
+    // 4a) agent.default → defaults.agent
+    if (typeof agent.default === "string" && agent.default.trim()) {
+      const defaults = getObj(result, "defaults");
+      if (typeof defaults.agent !== "string") defaults.agent = agent.default.trim();
+      changed = true;
+    }
+
+    // 4b) agent.profiles → profiles.agent (only entries with valid `platform`)
+    if (isObj(agent.profiles)) {
+      const v1Profiles = agent.profiles as Record<string, unknown>;
+      const profiles = getObj(result, "profiles");
+      const agentProfiles = getObj(profiles, "agent");
+      for (const [name, raw] of Object.entries(v1Profiles)) {
+        if (!isObj(raw)) continue;
+        if (isObj(agentProfiles[name])) continue; // do not overwrite existing v2 entries
+        // v1 profiles do not carry a "platform" — synthesize one from name where possible.
+        const platform = typeof raw.platform === "string" ? raw.platform : guessAgentPlatform(name);
+        if (!platform) continue;
+        const v2: Record<string, unknown> = { platform };
+        if (typeof raw.bin === "string" && raw.bin.trim()) v2.bin = raw.bin.trim();
+        if (Array.isArray(raw.args) && raw.args.every((a) => typeof a === "string")) v2.args = raw.args;
+        if (typeof raw.model === "string" && raw.model.trim()) v2.model = raw.model.trim();
+        if (typeof raw.workspace === "string" && raw.workspace.trim()) v2.workspace = raw.workspace.trim();
+        agentProfiles[name] = v2;
+        changed = true;
+      }
+    }
+
+    // 4c) agent.processes.<name> (v1 binding) → profiles.improve.default.processes.<name>.profile
+    if (isObj(agent.processes)) {
+      const v1Processes = agent.processes as Record<string, unknown>;
+      for (const [processName, raw] of Object.entries(v1Processes)) {
+        if (processName === "task") continue; // legacy v1-only; drop
+        let profileName: string | undefined;
+        let timeoutMs: number | null | undefined;
+        if (typeof raw === "string" && raw.trim()) {
+          profileName = raw.trim();
+        } else if (isObj(raw)) {
+          if (typeof raw.profile === "string" && raw.profile.trim()) profileName = raw.profile.trim();
+          if (raw.timeoutMs === null || typeof raw.timeoutMs === "number") {
+            timeoutMs = raw.timeoutMs;
+          }
+        }
+        if (!profileName) continue;
+        // Map v1 process names to v2 improve process names.
+        const v2Name = mapV1ProcessName(processName);
+        if (!v2Name) continue;
+        const target = getImproveProcess(result, v2Name);
+        target.profile = profileName;
+        target.mode = "agent";
+        if (timeoutMs !== undefined) target.timeoutMs = timeoutMs;
+        changed = true;
+      }
+    }
+
+    delete result.agent;
+  }
+
+  // ── 5) Migrate `improve.*` (top-level pipeline options) ──────────────────
+  if (isObj(result.improve)) {
+    const improve = { ...(result.improve as Record<string, unknown>) };
+
+    if (isObj(improve.reflectCooldownByType)) {
+      const reflect = getImproveProcess(result, "reflect");
       reflect.cooldownByType = improve.reflectCooldownByType;
-      processes.reflect = reflect;
-      defaultProfile.processes = processes;
-      profilesImprove.default = defaultProfile;
-      profiles.improve = profilesImprove;
-      result.profiles = profiles;
       changed = true;
     }
-
     if (typeof improve.limit === "number") {
-      // Migrate improve.limit → profiles.improve.default.limit
-      const profiles = (
-        typeof result.profiles === "object" && result.profiles !== null && !Array.isArray(result.profiles)
-          ? { ...(result.profiles as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-      const profilesImprove = (
-        typeof profiles.improve === "object" && profiles.improve !== null && !Array.isArray(profiles.improve)
-          ? { ...(profiles.improve as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
-      const defaultProfile = (
-        typeof profilesImprove.default === "object" && profilesImprove.default !== null
-          ? { ...(profilesImprove.default as Record<string, unknown>) }
-          : {}
-      ) as Record<string, unknown>;
+      const profiles = getObj(result, "profiles");
+      const improveProfiles = getObj(profiles, "improve");
+      const defaultProfile = getObj(improveProfiles, "default");
       defaultProfile.limit = improve.limit;
-      profilesImprove.default = defaultProfile;
-      profiles.improve = profilesImprove;
-      result.profiles = profiles;
       changed = true;
     }
 
-    // Strip migrated keys; preserve any remaining improve fields
-    const { reflectCooldownByType: _rct, limit: _limit, schedule: _schedule, ...improveRest } = improve;
-    if (Object.keys(improveRest).length > 0) {
-      result.improve = improveRest;
+    delete improve.reflectCooldownByType;
+    delete improve.limit;
+    delete improve.schedule;
+    if (Object.keys(improve).length > 0) {
+      result.improve = improve;
     } else {
       delete result.improve;
     }
   }
 
-  // ── Migrate legacy `defaults.improve` object form ({ limit, preset }) ────
-  // In 0.7.x users wrote `defaults.improve: { limit: 25, preset: "fast" }`.
-  // The 0.8.0 parser only accepts `defaults.improve` as a string (profile name)
-  // and silently drops the object form. Promote `limit` to
-  // `profiles.improve.default.limit` so it survives the upgrade, and warn that
-  // `preset` is no longer supported.
-  if (typeof raw.defaults === "object" && raw.defaults !== null && !Array.isArray(raw.defaults)) {
-    const defaultsRaw = raw.defaults as Record<string, unknown>;
+  // ── 6) Legacy `defaults.improve` object form ({ limit, preset }) ─────────
+  if (isObj(result.defaults)) {
+    const defaultsRaw = { ...(result.defaults as Record<string, unknown>) };
     const defaultsImprove = defaultsRaw.improve;
-    if (typeof defaultsImprove === "object" && defaultsImprove !== null && !Array.isArray(defaultsImprove)) {
+    if (isObj(defaultsImprove)) {
       const improveObj = defaultsImprove as Record<string, unknown>;
       if (typeof improveObj.limit === "number") {
-        const profiles = (
-          typeof result.profiles === "object" && result.profiles !== null && !Array.isArray(result.profiles)
-            ? { ...(result.profiles as Record<string, unknown>) }
-            : {}
-        ) as Record<string, unknown>;
-        const profilesImprove = (
-          typeof profiles.improve === "object" && profiles.improve !== null && !Array.isArray(profiles.improve)
-            ? { ...(profiles.improve as Record<string, unknown>) }
-            : {}
-        ) as Record<string, unknown>;
-        const defaultProfile = (
-          typeof profilesImprove.default === "object" && profilesImprove.default !== null
-            ? { ...(profilesImprove.default as Record<string, unknown>) }
-            : {}
-        ) as Record<string, unknown>;
-        // Only set limit when the default profile doesn't already have one — a
-        // value migrated earlier from `improve.limit` takes precedence.
-        if (typeof defaultProfile.limit !== "number") {
-          defaultProfile.limit = improveObj.limit;
-        }
-        profilesImprove.default = defaultProfile;
-        profiles.improve = profilesImprove;
-        result.profiles = profiles;
+        const profiles = getObj(result, "profiles");
+        const improveProfiles = getObj(profiles, "improve");
+        const defaultProfile = getObj(improveProfiles, "default");
+        if (typeof defaultProfile.limit !== "number") defaultProfile.limit = improveObj.limit;
         changed = true;
       }
       if (improveObj.preset !== undefined) {
         console.warn(
-          `[akm config-migrate] defaults.improve.preset is no longer supported. ` +
-            `Use \`--profile <name>\` (built-ins: default, quick, thorough, memory-focus) instead.`,
+          "[akm config-migrate] defaults.improve.preset is no longer supported. " +
+            "Use `--profile <name>` (built-ins: default, quick, thorough, memory-focus) instead.",
         );
       }
-      // Drop the object form so the parser doesn't see it. If `defaults` ends
-      // up empty after this, remove it entirely.
-      const defaultsCopy = { ...defaultsRaw };
-      delete defaultsCopy.improve;
-      if (Object.keys(defaultsCopy).length > 0) {
-        result.defaults = defaultsCopy;
+      delete defaultsRaw.improve;
+      if (Object.keys(defaultsRaw).length > 0) {
+        result.defaults = defaultsRaw;
       } else {
         delete result.defaults;
       }
@@ -288,41 +404,55 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
     }
   }
 
-  // ── Strip legacy agent.processes.task and agent.profiles[*].sdkMode ────────
-  if (typeof result.agent === "object" && result.agent !== null && !Array.isArray(result.agent)) {
-    const agent = { ...(result.agent as Record<string, unknown>) };
-
-    if (typeof agent.processes === "object" && agent.processes !== null && !Array.isArray(agent.processes)) {
-      const { task: _task, ...processesRest } = agent.processes as Record<string, unknown>;
-      if (Object.keys(processesRest).length > 0) {
-        agent.processes = processesRest;
-      } else {
-        delete agent.processes;
-      }
-      changed = true;
-    }
-
-    if (typeof agent.profiles === "object" && agent.profiles !== null && !Array.isArray(agent.profiles)) {
-      const profiles = agent.profiles as Record<string, unknown>;
-      const strippedProfiles: Record<string, unknown> = {};
-      for (const [name, profile] of Object.entries(profiles)) {
-        if (typeof profile === "object" && profile !== null && !Array.isArray(profile)) {
-          const { sdkMode: _sdkMode, ...rest } = profile as Record<string, unknown>;
-          strippedProfiles[name] = rest;
-        } else {
-          strippedProfiles[name] = profile;
-        }
-      }
-      agent.profiles = strippedProfiles;
-      changed = true;
-    }
-
-    result.agent = agent;
-  }
-
+  // Stamp the new version sentinel on any migration that did substantive work.
   if (changed) {
     result.configVersion = CURRENT_CONFIG_VERSION;
   }
 
   return { changed, result };
+}
+
+/**
+ * Guess a v2 agent platform for a known v1 profile name. Returns `undefined`
+ * for unknown names — the caller drops those entries (they have no usable
+ * platform).
+ */
+function guessAgentPlatform(name: string): "opencode" | "claude" | "opencode-sdk" | undefined {
+  const lower = name.toLowerCase();
+  if (lower === "claude" || lower === "claude-code") return "claude";
+  if (lower.startsWith("opencode-sdk")) return "opencode-sdk";
+  if (lower.startsWith("opencode")) return "opencode";
+  return undefined;
+}
+
+/**
+ * Map a v1 process name (e.g. `"reflect"`, `"propose"`) to its v2 improve
+ * process name. Returns `undefined` for names that have no v2 home (e.g.
+ * `"task"`, which was removed).
+ */
+function mapV1ProcessName(name: string): string | undefined {
+  switch (name) {
+    case "reflect":
+      return "reflect";
+    case "distill":
+      return "distill";
+    case "consolidate":
+      return "consolidate";
+    case "propose":
+      // v1 "propose" mapped to reflect/distill at runtime; bind to reflect by default.
+      return "reflect";
+    case "validation":
+      return "validation";
+    case "memoryInference":
+    case "memory_inference":
+      return "memoryInference";
+    case "graphExtraction":
+    case "graph_extraction":
+      return "graphExtraction";
+    case "feedbackDistillation":
+    case "feedback_distillation":
+      return "feedbackDistillation";
+    default:
+      return undefined;
+  }
 }

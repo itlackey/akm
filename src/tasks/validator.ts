@@ -57,7 +57,7 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
   // `tasks add` / `tasks sync` time is much more useful than failing only
   // when the OS scheduler fires.
   const config = loadConfig();
-  requireAgentProfile(config.agent, task.target.profile);
+  requireAgentProfile(config, task.target.profile);
 
   const src = task.target.source;
   if (src.kind === "asset") {

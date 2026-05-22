@@ -54,13 +54,13 @@ describe("resolveIndexPassLLM", () => {
     expect(resolveIndexPassLLM("graph", config)).toBeUndefined();
   });
 
-  test("returns the shared akm.llm by default for any pass", () => {
+  test("returns the default profile by default for any pass", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
     };
     expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
-    // A future pass plugs in for free — same default, no per-pass wiring.
     expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
     expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
   });
@@ -68,7 +68,8 @@ describe("resolveIndexPassLLM", () => {
   test("per-pass `llm: false` opts that pass out, leaving siblings intact", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
       index: {
         enrichment: { llm: false },
         graph: { llm: true },
@@ -76,14 +77,14 @@ describe("resolveIndexPassLLM", () => {
     };
     expect(resolveIndexPassLLM("enrichment", config)).toBeUndefined();
     expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
-    // Pass not mentioned at all still defaults to akm.llm.
     expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
   });
 
   test("per-pass `llm: true` is equivalent to default", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
       index: { enrichment: { llm: true } },
     };
     expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
@@ -106,7 +107,7 @@ describe("config loader: `index` block parsing", () => {
     });
   });
 
-  test("loads graphExtractionIncludeTypes for graph pass", () => {
+  test("loads graphExtractionIncludeTypes for graph pass", async () => {
     writeUserConfig({
       llm: SAMPLE_LLM,
       index: {
@@ -114,7 +115,8 @@ describe("config loader: `index` block parsing", () => {
       },
     });
     const config = loadUserConfig();
-    expect(config.index?.graph?.graphExtractionIncludeTypes).toEqual(["memory", "command"]);
+    const { getIndexPassConfig } = await import("../src/core/config");
+    expect(getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes).toEqual(["memory", "command"]);
   });
 
   test("rejects per-pass provider configuration (duplicate provider path)", () => {
