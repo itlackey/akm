@@ -59,7 +59,7 @@ import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInp
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { akmLint } from "./lint/index";
-import { type AkmReflectResult, akmReflect } from "./reflect";
+import { type AkmReflectResult, akmReflect, REFLECT_ALLOWED_TYPES } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
 import { checkDeadUrls, type DeadUrl } from "./url-checker";
 
@@ -172,6 +172,7 @@ export interface ImproveActionResult {
     | "reflect"
     | "reflect-failed"
     | "reflect-cooldown"
+    | "reflect-skipped"
     | "distill"
     | "distill-skipped"
     | "memory-prune"
@@ -247,6 +248,8 @@ export interface AkmImproveResult {
   proposalsExpired?: number;
   /** Number of reflect actions that were skipped due to cooldown/dedup signals. */
   reflectCooldownActions?: number;
+  /** Number of reflect actions skipped because the asset type is not supported by reflect. */
+  reflectSkippedActions?: number;
 }
 
 type ImproveScope = ReturnType<typeof resolveImproveScope>;
@@ -904,6 +907,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
+      reflectSkippedActions: finalActions.filter((a) => a.mode === "reflect-skipped").length,
     };
     if (!result.dryRun)
       emitImproveCompletedEvent(
@@ -965,6 +969,7 @@ function emitImproveCompletedEvent(
     reflect: 0,
     reflectFailed: 0,
     reflectCooldown: 0,
+    reflectSkipped: 0,
     distill: 0,
     distillSkipped: 0,
     memoryPrune: 0,
@@ -982,6 +987,9 @@ function emitImproveCompletedEvent(
         break;
       case "reflect-cooldown":
         actionCounts.reflectCooldown += 1;
+        break;
+      case "reflect-skipped":
+        actionCounts.reflectSkipped += 1;
         break;
       case "distill":
         actionCounts.distill += 1;
@@ -1022,6 +1030,7 @@ function emitImproveCompletedEvent(
         errorActions: actionCounts.error,
         reflectFailedActions: actionCounts.reflectFailed,
         reflectCooldownActions: actionCounts.reflectCooldown,
+        reflectSkippedActions: actionCounts.reflectSkipped,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,
         executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
@@ -1864,145 +1873,159 @@ async function runImproveLoopStage(args: {
       // path is also a no-op for them — we just avoid unnecessary agent spawns.
       // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-        // O-5 / #378: only inject reflect-originator errors into the reflect call.
-        // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
-        const reflectErrors = recentErrors.reflect ?? [];
-        if (reflectErrors.length > 0) reflectsWithErrorContext++;
-        // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
-        // bounded by the wall-clock deadline rather than the default per-profile timeout.
-        const reflectBudgetMs = remainingBudgetMs();
-        const reflectCallArgs = {
-          ref: planned.ref,
-          task: options.task,
-          ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-          ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
-          agentProcess: options.agentProcess ?? "reflect",
-          eventSource: "improve" as const,
-          ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
-        };
-        // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
-        // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
-        const refUtility = utilityMap.get(planned.ref) ?? 0;
-        const useConsistency = refUtility >= SC_THRESHOLD && SC_N >= 2;
-        let reflectResult: AkmReflectResult;
-        if (useConsistency) {
-          const samples: AkmReflectResult[] = [];
-          for (let s = 0; s < SC_N; s++) {
-            if (remainingBudgetMs() <= 0) break;
-            // draftMode: skip DB write so each sample doesn't create a proposal.
-            samples.push(await reflectFn({ ...reflectCallArgs, draftMode: true }));
-          }
-          const winner = pickMajorityVote(
-            samples.length > 0 ? samples : [await reflectFn({ ...reflectCallArgs, draftMode: true })],
-          );
-          // Persist only the majority-vote winner as a single real proposal.
-          if (winner.ok && primaryStashDir) {
-            const persistResult = createProposal(primaryStashDir, {
-              ref: winner.proposal.ref,
-              source: "reflect",
-              sourceRun: `reflect-sc-${Date.now()}`,
-              payload: winner.proposal.payload,
-            });
-            reflectResult = isProposalSkipped(persistResult)
-              ? {
-                  schemaVersion: 1,
-                  ok: false,
-                  reason: "cooldown" as const,
-                  error: `SC proposal skipped: ${persistResult.message}`,
-                  ref: winner.ref,
-                  exitCode: null,
-                }
-              : { ...winner, proposal: persistResult };
-          } else {
-            reflectResult = winner;
-          }
-        } else {
-          reflectResult = await reflectFn(reflectCallArgs);
-        }
-        const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
-        actions.push({
-          ref: planned.ref,
-          mode: reflectResult.ok ? "reflect" : isCooldown ? "reflect-cooldown" : "reflect-failed",
-          result: reflectResult,
-        });
-        // Cooldown skips are not failures — do not pollute recentErrors with them
-        // (those get injected as `avoidPatterns` into the next reflect prompt).
-        if (!reflectResult.ok && !isCooldown) {
-          const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-          pushRecentError("reflect", errMsg);
-        }
-        // improve_reflect_outcome — per-asset metric for tuning the reflect path.
-        appendEvent(
-          {
-            eventType: "improve_reflect_outcome",
+        // Type guard: skip reflect for unsupported types (script, vault, task, etc.).
+        // These types are rejected by akmReflect with a parse_error — filter them
+        // here to avoid wasting a reflect slot. Mirror of REFLECT_ALLOWED_TYPES in
+        // reflect.ts (the authoritative source of truth, exported for this check).
+        if (!REFLECT_ALLOWED_TYPES.has(parsedPlannedRef.type)) {
+          actions.push({
             ref: planned.ref,
-            metadata: {
-              ok: reflectResult.ok,
-              durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
-              agentProfile: reflectResult.ok ? reflectResult.agentProfile : undefined,
-              reason: reflectResult.ok ? undefined : reflectResult.reason,
+            mode: "reflect-skipped",
+            result: { ok: true, reason: "unsupported-type" },
+          });
+        } else {
+          // O-5 / #378: only inject reflect-originator errors into the reflect call.
+          // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
+          const reflectErrors = recentErrors.reflect ?? [];
+          if (reflectErrors.length > 0) reflectsWithErrorContext++;
+          // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
+          // bounded by the wall-clock deadline rather than the default per-profile timeout.
+          const reflectBudgetMs = remainingBudgetMs();
+          const reflectCallArgs = {
+            ref: planned.ref,
+            task: options.task,
+            ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+            ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
+            agentProcess: options.agentProcess ?? "reflect",
+            eventSource: "improve" as const,
+            ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
+          };
+          // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
+          // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
+          const refUtility = utilityMap.get(planned.ref) ?? 0;
+          const useConsistency = refUtility >= SC_THRESHOLD && SC_N >= 2;
+          let reflectResult: AkmReflectResult;
+          if (useConsistency) {
+            const samples: AkmReflectResult[] = [];
+            for (let s = 0; s < SC_N; s++) {
+              if (remainingBudgetMs() <= 0) break;
+              // draftMode: skip DB write so each sample doesn't create a proposal.
+              samples.push(await reflectFn({ ...reflectCallArgs, draftMode: true }));
+            }
+            const winner = pickMajorityVote(
+              samples.length > 0 ? samples : [await reflectFn({ ...reflectCallArgs, draftMode: true })],
+            );
+            // Persist only the majority-vote winner as a single real proposal.
+            if (winner.ok && primaryStashDir) {
+              const persistResult = createProposal(primaryStashDir, {
+                ref: winner.proposal.ref,
+                source: "reflect",
+                sourceRun: `reflect-sc-${Date.now()}`,
+                payload: winner.proposal.payload,
+              });
+              reflectResult = isProposalSkipped(persistResult)
+                ? {
+                    schemaVersion: 1,
+                    ok: false,
+                    reason: "cooldown" as const,
+                    error: `SC proposal skipped: ${persistResult.message}`,
+                    ref: winner.ref,
+                    exitCode: null,
+                  }
+                : { ...winner, proposal: persistResult };
+            } else {
+              reflectResult = winner;
+            }
+          } else {
+            reflectResult = await reflectFn(reflectCallArgs);
+          }
+          const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
+          actions.push({
+            ref: planned.ref,
+            mode: reflectResult.ok ? "reflect" : isCooldown ? "reflect-cooldown" : "reflect-failed",
+            result: reflectResult,
+          });
+          // Cooldown skips are not failures — do not pollute recentErrors with them
+          // (those get injected as `avoidPatterns` into the next reflect prompt).
+          if (!reflectResult.ok && !isCooldown) {
+            const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
+            pushRecentError("reflect", errMsg);
+          }
+          // improve_reflect_outcome — per-asset metric for tuning the reflect path.
+          appendEvent(
+            {
+              eventType: "improve_reflect_outcome",
+              ref: planned.ref,
+              metadata: {
+                ok: reflectResult.ok,
+                durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
+                agentProfile: reflectResult.ok ? reflectResult.agentProfile : undefined,
+                reason: reflectResult.ok ? undefined : reflectResult.reason,
+              },
             },
-          },
-          eventsCtx,
-        );
+            eventsCtx,
+          );
 
-        // Phase 6A (Advantage D6a): Confidence-driven auto-accept.
-        //
-        // The existing `--auto-accept` flag (commit 0c5eaa1) is a 0-100 integer
-        // threshold; `undefined` means auto-accept is disabled. Until this
-        // wave, the consolidate path treated any non-undefined value as a
-        // whole-batch "safe" accept (see TODO in consolidate.ts). Now that
-        // reflect proposals carry a self-reported `confidence` score in
-        // [0, 1], we can compare per-proposal: confidence >= threshold/100
-        // auto-accepts via the standard `promoteProposal` path; otherwise the
-        // proposal waits in the pending queue for human review.
-        //
-        // Plan default is 0.8 (per `self-improvement-enhancements-plan.md`
-        // line 184). We honour the existing CLI default (90 → 0.9) because
-        // that is what users have been seeing since 0c5eaa1; the plan and the
-        // existing default agree directionally that high-confidence-only is
-        // the right policy. The CLI flag is the single knob.
-        if (
-          reflectResult.ok &&
-          options.autoAccept !== undefined &&
-          typeof reflectResult.proposal.confidence === "number" &&
-          primaryStashDir
-        ) {
-          const threshold = options.autoAccept / 100;
-          const confidence = reflectResult.proposal.confidence;
-          if (confidence >= threshold) {
-            try {
-              const cfg = options.config ?? loadConfig();
-              const promotion = await promoteProposal(primaryStashDir, cfg, reflectResult.proposal.id, {}, undefined);
-              appendEvent(
-                {
-                  eventType: "promoted",
-                  ref: promotion.ref,
-                  metadata: {
-                    proposalId: promotion.proposal.id,
-                    source: promotion.proposal.source,
-                    ...(promotion.proposal.sourceRun !== undefined ? { sourceRun: promotion.proposal.sourceRun } : {}),
-                    assetPath: promotion.assetPath,
-                    autoAccept: true,
-                    confidence,
-                    threshold,
+          // Phase 6A (Advantage D6a): Confidence-driven auto-accept.
+          //
+          // The existing `--auto-accept` flag (commit 0c5eaa1) is a 0-100 integer
+          // threshold; `undefined` means auto-accept is disabled. Until this
+          // wave, the consolidate path treated any non-undefined value as a
+          // whole-batch "safe" accept (see TODO in consolidate.ts). Now that
+          // reflect proposals carry a self-reported `confidence` score in
+          // [0, 1], we can compare per-proposal: confidence >= threshold/100
+          // auto-accepts via the standard `promoteProposal` path; otherwise the
+          // proposal waits in the pending queue for human review.
+          //
+          // Plan default is 0.8 (per `self-improvement-enhancements-plan.md`
+          // line 184). We honour the existing CLI default (90 → 0.9) because
+          // that is what users have been seeing since 0c5eaa1; the plan and the
+          // existing default agree directionally that high-confidence-only is
+          // the right policy. The CLI flag is the single knob.
+          if (
+            reflectResult.ok &&
+            options.autoAccept !== undefined &&
+            typeof reflectResult.proposal.confidence === "number" &&
+            primaryStashDir
+          ) {
+            const threshold = options.autoAccept / 100;
+            const confidence = reflectResult.proposal.confidence;
+            if (confidence >= threshold) {
+              try {
+                const cfg = options.config ?? loadConfig();
+                const promotion = await promoteProposal(primaryStashDir, cfg, reflectResult.proposal.id, {}, undefined);
+                appendEvent(
+                  {
+                    eventType: "promoted",
+                    ref: promotion.ref,
+                    metadata: {
+                      proposalId: promotion.proposal.id,
+                      source: promotion.proposal.source,
+                      ...(promotion.proposal.sourceRun !== undefined
+                        ? { sourceRun: promotion.proposal.sourceRun }
+                        : {}),
+                      assetPath: promotion.assetPath,
+                      autoAccept: true,
+                      confidence,
+                      threshold,
+                    },
                   },
-                },
-                eventsCtx,
-              );
-              info(
-                `[improve] auto-accepted ${promotion.ref} (confidence=${confidence.toFixed(2)} >= threshold=${threshold.toFixed(2)})`,
-              );
-            } catch (err) {
-              // Auto-accept failures (validation, write error, etc.) must not
-              // poison the loop — surface a warning and leave the proposal
-              // pending so the reviewer can deal with it manually.
-              warn(
-                `[improve] auto-accept failed for ${reflectResult.proposal.ref}: ${err instanceof Error ? err.message : String(err)}`,
-              );
+                  eventsCtx,
+                );
+                info(
+                  `[improve] auto-accepted ${promotion.ref} (confidence=${confidence.toFixed(2)} >= threshold=${threshold.toFixed(2)})`,
+                );
+              } catch (err) {
+                // Auto-accept failures (validation, write error, etc.) must not
+                // poison the loop — surface a warning and leave the proposal
+                // pending so the reviewer can deal with it manually.
+                warn(
+                  `[improve] auto-accept failed for ${reflectResult.proposal.ref}: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
             }
           }
-        }
+        } // end else (REFLECT_ALLOWED_TYPES check)
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
         // B6: .derived refs skip reflect; record synthetic skip action.
         actions.push({
