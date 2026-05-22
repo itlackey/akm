@@ -3868,7 +3868,7 @@ const agentCommand = defineCommand({
         throw new UsageError(
           "Usage: akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>]",
           "MISSING_REQUIRED_ARGUMENT",
-          "Provide the agent profile name. Available profiles are listed in config.agent.profiles.",
+          "Provide the agent profile name. Available profiles are listed in profiles.agent.",
         );
       }
 
@@ -3962,7 +3962,7 @@ const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when llm.features.memory_consolidation is enabled",
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true",
   },
   args: {
     scope: {
@@ -4240,7 +4240,7 @@ const tasksAddCommand = defineCommand({
       description:
         'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
     },
-    profile: { type: "string", description: "Agent profile to use for prompt targets (default: config.agent.default)" },
+    profile: { type: "string", description: "Agent profile to use for prompt targets (default: defaults.agent)" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
     "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },

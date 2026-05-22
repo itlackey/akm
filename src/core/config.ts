@@ -164,8 +164,12 @@ export interface ImproveProcessConfig {
    * scored before entering the proposal queue. Fail-open: judge failures
    * always pass.
    *
-   * - For `distill`: gates lesson quality (replaces `lesson_quality_gate`).
-   * - For `reflect`: gates proposal quality (replaces `proposal_quality_gate`).
+   * - For `distill`: gates lesson quality at
+   *   `profiles.improve.default.processes.distill.qualityGate.enabled`
+   *   (replaces the legacy `lesson_quality_gate` flag).
+   * - For `reflect`: gates proposal quality at
+   *   `profiles.improve.default.processes.reflect.qualityGate.enabled`
+   *   (replaces the legacy `proposal_quality_gate` flag).
    */
   qualityGate?: { enabled?: boolean };
   /**
@@ -185,9 +189,10 @@ export interface ImproveProfileConfig {
     memoryInference?: ImproveProcessConfig;
     graphExtraction?: ImproveProcessConfig;
     /**
-     * Gates the feedback-distillation pass run by `akm distill <ref>`.
-     * Replaces the legacy `features.improve.feedback_distillation` /
-     * `llm.features.feedback_distillation` flag. Default: enabled.
+     * Gates the feedback-distillation pass run by `akm distill <ref>` at
+     * `profiles.improve.default.processes.feedbackDistillation.enabled`.
+     * (Replaces the legacy `features.improve.feedback_distillation` /
+     * `llm.features.feedback_distillation` flag.) Default: enabled.
      */
     feedbackDistillation?: ImproveProcessConfig;
     /**
@@ -408,10 +413,10 @@ export interface AkmConfig {
      */
     minScore?: number;
     /**
-     * Gates the `akm curate` LLM-rerank pass. Replaces the legacy
-     * `features.search.curate_rerank` / `llm.features.curate_rerank` flag.
-     * Default: false. When disabled (or absent) curate falls back to the
-     * deterministic pipeline.
+     * Gates the `akm curate` LLM-rerank pass at `search.curateRerank.enabled`.
+     * (Replaces the legacy `features.search.curate_rerank` /
+     * `llm.features.curate_rerank` flag.) Default: false. When disabled (or
+     * absent) curate falls back to the deterministic pipeline.
      */
     curateRerank?: { enabled?: boolean };
     /**
@@ -580,9 +585,10 @@ export interface IndexPassConfig {
 /** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */
 export interface IndexConfigReservedKeys {
   /**
-   * Gates the `akm index` metadata-enhancement pass. Replaces the legacy
-   * `features.index.metadata_enhance` / `llm.features.metadata_enhance`
-   * flag. Default: enabled.
+   * Gates the `akm index` metadata-enhancement pass at
+   * `index.metadataEnhance.enabled`. (Replaces the legacy
+   * `features.index.metadata_enhance` / `llm.features.metadata_enhance` flag.)
+   * Default: enabled.
    */
   metadataEnhance?: { enabled?: boolean };
   /**

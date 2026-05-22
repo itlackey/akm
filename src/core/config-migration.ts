@@ -10,6 +10,8 @@
  * new shape. There are no backward-compat shims after this migration.
  */
 
+import { warn } from "./warn";
+
 /**
  * Current config schema version sentinel.
  * Configs at this version are considered fully migrated and will not be rewritten.
@@ -80,6 +82,51 @@ function getImproveProcess(result: Record<string, unknown>, processName: string)
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Convert a snake_case or kebab-case identifier into camelCase. Leaves an
+ * already-camelCased value untouched. Used by the catch-all branches to
+ * normalize unknown legacy keys (e.g. `my_custom_process` → `myCustomProcess`).
+ */
+function toCamelCase(key: string): string {
+  return key.replace(/[-_]([a-zA-Z0-9])/g, (_, ch: string) => ch.toUpperCase());
+}
+
+/**
+ * Migrate a generic feature-gate-shaped value (boolean OR an object that may
+ * carry `{ enabled, options }`) into a target object at `result[section][key]`
+ * (where section is "index" or "search"). Preserves recognized `options.*`
+ * fields by spreading them onto the target shallowly.
+ *
+ * Returns true when the value was understood enough to set anything.
+ */
+function migrateGenericGateToSection(
+  result: Record<string, unknown>,
+  section: "index" | "search",
+  camelKey: string,
+  legacy: unknown,
+): boolean {
+  const parent = getObj(result, section);
+  const target = getObj(parent, camelKey);
+  if (typeof legacy === "boolean") {
+    target.enabled = legacy;
+    return true;
+  }
+  if (!isObj(legacy)) return false;
+  let touched = false;
+  if (typeof legacy.enabled === "boolean") {
+    target.enabled = legacy.enabled;
+    touched = true;
+  }
+  if (isObj(legacy.options)) {
+    // Best-effort: copy primitive option values onto the target so they aren't
+    // dropped. The exact final shape is unknown for unrecognized keys, so we
+    // place them under an `options` sub-object to keep the new shape clean.
+    target.options = { ...(isObj(target.options) ? target.options : {}), ...legacy.options };
+    touched = true;
+  }
+  return touched;
 }
 
 /**
@@ -238,6 +285,34 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
       if ("reflect" in fi) migrateProcessEntryToImprove(result, "reflect", fi.reflect);
       if ("distill" in fi) migrateProcessEntryToImprove(result, "distill", fi.distill);
       if ("consolidate" in fi) migrateProcessEntryToImprove(result, "consolidate", fi.consolidate);
+      // Catch-all: any remaining keys are treated as custom processes and
+      // migrated to profiles.improve.default.processes.<camelKey>. Without
+      // this branch, user-defined entries would be silently dropped when the
+      // legacy `features` block is deleted below.
+      const knownImproveKeys = new Set([
+        "memory_consolidation",
+        "feedback_distillation",
+        "validation",
+        "reflect",
+        "distill",
+        "consolidate",
+      ]);
+      for (const [legacyKey, legacyVal] of Object.entries(fi)) {
+        if (knownImproveKeys.has(legacyKey)) continue;
+        const camelKey = toCamelCase(legacyKey);
+        if (typeof legacyVal === "boolean" || isObj(legacyVal)) {
+          migrateProcessEntryToImprove(result, camelKey, legacyVal);
+          warn(
+            `[akm config-migrate] Unknown features.improve.${legacyKey} migrated to ` +
+              `profiles.improve.default.processes.${camelKey}. Please verify the new location.`,
+          );
+        } else {
+          warn(
+            `[akm config-migrate] features.improve.${legacyKey} has an unrecognized value type ` +
+              `(${typeof legacyVal}); dropping. Please re-add it under profiles.improve.* manually.`,
+          );
+        }
+      }
       changed = true;
     }
 
@@ -268,6 +343,30 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
           }
         }
       }
+      // Catch-all: unknown features.index.<key> entries land at
+      // index.<keyAsCamelCase> (preserving { enabled, options } when present).
+      const knownIndexKeys = new Set([
+        "memory_inference",
+        "graph_extraction",
+        "metadata_enhance",
+        "staleness_detection",
+      ]);
+      for (const [legacyKey, legacyVal] of Object.entries(findex)) {
+        if (knownIndexKeys.has(legacyKey)) continue;
+        const camelKey = toCamelCase(legacyKey);
+        const ok = migrateGenericGateToSection(result, "index", camelKey, legacyVal);
+        if (ok) {
+          warn(
+            `[akm config-migrate] Unknown features.index.${legacyKey} migrated to ` +
+              `index.${camelKey}. Please verify the new location is correct.`,
+          );
+        } else {
+          warn(
+            `[akm config-migrate] features.index.${legacyKey} has an unrecognized value shape; ` +
+              `dropping. Please re-add it under index.${camelKey} manually if needed.`,
+          );
+        }
+      }
       changed = true;
     }
 
@@ -279,6 +378,25 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
         const val = fsearch.curate_rerank;
         if (typeof val === "boolean") cr.enabled = val;
         else if (isObj(val) && typeof val.enabled === "boolean") cr.enabled = val.enabled;
+      }
+      // Catch-all: unknown features.search.<key> entries land at
+      // search.<keyAsCamelCase> (preserving { enabled, options } when present).
+      const knownSearchKeys = new Set(["curate_rerank"]);
+      for (const [legacyKey, legacyVal] of Object.entries(fsearch)) {
+        if (knownSearchKeys.has(legacyKey)) continue;
+        const camelKey = toCamelCase(legacyKey);
+        const ok = migrateGenericGateToSection(result, "search", camelKey, legacyVal);
+        if (ok) {
+          warn(
+            `[akm config-migrate] Unknown features.search.${legacyKey} migrated to ` +
+              `search.${camelKey}. Please verify the new location is correct.`,
+          );
+        } else {
+          warn(
+            `[akm config-migrate] features.search.${legacyKey} has an unrecognized value shape; ` +
+              `dropping. Please re-add it under search.${camelKey} manually if needed.`,
+          );
+        }
       }
       changed = true;
     }

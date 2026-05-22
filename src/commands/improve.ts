@@ -1908,7 +1908,8 @@ async function runImproveLoopStage(args: {
           const reflectBudgetMs = remainingBudgetMs();
           // Wire profile.processes.reflect.{mode, profile, timeoutMs} into the reflect
           // dispatch when present. Falls back to akmReflect's own config-based resolution
-          // (features.improve.reflect → defaults.llm) when the profile does not specify.
+          // (profiles.improve.<name>.processes.reflect → defaults.llm) when the profile
+          // does not specify.
           const reflectProfileRunner = resolveImproveProcessRunnerFromProfile(
             improveProfile.processes?.reflect,
             options.config ?? loadConfig(),

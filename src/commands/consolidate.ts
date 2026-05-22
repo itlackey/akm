@@ -289,12 +289,12 @@ const PROMPT_OVERHEAD_TOKENS = 2_000;
  *     forwarding to the model. That overhead easily consumes 30K+ tokens on
  *     a model with a 16K context window, leaving very little room for
  *     chunk content.
- *   - When the HTTP path is used (config.llm), only the akm system prompt and
- *     user prompt are sent, so the budget can be set to the model's actual
- *     context length via config.llm.contextLength.
+ *   - When the HTTP path is used (an LLM profile is selected), only the akm
+ *     system prompt and user prompt are sent, so the budget can be set to the
+ *     model's actual context length via profiles.llm[defaults.llm].contextLength.
  *
- * Set config.llm.contextLength in your config file to the model's actual
- * context window to allow larger chunks on the HTTP path.
+ * Set profiles.llm[defaults.llm].contextLength in your config file to the
+ * model's actual context window to allow larger chunks on the HTTP path.
  */
 export const DEFAULT_CONTEXT_LENGTH_TOKENS = 4_096;
 

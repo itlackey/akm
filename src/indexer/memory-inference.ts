@@ -15,10 +15,12 @@
  * with `inferenceProcessed: true`. A subsequent `akm index` therefore skips
  * the parent without re-running the LLM.
  *
- * Disabling — two orthogonal gates per v1 spec §14:
- *   1. `llm.features.memory_inference = false` blocks the pass at the
- *      locked feature-flag layer (no network call may ever issue).
- *   2. `index.memory.llm = false` (or no `akm.llm` block at all) opts the
+ * Disabling — two orthogonal gates:
+ *   1. `profiles.improve.default.processes.memoryInference.enabled = false`
+ *      blocks the pass at the feature-flag layer (no network call may ever
+ *      issue). Historically the v1 spec §14 gate, superseded by the 0.8.0
+ *      profile shape.
+ *   2. `index.memory.llm = false` (or no resolvable LLM profile) opts the
  *      pass out at the per-pass layer (#208).
  *   A pass runs iff both layers allow it. Existing inferred children are
  *   NEVER deleted — the user keeps what was already produced.
@@ -90,11 +92,11 @@ interface MemoryRecord {
 /**
  * Top-level entry point. Returns a no-op result when the pass is disabled.
  *
- * Two orthogonal gates per v1 spec §14:
+ * Two orthogonal gates:
  *
- *   1. **Feature gate** — `llm.features.memory_inference` (defaults to
- *      `true`). When `false`, no network call may issue regardless of
- *      per-pass settings. This is the locked spec-§14 gate.
+ *   1. **Feature gate** — `profiles.improve.default.processes.memoryInference.enabled`
+ *      (defaults to `true`). When `false`, no network call may issue regardless
+ *      of per-pass settings.
  *   2. **Per-pass gate** — `resolveIndexPassLLM("memory", config)` (which
  *      reads `index.memory.llm`). When `false`, the indexer simply skips
  *      this pass for the current run.
@@ -124,9 +126,9 @@ export async function runMemoryInferencePass(
     skippedNoFacts: 0,
   };
 
-  // Gate 1 — v2-aware feature gate (§14). Uses isProcessEnabled so that both
-  // v1 (llm.features.memory_inference) and v2 (features.index.memory_inference)
-  // configs are honoured. Defaults to enabled when neither key is present.
+  // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
+  // (profiles.improve.default.processes.memoryInference.enabled). Defaults to
+  // enabled when the key is absent.
   if (!isProcessEnabled("index", "memory_inference", config)) return result;
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or

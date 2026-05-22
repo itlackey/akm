@@ -103,7 +103,8 @@ export interface AkmReflectOptions {
   ) => Promise<string>;
   /**
    * Override the loaded AkmConfig (test seam + for the quality gate).
-   * Needed by R-5 to access llm.features.proposal_quality_gate without
+   * Needed by R-5 to access the proposal quality gate (now stored at
+   * `profiles.improve.default.processes.reflect.qualityGate.enabled`) without
    * a real config file in tests.
    */
   config?: import("../core/config").AkmConfig;
@@ -1228,10 +1229,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   // 7. R-5 / #374: Apply the proposal quality gate when enabled.
-  // Mirrors the `lesson_quality_gate` on distill proposals. The gate uses
+  // Mirrors the lesson quality gate on distill proposals. The gate uses
   // `runLessonQualityJudge` from distill.ts and is gated behind either
-  // `llm.features.proposal_quality_gate` or `llm.features.lesson_quality_gate`
-  // (legacy alias). Fail-open: any judge error passes through.
+  // `profiles.improve.default.processes.reflect.qualityGate.enabled` or
+  // `profiles.improve.default.processes.distill.qualityGate.enabled` (the
+  // `lesson_quality_gate` flag name is the legacy alias still accepted by
+  // `isLlmFeatureEnabled`). Fail-open: any judge error passes through.
   // G-Eval (arXiv:2303.16634) — quality judgment before admission.
   const runtimeConfig =
     options.config ??

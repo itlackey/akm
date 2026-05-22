@@ -1598,7 +1598,7 @@ interactively (no injected prompt, no platform-specific flags beyond the
 profile's base args) — the same behaviour as before 0.8.0.
 
 Profiles ship for `opencode`, `claude`, `codex`, `gemini`, and `aider` and
-can be extended via `agent.profiles[<name>]` in config (see
+can be extended via `profiles.agent.<name>` in config (see
 [Configuration](configuration.md)). akm spawns the profile's `bin` via the
 shared spawn wrapper described in v1 spec §12.2 — captured or interactive
 stdio, hard timeout, structured failure reasons.
@@ -1696,15 +1696,15 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
 | `--profile` | Override the default agent profile |
-| `--timeout-ms` | Override `agent.timeoutMs` for this call |
+| `--timeout-ms` | Override the agent profile's `timeoutMs` for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
 **Per-task `timeoutMs` in task markdown files:** task markdown frontmatter may
-set `timeoutMs` to override the global `config.agent.timeoutMs` for that task
-only. Set `timeoutMs: null` to disable the kill timer entirely (useful for
-long-running local-model tasks), or a positive integer (milliseconds) to apply
-a task-specific limit.
+set `timeoutMs` to override the agent profile's `timeoutMs` (i.e.
+`profiles.agent.<name>.timeoutMs`) for that task only. Set `timeoutMs: null` to
+disable the kill timer entirely (useful for long-running local-model tasks), or
+a positive integer (milliseconds) to apply a task-specific limit.
 
 ### proposals
 

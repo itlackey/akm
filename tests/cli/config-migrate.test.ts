@@ -213,4 +213,153 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(changed).toBe(false);
     expect(result.configVersion).toBeUndefined();
   });
+
+  describe("catch-all migration for unknown features.* keys", () => {
+    /** Capture warn output across a single block of code. */
+    function captureStderr<T>(fn: () => T): { result: T; messages: string[] } {
+      const messages: string[] = [];
+      const originalWarn = console.warn;
+      const originalError = console.error;
+      console.warn = (...args: unknown[]) => {
+        messages.push(args.map((a) => String(a)).join(" "));
+      };
+      console.error = (...args: unknown[]) => {
+        messages.push(args.map((a) => String(a)).join(" "));
+      };
+      try {
+        const result = fn();
+        return { result, messages };
+      } finally {
+        console.warn = originalWarn;
+        console.error = originalError;
+      }
+    }
+
+    test("features.improve.<unknown> boolean → profiles.improve.default.processes.<camelKey>.enabled with warn", () => {
+      const input = { features: { improve: { my_custom_process: true } } };
+      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const procs = ((result.result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+        .default as { processes?: Record<string, { enabled?: boolean }> };
+      expect(procs.processes?.myCustomProcess?.enabled).toBe(true);
+      expect(messages.some((m) => m.includes("my_custom_process") && m.includes("myCustomProcess"))).toBe(true);
+      // Legacy block stripped.
+      expect(result.result.features).toBeUndefined();
+    });
+
+    test("features.improve.<unknown> ProcessEntry-shaped object → migrates with profile/mode/timeoutMs", () => {
+      const input = {
+        features: {
+          improve: {
+            customAgentProcess: {
+              enabled: true,
+              mode: "agent",
+              profile: "opencode",
+              timeoutMs: 12345,
+              options: { allowedTypes: ["lesson"], cooldownDays: 7 },
+            },
+          },
+        },
+      };
+      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const procs = ((result.result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+        .default as { processes?: Record<string, Record<string, unknown>> };
+      const entry = procs.processes?.customAgentProcess;
+      expect(entry?.enabled).toBe(true);
+      expect(entry?.mode).toBe("agent");
+      expect(entry?.profile).toBe("opencode");
+      expect(entry?.timeoutMs).toBe(12345);
+      expect(entry?.allowedTypes).toEqual(["lesson"]);
+      expect(entry?.cooldownDays).toBe(7);
+      expect(messages.some((m) => m.includes("customAgentProcess"))).toBe(true);
+    });
+
+    test("features.index.<unknown> boolean → index.<camelKey>.enabled with warn", () => {
+      const input = { features: { index: { custom_pass: true } } };
+      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const index = result.result.index as { customPass?: { enabled?: boolean } };
+      expect(index.customPass?.enabled).toBe(true);
+      expect(messages.some((m) => m.includes("custom_pass") && m.includes("customPass"))).toBe(true);
+    });
+
+    test("features.index.<unknown> object with options → index.<camelKey> preserves options", () => {
+      const input = {
+        features: {
+          index: { custom_pass: { enabled: true, options: { threshold: 0.5, mode: "strict" } } },
+        },
+      };
+      const { result } = captureStderr(() => migrateConfigShape(input));
+      const index = result.result.index as {
+        customPass?: { enabled?: boolean; options?: Record<string, unknown> };
+      };
+      expect(index.customPass?.enabled).toBe(true);
+      expect(index.customPass?.options).toEqual({ threshold: 0.5, mode: "strict" });
+    });
+
+    test("features.search.<unknown> boolean → search.<camelKey>.enabled with warn", () => {
+      const input = { features: { search: { fancy_rerank: false } } };
+      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const search = result.result.search as { fancyRerank?: { enabled?: boolean } };
+      expect(search.fancyRerank?.enabled).toBe(false);
+      expect(messages.some((m) => m.includes("fancy_rerank") && m.includes("fancyRerank"))).toBe(true);
+    });
+
+    test("features.search.<unknown> object with enabled+options → search.<camelKey> preserves both", () => {
+      const input = {
+        features: {
+          search: { fancy_rerank: { enabled: true, options: { topN: 25 } } },
+        },
+      };
+      const { result } = captureStderr(() => migrateConfigShape(input));
+      const search = result.result.search as {
+        fancyRerank?: { enabled?: boolean; options?: Record<string, unknown> };
+      };
+      expect(search.fancyRerank?.enabled).toBe(true);
+      expect(search.fancyRerank?.options).toEqual({ topN: 25 });
+    });
+
+    test("unknown features.improve key with unrecognized value type warns and drops", () => {
+      // A bare string value is not a recognized ProcessEntry shape.
+      const input = { features: { improve: { weird_key: "totally-unknown-value" } } };
+      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      // No target created.
+      const profiles = result.result.profiles as Record<string, unknown> | undefined;
+      const improve = profiles?.improve as Record<string, unknown> | undefined;
+      const defaultProfile = improve?.default as Record<string, unknown> | undefined;
+      const procs = defaultProfile?.processes as Record<string, unknown> | undefined;
+      expect(procs?.weirdKey).toBeUndefined();
+      expect(messages.some((m) => m.includes("weird_key") && m.toLowerCase().includes("dropping"))).toBe(true);
+    });
+
+    test("known keys still take their explicit paths even alongside unknown keys", () => {
+      const input = {
+        features: {
+          improve: {
+            memory_consolidation: true,
+            my_custom: { enabled: true },
+          },
+          index: {
+            metadata_enhance: true,
+            custom_index_pass: true,
+          },
+          search: {
+            curate_rerank: true,
+            custom_search_pass: false,
+          },
+        },
+      };
+      const { result } = captureStderr(() => migrateConfigShape(input));
+      const procs = ((result.result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+        .default as { processes?: Record<string, { enabled?: boolean }> };
+      // Known.
+      expect(procs.processes?.consolidate?.enabled).toBe(true);
+      expect((result.result.index as { metadataEnhance?: { enabled?: boolean } }).metadataEnhance?.enabled).toBe(true);
+      expect((result.result.search as { curateRerank?: { enabled?: boolean } }).curateRerank?.enabled).toBe(true);
+      // Unknown.
+      expect(procs.processes?.myCustom?.enabled).toBe(true);
+      expect((result.result.index as { customIndexPass?: { enabled?: boolean } }).customIndexPass?.enabled).toBe(true);
+      expect((result.result.search as { customSearchPass?: { enabled?: boolean } }).customSearchPass?.enabled).toBe(
+        false,
+      );
+    });
+  });
 });
