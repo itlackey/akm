@@ -1294,57 +1294,32 @@ async function runImprovePreparationStage(args: {
   // filesystem scan, giving identical tier logic without touching the disk.
   // Built-in per-type reflect cooldown defaults. Higher-churn types get shorter
   // windows; stable reference material gets longer ones.
-  // Overridable via improveProfile.processes.reflect.cooldownByType (profile wins),
-  // config.improve.reflectCooldownByType (v1 compat), and at run-time via
-  // --reflect-cooldown-days (CLI flag wins over all).
+  // Overridable via profiles.improve[name].processes.reflect.cooldownByType,
+  // or globally via --reflect-cooldown-days (CLI flag, highest priority).
   const REFLECT_COOLDOWN_BUILTIN: Readonly<Record<string, number>> = {
-    memory: 2, // re-reflect every 48 h — context changes rapidly
-    lesson: 7, // re-reflect weekly — distilled but needs freshness checks
-    workflow: 30, // living docs, monthly cadence
+    memory: 2,
+    lesson: 7,
+    workflow: 30,
     skill: 30,
     agent: 30,
     command: 30,
-    knowledge: 30, // reference docs — stable
+    knowledge: 30,
     script: 30,
-    wiki: 30, // external snapshots
+    wiki: 30,
     task: 60,
   };
-  const REFLECT_COOLDOWN_FALLBACK = 30; // unknown/future types
+  const REFLECT_COOLDOWN_FALLBACK = 30;
 
-  // Merge priority (lowest to highest):
-  //   1. Built-in defaults
-  //   2. config.improve.reflectCooldownByType (v1 compat)
-  //   3. features.improve.reflect.options.cooldown (v2 features path)
-  //   4. improveProfile.processes.reflect.cooldownByType (profile-driven, highest)
-  const cfg = loadConfig();
-  const v2Cooldown =
-    cfg.features?.improve?.reflect &&
-    typeof cfg.features.improve.reflect === "object" &&
-    cfg.features.improve.reflect !== null &&
-    !Array.isArray(cfg.features.improve.reflect)
-      ? ((cfg.features.improve.reflect as { options?: { cooldown?: Record<string, number> } }).options?.cooldown ?? {})
-      : {};
   const profileCooldownByType: Record<string, number> = Object.fromEntries(
     Object.entries(improveProfile.processes?.reflect?.cooldownByType ?? {}).filter(
       (entry): entry is [string, number] => entry[1] !== undefined,
     ),
   );
-  const configByType: Record<string, number> = {
-    ...(cfg.improve?.reflectCooldownByType ?? {}),
-    ...v2Cooldown,
-    ...profileCooldownByType,
-  };
   const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
     ...REFLECT_COOLDOWN_BUILTIN,
-    ...configByType,
+    ...profileCooldownByType,
   };
 
-  // Returns the effective reflect cooldown for a given ref, respecting:
-  //   1. --reflect-cooldown-days (CLI, per-run global override — highest priority)
-  //   2. improveProfile.processes.reflect.cooldownByType (profile per-type overrides)
-  //   3. config.improve.reflectCooldownByType (v1 compat per-type overrides)
-  //   4. Built-in type defaults above
-  // Falls back to profile cooldownDays if set, then the built-in fallback.
   const profileCooldownDays = improveProfile.processes?.reflect?.cooldownDays;
   const reflectCooldownForRef = (ref: string): number => {
     if (options.reflectCooldownDays !== undefined) return options.reflectCooldownDays;

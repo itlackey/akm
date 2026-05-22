@@ -80,25 +80,27 @@ describe("migrateConfigShape", () => {
     expect(search.curate_rerank).toBe(true);
   });
 
-  test("migrates reflectCooldownByType to features.improve.reflect.options.cooldown", () => {
+  test("migrates reflectCooldownByType to profiles.improve.default.processes.reflect.cooldownByType", () => {
     const input = { improve: { reflectCooldownByType: { memory: 1, lesson: 5 } } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const improve = (result.features as Record<string, unknown>).improve as Record<string, unknown>;
-    const reflect = improve.reflect as Record<string, unknown>;
-    const options = reflect.options as Record<string, unknown>;
-    expect(options.cooldown).toEqual({ memory: 1, lesson: 5 });
-    // improve block should be removed (only had reflectCooldownByType)
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    const processes = defaultProfile.processes as Record<string, unknown>;
+    const reflect = processes.reflect as Record<string, unknown>;
+    expect(reflect.cooldownByType).toEqual({ memory: 1, lesson: 5 });
     expect(result.improve).toBeUndefined();
   });
 
-  test("migrates improve.limit to defaults.improve.limit", () => {
+  test("migrates improve.limit to profiles.improve.default.limit", () => {
     const input = { improve: { limit: 50 } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const defaults = result.defaults as Record<string, unknown>;
-    const defaultsImprove = defaults.improve as Record<string, unknown>;
-    expect(defaultsImprove.limit).toBe(50);
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    expect(defaultProfile.limit).toBe(50);
   });
 
   test("strips improve.schedule", () => {

@@ -164,54 +164,62 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
     const improve = raw.improve as Record<string, unknown>;
 
     if (typeof improve.reflectCooldownByType === "object" && improve.reflectCooldownByType !== null) {
-      const features = (
-        typeof result.features === "object" && result.features !== null && !Array.isArray(result.features)
-          ? { ...(result.features as Record<string, unknown>) }
+      // Migrate improve.reflectCooldownByType → profiles.improve.default.processes.reflect.cooldownByType
+      const profiles = (
+        typeof result.profiles === "object" && result.profiles !== null && !Array.isArray(result.profiles)
+          ? { ...(result.profiles as Record<string, unknown>) }
           : {}
       ) as Record<string, unknown>;
-
-      const featuresImprove = (
-        typeof features.improve === "object" && features.improve !== null && !Array.isArray(features.improve)
-          ? { ...(features.improve as Record<string, unknown>) }
+      const profilesImprove = (
+        typeof profiles.improve === "object" && profiles.improve !== null && !Array.isArray(profiles.improve)
+          ? { ...(profiles.improve as Record<string, unknown>) }
           : {}
       ) as Record<string, unknown>;
-
-      const existingReflect =
-        typeof featuresImprove.reflect === "object" &&
-        featuresImprove.reflect !== null &&
-        !Array.isArray(featuresImprove.reflect)
-          ? { ...(featuresImprove.reflect as Record<string, unknown>) }
-          : ({} as Record<string, unknown>);
-
-      const existingOptions =
-        typeof existingReflect.options === "object" &&
-        existingReflect.options !== null &&
-        !Array.isArray(existingReflect.options)
-          ? { ...(existingReflect.options as Record<string, unknown>) }
-          : ({} as Record<string, unknown>);
-
-      existingOptions.cooldown = improve.reflectCooldownByType;
-      existingReflect.options = existingOptions;
-      featuresImprove.reflect = existingReflect;
-      features.improve = featuresImprove;
-      result.features = features;
+      const defaultProfile = (
+        typeof profilesImprove.default === "object" && profilesImprove.default !== null
+          ? { ...(profilesImprove.default as Record<string, unknown>) }
+          : {}
+      ) as Record<string, unknown>;
+      const processes = (
+        typeof defaultProfile.processes === "object" && defaultProfile.processes !== null
+          ? { ...(defaultProfile.processes as Record<string, unknown>) }
+          : {}
+      ) as Record<string, unknown>;
+      const reflect = (
+        typeof processes.reflect === "object" && processes.reflect !== null
+          ? { ...(processes.reflect as Record<string, unknown>) }
+          : {}
+      ) as Record<string, unknown>;
+      reflect.cooldownByType = improve.reflectCooldownByType;
+      processes.reflect = reflect;
+      defaultProfile.processes = processes;
+      profilesImprove.default = defaultProfile;
+      profiles.improve = profilesImprove;
+      result.profiles = profiles;
       changed = true;
     }
 
     if (typeof improve.limit === "number") {
-      const defaults = (
-        typeof result.defaults === "object" && result.defaults !== null && !Array.isArray(result.defaults)
-          ? { ...(result.defaults as Record<string, unknown>) }
+      // Migrate improve.limit → profiles.improve.default.limit
+      const profiles = (
+        typeof result.profiles === "object" && result.profiles !== null && !Array.isArray(result.profiles)
+          ? { ...(result.profiles as Record<string, unknown>) }
           : {}
       ) as Record<string, unknown>;
-      const defaultsImprove = (
-        typeof defaults.improve === "object" && defaults.improve !== null && !Array.isArray(defaults.improve)
-          ? { ...(defaults.improve as Record<string, unknown>) }
+      const profilesImprove = (
+        typeof profiles.improve === "object" && profiles.improve !== null && !Array.isArray(profiles.improve)
+          ? { ...(profiles.improve as Record<string, unknown>) }
           : {}
       ) as Record<string, unknown>;
-      defaultsImprove.limit = improve.limit;
-      defaults.improve = defaultsImprove;
-      result.defaults = defaults;
+      const defaultProfile = (
+        typeof profilesImprove.default === "object" && profilesImprove.default !== null
+          ? { ...(profilesImprove.default as Record<string, unknown>) }
+          : {}
+      ) as Record<string, unknown>;
+      defaultProfile.limit = improve.limit;
+      profilesImprove.default = defaultProfile;
+      profiles.improve = profilesImprove;
+      result.profiles = profiles;
       changed = true;
     }
 

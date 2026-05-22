@@ -3991,7 +3991,7 @@ const improveCommand = defineCommand({
     "reflect-cooldown-days": {
       type: "string",
       description:
-        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be persisted via config.improve.reflectCooldownByType. Set 0 to disable.",
+        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be configured via profiles.improve.<name>.processes.reflect.cooldownByType. Set 0 to disable.",
     },
     "distill-cooldown-days": {
       type: "string",

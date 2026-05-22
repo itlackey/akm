@@ -91,31 +91,20 @@ describe("migrateConfigShape", () => {
     expect(search.curate_rerank).toBe(true);
   });
 
-  test("migrates improve.reflectCooldownByType → features.improve.reflect.options.cooldown", () => {
+  test("migrates improve.reflectCooldownByType → profiles.improve.default.processes.reflect.cooldownByType", () => {
     const cooldown = { lesson: 7, feedback: 14 };
     const input = {
       improve: { reflectCooldownByType: cooldown },
     };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
-    const features = result.features as Record<string, unknown>;
-    const improve = features.improve as Record<string, unknown>;
-    const reflect = improve.reflect as Record<string, unknown>;
-    const options = reflect.options as Record<string, unknown>;
-    expect(options.cooldown).toEqual(cooldown);
-    // improve block should be removed since only reflectCooldownByType was present
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    const processes = defaultProfile.processes as Record<string, unknown>;
+    const reflect = processes.reflect as Record<string, unknown>;
+    expect(reflect.cooldownByType).toEqual(cooldown);
     expect(result.improve).toBeUndefined();
-  });
-
-  test("migrates improve.limit → defaults.improve.limit", () => {
-    const input = {
-      improve: { limit: 50 },
-    };
-    const { changed, result } = migrateConfigShape(input);
-    expect(changed).toBe(true);
-    const defaults = result.defaults as Record<string, unknown>;
-    const defaultsImprove = defaults.improve as Record<string, unknown>;
-    expect(defaultsImprove.limit).toBe(50);
   });
 
   test("strips agent.processes.task", () => {

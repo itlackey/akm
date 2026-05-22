@@ -165,7 +165,7 @@ export interface ImproveProcessConfig {
    *   consolidate: ["memory"]
    */
   allowedTypes?: string[];
-  /** Per-type cooldown overrides in days. Overrides improve.reflectCooldownByType for matching types. */
+  /** Per-type cooldown overrides in days for this process. */
   cooldownByType?: Partial<Record<string, number>>;
   /** Uniform cooldown in days for types not covered by cooldownByType. */
   cooldownDays?: number;
@@ -556,27 +556,7 @@ export interface AkmConfig {
   improve?: ImproveConfig;
 }
 
-/**
- * Per-type reflect cooldown configuration for `akm improve`.
- * Each key is an asset type (`memory`, `knowledge`, `skill`, etc.) and the
- * value is the cooldown window in days. Set a type to 0 to disable cooldown
- * for that type. Unknown type keys are accepted and used as-is.
- */
 export interface ImproveConfig {
-  /**
-   * @deprecated Use profiles.improve[name].processes.reflect.cooldownByType instead.
-   * Per-asset-type reflect cooldown in days. Overrides the built-in defaults
-   * for any type listed. Types not listed continue to use their built-in default.
-   *
-   * Built-in defaults:
-   *   memory: 2, lesson: 7, workflow/skill/agent/command/knowledge/script/wiki: 30, task: 60
-   *
-   * Example:
-   * ```json
-   * { "improve": { "reflectCooldownByType": { "memory": 1, "knowledge": 60 } } }
-   * ```
-   */
-  reflectCooldownByType?: Record<string, number>;
   /**
    * Phase 2A / Rec 5 — configurable forgetting curve.
    *
@@ -1197,17 +1177,6 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
   if (raw.improve !== null && typeof raw.improve === "object") {
     const improveRaw = raw.improve as Record<string, unknown>;
     const improveConfig: ImproveConfig = {};
-    if (improveRaw.reflectCooldownByType !== null && typeof improveRaw.reflectCooldownByType === "object") {
-      const byType: Record<string, number> = {};
-      for (const [type, days] of Object.entries(improveRaw.reflectCooldownByType as Record<string, unknown>)) {
-        if (typeof days === "number" && Number.isFinite(days) && days >= 0) {
-          byType[type] = days;
-        } else {
-          warn(`[akm] Ignoring improve.reflectCooldownByType["${type}"]: expected a non-negative number.`);
-        }
-      }
-      if (Object.keys(byType).length > 0) improveConfig.reflectCooldownByType = byType;
-    }
     // Phase 2A / Rec 5: configurable forgetting curve.
     if (improveRaw.utilityDecay !== null && typeof improveRaw.utilityDecay === "object") {
       const decayRaw = improveRaw.utilityDecay as Record<string, unknown>;

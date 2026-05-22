@@ -252,13 +252,8 @@
     },
     "improve": {
       "type": "object",
-      "description": "v1 compat: improve pipeline tuning. Use defaults.improve and features.improve in v2.",
+      "description": "Improve pipeline tuning.",
       "properties": {
-        "reflectCooldownByType": {
-          "type": "object",
-          "description": "Per-asset-type reflect cooldown in days. Migrated to features.improve.reflect.options.cooldown in v2.",
-          "additionalProperties": { "type": "number", "minimum": 0 }
-        },
         "utilityDecay": {
           "type": "object",
           "description": "Phase 2A / Rec 5: configurable forgetting curve for the utility-recency boost used during search ranking. Default-safe: omitting this object preserves the legacy exp(-days/30) decay.",
@@ -361,7 +356,7 @@
         },
         "cooldownByType": {
           "type": "object",
-          "description": "Per-type cooldown overrides in days. Overrides improve.reflectCooldownByType for matching types.",
+          "description": "Per-type cooldown overrides in days for this process.",
           "additionalProperties": { "type": "number", "minimum": 0 }
         },
         "cooldownDays": {

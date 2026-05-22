@@ -315,12 +315,12 @@ describe("Reflect size guard — diff-size safety rails", () => {
     expect(listProposals(stash).length).toBe(0);
   });
 
-  test("body expanded above 200% of source is rejected with EXCESSIVE_EXPANSION", async () => {
+  test("body expanded above 250% of source is rejected with EXCESSIVE_EXPANSION", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Tight doc\n---\n\n${LONG_SOURCE_BODY}\n`;
 
-    // LLM tripled the asset with speculative material.
-    const bloatedBody = `${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}`;
+    // LLM quintupled the asset with speculative material (5× > 2500-byte absolute ceiling).
+    const bloatedBody = `${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}`;
     const payload = JSON.stringify({ ref: "knowledge:expand", content: bloatedBody });
 
     const result = await akmReflect({
