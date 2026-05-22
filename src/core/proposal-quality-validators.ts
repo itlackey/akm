@@ -53,6 +53,125 @@
 
 // ── Reflect-size guard ───────────────────────────────────────────────────────
 
+import { parseFrontmatter } from "./frontmatter";
+import type { ProposalValidator } from "./proposal-validators";
+import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "./text-truncation";
+
+// ── Description / when_to_use shape ─────────────────────────────────────────
+
+export const HEADING_FRAGMENT_PATTERNS: readonly RegExp[] = [
+  /^for example\b/i,
+  /^to reduce\b/i,
+  /^key (pitfalls|fixes|points|takeaways|considerations|steps|notes|tips|insights|features|benefits|risks)\b/i,
+  /^example[s]?$/i,
+  /^summary$/i,
+  /^overview$/i,
+  /^introduction$/i,
+  /^takeaways$/i,
+  /^conclusion$/i,
+  /^notes?$/i,
+  /^tips?$/i,
+];
+
+export function isValidDescription(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
+  if (typeof value !== "string") return { ok: false, reason: "description is not a string" };
+  const v = value.trim();
+  if (!v) return { ok: false, reason: "description is empty" };
+  if (v.length < 20) return { ok: false, reason: `description is too short (${v.length} chars; need ≥20)` };
+  if (v.length > 400) return { ok: false, reason: `description is too long (${v.length} chars; max 400)` };
+  if (/^\s*[\d#*\->`]/.test(v)) return { ok: false, reason: "description starts with a digit or markdown marker" };
+  const last = v.slice(-1);
+  if (last === ":" || last === ";" || last === ",")
+    return { ok: false, reason: `description ends with truncation indicator "${last}"` };
+  const lastWordMatch = v.match(/([A-Za-z']+)[.!?]*$/);
+  if (lastWordMatch) {
+    const lastWord = lastWordMatch[1].toLowerCase();
+    if (TRUNCATION_TRAILING_WORDS.has(lastWord))
+      return { ok: false, reason: `description ends with truncation-indicator word "${lastWord}"` };
+  }
+  if (/^lesson distilled from\b/i.test(v))
+    return { ok: false, reason: "description matches the auto-repair placeholder text" };
+  for (const re of HEADING_FRAGMENT_PATTERNS) {
+    if (re.test(v)) return { ok: false, reason: `description looks like a section heading: "${v.slice(0, 40)}"` };
+  }
+  if (
+    /^(def|function|async\s+def|async\s+function|class|const|let|var|export\s+function|export\s+const|export\s+default|import|public|private|protected|fn|func)\s+\S/i.test(
+      v,
+    )
+  ) {
+    const firstWord = v.split(/\s+/)[0] ?? "";
+    return {
+      ok: false,
+      reason: `description starts with code keyword "${firstWord}" — looks like a code fragment, not prose`,
+    };
+  }
+  const backtickCount = (v.match(/`/g) ?? []).length;
+  if (backtickCount % 2 !== 0)
+    return {
+      ok: false,
+      reason: `description has ${backtickCount} backticks (unbalanced); likely contains a malformed code fragment`,
+    };
+  if (/^when\b/i.test(v))
+    return { ok: false, reason: "description starts with 'When' — that pattern belongs in when_to_use" };
+  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40)
+    return { ok: false, reason: "description appears to just name the input ref" };
+  return { ok: true };
+}
+
+export function isValidWhenToUse(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
+  if (typeof value !== "string") return { ok: false, reason: "when_to_use is not a string" };
+  const v = value.trim();
+  if (!v) return { ok: false, reason: "when_to_use is empty" };
+  if (v.length < 15) return { ok: false, reason: `when_to_use is too short (${v.length} chars; need ≥15)` };
+  if (v.length > 400) return { ok: false, reason: `when_to_use is too long (${v.length} chars; max 400)` };
+  if (/^when working with\b/i.test(v))
+    return { ok: false, reason: "when_to_use is the circular 'When working with ...' fallback" };
+  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 25)
+    return { ok: false, reason: "when_to_use appears to just name the input ref" };
+  return { ok: true };
+}
+
+export function detectDoubleFrontmatter(content: string): { kind: string; message: string } | null {
+  const fenceLines = content.split(/\r?\n/).filter((l) => /^---\s*$/.test(l));
+  if (fenceLines.length > 2)
+    return {
+      kind: "double-frontmatter-fence",
+      message: `Content contains ${fenceLines.length} \`---\` fence lines; lessons must have exactly 2.`,
+    };
+  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const pseudoLine = body
+    .split(/\r?\n/)
+    .find((l) => /^\s*(\*\*|__)?\s*(description|when_to_use)\s*(\*\*|__)?\s*:/i.test(l));
+  if (pseudoLine)
+    return {
+      kind: "pseudo-frontmatter-in-body",
+      message: `Body contains a pseudo-frontmatter restatement: "${pseudoLine.slice(0, 80)}". Fields belong in YAML frontmatter only.`,
+    };
+  return null;
+}
+
+export function validateProposalFrontmatter(fm: Record<string, unknown>): { ok: true } | { ok: false; reason: string } {
+  const desc = fm.description;
+  if (typeof desc !== "string" || desc.trim().length === 0)
+    return { ok: false, reason: "MISSING_FRONTMATTER_DESCRIPTION" };
+  const truncReason = detectTruncatedDescription(desc);
+  if (truncReason) return { ok: false, reason: `TRUNCATED_DESCRIPTION (${truncReason})` };
+  return { ok: true };
+}
+
+export function hasSupersededStatus(frontmatter: Record<string, unknown> | undefined): boolean {
+  const status = frontmatter?.status;
+  return typeof status === "string" && status.trim().toLowerCase() === "superseded";
+}
+
+export function hasHotCaptureMode(frontmatter: Record<string, unknown> | undefined): boolean {
+  return frontmatter?.captureMode === "hot";
+}
+
+// ── Reflect size gate ────────────────────────────────────────────────────────
+
 /** Ratio lower-bound: proposed body must be at least this fraction of source. */
 export const REFLECT_SHRINK_RATIO_MIN = 0.5;
 /** Ratio upper-bound: proposed body must not exceed this fraction of source. */
@@ -129,3 +248,135 @@ export function checkReflectSize(sourceBody: string | undefined, proposedBody: s
 
   return { ok: true };
 }
+
+// ── ProposalValidator entries (registered with proposal-validators.ts) ──────
+
+const descriptionQualityValidator: ProposalValidator = {
+  name: "description-quality",
+  appliesTo(_proposal, ctx) {
+    return ctx.parsedRef?.type === "knowledge" || ctx.parsedRef?.type === "memory" || ctx.parsedRef?.type === "lesson";
+  },
+  validate(proposal) {
+    if (typeof proposal.payload?.content !== "string" || proposal.payload.content.trim() === "") return [];
+    let fm: Record<string, unknown>;
+    try {
+      fm = parseFrontmatter(proposal.payload.content).data as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+    const check = validateProposalFrontmatter(fm);
+    if (check.ok) return [];
+    return [
+      {
+        kind: "invalid-description",
+        message: `Proposal ${proposal.id} (${proposal.ref}) has an invalid description: ${check.reason}.`,
+      },
+    ];
+  },
+};
+
+const lessonContentQualityValidator: ProposalValidator = {
+  name: "lesson-content-quality",
+  appliesTo(_proposal, ctx) {
+    return ctx.parsedRef?.type === "lesson";
+  },
+  validate(proposal) {
+    if (typeof proposal.payload?.content !== "string") return [];
+    let fm: Record<string, unknown>;
+    try {
+      fm = parseFrontmatter(proposal.payload.content).data as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+    const findings = [] as { kind: string; message: string }[];
+    const descCheck = isValidDescription(fm.description, proposal.ref);
+    if (!descCheck.ok)
+      findings.push({
+        kind: "invalid-description",
+        message: `Lesson proposal ${proposal.id} (${proposal.ref}) has an invalid description: ${descCheck.reason}.`,
+      });
+    const wtuCheck = isValidWhenToUse(fm.when_to_use, proposal.ref);
+    if (!wtuCheck.ok)
+      findings.push({
+        kind: "invalid-when_to_use",
+        message: `Lesson proposal ${proposal.id} (${proposal.ref}) has an invalid when_to_use: ${wtuCheck.reason}.`,
+      });
+    if (
+      descCheck.ok &&
+      wtuCheck.ok &&
+      typeof fm.description === "string" &&
+      typeof fm.when_to_use === "string" &&
+      fm.description.trim().toLowerCase() === fm.when_to_use.trim().toLowerCase()
+    ) {
+      findings.push({
+        kind: "description-equals-when_to_use",
+        message: `Lesson proposal ${proposal.id} (${proposal.ref}) has identical description and when_to_use.`,
+      });
+    }
+    const dfm = detectDoubleFrontmatter(proposal.payload.content);
+    if (dfm)
+      findings.push({ kind: dfm.kind, message: `Lesson proposal ${proposal.id} (${proposal.ref}): ${dfm.message}` });
+    return findings;
+  },
+};
+
+const sourceNotSupersededValidator: ProposalValidator = {
+  name: "source-not-superseded",
+  appliesTo(proposal, ctx) {
+    return proposal.source === "consolidate" && !!ctx.source?.frontmatter;
+  },
+  validate(proposal, ctx) {
+    if (hasSupersededStatus(ctx.source?.frontmatter)) {
+      return [
+        {
+          kind: "source-superseded",
+          message: `Proposal ${proposal.id} (${proposal.ref}) has a source asset marked status:superseded; superseded memories are not promotable knowledge.`,
+        },
+      ];
+    }
+    return [];
+  },
+};
+
+/** Strip an opening frontmatter block (`---\n…\n---`) from `content`, returning the body. */
+function stripFrontmatterBody(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+
+const reflectSizeGuardValidator: ProposalValidator = {
+  name: "reflect-size-guard",
+  appliesTo(proposal, ctx) {
+    return proposal.source === "reflect" && typeof ctx.source?.content === "string";
+  },
+  validate(proposal, ctx) {
+    const sourceBody = stripFrontmatterBody(ctx.source?.content ?? "");
+    const proposedBody =
+      typeof proposal.payload?.content === "string" ? stripFrontmatterBody(proposal.payload.content) : "";
+    const outcome = checkReflectSize(sourceBody, proposedBody);
+    if (outcome.ok) return [];
+    const pct = (outcome.ratio * 100).toFixed(0);
+    const limit = outcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 200%";
+    const cause =
+      outcome.code === "EXCESSIVE_SHRINKAGE"
+        ? "Concrete content was likely deleted."
+        : "Speculative material was likely added.";
+    return [
+      {
+        kind: outcome.code.toLowerCase(),
+        message: `Reflect rejected: ${outcome.code} — proposed body is ${pct}% of source (${limit}) for ref ${proposal.ref}. ${cause}`,
+      },
+    ];
+  },
+};
+
+/**
+ * Full set of quality validators in registration order. Appended onto
+ * {@link defaultProposalValidators} so they run inside `validateProposal` on
+ * `proposal accept` automatically.
+ */
+export const defaultProposalQualityValidators: ProposalValidator[] = [
+  descriptionQualityValidator,
+  lessonContentQualityValidator,
+  sourceNotSupersededValidator,
+  reflectSizeGuardValidator,
+];
