@@ -19,8 +19,8 @@
  *
  * # LLM Feature Gate
  *
- * The pass is gated behind `memory_contradiction_detection` in
- * `config.llm.features`. When the gate is disabled or no LLM is configured,
+ * The pass is gated behind `profiles.improve.default.processes.consolidate.contradictionDetection.enabled`.
+ * When the gate is disabled or no LLM is configured,
  * the pass is a no-op and `analyzeMemoryCleanup` proceeds with only manually
  * annotated edges.
  *

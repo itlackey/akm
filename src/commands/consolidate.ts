@@ -280,11 +280,11 @@ const CHARS_PER_TOKEN = 3;
 const PROMPT_OVERHEAD_TOKENS = 2_000;
 
 /**
- * Default effective token budget used when `config.llm.contextLength` is not
- * set. This is intentionally conservative (4 096) rather than being set to
- * the model's actual context window, because:
+ * Default effective token budget used when the default LLM profile's
+ * `contextLength` is not set. This is intentionally conservative (4 096)
+ * rather than being set to the model's actual context window, because:
  *
- *   - When the agent path is used (config.agent), the agent CLI (e.g. opencode)
+ *   - When the agent path is used, the agent CLI (e.g. opencode)
  *     prepends its own large system prompt + conversation history before
  *     forwarding to the model. That overhead easily consumes 30K+ tokens on
  *     a model with a 16K context window, leaving very little room for

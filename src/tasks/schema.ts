@@ -29,7 +29,7 @@ export type TaskPromptSource =
 export interface TaskPromptTarget {
   kind: "prompt";
   source: TaskPromptSource;
-  /** Agent profile name; defaults to `config.agent.default` when undefined. */
+  /** Agent profile name; defaults to `defaults.agent` when undefined. */
   profile?: string;
 }
 

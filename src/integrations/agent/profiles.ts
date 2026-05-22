@@ -43,9 +43,9 @@ export interface AgentProfile {
   readonly sdkMode?: boolean;
   /** Model to use when sdkMode is true (e.g. "anthropic/claude-sonnet-4-5", "ollama/qwen2.5-coder"). */
   readonly model?: string;
-  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from config.llm.endpoint. */
+  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from profiles.llm[defaults.llm].endpoint. */
   readonly endpoint?: string;
-  /** API key for sdkMode endpoint. If absent, inherits from config.llm.apiKey. */
+  /** API key for sdkMode endpoint. If absent, inherits from profiles.llm[defaults.llm].apiKey. */
   readonly apiKey?: string;
   /**
    * Which AgentCommandBuilder handles argv construction. Defaults to profile.name.
