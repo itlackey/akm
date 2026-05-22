@@ -20,6 +20,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
@@ -264,6 +265,40 @@ function readRejectedProposals(stash: string, ref?: string): RejectedProposalCon
   } catch {
     return [];
   }
+}
+
+/**
+ * Synthesize a tmp draft-file path for the agent/sdk file-write contract.
+ *
+ * Mirrors `src/commands/propose.ts:163-178` — when the runner is agent-CLI or
+ * the OpenCode SDK, we instruct the agent to write the proposal body directly
+ * to this file instead of inlining it in JSON on stdout. This bypasses two
+ * known failure modes for long assets: (a) ARG_MAX truncation on prompt
+ * round-trips through fenced JSON, and (b) embedded-JSON parser brittleness
+ * on multi-KB bodies (e.g. the `knowledge:systems/KOKORO_USAGE_GUIDE` 8.4KB
+ * payload that produced 4/5 `parse_error` in May 2026 reflect validation).
+ *
+ * The path lives under {@link os.tmpdir} and embeds the (sanitized) ref +
+ * timestamp + random suffix so concurrent reflect calls cannot collide.
+ *
+ * Returns `undefined` for the LLM HTTP runner — the chat-completion transport
+ * has no filesystem access (see warning at `src/llm/call-ai.ts:64-71`).
+ */
+function synthesizeReflectDraftPath(ref: string | undefined): string {
+  const safeRef = (ref ?? "no-ref").replace(/[^a-z0-9_-]/gi, "_");
+  const rand = Math.random().toString(36).slice(2, 8);
+  return path.join(os.tmpdir(), `akm-reflect-${safeRef}-${Date.now()}-${rand}.md`);
+}
+
+/**
+ * Heuristic check that the agent honoured the file-write contract.
+ * The contract instructs the agent to emit a single `DRAFT_WRITTEN` line on
+ * stdout when it has finished writing the draft file. Some agents print
+ * additional log lines; we match anywhere in the captured stdout.
+ */
+function stdoutSignalsDraftWritten(stdout: string | undefined): boolean {
+  if (!stdout) return false;
+  return /\bDRAFT_WRITTEN\b/.test(stdout);
 }
 
 /**
@@ -709,6 +744,15 @@ export interface RunReflectViaLlmOptions {
   responseSchema?: Record<string, unknown>;
   /** Test seam: override the chat function (avoids real LLM calls in tests). */
   chat?: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+  /**
+   * Accepted for type consistency with agent/sdk runners but intentionally NO-OP
+   * for the LLM HTTP path: the chat-completion transport has no filesystem access,
+   * so it cannot honour a file-write contract. The reflect dispatcher must NEVER
+   * synthesize a draft path when the runner kind is `llm` — the prompt builder
+   * is also called WITHOUT `draftFilePath` so it emits the JSON contract instead.
+   * Mirrors the warning at `src/llm/call-ai.ts:64-71`.
+   */
+  draftFilePath?: string;
 }
 
 /**
@@ -911,146 +955,251 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const maxRefineIters = Math.min(Math.max(1, options.maxRefineIters ?? 1), MAX_REFINE_ITERS);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
 
+  // Determine whether this dispatch can honour the file-write contract.
+  // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
+  // LLM HTTP runner does NOT (see `src/llm/call-ai.ts:64-71`). The v1
+  // `profile.sdkMode` fallback also runs the SDK so it counts as file-writable.
+  // Test seams (`options.runAgentOptions.spawn`) emulate agent CLI behaviour so
+  // they participate as well — tests opt out by simply not writing the file.
+  const runnerSupportsFileWrite = runnerSpec ? runnerSpec.kind !== "llm" : true;
+
   // Initialized to a sentinel; always overwritten in the first loop iteration
   // (maxRefineIters is clamped to >= 1 above). TypeScript cannot prove a
   // for-loop always runs at least once, so we use a type assertion here.
   let result = {} as AgentRunResult;
   let priorDraft: string | undefined;
+  // Track every draft file path we synthesize so cleanup can remove them on
+  // every return path (success and failure). Mirrors propose's unlink pattern
+  // in `src/commands/propose.ts:215-226` but generalised to N refinement
+  // iterations. Always called via {@link cleanupDrafts} below.
+  const draftPathsToCleanup: string[] = [];
+  // Last iteration's draft path — read back if the agent wrote it.
+  let lastDraftPath: string | undefined;
 
-  for (let iter = 0; iter < maxRefineIters; iter++) {
-    const prompt = buildReflectPrompt({
-      ...(options.ref ? { ref: options.ref } : {}),
-      ...(parsedRef?.type ? { type: parsedRef.type } : {}),
-      ...(parsedRef?.name ? { name: parsedRef.name } : {}),
-      ...(assetContent !== undefined ? { assetContent } : {}),
-      ...(feedback.length > 0 ? { feedback } : {}),
-      ...(schemaHints.length > 0 ? { schemaHints } : {}),
-      ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
-      ...(options.task ? { task: options.task } : {}),
-      ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
-      ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
-      // R-1: inject prior draft as self-critique target on iterations > 0
-      ...(priorDraft !== undefined ? { priorDraft } : {}),
-    });
-
-    let iterResult: AgentRunResult;
-    if (options.runAgentOptions?.spawn) {
-      // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
-      const resolvedProfile = profile;
-      if (!resolvedProfile) {
-        throw new Error("internal: reflect test-seam path requires a resolved agent profile");
+  // Best-effort unlink: tolerate already-deleted files (we may have unlinked
+  // an intermediate iteration's draft) and unwritable paths. Never throws —
+  // the proposal result is the source of truth for the caller.
+  const cleanupDrafts = (): void => {
+    for (const p of draftPathsToCleanup) {
+      try {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      } catch {
+        // Swallow — cleanup is best-effort.
       }
-      const runOptions: RunAgentOptions = {
-        stdio: "captured",
-        parseOutput: "text",
-        ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-        ...(options.runAgentOptions ?? {}),
-      };
-      iterResult = await runAgent(resolvedProfile, prompt, runOptions);
-    } else if (runnerSpec) {
-      // v2: dispatch through unified RunnerSpec
-      const runOptions: RunAgentOptions = {
-        stdio: "captured",
-        parseOutput: "text",
-        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-      };
-      switch (runnerSpec.kind) {
-        case "llm":
-          iterResult = await runReflectViaLlm({
-            prompt,
-            connection: runnerSpec.connection,
-            timeoutMs: runnerSpec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
-            priorDraft,
-            iteration: iter,
-            chat: options.chat,
-          });
-          break;
-        case "sdk":
-          iterResult = await runOpencodeSdk(runnerSpec.profile, prompt ?? "", runOptions);
-          break;
-        case "agent":
-          iterResult = await runAgent(runnerSpec.profile, prompt, {
-            ...runOptions,
-            ...(runnerSpec.timeoutMs !== undefined ? { timeoutMs: runnerSpec.timeoutMs } : {}),
-          });
-          break;
-      }
-    } else {
-      // Production path (v1): dispatch directly to the appropriate runner.
-      // The fallback at the end of step 3 guarantees `profile` is set whenever
-      // `runnerSpec` is undefined, but TS can't prove that across the loop +
-      // await boundary — narrow into a const.
-      const resolvedProfile = profile;
-      if (!resolvedProfile) {
-        throw new Error("internal: reflect v1 dispatch reached without a resolved agent profile or runnerSpec");
-      }
-      const runOptions: RunAgentOptions = {
-        stdio: "captured",
-        parseOutput: "text",
-        ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-      };
-      iterResult = resolvedProfile.sdkMode
-        ? await runOpencodeSdk(resolvedProfile, prompt ?? "", runOptions)
-        : await runAgent(resolvedProfile, prompt, runOptions);
     }
+  };
 
-    result = iterResult;
-
-    if (!iterResult.ok) break; // surface failure after loop
-
-    // On success, extract the draft content for the next iteration.
-    // If the agent returns the same content as the prior draft, stop early
-    // (no-op refinement) to avoid wasting tokens on identical iterations.
-    if (iter < maxRefineIters - 1) {
-      const nextDraft = iterResult.stdout ?? "";
-      if (priorDraft !== undefined && nextDraft === priorDraft) break;
-      priorDraft = nextDraft;
-    }
-  }
-
-  const finalResult: AgentRunResult = result;
-
-  if (!finalResult.ok) {
-    // B3: ENOENT / not-found gives an actionable hint.
-    if (isEnoentFailure(finalResult)) {
-      return {
-        ...failureEnvelope(finalResult, options.ref),
-        error: enoentHintMessage(profile?.bin ?? resolvedProfileName),
-      };
-    }
-    return failureEnvelope(finalResult, options.ref);
-  }
-
-  // Re-alias to `result` for the downstream code that references it.
-  result = finalResult;
-
-  // 6. Resolve the proposal content from stdout JSON.
+  // `payload` is populated inside the try (either by reading the draft file
+  // or parsing stdout JSON). Hoisted here so the post-try sections (R-3 ref
+  // guard, quality gate, sanitizer, createProposal) can use it after the
+  // drafts have been cleaned up.
   let payload: ReturnType<typeof parseAgentProposalPayload>;
   try {
-    payload = parseAgentProposalPayload(result.stdout ?? "");
-  } catch (err) {
-    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, profile?.sdkMode ?? false);
-    if (fallback) {
-      payload = fallback;
-    } else {
-      // Reclassify cooldown/skip messages that arrive as stdout text instead of
-      // valid proposal JSON. These are legitimate skip signals, not parse failures,
-      // and should not pollute reflectFailedActions or recentErrors injection.
-      const stdoutText = result.stdout ?? "";
-      const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
+    for (let iter = 0; iter < maxRefineIters; iter++) {
+      // Synthesize a fresh tmp path per iteration so refinement passes never
+      // clobber an earlier draft (and so reading back is unambiguous).
+      const iterDraftPath = runnerSupportsFileWrite ? synthesizeReflectDraftPath(options.ref) : undefined;
+      if (iterDraftPath) {
+        draftPathsToCleanup.push(iterDraftPath);
+        lastDraftPath = iterDraftPath;
+      }
+
+      const prompt = buildReflectPrompt({
+        ...(options.ref ? { ref: options.ref } : {}),
+        ...(parsedRef?.type ? { type: parsedRef.type } : {}),
+        ...(parsedRef?.name ? { name: parsedRef.name } : {}),
+        ...(assetContent !== undefined ? { assetContent } : {}),
+        ...(feedback.length > 0 ? { feedback } : {}),
+        ...(schemaHints.length > 0 ? { schemaHints } : {}),
+        ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
+        ...(options.task ? { task: options.task } : {}),
+        ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
+        ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
+        // R-1: inject prior draft as self-critique target on iterations > 0
+        ...(priorDraft !== undefined ? { priorDraft } : {}),
+        // Issue A (#reflect-pipeline file-write contract): when the runner can
+        // touch the filesystem, instruct the agent to write the proposal body
+        // to a tmp file instead of inlining it in JSON. Avoids parse failures
+        // on long bodies (e.g. knowledge:systems/KOKORO_USAGE_GUIDE 8.4KB).
+        ...(iterDraftPath ? { draftFilePath: iterDraftPath } : {}),
+      });
+
+      let iterResult: AgentRunResult;
+      if (options.runAgentOptions?.spawn) {
+        // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
+        const resolvedProfile = profile;
+        if (!resolvedProfile) {
+          throw new Error("internal: reflect test-seam path requires a resolved agent profile");
+        }
+        const runOptions: RunAgentOptions = {
+          stdio: "captured",
+          parseOutput: "text",
+          ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+          ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+          ...(options.runAgentOptions ?? {}),
+        };
+        iterResult = await runAgent(resolvedProfile, prompt, runOptions);
+      } else if (runnerSpec) {
+        // v2: dispatch through unified RunnerSpec
+        const runOptions: RunAgentOptions = {
+          stdio: "captured",
+          parseOutput: "text",
+          ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+        };
+        switch (runnerSpec.kind) {
+          case "llm":
+            // LLM HTTP path — `draftFilePath` is accepted for type symmetry
+            // (see `RunReflectViaLlmOptions.draftFilePath` docstring) but is
+            // intentionally a no-op. The prompt builder above also did not
+            // include the file-write contract for this kind, so the LLM is
+            // still asked for JSON via stdout.
+            iterResult = await runReflectViaLlm({
+              prompt,
+              connection: runnerSpec.connection,
+              timeoutMs:
+                runnerSpec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
+              priorDraft,
+              iteration: iter,
+              chat: options.chat,
+            });
+            break;
+          case "sdk":
+            iterResult = await runOpencodeSdk(runnerSpec.profile, prompt ?? "", runOptions);
+            break;
+          case "agent":
+            iterResult = await runAgent(runnerSpec.profile, prompt, {
+              ...runOptions,
+              ...(runnerSpec.timeoutMs !== undefined ? { timeoutMs: runnerSpec.timeoutMs } : {}),
+            });
+            break;
+        }
+      } else {
+        // Production path (v1): dispatch directly to the appropriate runner.
+        // The fallback at the end of step 3 guarantees `profile` is set whenever
+        // `runnerSpec` is undefined, but TS can't prove that across the loop +
+        // await boundary — narrow into a const.
+        const resolvedProfile = profile;
+        if (!resolvedProfile) {
+          throw new Error("internal: reflect v1 dispatch reached without a resolved agent profile or runnerSpec");
+        }
+        const runOptions: RunAgentOptions = {
+          stdio: "captured",
+          parseOutput: "text",
+          ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
+          ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+        };
+        iterResult = resolvedProfile.sdkMode
+          ? await runOpencodeSdk(resolvedProfile, prompt ?? "", runOptions)
+          : await runAgent(resolvedProfile, prompt, runOptions);
+      }
+
+      result = iterResult;
+
+      if (!iterResult.ok) break; // surface failure after loop
+
+      // On success, extract the draft content for the next iteration.
+      // If the agent returns the same content as the prior draft, stop early
+      // (no-op refinement) to avoid wasting tokens on identical iterations.
+      if (iter < maxRefineIters - 1) {
+        const nextDraft = iterResult.stdout ?? "";
+        if (priorDraft !== undefined && nextDraft === priorDraft) break;
+        priorDraft = nextDraft;
+      }
+    }
+
+    const finalResult: AgentRunResult = result;
+
+    if (!finalResult.ok) {
+      // B3: ENOENT / not-found gives an actionable hint.
+      if (isEnoentFailure(finalResult)) {
+        return {
+          ...failureEnvelope(finalResult, options.ref),
+          error: enoentHintMessage(profile?.bin ?? resolvedProfileName),
+        };
+      }
+      return failureEnvelope(finalResult, options.ref);
+    }
+
+    // Re-alias to `result` for the downstream code that references it.
+    result = finalResult;
+
+    // 6. Resolve the proposal content.
+    //
+    // Path A (file-write contract — preferred for agent/sdk runners on long
+    // assets): the agent wrote the body to `lastDraftPath` and printed
+    // `DRAFT_WRITTEN` on stdout. Load the body from disk and synthesize a
+    // payload. The `EXCESSIVE_EXPANSION`/schema-shape gates downstream still
+    // apply — they validate content, not transport.
+    //
+    // Path B (legacy JSON stdout): the agent inlined the proposal body in
+    // JSON on stdout. Falls through to `parseAgentProposalPayload`. Also the
+    // path used by the LLM HTTP runner, which cannot honour file-write.
+    const draftFileExists =
+      lastDraftPath !== undefined && fs.existsSync(lastDraftPath) && fs.statSync(lastDraftPath).size > 0;
+    const draftSignaled = stdoutSignalsDraftWritten(result.stdout);
+
+    if (draftSignaled && lastDraftPath && !draftFileExists) {
+      // Agent claimed to write the draft but the file is missing or empty.
+      // Surface as a parse_error rather than silently falling through — the
+      // alternative would be parsing the `DRAFT_WRITTEN` sentinel as JSON,
+      // which is guaranteed to fail with a confusing message.
       return {
         schemaVersion: 1,
         ok: false,
-        reason: isCooldownSignal ? "cooldown" : "parse_error",
-        error: err instanceof Error ? err.message : String(err),
+        reason: "parse_error",
+        error: `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
         ...(options.ref ? { ref: options.ref } : {}),
         exitCode: result.exitCode,
         stdout: result.stdout,
         ...(result.stderr ? { stderr: result.stderr } : {}),
       };
     }
+
+    if (draftFileExists && lastDraftPath) {
+      // Happy path: agent wrote the body to disk. Use the ref the caller
+      // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
+      // below has no effect when there is no expected ref).
+      const fileContent = fs.readFileSync(lastDraftPath, "utf8");
+      payload = {
+        ref: options.ref ?? "",
+        content: fileContent,
+      };
+      // The agent followed the file-write contract — `payload.ref` mirrors the
+      // caller's expected ref, so the R-3 guard below cannot fire. The agent
+      // had no opportunity to retarget the proposal. If the ref was omitted
+      // entirely, downstream `createProposal` will reject the empty ref.
+    } else {
+      try {
+        payload = parseAgentProposalPayload(result.stdout ?? "");
+      } catch (err) {
+        const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, profile?.sdkMode ?? false);
+        if (fallback) {
+          payload = fallback;
+        } else {
+          // Reclassify cooldown/skip messages that arrive as stdout text instead of
+          // valid proposal JSON. These are legitimate skip signals, not parse failures,
+          // and should not pollute reflectFailedActions or recentErrors injection.
+          const stdoutText = result.stdout ?? "";
+          const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
+          return {
+            schemaVersion: 1,
+            ok: false,
+            reason: isCooldownSignal ? "cooldown" : "parse_error",
+            error: err instanceof Error ? err.message : String(err),
+            ...(options.ref ? { ref: options.ref } : {}),
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            ...(result.stderr ? { stderr: result.stderr } : {}),
+          };
+        }
+      }
+    }
+  } finally {
+    // Always remove tmp draft files — success, failure, or exception. Returns
+    // inside the try above trigger this block before the function exits. Code
+    // after this point uses the already-loaded `payload` and never touches the
+    // draft paths.
+    cleanupDrafts();
   }
 
   // 6b. Validate payload.ref === options.ref (R-3 / #366).
