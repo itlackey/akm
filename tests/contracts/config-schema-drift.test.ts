@@ -10,25 +10,40 @@ function readSchema(): Record<string, unknown> {
 }
 
 describe("config schema drift pins", () => {
-  test("llm.features includes all locked runtime keys", () => {
+  test("ImproveProcessConfig schema includes qualityGate + contradictionDetection sub-objects", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
-    const llm = defs.LlmConnectionConfig as { allOf?: Array<Record<string, unknown>> };
-    const llmProps = (llm.allOf?.[1]?.properties ?? {}) as Record<string, unknown>;
-    const features = llmProps.features as { properties?: Record<string, unknown> };
-    const keys = Object.keys(features.properties ?? {});
+    const ipc = defs.ImproveProcessConfig as { properties?: Record<string, unknown> };
+    const keys = Object.keys(ipc.properties ?? {});
+    expect(keys).toContain("qualityGate");
+    expect(keys).toContain("contradictionDetection");
+  });
 
-    expect(keys).toEqual([
-      "curate_rerank",
-      "feedback_distillation",
-      "memory_inference",
-      "graph_extraction",
-      "memory_consolidation",
-      "lesson_quality_gate",
-      "proposal_quality_gate",
-      "metadata_enhance",
-      "memory_contradiction_detection",
-    ]);
+  test("ImproveProfileConfig.processes includes feedbackDistillation + validation entries", () => {
+    const schema = readSchema();
+    const defs = schema.$defs as Record<string, unknown>;
+    const ipfc = defs.ImproveProfileConfig as { properties?: { processes?: { properties?: Record<string, unknown> } } };
+    const processes = ipfc.properties?.processes?.properties ?? {};
+    expect(Object.keys(processes)).toContain("feedbackDistillation");
+    expect(Object.keys(processes)).toContain("validation");
+  });
+
+  test("top-level index and search expose the new feature sections", () => {
+    const schema = readSchema();
+    const props = schema.properties as Record<string, unknown>;
+    const index = props.index as { properties?: Record<string, unknown> };
+    expect(Object.keys(index.properties ?? {})).toContain("metadataEnhance");
+    expect(Object.keys(index.properties ?? {})).toContain("stalenessDetection");
+    const search = props.search as { properties?: Record<string, unknown> };
+    expect(Object.keys(search.properties ?? {})).toContain("curateRerank");
+  });
+
+  test("legacy llm/agent/features top-level entries are gone from the schema", () => {
+    const schema = readSchema();
+    const props = schema.properties as Record<string, unknown>;
+    expect(props.llm).toBeUndefined();
+    expect(props.agent).toBeUndefined();
+    expect(props.features).toBeUndefined();
   });
 
   test("search.graphBoost confidence knobs match runtime", () => {

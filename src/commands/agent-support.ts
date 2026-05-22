@@ -12,19 +12,21 @@ import {
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
-  parseAgentConfig,
   requireAgentProfile,
 } from "../integrations/agent";
 
 // ── Config helpers ───────────────────────────────────────────────────────────
 
 /**
- * Load the agent config block from the on-disk config file.
- * Returns `undefined` when no agent block is present.
+ * Load the loaded AkmConfig from disk.
+ *
+ * After 0.8.0, the legacy `agent` top-level block was removed — the agent
+ * profile data now lives on the unified `AkmConfig` (via `profiles.agent` and
+ * `defaults.agent`). This helper remains for source-compat with callers that
+ * still expect an "AgentConfig"; it now returns the loaded `AkmConfig`.
  */
 export function loadAgentConfigFromDisk(): AgentConfig | undefined {
-  const config = loadConfig();
-  return parseAgentConfig(config.agent);
+  return loadConfig();
 }
 
 /**

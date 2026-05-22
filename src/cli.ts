@@ -3868,15 +3868,16 @@ const agentCommand = defineCommand({
         throw new UsageError(
           "Usage: akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>]",
           "MISSING_REQUIRED_ARGUMENT",
-          "Provide the agent profile name. Available profiles are listed in config.agent.profiles.",
+          "Provide the agent profile name. Available profiles are listed in profiles.agent.",
         );
       }
 
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
 
       const config = loadConfig();
-      const { parseAgentConfig } = await import("./integrations/agent/config.js");
-      const agentConfig = parseAgentConfig(config.agent);
+      const { getDefaultLlmConfig } = await import("./core/config.js");
+      // After 0.8.0 the agent block IS the loaded AkmConfig.
+      const agentConfig = config;
 
       // Resolve agent asset ref → extract system prompt, model, and tool policy.
       const agentRef = getStringArg(args, "agent-ref");
@@ -3912,7 +3913,7 @@ const agentCommand = defineCommand({
         commandRef,
         workflowRef,
         agentConfig,
-        llmConfig: config.llm,
+        llmConfig: getDefaultLlmConfig(config),
         ...(hasDispatchContent
           ? {
               dispatch: {
@@ -3961,7 +3962,7 @@ const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when llm.features.memory_consolidation is enabled",
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true",
   },
   args: {
     scope: {
@@ -3991,7 +3992,7 @@ const improveCommand = defineCommand({
     "reflect-cooldown-days": {
       type: "string",
       description:
-        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be persisted via config.improve.reflectCooldownByType. Set 0 to disable.",
+        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be configured via profiles.improve.<name>.processes.reflect.cooldownByType. Set 0 to disable.",
     },
     "distill-cooldown-days": {
       type: "string",
@@ -4021,6 +4022,11 @@ const improveCommand = defineCommand({
       description:
         "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full JSON is written to .akm/runs/<run-id>/improve-result.json and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve | jq`.)",
       default: false,
+    },
+    profile: {
+      type: "string",
+      description:
+        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus). Controls which sub-processes run and which asset types are processed.",
     },
   },
   async run({ args }) {
@@ -4068,6 +4074,7 @@ const improveCommand = defineCommand({
       const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
+      const profileArg = getStringArg(args, "profile");
 
       const improveLogFile = path.join(
         getCacheDir(),
@@ -4092,6 +4099,7 @@ const improveCommand = defineCommand({
           ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
           ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
+          ...(profileArg !== undefined ? { profile: profileArg } : {}),
           consolidateOptions: {
             target: targetArg,
             dryRun,
@@ -4232,7 +4240,7 @@ const tasksAddCommand = defineCommand({
       description:
         'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
     },
-    profile: { type: "string", description: "Agent profile to use for prompt targets (default: config.agent.default)" },
+    profile: { type: "string", description: "Agent profile to use for prompt targets (default: defaults.agent)" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
     "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },

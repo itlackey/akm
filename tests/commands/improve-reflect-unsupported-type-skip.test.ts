@@ -17,8 +17,8 @@
  *
  *   1. A stash containing a `script:*` ref that would otherwise be a reflect
  *      candidate never causes akmReflect to be called.
- *   2. The action for that ref is recorded as `reflect-skipped` (not
- *      `reflect-failed`) so the run summary is not polluted with bogus failures.
+ *   2. The action for that ref is recorded as `reflect-skipped` with reason
+ *      `"type-filter"` (not `reflect-failed`) so the run summary is not polluted.
  *   3. A co-located `skill:*` ref (an allowed type) IS reflected normally —
  *      the guard does not accidentally block allowed types.
  */
@@ -192,9 +192,10 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     expect(reflectFailedActions).toEqual([]);
     const reflectSkippedActions = scriptActions.filter((a) => a.mode === "reflect-skipped");
     expect(reflectSkippedActions.length).toBeGreaterThan(0);
-    // Reason must be "unsupported-type" — not a generic failure.
+    // Reason must be "type-filter" (profile-driven) — not a generic failure.
+    // (Previously "unsupported-type" — unified to "type-filter" with the profile system.)
     for (const action of reflectSkippedActions) {
-      expect((action.result as { reason?: string }).reason).toBe("unsupported-type");
+      expect((action.result as { reason?: string }).reason).toBe("type-filter");
     }
 
     // Core assertion 3: the allowed-type skill ref IS reflected normally (type

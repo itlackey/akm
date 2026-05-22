@@ -52,7 +52,7 @@ import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
-import { loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -704,8 +704,10 @@ function buildJudgePrompt(
  * Run the LLM-as-judge quality gate on a proposal's content.
  *
  * Exported so reflect.ts can apply the same gate to reflect proposals (R-5 / #374).
- * Gated behind `lesson_quality_gate` (or its alias `proposal_quality_gate`) at
- * the call site via {@link isLlmFeatureEnabled}.
+ * Gated by the flag name `lesson_quality_gate` (or its alias
+ * `proposal_quality_gate`) via {@link isLlmFeatureEnabled} — which reads
+ * `profiles.improve.default.processes.distill.qualityGate.enabled` (and the
+ * corresponding `.reflect.qualityGate.enabled` for proposals).
  *
  * Fail-open: returns `pass: true` on timeout, parse failure, or missing LLM.
  */
@@ -717,10 +719,11 @@ export async function runLessonQualityJudge(
   /** D-4 / #390: top-3 similar existing lessons for dedup check. */
   similarLessons?: Array<{ ref: string; content: string }>,
 ): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
-  if (!config.llm) {
+  const llmConfig = getDefaultLlmConfig(config);
+  if (!llmConfig) {
     return { pass: true, score: -1, reason: "no LLM configured — passing through" };
   }
-  const judgeLlmConfig = config.llm.judgeModel ? { ...config.llm, model: config.llm.judgeModel } : config.llm;
+  const judgeLlmConfig = llmConfig.judgeModel ? { ...llmConfig, model: llmConfig.judgeModel } : llmConfig;
   const JUDGE_TIMEOUT_MS = 8_000;
   try {
     const raw = await Promise.race([
@@ -934,7 +937,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           })()
         : null;
 
-    if (existingKnowledgeContent && config?.llm) {
+    if (existingKnowledgeContent && config && getDefaultLlmConfig(config)) {
       // Existing content found: call LLM for contradiction-resolution merge.
       const mergePrompt = [
         "You are merging two versions of a knowledge document.",
@@ -954,7 +957,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ].join("\n");
 
       try {
-        const mergeResponse = await chat(config.llm, [
+        const mergeLlm = getDefaultLlmConfig(config);
+        if (!mergeLlm) {
+          throw new ConfigError("LLM is not configured for distillation merge.", "LLM_NOT_CONFIGURED");
+        }
+        const mergeResponse = await chat(mergeLlm, [
           { role: "system", content: "Return only valid JSON. No prose." },
           { role: "user", content: mergePrompt },
         ]);
@@ -993,7 +1000,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         // LLM merge failed — fall through with the original promotion content.
         // The reviewer will see both versions in the proposal diff.
       }
-    } else if (existingKnowledgeContent && !config?.llm) {
+    } else if (existingKnowledgeContent && config && !getDefaultLlmConfig(config)) {
       // No LLM configured: include existing content as context in the proposal
       // so the reviewer can do the contradiction resolution manually.
       resolvedPromotionContent = [
@@ -1161,12 +1168,13 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     "feedback_distillation",
     config,
     async () => {
-      if (!config.llm) {
+      const distillLlm = getDefaultLlmConfig(config);
+      if (!distillLlm) {
         // No LLM connection configured — treat as gate-disabled. Throwing
         // here lets `tryLlmFeature` route us through the "error" fallback,
         // which is the same graceful skipped path.
         throw new ConfigError(
-          "No LLM connection configured. Set `llm.endpoint` and `llm.model` in the akm config.",
+          "No LLM connection configured. Set `defaults.llm` and a profile under `profiles.llm`.",
           "LLM_NOT_CONFIGURED",
         );
       }
@@ -1174,11 +1182,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       // `response_format: json_schema` enforce shape upstream. Providers that
       // ignore the option fall through to the prompt-contract markdown path.
       if (options.chat === undefined) {
-        return chatCompletion(config.llm, messages, { responseSchema: distillSchema });
+        return chatCompletion(distillLlm, messages, { responseSchema: distillSchema });
       }
       // Test seam: preserve the two-arg signature so existing fake `chat`
       // functions (which return markdown strings) continue to work.
-      return chat(config.llm, messages);
+      return chat(distillLlm, messages);
     },
     null as string | null,
     {

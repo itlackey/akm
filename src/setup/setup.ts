@@ -20,7 +20,7 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "../core/config";
-import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config";
+import { DEFAULT_CONFIG, getDefaultLlmConfig, loadUserConfig, saveConfig } from "../core/config";
 import { getConfigPath, getDefaultStashDir } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
@@ -30,12 +30,7 @@ import {
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
 } from "../indexer/semantic-status";
-import {
-  type AgentConfig,
-  type AgentDetectionResult,
-  detectAgentCliProfiles,
-  pickDefaultAgentProfile,
-} from "../integrations/agent";
+import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectOllama } from "./detect";
@@ -50,6 +45,98 @@ export interface SetupSummary {
   written: boolean;
   fields: string[];
   ripgrep?: InitResponse["ripgrep"];
+}
+
+// ── 0.8.0 config-shape helpers ──────────────────────────────────────────────
+
+/**
+ * Snapshot used by the setup wizard's internal logic — the legacy mental
+ * model of a single top-level `llm` + `agent` block. Translated to the new
+ * `profiles.*` + `defaults.*` shape when written via {@link applyLegacyLlm}
+ * and {@link applyLegacyAgent}.
+ */
+interface LegacyAgentBlockShape {
+  default?: string;
+  timeoutMs?: number;
+  profiles?: Record<
+    string,
+    { sdkMode?: boolean; model?: string; endpoint?: string; apiKey?: string; bin?: string; args?: string[] }
+  >;
+}
+
+/** Read the currently-configured LLM connection from a loaded config. */
+function getCurrentLlm(config: AkmConfig): LlmConnectionConfig | undefined {
+  return getDefaultLlmConfig(config);
+}
+
+/** Read a synthesised legacy-shape agent block from the new-shape AkmConfig. */
+function getCurrentAgentBlock(config: AkmConfig): LegacyAgentBlockShape | undefined {
+  if (!config.profiles?.agent && !config.defaults?.agent) return undefined;
+  const block: LegacyAgentBlockShape = {};
+  if (config.defaults?.agent) block.default = config.defaults.agent;
+  if (config.profiles?.agent) {
+    const profiles: NonNullable<LegacyAgentBlockShape["profiles"]> = {};
+    for (const [name, raw] of Object.entries(config.profiles.agent)) {
+      profiles[name] = {
+        ...(raw.platform === "opencode-sdk" ? { sdkMode: true } : {}),
+        ...(raw.model ? { model: raw.model } : {}),
+        ...(raw.bin ? { bin: raw.bin } : {}),
+        ...(raw.args ? { args: raw.args } : {}),
+      };
+    }
+    block.profiles = profiles;
+  }
+  return block;
+}
+
+/** Apply an LLM connection patch onto the new-shape config. */
+function applyLegacyLlm(config: AkmConfig, llm: LlmConnectionConfig | undefined): Partial<AkmConfig> {
+  if (!llm) {
+    // Clear the default LLM profile.
+    const name = config.defaults?.llm ?? "default";
+    const remaining = { ...(config.profiles?.llm ?? {}) };
+    delete remaining[name];
+    return {
+      profiles: { ...(config.profiles ?? {}), llm: remaining },
+      defaults: { ...(config.defaults ?? {}), llm: undefined },
+    };
+  }
+  const name = config.defaults?.llm ?? "default";
+  return {
+    profiles: {
+      ...(config.profiles ?? {}),
+      llm: { ...(config.profiles?.llm ?? {}), [name]: llm },
+    },
+    defaults: { ...(config.defaults ?? {}), llm: name },
+  };
+}
+
+/** Apply a legacy-shape agent block onto the new-shape config. */
+function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape | undefined): Partial<AkmConfig> {
+  if (!agent) {
+    return {
+      profiles: { ...(config.profiles ?? {}), agent: undefined },
+      defaults: { ...(config.defaults ?? {}), agent: undefined },
+    };
+  }
+  const v2Profiles: NonNullable<AkmConfig["profiles"]>["agent"] = { ...(config.profiles?.agent ?? {}) };
+  for (const [name, profile] of Object.entries(agent.profiles ?? {})) {
+    const platform: "opencode" | "claude" | "opencode-sdk" = profile.sdkMode
+      ? "opencode-sdk"
+      : name.toLowerCase().includes("claude")
+        ? "claude"
+        : "opencode";
+    v2Profiles[name] = {
+      platform,
+      ...(profile.bin ? { bin: profile.bin } : {}),
+      ...(profile.args ? { args: profile.args } : {}),
+      ...(profile.model ? { model: profile.model } : {}),
+    };
+  }
+  return {
+    profiles: { ...(config.profiles ?? {}), agent: v2Profiles },
+    defaults: { ...(config.defaults ?? {}), agent: agent.default },
+  };
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -177,7 +264,6 @@ function cloneLlmConfig(llm?: LlmConnectionConfig): LlmConnectionConfig | undefi
   return {
     ...llm,
     ...(llm.capabilities ? { capabilities: { ...llm.capabilities } } : {}),
-    ...(llm.features ? { features: { ...llm.features } } : {}),
     ...(llm.extraParams ? { extraParams: { ...llm.extraParams } } : {}),
   };
 }
@@ -659,15 +745,16 @@ export async function stepLlm(
   }
   options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
   options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement during indexing" });
-  if (current.llm) {
+  const currentLlm = getCurrentLlm(current);
+  if (currentLlm) {
     options.push({
       value: "keep",
-      label: `Keep current: ${current.llm.provider ?? current.llm.endpoint}`,
-      hint: current.llm.model,
+      label: `Keep current: ${currentLlm.provider ?? currentLlm.endpoint}`,
+      hint: currentLlm.model,
     });
   }
 
-  const initialValue = current.llm ? "keep" : ollamaAvailable ? "ollama" : (LLM_PRESETS[0]?.value ?? "none");
+  const initialValue = currentLlm ? "keep" : ollamaAvailable ? "ollama" : (LLM_PRESETS[0]?.value ?? "none");
 
   const choice = await prompt(() =>
     p.select({
@@ -677,7 +764,7 @@ export async function stepLlm(
     }),
   );
 
-  if (choice === "keep") return cloneLlmConfig(current.llm);
+  if (choice === "keep") return cloneLlmConfig(currentLlm);
   if (choice === "none") return undefined;
 
   let llm: LlmConnectionConfig;
@@ -1015,15 +1102,16 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     { value: "skip", label: "Skip — disable enrichment features" },
   );
 
-  if (current.llm) {
+  const currentLlmSmall = getCurrentLlm(current);
+  if (currentLlmSmall) {
     providerOptions.push({
       value: "keep",
-      label: `Keep current: ${current.llm.provider ?? current.llm.endpoint}`,
-      hint: current.llm.model,
+      label: `Keep current: ${currentLlmSmall.provider ?? currentLlmSmall.endpoint}`,
+      hint: currentLlmSmall.model,
     });
   }
 
-  const initialValue = current.llm ? "keep" : ollama.available ? "ollama" : "openai";
+  const initialValue = currentLlmSmall ? "keep" : ollama.available ? "ollama" : "openai";
 
   const providerChoice = await prompt(() =>
     p.select({
@@ -1034,7 +1122,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
   );
 
   if (providerChoice === "keep") {
-    return { llm: cloneLlmConfig(current.llm), skipped: false, ollamaEndpoint };
+    return { llm: cloneLlmConfig(currentLlmSmall), skipped: false, ollamaEndpoint };
   }
 
   if (providerChoice === "skip") {
@@ -1205,7 +1293,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
 export async function stepAgentConnection(
   current: AkmConfig,
   smallModel: SmallModelConnectionResult,
-): Promise<AgentConfig | undefined> {
+): Promise<LegacyAgentBlockShape | undefined> {
   p.log.step("Step 2/2: Configure your agent connection");
 
   p.note(
@@ -1218,7 +1306,8 @@ export async function stepAgentConnection(
   );
 
   // Detect available CLI agents.
-  const detections = detectAgentCliProfiles(current.agent);
+  const detections = detectAgentCliProfiles(current);
+  const currentAgentBlock = getCurrentAgentBlock(current);
   const availableClis = detections.filter((d) => d.available);
 
   const agentOptions: Array<{ value: string; label: string; hint?: string }> = [];
@@ -1241,16 +1330,16 @@ export async function stepAgentConnection(
   }
   agentOptions.push({ value: "none", label: "None — disable agentic features" });
 
-  if (current.agent) {
-    const currentDesc = current.agent.default
-      ? `CLI: ${current.agent.default}`
-      : current.agent.profiles?.default?.model
-        ? `SDK: ${current.agent.profiles.default.model}`
+  if (currentAgentBlock) {
+    const currentDesc = currentAgentBlock.default
+      ? `CLI: ${currentAgentBlock.default}`
+      : currentAgentBlock.profiles?.default?.model
+        ? `SDK: ${currentAgentBlock.profiles.default.model}`
         : "configured";
     agentOptions.push({ value: "keep", label: `Keep current: ${currentDesc}` });
   }
 
-  const initialAgentValue = current.agent
+  const initialAgentValue = currentAgentBlock
     ? "keep"
     : availableClis.length > 0 && smallModel.skipped
       ? "cli-agent"
@@ -1269,7 +1358,7 @@ export async function stepAgentConnection(
   );
 
   if (agentChoice === "keep") {
-    return current.agent;
+    return currentAgentBlock;
   }
 
   if (agentChoice === "none") {
@@ -1305,11 +1394,11 @@ export async function stepAgentConnection(
       );
       const profileName = smallModel.llm.provider ?? "default";
       return {
-        ...(current.agent ?? {}),
+        ...(currentAgentBlock ?? {}),
         profiles: {
-          ...(current.agent?.profiles ?? {}),
+          ...(currentAgentBlock?.profiles ?? {}),
           [profileName]: {
-            ...(current.agent?.profiles?.[profileName] ?? {}),
+            ...(currentAgentBlock?.profiles?.[profileName] ?? {}),
             sdkMode: true,
             model: agentModel.trim(),
             endpoint: smallModel.llm.endpoint,
@@ -1323,10 +1412,10 @@ export async function stepAgentConnection(
   if (agentChoice === "cli-agent") {
     if (availableClis.length === 0) {
       p.log.warn("No agent CLIs detected on PATH.");
-      return current.agent;
+      return currentAgentBlock;
     }
 
-    const initialCli = pickDefaultAgentProfile(detections, current.agent?.default) ?? availableClis[0]?.name;
+    const initialCli = pickDefaultAgentProfile(detections, currentAgentBlock?.default) ?? availableClis[0]?.name;
     const selectedCli = await prompt(() =>
       p.select({
         message: "Which CLI agent?",
@@ -1340,7 +1429,7 @@ export async function stepAgentConnection(
     );
 
     return {
-      ...(current.agent ?? {}),
+      ...(currentAgentBlock ?? {}),
       default: selectedCli,
     };
   }
@@ -1370,7 +1459,7 @@ export async function stepAgentConnection(
     }),
   );
 
-  const customProfile: import("../integrations/agent/config").AgentProfileConfig = {
+  const customProfile = {
     sdkMode: true,
     endpoint: newEndpoint.trim(),
     model: newModel.trim(),
@@ -1378,9 +1467,9 @@ export async function stepAgentConnection(
   };
 
   return {
-    ...(current.agent ?? {}),
+    ...(currentAgentBlock ?? {}),
     profiles: {
-      ...(current.agent?.profiles ?? {}),
+      ...(currentAgentBlock?.profiles ?? {}),
       custom: customProfile,
     },
     default: "custom",
@@ -1420,7 +1509,7 @@ function printCapabilitySummary(smallModelSkipped: boolean, agentConfigured: boo
  */
 export interface AgentSetupResult {
   /** Updated agent config block, or `undefined` if the user has nothing installed and no existing block. */
-  agent?: AgentConfig;
+  agent?: LegacyAgentBlockShape;
   /** Per-profile detection results, available to the UI for display. */
   detections: AgentDetectionResult[];
 }
@@ -1428,13 +1517,14 @@ export interface AgentSetupResult {
 export async function stepAgentSelection(
   current: AkmConfig,
   detections: AgentDetectionResult[],
-): Promise<AgentConfig | undefined> {
+): Promise<LegacyAgentBlockShape | undefined> {
+  const currentAgentBlock = getCurrentAgentBlock(current);
   const available = detections.filter((d) => d.available);
   if (available.length === 0) {
-    return current.agent;
+    return currentAgentBlock;
   }
 
-  const initialValue = pickDefaultAgentProfile(detections, current.agent?.default) ?? available[0]?.name;
+  const initialValue = pickDefaultAgentProfile(detections, currentAgentBlock?.default) ?? available[0]?.name;
   const selectedDefault = await prompt(() =>
     p.select({
       message: "Which detected agent CLI should be the default?",
@@ -1451,17 +1541,17 @@ export async function stepAgentSelection(
   );
 
   if (selectedDefault === "disabled") {
-    if (!current.agent?.profiles && !current.agent?.timeoutMs) {
+    if (!currentAgentBlock?.profiles && !currentAgentBlock?.timeoutMs) {
       return undefined;
     }
     return {
-      ...(current.agent ?? {}),
+      ...(currentAgentBlock ?? {}),
       default: undefined,
     };
   }
 
   return {
-    ...(current.agent ?? {}),
+    ...(currentAgentBlock ?? {}),
     default: selectedDefault,
   };
 }
@@ -1506,18 +1596,19 @@ export async function stepOutputConfig(current: AkmConfig): Promise<OutputConfig
  */
 export function stepAgentCliDetection(
   current: AkmConfig,
-  detectFn: (agent?: AgentConfig) => AgentDetectionResult[] = detectAgentCliProfiles,
+  detectFn: (config?: AkmConfig) => AgentDetectionResult[] = detectAgentCliProfiles,
 ): AgentSetupResult {
-  const detections = detectFn(current.agent);
-  const defaultName = pickDefaultAgentProfile(detections, current.agent?.default);
+  const detections = detectFn(current);
+  const currentAgentBlock = getCurrentAgentBlock(current);
+  const defaultName = pickDefaultAgentProfile(detections, currentAgentBlock?.default);
 
   // No installed agents found and no existing config → leave block absent.
-  if (!defaultName && !current.agent) {
+  if (!defaultName && !currentAgentBlock) {
     return { detections };
   }
 
-  const agent: AgentConfig = {
-    ...(current.agent ?? {}),
+  const agent: LegacyAgentBlockShape = {
+    ...(currentAgentBlock ?? {}),
     ...(defaultName ? { default: defaultName } : {}),
   };
   return { agent, detections };
@@ -1580,11 +1671,10 @@ export function buildSetupSteps(options: {
       label: "LLM Provider",
       async run(ctx) {
         if (!options.online) {
-          ctx.apply({ llm: ctx.config.llm });
           return;
         }
         const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels);
-        ctx.apply({ llm });
+        ctx.apply(applyLegacyLlm(ctx.config, llm));
       },
     },
     {
@@ -1634,8 +1724,11 @@ export function buildSetupSteps(options: {
             "No agent CLIs detected on PATH. Agent commands will be disabled until one is installed and `akm setup` is re-run.",
           );
         }
-        const agent = await stepAgentSelection({ ...ctx.config, agent: result.agent }, result.detections);
-        ctx.apply({ agent });
+        // Inject the detected agent block into a synthetic AkmConfig so
+        // stepAgentSelection can read it via getCurrentAgentBlock().
+        const synthConfig = { ...ctx.config, ...applyLegacyAgent(ctx.config, result.agent) };
+        const agent = await stepAgentSelection(synthConfig, result.detections);
+        ctx.apply(applyLegacyAgent(ctx.config, agent));
       },
     },
     {
@@ -1698,12 +1791,12 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   // Step 1/2: Small model connection (for enrichment features)
   const smallModelResult = await stepSmallModelConnection(ctx.config);
   if (!smallModelResult.skipped) {
-    ctx.apply({ llm: smallModelResult.llm });
+    ctx.apply(applyLegacyLlm(ctx.config, smallModelResult.llm));
   }
 
   // Step 2/2: Agent connection (for agentic features)
   const agentConfig = await stepAgentConnection(ctx.config, smallModelResult);
-  ctx.apply({ agent: agentConfig });
+  ctx.apply(applyLegacyAgent(ctx.config, agentConfig));
 
   const newConfig: AkmConfig = {
     ...ctx.config,
@@ -1713,7 +1806,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   const semanticSearchMode = outcome.semantic;
   const stashDir = newConfig.stashDir ?? current.stashDir ?? getDefaultStashDir();
   const embedding = newConfig.embedding;
-  const llm = newConfig.llm;
+  const llm = getDefaultLlmConfig(newConfig);
   const registries = newConfig.registries;
   const allStashes = newConfig.sources ?? [];
 
@@ -1731,7 +1824,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
       `Semantic search:  ${semanticSearchMode.mode}`,
       `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Stash sources:    ${allStashes.length}`,
-      `Agent default:    ${newConfig.agent?.default ?? "disabled"}`,
+      `Agent default:    ${newConfig.defaults?.agent ?? "disabled"}`,
       `Output:           ${newConfig.output?.format ?? "json"} / ${newConfig.output?.detail ?? "brief"}`,
     ].join("\n"),
     "Configuration Summary",
@@ -1867,11 +1960,11 @@ export async function runSetupWithDefaults(opts: {
   if (!ctx.config.stashDir) ctx.apply({ stashDir });
 
   // Auto-detect agent CLI if not already configured
-  if (!ctx.config.agent) {
+  if (!ctx.config.defaults?.agent) {
     const detected = detectAgentCliProfiles(undefined);
     const defaultProfile = pickDefaultAgentProfile(detected, undefined);
     if (defaultProfile) {
-      ctx.apply({ agent: { default: defaultProfile } });
+      ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
     }
   }
 
@@ -1898,7 +1991,11 @@ export async function runSetupFromConfig(opts: {
   probe?: boolean;
 }): Promise<SetupSummary> {
   // Phase 1: Parse JSON
-  let incoming: Partial<AkmConfig>;
+  type IncomingShape = Partial<AkmConfig> & {
+    llm?: LlmConnectionConfig;
+    agent?: LegacyAgentBlockShape;
+  };
+  let incoming: IncomingShape;
   try {
     incoming = JSON.parse(opts.configJson);
   } catch (e) {
@@ -1906,7 +2003,16 @@ export async function runSetupFromConfig(opts: {
   }
 
   // Phase 2: Validate — only allow safe top-level keys
-  const ALLOWED_KEYS = new Set(["stashDir", "llm", "embedding", "agent", "semanticSearchMode", "output"]);
+  const ALLOWED_KEYS = new Set([
+    "stashDir",
+    "llm",
+    "embedding",
+    "agent",
+    "semanticSearchMode",
+    "output",
+    "profiles",
+    "defaults",
+  ]);
   for (const key of Object.keys(incoming)) {
     if (!ALLOWED_KEYS.has(key)) {
       warn(`[akm setup] Ignoring unknown or restricted config key: "${key}"`);
@@ -1933,11 +2039,20 @@ export async function runSetupFromConfig(opts: {
       ? path.resolve(incoming.stashDir)
       : (current.stashDir ?? getDefaultStashDir());
 
-  const merged: AkmConfig = {
-    ...current,
-    ...incoming,
-    stashDir,
-  };
+  let merged: AkmConfig = { ...current, stashDir };
+  // Apply non-llm/agent keys directly.
+  const mergedRec = merged as unknown as Record<string, unknown>;
+  for (const key of Object.keys(incoming)) {
+    if (key === "llm" || key === "agent") continue;
+    mergedRec[key] = (incoming as Record<string, unknown>)[key];
+  }
+  // Translate legacy llm/agent inputs into the new shape.
+  if (incoming.llm) {
+    merged = { ...merged, ...applyLegacyLlm(merged, incoming.llm) };
+  }
+  if (incoming.agent) {
+    merged = { ...merged, ...applyLegacyAgent(merged, incoming.agent) };
+  }
 
   // Bootstrap directory structure
   let initResult: InitResponse | undefined;
@@ -1946,11 +2061,18 @@ export async function runSetupFromConfig(opts: {
   }
 
   // Optional probe
-  if (opts.probe && merged.llm) {
+  const mergedLlm = getDefaultLlmConfig(merged);
+  if (opts.probe && mergedLlm) {
     try {
-      const caps = await probeLlmCapabilities(merged.llm);
+      const caps = await probeLlmCapabilities(mergedLlm);
       if (caps.reachable) {
-        merged.llm = { ...merged.llm, capabilities: { structuredOutput: caps.structuredOutput ?? false } };
+        merged = {
+          ...merged,
+          ...applyLegacyLlm(merged, {
+            ...mergedLlm,
+            capabilities: { structuredOutput: caps.structuredOutput ?? false },
+          }),
+        };
       }
     } catch {
       // Non-fatal: probe failure is informational only

@@ -30,7 +30,13 @@ describe("detectAgentCliProfiles", () => {
   });
 
   test("includes user-defined profiles via the resolver", () => {
-    const results = detectAgentCliProfiles({ profiles: { rover: { bin: "rover-cli" } } }, whichOnly(["rover-cli"]));
+    const results = detectAgentCliProfiles(
+      {
+        semanticSearchMode: "auto",
+        profiles: { agent: { rover: { platform: "opencode", bin: "rover-cli" } } },
+      },
+      whichOnly(["rover-cli"]),
+    );
     const rover = results.find((r) => r.name === "rover");
     expect(rover?.available).toBe(true);
     expect(rover?.resolvedPath).toContain("rover-cli");
@@ -108,7 +114,8 @@ describe("stepAgentCliDetection (setup wizard)", () => {
     const result = stepAgentCliDetection(
       {
         semanticSearchMode: "auto",
-        agent: { default: "aider", profiles: { aider: { args: ["--no-auto-commits"] } } },
+        defaults: { agent: "aider" },
+        profiles: { agent: { aider: { platform: "opencode", args: ["--no-auto-commits"] } } },
       },
       () => [
         { name: "claude", bin: "claude", available: true },

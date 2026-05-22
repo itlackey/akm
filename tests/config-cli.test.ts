@@ -77,21 +77,31 @@ describe("config CLI helpers", () => {
         '{"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-4o-mini","temperature":0.6,"maxTokens":300}',
       ),
     ).toEqual({
-      llm: {
-        endpoint: "https://api.openai.com/v1/chat/completions",
-        model: "gpt-4o-mini",
-        temperature: 0.6,
-        maxTokens: 300,
+      profiles: {
+        llm: {
+          default: {
+            endpoint: "https://api.openai.com/v1/chat/completions",
+            model: "gpt-4o-mini",
+            temperature: 0.6,
+            maxTokens: 300,
+          },
+        },
       },
+      defaults: { llm: "default" },
     });
   });
 
   test("parseConfigValue accepts llm JSON with endpoint and omitted model", () => {
     expect(parseConfigValue("llm", '{"endpoint":"http://localhost:11434/v1/chat/completions"}')).toEqual({
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "",
+      profiles: {
+        llm: {
+          default: {
+            endpoint: "http://localhost:11434/v1/chat/completions",
+            model: "",
+          },
+        },
       },
+      defaults: { llm: "default" },
     });
   });
 
@@ -120,18 +130,19 @@ describe("config CLI helpers", () => {
     });
   });
 
-  test("setConfigValue sets llm via JSON", () => {
+  test("setConfigValue sets llm via JSON (writes to profiles.llm.default)", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "llm",
       '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3}',
     );
-    expect(updated.llm).toEqual({
+    expect(updated.profiles?.llm?.default).toMatchObject({
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
       temperature: 0.3,
     });
+    expect(updated.defaults?.llm).toBe("default");
   });
 
   test("getConfigValue returns null for unconfigured embedding/llm", () => {
@@ -141,20 +152,22 @@ describe("config CLI helpers", () => {
   });
 
   test("getConfigValue returns configured embedding/llm objects", () => {
+    const llm = {
+      endpoint: "http://localhost:11434/v1/chat/completions",
+      model: "llama3.2",
+      temperature: 0.3,
+    };
     const base: AkmConfig = {
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
       },
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "llama3.2",
-        temperature: 0.3,
-      },
+      profiles: { llm: { default: llm } },
+      defaults: { llm: "default" },
     };
     expect(getConfigValue(base, "embedding")).toEqual(base.embedding);
-    expect(getConfigValue(base, "llm")).toEqual(base.llm);
+    expect(getConfigValue(base, "llm")).toEqual(llm);
   });
 
   test("set/get/unset support install audit config keys", () => {
@@ -190,16 +203,16 @@ describe("config CLI helpers", () => {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
       },
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "llama3.2",
+      profiles: {
+        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } },
       },
+      defaults: { llm: "default" },
     };
     const noEmbed = unsetConfigValue(base, "embedding");
     expect(noEmbed.embedding).toBeUndefined();
 
     const noLlm = unsetConfigValue(base, "llm");
-    expect(noLlm.llm).toBeUndefined();
+    expect(noLlm.profiles?.llm?.default).toBeUndefined();
   });
 
   test("setConfigValue merges output format and detail", () => {

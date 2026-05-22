@@ -297,20 +297,22 @@ describe("agent and output setup steps", () => {
     const { stepLlm } = setupModule;
     q.selects.push("keep");
 
+    const existingLlm = {
+      provider: "lmstudio",
+      endpoint: "http://localhost:7200/v1/chat/completions",
+      model: "qwen/qwen3.5-9b",
+      capabilities: { structuredOutput: true },
+    };
     const current = {
       semanticSearchMode: "auto",
-      llm: {
-        provider: "lmstudio",
-        endpoint: "http://localhost:7200/v1/chat/completions",
-        model: "qwen/qwen3.5-9b",
-        capabilities: { structuredOutput: true },
-      },
+      profiles: { llm: { default: existingLlm } },
+      defaults: { llm: "default" },
     };
 
     const result = await stepLlm(current as never, "http://localhost:11434", ["llama3.2"]);
 
-    expect(result).toEqual(current.llm);
-    expect(result).not.toBe(current.llm);
+    expect(result).toEqual(existingLlm);
+    expect(result).not.toBe(existingLlm);
   });
 
   test("stepOutputConfig prompts for format and detail", async () => {

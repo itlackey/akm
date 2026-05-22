@@ -5,6 +5,7 @@ import {
   getSources,
   type InstallAuditConfig,
   type LlmConnectionConfig,
+  type LlmProfileConfig,
   type OutputConfig,
   type RegistryConfigEntry,
   type SecurityConfig,
@@ -15,8 +16,63 @@ import { assertWritableAllowedForKind } from "../core/write-source";
 
 // ── Merge helpers for LLM/embedding subkey set ───────────────────────────────
 
-function mergeLlmLike(base: LlmConnectionConfig | undefined, patch: Partial<LlmConnectionConfig>): LlmConnectionConfig {
-  return { endpoint: "", model: "", ...(base ?? {}), ...patch };
+/**
+ * Build a Partial<AkmConfig> that places an LLM connection patch into the
+ * `profiles.llm.default` slot and sets `defaults.llm = "default"`. Used by
+ * the legacy `llm.*` config-cli paths so existing scripts that ran
+ * `akm config set llm.endpoint <url>` continue to work after the 0.8.0
+ * migration.
+ */
+function buildDefaultLlmProfilePatch(patch: Partial<LlmConnectionConfig>): Partial<AkmConfig> {
+  const profile: LlmProfileConfig = { endpoint: "", model: "", ...patch };
+  return {
+    profiles: { llm: { default: profile } },
+    defaults: { llm: "default" },
+  };
+}
+
+function getDefaultLlmProfile(config: AkmConfig): LlmConnectionConfig | undefined {
+  const name = config.defaults?.llm;
+  if (!name) return undefined;
+  return config.profiles?.llm?.[name];
+}
+
+function setDefaultLlmProfile(config: AkmConfig, patch: Partial<LlmConnectionConfig>): AkmConfig {
+  const name = config.defaults?.llm ?? "default";
+  const existing = config.profiles?.llm?.[name];
+  const updated: LlmProfileConfig = { endpoint: "", model: "", ...(existing ?? {}), ...patch };
+  return {
+    ...config,
+    profiles: {
+      ...(config.profiles ?? {}),
+      llm: {
+        ...(config.profiles?.llm ?? {}),
+        [name]: updated,
+      },
+    },
+    defaults: {
+      ...(config.defaults ?? {}),
+      llm: name,
+    },
+  };
+}
+
+function removeDefaultLlmField<K extends keyof LlmConnectionConfig>(config: AkmConfig, field: K): AkmConfig {
+  const name = config.defaults?.llm;
+  if (!name) return config;
+  const existing = config.profiles?.llm?.[name];
+  if (!existing) return config;
+  const { [field]: _dropped, ...rest } = existing;
+  return {
+    ...config,
+    profiles: {
+      ...(config.profiles ?? {}),
+      llm: {
+        ...(config.profiles?.llm ?? {}),
+        [name]: rest as LlmProfileConfig,
+      },
+    },
+  };
 }
 
 function mergeLlmLikeEmbedding(
@@ -62,16 +118,21 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return {
         embedding: mergeLlmLikeEmbedding(undefined, { ollamaOptions: { num_ctx: parsePositiveInteger(value, key) } }),
       };
-    case "llm":
-      return { llm: parseLlmConnectionValue(value) };
+    case "llm": {
+      const parsed = parseLlmConnectionValue(value);
+      if (!parsed) {
+        throw new UsageError("Invalid value for llm: expected a JSON object with at least endpoint and model.");
+      }
+      return buildDefaultLlmProfilePatch(parsed);
+    }
     case "llm.endpoint":
-      return { llm: mergeLlmLike(undefined, { endpoint: requireNonEmptyString(value, key) }) };
+      return buildDefaultLlmProfilePatch({ endpoint: requireNonEmptyString(value, key) });
     case "llm.model":
-      return { llm: mergeLlmLike(undefined, { model: requireNonEmptyString(value, key) }) };
+      return buildDefaultLlmProfilePatch({ model: requireNonEmptyString(value, key) });
     case "llm.apiKey":
-      return { llm: mergeLlmLike(undefined, { apiKey: requireNonEmptyString(value, key) }) };
+      return buildDefaultLlmProfilePatch({ apiKey: requireNonEmptyString(value, key) });
     case "llm.contextLength":
-      return { llm: mergeLlmLike(undefined, { contextLength: parsePositiveInteger(value, key) }) };
+      return buildDefaultLlmProfilePatch({ contextLength: parsePositiveInteger(value, key) });
     case "registries":
       return { registries: parseRegistriesValue(value) };
     case "sources":
@@ -123,15 +184,15 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
     case "embedding.ollamaOptions.numCtx":
       return config.embedding?.ollamaOptions?.num_ctx ?? null;
     case "llm":
-      return config.llm ?? null;
+      return getDefaultLlmProfile(config) ?? null;
     case "llm.endpoint":
-      return config.llm?.endpoint ?? null;
+      return getDefaultLlmProfile(config)?.endpoint ?? null;
     case "llm.model":
-      return config.llm?.model ?? null;
+      return getDefaultLlmProfile(config)?.model ?? null;
     case "llm.apiKey":
-      return config.llm?.apiKey ?? null;
+      return getDefaultLlmProfile(config)?.apiKey ?? null;
     case "llm.contextLength":
-      return config.llm?.contextLength ?? null;
+      return getDefaultLlmProfile(config)?.contextLength ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
     case "sources":
@@ -208,13 +269,13 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
         }),
       };
     case "llm.endpoint":
-      return { ...config, llm: mergeLlmLike(config.llm, { endpoint: requireNonEmptyString(rawValue, key) }) };
+      return setDefaultLlmProfile(config, { endpoint: requireNonEmptyString(rawValue, key) });
     case "llm.model":
-      return { ...config, llm: mergeLlmLike(config.llm, { model: requireNonEmptyString(rawValue, key) }) };
+      return setDefaultLlmProfile(config, { model: requireNonEmptyString(rawValue, key) });
     case "llm.apiKey":
-      return { ...config, llm: mergeLlmLike(config.llm, { apiKey: requireNonEmptyString(rawValue, key) }) };
+      return setDefaultLlmProfile(config, { apiKey: requireNonEmptyString(rawValue, key) });
     case "llm.contextLength":
-      return { ...config, llm: mergeLlmLike(config.llm, { contextLength: parsePositiveInteger(rawValue, key) }) };
+      return setDefaultLlmProfile(config, { contextLength: parsePositiveInteger(rawValue, key) });
     case "defaultWriteTarget": {
       const name = requireNonEmptyString(rawValue, key);
       const knownNames = getSources(config)
@@ -260,22 +321,24 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
       const ollamaOptions = Object.keys(restOpts).length > 0 ? restOpts : undefined;
       return { ...config, embedding: { ...config.embedding, ollamaOptions } };
     }
-    case "llm":
-      return { ...config, llm: undefined };
+    case "llm": {
+      // Clear the default LLM profile entry entirely.
+      const name = config.defaults?.llm;
+      if (!name) return config;
+      const { [name]: _dropped, ...rest } = config.profiles?.llm ?? {};
+      return {
+        ...config,
+        profiles: { ...(config.profiles ?? {}), llm: rest },
+      };
+    }
     case "llm.endpoint":
-      return { ...config, llm: mergeLlmLike(config.llm, { endpoint: "" }) };
+      return setDefaultLlmProfile(config, { endpoint: "" });
     case "llm.model":
-      return { ...config, llm: mergeLlmLike(config.llm, { model: "" }) };
-    case "llm.apiKey": {
-      if (!config.llm) return config;
-      const { apiKey: _b, ...restLlm } = config.llm;
-      return { ...config, llm: restLlm as LlmConnectionConfig };
-    }
-    case "llm.contextLength": {
-      if (!config.llm) return config;
-      const { contextLength: _lctx, ...restLlm2 } = config.llm;
-      return { ...config, llm: restLlm2 as LlmConnectionConfig };
-    }
+      return setDefaultLlmProfile(config, { model: "" });
+    case "llm.apiKey":
+      return removeDefaultLlmField(config, "apiKey");
+    case "llm.contextLength":
+      return removeDefaultLlmField(config, "contextLength");
     case "registries":
       return { ...config, registries: undefined };
     case "sources":
@@ -331,7 +394,8 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   };
   if (config.defaultWriteTarget) result.defaultWriteTarget = config.defaultWriteTarget;
   if (config.embedding) result.embedding = config.embedding;
-  if (config.llm) result.llm = config.llm;
+  if (config.profiles) result.profiles = config.profiles;
+  if (config.defaults) result.defaults = config.defaults;
   if (config.security) result.security = config.security;
   return result;
 }

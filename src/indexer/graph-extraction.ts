@@ -10,15 +10,16 @@
  * scorer and no parallel ranking track.
  *
  * Disabling — three preconditions must ALL hold for the pass to run:
- *   1. `akm.llm` must be configured (no provider = no extraction). When
+ *   1. An LLM profile must be configured (no provider = no extraction). When
  *      absent, `resolveIndexPassLLM("graph", config)` returns `undefined`
  *      and the pass short-circuits.
- *   2. `llm.features.graph_extraction !== false` — the locked v1 spec §14
- *      feature-flag layer. Set to `false` to block the pass at the
+ *   2. `profiles.improve.default.processes.graphExtraction.enabled !== false`
+ *      — the feature-gate layer (historically v1 spec §14, since superseded by
+ *      the 0.8.0 profile shape). Set to `false` to block the pass at the
  *      feature-gate layer (no network call may ever issue).
  *   3. `index.graph.llm !== false` — the per-pass opt-out layer (#208).
  *      Set to `false` to skip just this pass while leaving other passes
- *      that share the same `llm` block enabled.
+ *      that share the same LLM profile enabled.
  *   Toggling any one off does NOT delete the existing persisted graph — the
  *   user keeps the boost component they already have, it just stops
  *   refreshing.
@@ -37,7 +38,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { concurrentMap } from "../core/concurrent";
-import { type AkmConfig, resolveBatchSize } from "../core/config";
+import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn, warnVerbose } from "../core/warn";
 import { isProcessEnabled } from "../llm/feature-gate";
@@ -278,7 +279,7 @@ function buildLowQualityWarnings(quality: GraphQualityTelemetry, telemetry: Grap
 }
 
 export function getGraphExtractionIncludeTypes(config: AkmConfig): string[] {
-  const configured = config.index?.graph?.graphExtractionIncludeTypes;
+  const configured = getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes;
   if (!configured || configured.length === 0) return [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES];
 
   const out: string[] = [];
@@ -391,12 +392,12 @@ function reuseGraphNode(
  *
  * Three preconditions — ALL must hold for the pass to run:
  *
- *   1. **Provider configured** — `akm.llm` must be present. Without a
+ *   1. **Provider configured** — an LLM profile must be selectable. Without a
  *      configured provider, `resolveIndexPassLLM("graph", config)` returns
  *      `undefined` (the pass cannot run because there is no model to call).
- *   2. **Feature gate** — `llm.features.graph_extraction` (defaults to
- *      `true`). When `false`, no network call may issue regardless of
- *      per-pass settings. This is the locked spec-§14 gate.
+ *   2. **Feature gate** — `profiles.improve.default.processes.graphExtraction.enabled`
+ *      (defaults to `true`). When `false`, no network call may issue regardless
+ *      of per-pass settings.
  *   3. **Per-pass gate** — `index.graph.llm` (defaults to `true`). When
  *      `false`, the indexer simply skips this pass for the current run.
  *
@@ -424,9 +425,9 @@ export async function runGraphExtractionPass(
   }) => void,
   options: GraphExtractionPassOptions = {},
 ): Promise<GraphExtractionResult> {
-  // Gate 1 — v2-aware feature gate (§14). Uses isProcessEnabled so that both
-  // v1 (llm.features.graph_extraction) and v2 (features.index.graph_extraction)
-  // configs are honoured. Defaults to enabled when neither key is present.
+  // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
+  // (profiles.improve.default.processes.graphExtraction.enabled). Defaults to
+  // enabled when the key is absent.
   if (!isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
@@ -434,7 +435,9 @@ export async function runGraphExtractionPass(
   const llmConfig = resolveIndexPassLLM("graph", config);
   if (!llmConfig) {
     const reason =
-      config.index?.graph?.llm === false ? "index.graph.llm is false" : "no akm.llm provider is configured";
+      getIndexPassConfig(config.index, "graph")?.llm === false
+        ? "index.graph.llm is false"
+        : "no default LLM profile is configured";
     warnVerbose(`graph extraction: skipped because ${reason}.`);
     return { ...EMPTY_RESULT };
   }
@@ -492,7 +495,10 @@ export async function runGraphExtractionPass(
   // Resolve the effective batch size. Falls back to
   // DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE (4) when unset, and clamps against
   // `llm.contextLength` if the model's context window is configured.
-  const batchSize = resolveBatchSize(config.index?.graph?.graphExtractionBatchSize, llmConfig.contextLength);
+  const batchSize = resolveBatchSize(
+    getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
+    llmConfig.contextLength,
+  );
   const extractionRunId = crypto.randomUUID();
   const extractorId = getGraphExtractorId({ model: llmConfig.model, batchSize, includeTypes });
   const cacheVariant = extractorId;

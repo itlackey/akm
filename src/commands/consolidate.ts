@@ -6,7 +6,7 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
-import { loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -280,21 +280,21 @@ const CHARS_PER_TOKEN = 3;
 const PROMPT_OVERHEAD_TOKENS = 2_000;
 
 /**
- * Default effective token budget used when `config.llm.contextLength` is not
- * set. This is intentionally conservative (4 096) rather than being set to
- * the model's actual context window, because:
+ * Default effective token budget used when the default LLM profile's
+ * `contextLength` is not set. This is intentionally conservative (4 096)
+ * rather than being set to the model's actual context window, because:
  *
- *   - When the agent path is used (config.agent), the agent CLI (e.g. opencode)
+ *   - When the agent path is used, the agent CLI (e.g. opencode)
  *     prepends its own large system prompt + conversation history before
  *     forwarding to the model. That overhead easily consumes 30K+ tokens on
  *     a model with a 16K context window, leaving very little room for
  *     chunk content.
- *   - When the HTTP path is used (config.llm), only the akm system prompt and
- *     user prompt are sent, so the budget can be set to the model's actual
- *     context length via config.llm.contextLength.
+ *   - When the HTTP path is used (an LLM profile is selected), only the akm
+ *     system prompt and user prompt are sent, so the budget can be set to the
+ *     model's actual context length via profiles.llm[defaults.llm].contextLength.
  *
- * Set config.llm.contextLength in your config file to the model's actual
- * context window to allow larger chunks on the HTTP path.
+ * Set profiles.llm[defaults.llm].contextLength in your config file to the
+ * model's actual context window to allow larger chunks on the HTTP path.
  */
 export const DEFAULT_CONTEXT_LENGTH_TOKENS = 4_096;
 
@@ -744,20 +744,21 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // Consolidation always uses the HTTP LLM client directly — never the agent
   // CLI. The agent CLI is for interactive agent sessions (reflect, propose);
   // structured JSON generation works better and faster via HTTP.
-  const isHttpPath = !!config.llm;
+  const llmConfig = getDefaultLlmConfig(config);
+  const isHttpPath = !!llmConfig;
 
   // Chunk sizing: derive a safe chunk size from the configured model context
-  // window (config.llm.contextLength) so that the full prompt (system prompt +
-  // chunk user prompt) never exceeds the model's n_ctx limit.  When no context
-  // length is configured we fall back to DEFAULT_CONTEXT_LENGTH_TOKENS (8 000)
-  // which is conservative enough for most 8K–16K local models.
+  // window so that the full prompt (system prompt + chunk user prompt) never
+  // exceeds the model's n_ctx limit.  When no context length is configured we
+  // fall back to DEFAULT_CONTEXT_LENGTH_TOKENS (8 000) which is conservative
+  // enough for most 8K–16K local models.
   //
   // bodyTruncation caps the body excerpt included per memory in the prompt.
   // Reducing it further than 500 chars degrades consolidation quality, so we
   // keep it fixed and let computeSafeChunkSize vary the number of memories
   // per chunk instead.
   const bodyTruncation = 500;
-  const modelContextLength = config.llm?.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS;
+  const modelContextLength = llmConfig?.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS;
   const chunkSize = computeSafeChunkSize(modelContextLength, bodyTruncation);
 
   // -- Phase A: plan generation -----------------------------------------------
@@ -810,7 +811,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       "memory_consolidation",
       config,
       async () => {
-        if (!config.llm) return { ok: false as const, error: "No LLM configured for consolidation" };
+        if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
         try {
           // responseSchema lift (PR 1, asset-writers-investigation §5): pass
           // the consolidate plan schema so providers with
@@ -818,7 +819,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           // ignore the option fall through to the existing
           // `parseEmbeddedJsonResponse` path on the response side.
           const content = await chatCompletion(
-            config.llm,
+            llmConfig,
             [
               { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
               { role: "user", content: userPrompt },
@@ -1668,13 +1669,14 @@ async function generateMergedContent(
     secBody,
   ].join("\n");
 
+  const llmConfig = getDefaultLlmConfig(config);
   const result = await tryLlmFeature(
     "memory_consolidation",
     config,
     async () => {
-      if (!config.llm) return { ok: false as const, error: "No LLM configured for consolidation" };
+      if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
       try {
-        const content = await chatCompletion(config.llm, [{ role: "user", content: prompt }]);
+        const content = await chatCompletion(llmConfig, [{ role: "user", content: prompt }]);
         return { ok: true as const, content };
       } catch (e) {
         return { ok: false as const, error: String(e) };

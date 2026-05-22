@@ -1,161 +1,81 @@
 /**
- * Per-feature LLM gates (v1 spec §14).
+ * Per-feature LLM gates.
  *
  * Every bounded in-tree LLM call site in akm is addressed by exactly one
- * feature key under `llm.features.*`. This module is the single seam call
- * sites use to ask "should I run?" and "if I run and fail, what do I return?"
+ * feature key. This module is the single seam call sites use to ask
+ * "should I run?" and "if I run and fail, what do I return?".
  *
  * The seam is intentionally tiny:
  *
  *   - `isLlmFeatureEnabled(config, feature)` — pure predicate, no side
- *     effects, no I/O. Returns `true` when the feature flag is explicitly
- *     `true`, or when the feature has a non-false default (currently
- *     `graph_extraction`).
+ *     effects, no I/O.
  *   - `tryLlmFeature(feature, config, fn, fallback, opts?)` — single-call
  *     wrapper that runs `fn()` only when the gate is open, enforces a hard
  *     timeout (default 600s — overridable per call via `opts.timeoutMs`),
- *     and returns `fallback` on disablement, throw, or timeout. The wrapper
- *     is referentially transparent for any given (gate-state, fn-result)
- *     pair: no module state is mutated.
+ *     and returns `fallback` on disablement, throw, or timeout.
  *
- * Statelessness invariant (v1 spec §14.4): nothing in this module holds
- * state across calls. There are no caches, no module-level singletons, no
- * persistent connections. The architecture seam test
- * (`tests/architecture/llm-stateless-seam.test.ts`) does not currently
- * inspect this file but the same rule applies — keep all exports as pure
- * functions.
+ * The 0.8.0 config shape replaced the legacy `llm.features.*` /
+ * `features.<section>.*` trees with the unified
+ * `profiles.improve.default.processes.*`, `index.*`, and `search.*` shape.
+ * The legacy `LlmFeatureKey` strings (`memory_inference`, etc.) are kept here
+ * as a stable external API so call sites do not need to know where each gate
+ * lives in the config tree — that mapping is private to this module.
  */
 
-import type { AkmConfig, LlmFeatureFlags } from "../core/config";
+import type { AkmConfig } from "../core/config";
 
-/** Locked v1 feature keys (mirrors `LOCKED_LLM_FEATURE_KEYS` in config.ts). */
-export type LlmFeatureKey = keyof LlmFeatureFlags;
+/** Locked v1 feature keys, kept for backward-compat at the call-site API level. */
+export type LlmFeatureKey =
+  | "memory_consolidation"
+  | "feedback_distillation"
+  | "memory_inference"
+  | "graph_extraction"
+  | "metadata_enhance"
+  | "curate_rerank"
+  | "lesson_quality_gate"
+  | "proposal_quality_gate"
+  | "memory_contradiction_detection";
 
 /**
- * Pure predicate: is the named feature gate explicitly enabled in `config`?
- *
- * Returns `false` only when the key is explicitly set to `false`, or when
- * the key is absent and its default is `false`.
+ * For each feature key, return the effective enabled state by reading the
+ * new 0.8.0 config shape. Defaults match the legacy `LlmFeatureFlags` docstrings.
  */
-const FEATURE_DEFAULTS: Partial<Record<LlmFeatureKey, boolean>> = {
-  memory_inference: true,
-  graph_extraction: true,
+// Defaults below mirror the legacy LlmFeatureFlags docstrings so existing
+// behaviour is preserved when a config is silent on a flag.
+const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
+  // Legacy default: false → memory_consolidation only runs when explicitly enabled
+  // (either via the user's improve profile or the built-in `default` profile).
+  memory_consolidation: (cfg) => cfg.profiles?.improve?.default?.processes?.consolidate?.enabled ?? false,
+  // Legacy default: false
+  feedback_distillation: (cfg) => cfg.profiles?.improve?.default?.processes?.feedbackDistillation?.enabled ?? false,
+  // Legacy default: true
+  memory_inference: (cfg) => cfg.profiles?.improve?.default?.processes?.memoryInference?.enabled ?? true,
+  // Legacy default: true
+  graph_extraction: (cfg) => cfg.profiles?.improve?.default?.processes?.graphExtraction?.enabled ?? true,
+  // Legacy default: false
+  metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
+  // Legacy default: false
+  curate_rerank: (cfg) => cfg.search?.curateRerank?.enabled ?? false,
+  // Legacy default: false
+  lesson_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.qualityGate?.enabled ?? false,
+  // Legacy default: false
+  proposal_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.reflect?.qualityGate?.enabled ?? false,
+  // Legacy default: false
+  memory_contradiction_detection: (cfg) =>
+    cfg.profiles?.improve?.default?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
 };
 
 /**
- * Reverse map: which v2 section owns each v1 feature key. Used by
- * `isLlmFeatureEnabled` to honour the v2 `features.<section>.<process>` gate
- * even when callers use the legacy `LlmFeatureKey` API.
+ * Pure predicate: is the named feature gate enabled in `config`?
  *
- * Mirrors the forward map in `isProcessEnabled` (line ~111-122). Keep in sync.
+ * Reads from the unified 0.8.0 config shape. Defaults follow the legacy
+ * `LlmFeatureFlags` docstring defaults.
  */
-const FEATURE_KEY_TO_SECTION: Partial<Record<LlmFeatureKey, string>> = {
-  memory_inference: "index",
-  graph_extraction: "index",
-  feedback_distillation: "improve",
-  curate_rerank: "search",
-};
-
 export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmFeatureKey): boolean {
   if (!config) return false;
-
-  // v2 first: if a `features.<section>.<process>` entry exists for this key,
-  // honour it. Without this, configs that set `features.improve.feedback_distillation: true`
-  // (the canonical v2 way to enable distill) get ignored by callers that use
-  // the legacy `tryLlmFeature(key, ...)` API.
-  const section = FEATURE_KEY_TO_SECTION[feature];
-  if (section) {
-    const featuresSection = (config as Record<string, unknown> & AkmConfig).features as
-      | Record<string, unknown>
-      | undefined;
-    const sectionValue = featuresSection?.[section];
-    if (sectionValue !== undefined) {
-      // Section present — `isProcessEnabled` is the authoritative reader.
-      return isProcessEnabled(section, feature, config);
-    }
-  }
-
-  // v1 fallback: section absent → read legacy `llm.features.<key>`.
-  const configured = config.llm?.features?.[feature];
-  if (configured === true) return true;
-  if (configured === false) return false;
-  return FEATURE_DEFAULTS[feature] === true;
-}
-
-/**
- * Feature processes that default to `true` when absent from the v1
- * `llm.features` block. These mirror the original `=== false` guard semantics:
- * blocking only on explicit `false`, not on absence.
- */
-const V1_DEFAULT_ENABLED: ReadonlySet<LlmFeatureKey> = new Set<LlmFeatureKey>(["memory_inference", "graph_extraction"]);
-
-/**
- * Read the v1 `llm.features` gate for a known feature key, honouring the
- * per-key default: `true` for keys in {@link V1_DEFAULT_ENABLED}, `false` for
- * all others (opt-in).
- */
-function isV1FeatureEnabled(config: AkmConfig, key: LlmFeatureKey): boolean {
-  const configured = config.llm?.features?.[key];
-  if (configured === true) return true;
-  if (configured === false) return false;
-  // Key absent — return the per-feature default.
-  return V1_DEFAULT_ENABLED.has(key);
-}
-
-/**
- * v2 replacement for `isLlmFeatureEnabled`. Reads from the unified
- * `config.features[section][processName]` tree introduced in v2 config.
- *
- * Falls back to v1 `llm.features.*` when the specific `section` is absent
- * from the v2 features tree, enabling transparent backward compatibility with
- * v1 configs that still use `llm.features.*`.
- *
- * Bug fix: the fallback triggers on a missing *section*, not just a missing
- * top-level `features` object — so a partial v2 config (e.g. only
- * `features.improve` is present) still falls back to v1 for unregistered
- * sections like `features.search`.
- */
-export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
-  if (!config) return false;
-
-  // Check v2 features tree for this specific section.
-  const featuresSection = (config as Record<string, unknown> & AkmConfig).features as
-    | Record<string, unknown>
-    | undefined;
-  const sectionValue = featuresSection?.[section];
-  if (sectionValue !== undefined) {
-    // Section exists in the v2 tree — resolve through the v2 object.
-    if (typeof sectionValue === "object" && sectionValue !== null && !Array.isArray(sectionValue)) {
-      const entry = (sectionValue as Record<string, unknown>)[processName];
-      // A process entry may be a plain boolean or an object with an `enabled` field.
-      if (typeof entry === "boolean") return entry;
-      if (typeof entry === "object" && entry !== null) {
-        const enabled = (entry as Record<string, unknown>).enabled;
-        if (typeof enabled === "boolean") return enabled;
-        return true; // object present but no `enabled` key → treat as enabled
-      }
-      // Process not present in the section → disabled by default in v2.
-      return false;
-    }
-    return false;
-  }
-
-  // Section absent from v2 tree — fall back to v1 llm.features gate for known v1 keys.
-  const v1KeyMap: Record<string, Record<string, LlmFeatureKey>> = {
-    index: {
-      memory_inference: "memory_inference",
-      graph_extraction: "graph_extraction",
-    },
-    improve: {
-      feedback_distillation: "feedback_distillation",
-    },
-    search: {
-      curate_rerank: "curate_rerank",
-    },
-  };
-  const v1Key = v1KeyMap[section]?.[processName];
-  if (v1Key) return isV1FeatureEnabled(config, v1Key);
-  return false;
+  const resolver = FEATURE_LOCATION[feature];
+  if (!resolver) return false;
+  return resolver(config);
 }
 
 /** Optional knobs for `tryLlmFeature`. */
@@ -169,9 +89,7 @@ export interface TryLlmFeatureOptions {
   timeoutMs?: number;
   /**
    * Optional warning sink. Receives a structured `{ feature, reason, error }`
-   * record on every fallback. Default: the wrapper is silent. Call sites
-   * that want to surface a structured `warnings` entry (per spec §14.2)
-   * should pass a sink and forward into their command result.
+   * record on every fallback. Default: the wrapper is silent.
    */
   onFallback?: (event: TryLlmFeatureFallbackEvent) => void;
 }
@@ -188,12 +106,7 @@ export interface TryLlmFeatureFallbackEvent {
 }
 
 /**
- * Default hard timeout for every bounded in-tree LLM call. Set to 10 minutes
- * (600 000 ms) — generous enough for a slow local model on a single-threaded
- * server. Override per-call via `TryLlmFeatureOptions.timeoutMs`.
- *
- * Do NOT reduce this default without a documented user-facing reason — local
- * model users need the headroom.
+ * Default hard timeout for every bounded in-tree LLM call.
  */
 const DEFAULT_TIMEOUT_MS = 600_000;
 
@@ -201,19 +114,6 @@ const DEFAULT_TIMEOUT_MS = 600_000;
  * Run `fn()` only if `isLlmFeatureEnabled(config, feature)` is `true`. On
  * disablement, throw, or timeout, return `fallback` (or — if it is a
  * thunk — the value produced by calling it).
- *
- * The fallback may be a value or a synchronous/async function returning a
- * value. The thunk form lets call sites encode "run the deterministic
- * pipeline" without paying for it in the success path:
- *
- * ```ts
- * const ranked = await tryLlmFeature(
- *   "curate_rerank",
- *   config,
- *   () => llmRerank(candidates),
- *   () => deterministicRerank(candidates),
- * );
- * ```
  */
 export async function tryLlmFeature<T>(
   feature: LlmFeatureKey,
@@ -242,6 +142,56 @@ export async function tryLlmFeature<T>(
     opts?.onFallback?.({ feature, reason, error });
     return resolveFallback();
   }
+}
+
+/**
+ * Section-agnostic process gate. After the 0.8.0 migration, the canonical
+ * accessor is the `FEATURE_LOCATION` map above; this helper exists so older
+ * call sites that knew the (section, processName) pair don't all need to
+ * relearn the new mapping.
+ *
+ * For unknown (section, processName) pairs the result is `false`.
+ */
+export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
+  if (!config) return false;
+  // index.metadataEnhance / index.stalenessDetection are first-class new-shape entries.
+  if (section === "index") {
+    if (processName === "metadata_enhance" || processName === "metadataEnhance") {
+      return config.index?.metadataEnhance?.enabled ?? true;
+    }
+    if (processName === "staleness_detection" || processName === "stalenessDetection") {
+      return config.index?.stalenessDetection?.enabled ?? false;
+    }
+    if (processName === "memory_inference" || processName === "memoryInference") {
+      return isLlmFeatureEnabled(config, "memory_inference");
+    }
+    if (processName === "graph_extraction" || processName === "graphExtraction") {
+      return isLlmFeatureEnabled(config, "graph_extraction");
+    }
+  }
+  if (section === "search" && (processName === "curate_rerank" || processName === "curateRerank")) {
+    return config.search?.curateRerank?.enabled ?? false;
+  }
+  if (section === "improve") {
+    const processes = config.profiles?.improve?.default?.processes as
+      | Record<string, { enabled?: boolean } | undefined>
+      | undefined;
+    const entry = processes?.[processName];
+    if (entry && typeof entry.enabled === "boolean") return entry.enabled;
+    // Fallback to default-enabled state for known processes.
+    switch (processName) {
+      case "reflect":
+      case "distill":
+      case "consolidate":
+      case "memoryInference":
+      case "graphExtraction":
+      case "feedbackDistillation":
+        return true;
+      default:
+        return false;
+    }
+  }
+  return false;
 }
 
 /** Specific error class so call sites and the wrapper can tell timeouts apart from generic throws. */

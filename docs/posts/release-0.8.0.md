@@ -202,14 +202,16 @@ To opt in to LLM mode for reflect:
         "apiKey": "${OPENAI_API_KEY}",
         "supportsJsonSchema": true
       }
+    },
+    "improve": {
+      "default": {
+        "processes": {
+          "reflect": { "mode": "llm", "profile": "openai-mini" }
+        }
+      }
     }
   },
-  "defaults": { "llm": "openai-mini" },
-  "features": {
-    "improve": {
-      "reflect": { "mode": "llm", "profile": "openai-mini" }
-    }
-  }
+  "defaults": { "llm": "openai-mini" }
 }
 ```
 

@@ -1424,11 +1424,11 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         config: {
           semanticSearchMode: "off",
-          llm: {
-            endpoint: "http://localhost/chat/completions",
-            model: "test",
-            features: { memory_consolidation: true },
+          profiles: {
+            llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
+            improve: { default: { processes: { consolidate: { enabled: true } } } },
           },
+          defaults: { llm: "default" },
         },
         ensureIndexFn: async () => false,
         reindexFn: async () => ({
@@ -1447,11 +1447,11 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         config: {
           semanticSearchMode: "off",
-          llm: {
-            endpoint: "http://localhost/chat/completions",
-            model: "test",
-            features: { memory_consolidation: true },
+          profiles: {
+            llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
+            improve: { default: { processes: { consolidate: { enabled: true } } } },
           },
+          defaults: { llm: "default" },
         },
         ensureIndexFn: async () => false,
         reindexFn: async () => ({
@@ -1490,11 +1490,11 @@ describe("akm improve memory cleanup", () => {
       stashDir,
       config: {
         semanticSearchMode: "off",
-        llm: {
-          endpoint: "http://localhost/chat/completions",
-          model: "test",
-          features: { memory_consolidation: true },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
+          improve: { default: { processes: { consolidate: { enabled: true } } } },
         },
+        defaults: { llm: "default" },
       },
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
@@ -1797,14 +1797,15 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     const result = await detectAndWriteContradictions(
       stashDir,
       {
+        semanticSearchMode: "auto",
         stashDir,
         sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
         defaultWriteTarget: "stash",
-        llm: {
-          endpoint: "http://localhost/v1/chat",
-          model: "test",
-          features: { memory_contradiction_detection: true },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+          improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
         },
+        defaults: { llm: "default" },
       } as Parameters<typeof detectAndWriteContradictions>[1],
       // Inject a fake chat that always returns "contradicts: true".
       async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict about VPN requirement." }),
@@ -1838,14 +1839,15 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     const result = await detectAndWriteContradictions(
       stashDir,
       {
+        semanticSearchMode: "auto",
         stashDir,
         sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
         defaultWriteTarget: "stash",
-        llm: {
-          endpoint: "http://localhost/v1/chat",
-          model: "test",
-          features: { memory_contradiction_detection: true },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+          improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
         },
+        defaults: { llm: "default" },
       } as Parameters<typeof detectAndWriteContradictions>[1],
       async () => JSON.stringify({ contradicts: false, reason: "These are complementary security measures." }),
     );
@@ -1965,11 +1967,15 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
       stashDir,
       config: {
         semanticSearchMode: "off",
-        llm: {
-          endpoint: "http://localhost/chat/completions",
-          model: "test",
-          features: { memory_consolidation: true, graph_extraction: true },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
+          improve: {
+            default: {
+              processes: { consolidate: { enabled: true }, graphExtraction: { enabled: true } },
+            },
+          },
         },
+        defaults: { llm: "default" },
       },
       ensureIndexFn: async () => false,
       reindexFn,
@@ -2019,11 +2025,8 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
       stashDir,
       config: {
         semanticSearchMode: "off",
-        llm: {
-          endpoint: "http://localhost/chat/completions",
-          model: "test",
-          features: {},
-        },
+        profiles: { llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } } },
+        defaults: { llm: "default" },
       },
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => {

@@ -85,14 +85,16 @@ const SAMPLE_LLM = {
 function configWithLlm(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    llm: { ...SAMPLE_LLM },
+    profiles: { llm: { default: { ...SAMPLE_LLM } } },
+    defaults: { llm: "default" },
   };
 }
 
 function configOptedOut(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    llm: { ...SAMPLE_LLM },
+    profiles: { llm: { default: { ...SAMPLE_LLM } } },
+    defaults: { llm: "default" },
     index: { memory: { llm: false } },
   };
 }
@@ -221,7 +223,11 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     compressor = () => sampleDraft();
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { memoryInference: { enabled: true } } } },
+      },
+      defaults: { llm: "default" },
       // index.memory.llm omitted → defaults to enabled.
     };
     const result = await runMemoryInferencePass(cfg, sources());
@@ -238,7 +244,11 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { memory_inference: false } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { memoryInference: { enabled: false } } } },
+      },
+      defaults: { llm: "default" },
       index: { memory: { llm: true } },
     };
     const result = await runMemoryInferencePass(cfg, sources());
@@ -258,7 +268,11 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { memoryInference: { enabled: true } } } },
+      },
+      defaults: { llm: "default" },
       index: { memory: { llm: false } },
     };
     const result = await runMemoryInferencePass(cfg, sources());

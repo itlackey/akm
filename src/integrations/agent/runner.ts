@@ -1,4 +1,4 @@
-import type { AkmConfig, LlmConnectionConfig, ProcessEntry } from "../../core/config";
+import type { AkmConfig, ImproveProcessConfig, LlmConnectionConfig } from "../../core/config";
 import { ConfigError } from "../../core/errors";
 import type { AgentProfile } from "./profiles";
 
@@ -9,13 +9,8 @@ export type RunnerSpec =
   | { kind: "agent"; profile: AgentProfile; timeoutMs?: number }
   | { kind: "sdk"; profile: AgentProfile; timeoutMs?: number };
 
-function normalizeEntry(raw: ProcessEntry | boolean): ProcessEntry & { enabled: boolean } {
-  if (typeof raw === "boolean") return { enabled: raw };
-  return { enabled: raw.enabled ?? true, ...raw };
-}
-
 function resolveEffectiveMode(
-  entry: ProcessEntry,
+  entry: ImproveProcessConfig,
   profileName: string | undefined,
   config: AkmConfig,
 ): "llm" | "agent" | "sdk" {
@@ -34,14 +29,10 @@ function resolveEffectiveMode(
   if (config.defaults?.llm) return "llm";
   if (config.defaults?.agent) return "agent";
 
-  // Legacy fallback: check old config.llm
-  if (config.llm) return "llm";
-  if (config.agent) return "agent";
-
   return "llm";
 }
 
-function resolveProfileName(entry: ProcessEntry, mode: "llm" | "agent" | "sdk", config: AkmConfig): string {
+function resolveProfileName(entry: ImproveProcessConfig, mode: "llm" | "agent" | "sdk", config: AkmConfig): string {
   if (entry.profile) return entry.profile;
   if (mode === "llm") {
     const defaultName = config.defaults?.llm;
@@ -49,7 +40,7 @@ function resolveProfileName(entry: ProcessEntry, mode: "llm" | "agent" | "sdk", 
     throw new ConfigError(
       `No LLM profile configured. Set defaults.llm in config or specify profile in the process entry.`,
       "LLM_NOT_CONFIGURED",
-      'Run `akm setup` or `akm config set profiles.llm.default \'{"endpoint":"...","model":"..."}\'` to configure an LLM profile.',
+      "Run `akm setup` or define a profile under `profiles.llm` and set `defaults.llm`.",
     );
   }
   const defaultName = config.defaults?.agent;
@@ -57,21 +48,13 @@ function resolveProfileName(entry: ProcessEntry, mode: "llm" | "agent" | "sdk", 
   throw new ConfigError(
     `No agent profile configured. Set defaults.agent in config or specify profile in the process entry.`,
     "INVALID_CONFIG_FILE",
-    "Run `akm setup` to configure an agent profile, or add one under profiles.agent in config.",
+    "Run `akm setup` to configure an agent profile, or add one under `profiles.agent`.",
   );
 }
 
 function buildLlmRunnerSpec(profileName: string, timeoutMs: number | null | undefined, config: AkmConfig): RunnerSpec {
   const profile = config.profiles?.llm?.[profileName];
   if (!profile) {
-    // Fall back to legacy config.llm
-    if (config.llm) {
-      return {
-        kind: "llm",
-        connection: config.llm,
-        ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
-      };
-    }
     throw new ConfigError(
       `LLM profile "${profileName}" not found in profiles.llm.`,
       "LLM_NOT_CONFIGURED",
@@ -93,18 +76,6 @@ function buildAgentRunnerSpec(
 ): RunnerSpec {
   const profileConfig = config.profiles?.agent?.[profileName];
   if (!profileConfig) {
-    // Fall back to legacy agent config
-    if (config.agent) {
-      const { resolveProfileFromConfig } = require("./config") as typeof import("./config");
-      const legacyProfile = resolveProfileFromConfig(profileName, config.agent);
-      if (legacyProfile) {
-        return {
-          kind,
-          profile: legacyProfile,
-          ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
-        };
-      }
-    }
     throw new ConfigError(
       `Agent profile "${profileName}" not found in profiles.agent.`,
       "INVALID_CONFIG_FILE",
@@ -145,23 +116,12 @@ function buildAgentRunnerSpec(
 }
 
 /**
- * Narrow predicate matching the `ConfigError` thrown by `resolveProcessRunner`
- * when a feature is explicitly disabled (`enabled: false`). All ConfigErrors
- * from this module share the `INVALID_CONFIG_FILE` code, so we additionally
- * pattern-match the message to avoid swallowing unrelated misconfiguration
- * errors (missing profile, mode/pool mismatch, etc.).
- */
-function isProcessDisabledError(e: unknown): boolean {
-  return e instanceof ConfigError && /is disabled in config/.test(e.message);
-}
-
-/**
  * Resolve the runner used for "validation" passes on the `improve` section
  * (Advantage D3 / Phase 4B — third model tier).
  *
  * Look-up order:
- *   1. `features.improve.validation` ProcessEntry (preferred — lets users wire
- *      a lower-cost classifier model for staleness detection, confidence
+ *   1. `profiles.improve.default.processes.validation` (preferred — lets users
+ *      wire a lower-cost classifier model for staleness detection, confidence
  *      scoring, and lesson classification).
  *   2. `defaults.llm` as a final fallback so callers always get a usable
  *      runner when any LLM is configured.
@@ -170,18 +130,12 @@ function isProcessDisabledError(e: unknown): boolean {
  * validation pass rather than throwing).
  */
 export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
-  if (isProcessEnabled("improve", "validation", config)) {
+  const validation = config.profiles?.improve?.default?.processes?.validation;
+  if (validation && validation.enabled !== false && (validation.profile || validation.mode)) {
     try {
-      return resolveProcessRunner("improve", "validation", config);
-    } catch (e) {
-      // Only swallow the expected "process is disabled" ConfigError so we can
-      // fall through to defaults.llm. Any other error (mode/pool mismatch,
-      // missing profile, malformed entry, etc.) is a real misconfiguration —
-      // rethrow it so the caller sees the diagnostic instead of silently
-      // degrading to a different runner.
-      if (!isProcessDisabledError(e)) {
-        throw e;
-      }
+      const spec = resolveImproveProcessRunnerFromProfile(validation, config);
+      if (spec) return spec;
+    } catch {
       // Fall through to defaults.llm below.
     }
   }
@@ -194,40 +148,7 @@ export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
       return null;
     }
   }
-
-  // Legacy fallback to top-level config.llm (matches buildLlmRunnerSpec).
-  if (config.llm) {
-    return { kind: "llm", connection: config.llm };
-  }
-
   return null;
-}
-
-export function resolveProcessRunner(section: ProcessSection, processName: string, config: AkmConfig): RunnerSpec {
-  const sectionMap = (
-    config.features as Record<string, Record<string, ProcessEntry | boolean> | undefined> | undefined
-  )?.[section];
-  const raw = sectionMap?.[processName];
-
-  // If not configured in features, use defaults
-  const entry: ProcessEntry = raw === undefined ? {} : raw === true ? {} : raw === false ? { enabled: false } : raw;
-
-  const normalized = normalizeEntry(entry);
-
-  if (!normalized.enabled) {
-    throw new ConfigError(
-      `Process "${section}.${processName}" is disabled in config.`,
-      "INVALID_CONFIG_FILE",
-      `Set features.${section}.${processName} to true or an object with enabled: true to enable it.`,
-    );
-  }
-
-  const mode = resolveEffectiveMode(normalized, normalized.profile, config);
-  const profileName = resolveProfileName(normalized, mode, config);
-  const timeoutMs = typeof normalized.timeoutMs === "number" ? normalized.timeoutMs : undefined;
-
-  if (mode === "llm") return buildLlmRunnerSpec(profileName, timeoutMs, config);
-  return buildAgentRunnerSpec(mode, profileName, timeoutMs, config);
 }
 
 export function resolveRunner(mode: "llm" | "agent" | "sdk", profileName: string, config: AkmConfig): RunnerSpec {
@@ -235,25 +156,39 @@ export function resolveRunner(mode: "llm" | "agent" | "sdk", profileName: string
   return buildAgentRunnerSpec(mode, profileName, undefined, config);
 }
 
-export function isProcessEnabled(section: ProcessSection, processName: string, config: AkmConfig): boolean {
-  const sectionMap = (
-    config.features as Record<string, Record<string, ProcessEntry | boolean> | undefined> | undefined
-  )?.[section];
-  const raw = sectionMap?.[processName];
-  if (raw === undefined) return false;
-  if (typeof raw === "boolean") return raw;
-  return raw.enabled !== false;
+/**
+ * Resolve a RunnerSpec from an improve-profile process entry. Returns `null`
+ * when the entry is absent or provides no overrides — callers should fall
+ * back to the default per-process runner resolution path.
+ */
+export function resolveImproveProcessRunnerFromProfile(
+  processConfig: ImproveProcessConfig | undefined,
+  config: AkmConfig,
+): RunnerSpec | null {
+  if (!processConfig) return null;
+  const { mode: explicitMode, profile, timeoutMs } = processConfig;
+  if (!explicitMode && !profile) return null;
+  const mode = explicitMode ?? resolveEffectiveMode(processConfig, profile, config);
+  const profileName = profile ?? resolveProfileName(processConfig, mode, config);
+  if (mode === "llm") {
+    return buildLlmRunnerSpec(profileName, timeoutMs, config);
+  }
+  if (mode === "agent" || mode === "sdk") {
+    return buildAgentRunnerSpec(mode, profileName, timeoutMs, config);
+  }
+  return null;
 }
 
-export function getProcessOptions<T = Record<string, unknown>>(
-  section: ProcessSection,
-  processName: string,
-  config: AkmConfig,
-): T | undefined {
-  const sectionMap = (
-    config.features as Record<string, Record<string, ProcessEntry | boolean> | undefined> | undefined
-  )?.[section];
-  const raw = sectionMap?.[processName];
-  if (!raw || typeof raw === "boolean") return undefined;
-  return raw.options as T | undefined;
+/**
+ * Convenience accessor for callers that previously read
+ * `getProcessOptions("index", "staleness_detection", config).thresholdDays`.
+ * After the 0.8.0 migration, those values live on first-class config keys —
+ * see `config.index?.stalenessDetection?.thresholdDays` etc.
+ */
+export function getStalenessDetectionThresholdDays(config: AkmConfig): number | undefined {
+  return config.index?.stalenessDetection?.thresholdDays;
 }
+
+// Re-export `isProcessEnabled` from feature-gate.ts so callers that previously
+// imported it from runner.ts continue to work.
+export { isProcessEnabled } from "../../llm/feature-gate";

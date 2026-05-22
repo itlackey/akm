@@ -1,38 +1,36 @@
 /**
  * Per-pass LLM config resolution for `akm index`.
  *
- * Locked v1 contract (#208):
- * - There is exactly one provider/model configuration: `akm.llm`.
- * - Every LLM-using pass inside `akm index` defaults to that block.
+ * Locked contract:
+ * - There is exactly one provider/model configuration per profile —
+ *   `profiles.llm.<name>` — and exactly one default profile name (`defaults.llm`).
+ * - Every LLM-using pass inside `akm index` defaults to the default profile.
  * - A pass can be opted out individually with `index.<passName>.llm = false`.
  * - Any attempt to supply provider/model fields under `index.<passName>` is
- *   rejected at config-load time by `parseIndexConfig` in
- *   {@link ../core/config.ts} (`ConfigError("INVALID_CONFIG_FILE")`).
+ *   rejected at config-load time by `parseIndexConfig`.
  *
  * Passes plug in by calling {@link resolveIndexPassLLM} with their pass
- * name (e.g. `"memory"` for #201's memory-inference pass, `"graph"` for
- * #207's graph-extraction pass). They do not read `config.llm` directly.
- * This keeps the config surface small and the wiring uniform.
+ * name (e.g. `"memory"` for the memory-inference pass, `"graph"` for the
+ * graph-extraction pass). They do not read connection fields directly.
  */
 
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, IndexPassConfig, LlmConnectionConfig } from "../core/config";
+import { getDefaultLlmConfig, getIndexPassConfig } from "../core/config";
 
 /**
  * Resolve the {@link LlmConnectionConfig} a single index pass should use, or
  * `undefined` when the pass should run without an LLM.
  *
  * Returns `undefined` if any of:
- * - No top-level `akm.llm` block is configured.
+ * - No default LLM profile is configured.
  * - The pass is explicitly opted out (`index.<passName>.llm === false`).
- *
- * Otherwise returns the shared `akm.llm` config. There is no per-pass
- * provider override; that decision is locked by §9 of the v1 spec.
  */
 export function resolveIndexPassLLM(passName: string, config: AkmConfig): LlmConnectionConfig | undefined {
-  if (!config.llm) return undefined;
+  const llm = getDefaultLlmConfig(config);
+  if (!llm) return undefined;
 
-  const passConfig = config.index?.[passName];
+  const passConfig: IndexPassConfig | undefined = getIndexPassConfig(config.index, passName);
   if (passConfig?.llm === false) return undefined;
 
-  return config.llm;
+  return llm;
 }

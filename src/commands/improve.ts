@@ -4,7 +4,7 @@ import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import { daysToMs, isAssetType, isProcessAlive } from "../core/common";
 import type { AkmConfig } from "../core/config";
-import { loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -52,14 +52,16 @@ import {
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
+import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
+import { resolveImproveProfile, shouldSkipRef } from "./improve-profiles";
 import { akmLint } from "./lint/index";
-import { type AkmReflectResult, akmReflect, REFLECT_ALLOWED_TYPES } from "./reflect";
+import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
 import { checkDeadUrls, type DeadUrl } from "./url-checker";
 
@@ -78,6 +80,8 @@ export interface AkmImproveOptions {
   /** Wall-clock budget for the entire improve run in milliseconds. Defaults to 2 hours. */
   timeoutMs?: number;
   limit?: number;
+  /** Named improve profile from profiles.improve or built-in profile names (default, quick, thorough, memory-focus). */
+  profile?: string;
   consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
   /** Number of eligible memory assets above which consolidation is forced even if the memory_consolidation feature flag is not set. Defaults to 100. */
   memoryVolumeConsolidationThreshold?: number;
@@ -560,6 +564,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const distillFn = options.distillFn ?? akmDistill;
   const ensureIndexFn = options.ensureIndexFn ?? ensureIndex;
   const reindexFn = options.reindexFn ?? akmIndex;
+  // Resolve the improve profile for this run. Profile drives type filtering,
+  // process gating, and default autoAccept/limit values.
+  const _earlyConfig = options.config ?? loadConfig();
+  const improveProfile = resolveImproveProfile(options.profile, _earlyConfig);
+  // Apply profile defaults — CLI flags take precedence over profile defaults.
+  // Rebuild options with effective values so all downstream stage functions
+  // automatically pick up the profile-driven defaults.
+  options = {
+    ...options,
+    autoAccept: options.autoAccept ?? improveProfile.autoAccept,
+    limit: options.limit ?? improveProfile.limit,
+  };
   let primaryStashDir: string | undefined;
   try {
     primaryStashDir = resolveSourceEntries(options.stashDir)[0]?.path;
@@ -794,6 +810,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       budgetMs,
       eventsCtx,
       initialCleanupWarnings: preEnsureCleanupWarnings,
+      improveProfile,
     });
 
     // D6: pre-load all proposal_rejected events from the last 30 days once,
@@ -825,6 +842,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       startMs,
       budgetMs,
       eventsCtx,
+      improveProfile,
     });
 
     const {
@@ -852,6 +870,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       eventsCtx,
       // O-1 (#364): propagate wall-clock budget signal to post-loop maintenance.
       budgetSignal: budgetAbortController.signal,
+      improveProfile,
     });
 
     const finalActions =
@@ -1080,6 +1099,8 @@ async function runImprovePreparationStage(args: {
   eventsCtx?: EventsContext;
   /** Warnings accumulated in akmImprove() prior to this stage (e.g. from the hoisted ensureIndex call). */
   initialCleanupWarnings?: string[];
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile: import("./improve-profiles").ImproveProfileConfig;
 }): Promise<ImprovePreparationResult> {
   const {
     scope,
@@ -1092,6 +1113,7 @@ async function runImprovePreparationStage(args: {
     budgetMs,
     eventsCtx,
     initialCleanupWarnings,
+    improveProfile,
   } = args;
 
   const actions: ImproveActionResult[] = [];
@@ -1206,7 +1228,7 @@ async function runImprovePreparationStage(args: {
   // Schema repair pass: attempt to fix validation failures via LLM before skipping.
   if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
     const baseConfigForRepair = options.config ?? loadConfig();
-    const llmCfg = baseConfigForRepair.llm;
+    const llmCfg = getDefaultLlmConfig(baseConfigForRepair);
     if (llmCfg) {
       const result = await runSchemaRepairPass(validationFailures, {
         startMs,
@@ -1273,46 +1295,37 @@ async function runImprovePreparationStage(args: {
   // filesystem scan, giving identical tier logic without touching the disk.
   // Built-in per-type reflect cooldown defaults. Higher-churn types get shorter
   // windows; stable reference material gets longer ones.
-  // Overridable via config.improve.reflectCooldownByType (user config wins) and
-  // at run-time via --reflect-cooldown-days (CLI flag wins over all).
+  // Overridable via profiles.improve[name].processes.reflect.cooldownByType,
+  // or globally via --reflect-cooldown-days (CLI flag, highest priority).
   const REFLECT_COOLDOWN_BUILTIN: Readonly<Record<string, number>> = {
-    memory: 2, // re-reflect every 48 h — context changes rapidly
-    lesson: 7, // re-reflect weekly — distilled but needs freshness checks
-    workflow: 30, // living docs, monthly cadence
+    memory: 2,
+    lesson: 7,
+    workflow: 30,
     skill: 30,
     agent: 30,
     command: 30,
-    knowledge: 30, // reference docs — stable
+    knowledge: 30,
     script: 30,
-    wiki: 30, // external snapshots
+    wiki: 30,
     task: 60,
   };
-  const REFLECT_COOLDOWN_FALLBACK = 30; // unknown/future types
+  const REFLECT_COOLDOWN_FALLBACK = 30;
 
-  // Merge: built-in < config.improve.reflectCooldownByType (v1) or
-  // features.improve.reflect.options.cooldown (v2) — user config wins per-type.
-  const cfg = loadConfig();
-  const v2Cooldown =
-    cfg.features?.improve?.reflect &&
-    typeof cfg.features.improve.reflect === "object" &&
-    cfg.features.improve.reflect !== null &&
-    !Array.isArray(cfg.features.improve.reflect)
-      ? ((cfg.features.improve.reflect as { options?: { cooldown?: Record<string, number> } }).options?.cooldown ?? {})
-      : {};
-  const configByType: Record<string, number> = { ...cfg.improve?.reflectCooldownByType, ...v2Cooldown };
+  const profileCooldownByType: Record<string, number> = Object.fromEntries(
+    Object.entries(improveProfile.processes?.reflect?.cooldownByType ?? {}).filter(
+      (entry): entry is [string, number] => entry[1] !== undefined,
+    ),
+  );
   const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
     ...REFLECT_COOLDOWN_BUILTIN,
-    ...configByType,
+    ...profileCooldownByType,
   };
 
-  // Returns the effective reflect cooldown for a given ref, respecting:
-  //   1. --reflect-cooldown-days (CLI, per-run global override — highest priority)
-  //   2. config.improve.reflectCooldownByType (persisted per-type overrides)
-  //   3. Built-in type defaults above
+  const profileCooldownDays = improveProfile.processes?.reflect?.cooldownDays;
   const reflectCooldownForRef = (ref: string): number => {
     if (options.reflectCooldownDays !== undefined) return options.reflectCooldownDays;
     const type = ref.split(":")[0] ?? "";
-    return REFLECT_COOLDOWN_BY_TYPE[type] ?? REFLECT_COOLDOWN_FALLBACK;
+    return REFLECT_COOLDOWN_BY_TYPE[type] ?? profileCooldownDays ?? REFLECT_COOLDOWN_FALLBACK;
   };
 
   const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 1;
@@ -1721,6 +1734,8 @@ async function runImproveLoopStage(args: {
   startMs: number;
   budgetMs: number;
   eventsCtx?: EventsContext;
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile: import("./improve-profiles").ImproveProfileConfig;
 }): Promise<ImproveLoopResult> {
   const {
     scope,
@@ -1739,6 +1754,7 @@ async function runImproveLoopStage(args: {
     startMs,
     budgetMs,
     eventsCtx,
+    improveProfile,
   } = args;
 
   // O-1 (#364): compute remaining budget at call time so each sub-call
@@ -1873,19 +1889,14 @@ async function runImproveLoopStage(args: {
       // path is also a no-op for them — we just avoid unnecessary agent spawns.
       // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-        // Type guard: skip reflect for unsupported types (script, vault, task, etc.).
-        // These types are rejected by akmReflect with a parse_error — filter them
-        // here to avoid wasting a reflect slot. Mirror of REFLECT_ALLOWED_TYPES in
-        // reflect.ts (the authoritative source of truth, exported for this check).
-        // Name guard: skip wiki:<name>/raw/* — raw ingested snapshots across all
-        // wikis are source material and must never be altered by reflect.
-        // "raw" must be the first segment after the wiki name, not anywhere in the path.
-        const isRawWiki = parsedPlannedRef.type === "wiki" && parsedPlannedRef.name.split("/")[1] === "raw";
-        if (!REFLECT_ALLOWED_TYPES.has(parsedPlannedRef.type) || isRawWiki) {
+        // Type guard: skip reflect for unsupported types (script, vault, task, etc.)
+        // and raw wiki directories, driven by the active improve profile.
+        const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
+        if (reflectSkip.skip) {
           actions.push({
             ref: planned.ref,
             mode: "reflect-skipped",
-            result: { ok: true, reason: isRawWiki ? "raw-wiki" : "unsupported-type" },
+            result: { ok: true, reason: reflectSkip.reason },
           });
         } else {
           // O-5 / #378: only inject reflect-originator errors into the reflect call.
@@ -1895,6 +1906,14 @@ async function runImproveLoopStage(args: {
           // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
           // bounded by the wall-clock deadline rather than the default per-profile timeout.
           const reflectBudgetMs = remainingBudgetMs();
+          // Wire profile.processes.reflect.{mode, profile, timeoutMs} into the reflect
+          // dispatch when present. Falls back to akmReflect's own config-based resolution
+          // (profiles.improve.<name>.processes.reflect → defaults.llm) when the profile
+          // does not specify.
+          const reflectProfileRunner = resolveImproveProcessRunnerFromProfile(
+            improveProfile.processes?.reflect,
+            options.config ?? loadConfig(),
+          );
           const reflectCallArgs = {
             ref: planned.ref,
             task: options.task,
@@ -1903,6 +1922,7 @@ async function runImproveLoopStage(args: {
             agentProcess: options.agentProcess ?? "reflect",
             eventSource: "improve" as const,
             ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
+            ...(reflectProfileRunner ? { runner: reflectProfileRunner } : {}),
           };
           // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
           // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
@@ -2029,7 +2049,7 @@ async function runImproveLoopStage(args: {
               }
             }
           }
-        } // end else (REFLECT_ALLOWED_TYPES check)
+        } // end else (reflect type/profile check)
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
         // B6: .derived refs skip reflect; record synthetic skip action.
         actions.push({
@@ -2049,6 +2069,21 @@ async function runImproveLoopStage(args: {
       // isDistillOnly refs: no reflect action emitted — proceed directly to distill path below.
       const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
       const explicitRefScope = scope.mode === "ref";
+      // Profile gate: apply the full type-filter / raw-wiki / disabled rules to
+      // distill so callers who configure `profile.processes.distill.allowedTypes`
+      // or land on raw-wiki refs get a recorded skip action instead of silently
+      // proceeding.
+      const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
+      if (distillSkip.skip) {
+        actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: distillSkip.reason },
+        });
+        completedCount++;
+        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+        continue;
+      }
       // See `isDistillCandidateRef` — excludes `lesson:*` (and anything else in
       // DISTILL_REFUSED_INPUT_TYPES) so distill never gets queued for an input
       // it will refuse.
@@ -2222,6 +2257,8 @@ async function runImprovePostLoopStage(args: {
   eventsCtx?: EventsContext;
   /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
   budgetSignal?: AbortSignal;
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
 }): Promise<ImprovePostLoopResult> {
   const {
     scope,
@@ -2235,25 +2272,38 @@ async function runImprovePostLoopStage(args: {
     reindexFn,
     eventsCtx,
     budgetSignal,
+    improveProfile,
   } = args;
   const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
 
   const baseConfig = options.config ?? loadConfig();
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
-  const hasLlm = !!(baseConfig.llm || baseConfig.agent);
+  const hasLlm = !!(baseConfig.defaults?.llm || baseConfig.defaults?.agent);
   const volumeTriggered =
     typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
+  // When volume triggers a consolidation pass, force-enable the consolidate
+  // process on the default improve profile so the gate accepts the run even
+  // if the user's config disabled it. We synthesise a new profile override
+  // rather than mutating connection settings.
   const consolidationConfig: AkmConfig = volumeTriggered
     ? {
         ...baseConfig,
-        ...(baseConfig.llm
-          ? {
-              llm: {
-                ...baseConfig.llm,
-                features: { ...baseConfig.llm.features, memory_consolidation: true },
+        profiles: {
+          ...(baseConfig.profiles ?? {}),
+          improve: {
+            ...(baseConfig.profiles?.improve ?? {}),
+            default: {
+              ...(baseConfig.profiles?.improve?.default ?? {}),
+              processes: {
+                ...(baseConfig.profiles?.improve?.default?.processes ?? {}),
+                consolidate: {
+                  ...(baseConfig.profiles?.improve?.default?.processes?.consolidate ?? {}),
+                  enabled: true,
+                },
               },
-            }
-          : {}),
+            },
+          },
+        },
       }
     : baseConfig;
 
@@ -2271,6 +2321,9 @@ async function runImprovePostLoopStage(args: {
     lastConsolidation?.ts &&
     Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
 
+  // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
+  const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
+
   let consolidation: ConsolidateResult = {
     schemaVersion: 1,
     ok: true,
@@ -2286,13 +2339,20 @@ async function runImprovePostLoopStage(args: {
     warnings: [],
     durationMs: 0,
   };
-  if (!consolidationOnCooldown) {
+  if (consolidateDisabledByProfile) {
+    info("[improve] consolidation skipped (disabled by improve profile)");
+  } else if (!consolidationOnCooldown) {
     consolidation = await akmConsolidate({
       ...options.consolidateOptions,
       config: consolidationConfig,
       stashDir: options.stashDir,
       autoTriggered: volumeTriggered,
-      autoAccept: 90,
+      // Honor profile.autoAccept (already merged into options.autoAccept at the
+      // top of akmImprove). Falls back to 90 when no profile/flag value is set.
+      // options.consolidateOptions.autoAccept (if explicitly provided by caller)
+      // still wins because the spread above runs first — we override only when
+      // the caller didn't supply a value.
+      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept ?? 90,
     });
     if (consolidation.processed > 0) {
       appendEvent(
@@ -2322,7 +2382,7 @@ async function runImprovePostLoopStage(args: {
   }
 
   // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
-  const consolidationRan = !consolidationOnCooldown && consolidation.processed > 0;
+  const consolidationRan = !consolidateDisabledByProfile && !consolidationOnCooldown && consolidation.processed > 0;
 
   info("[improve] post-loop maintenance starting");
   const maintenanceResult = await runImproveMaintenancePasses({
@@ -2336,6 +2396,7 @@ async function runImprovePostLoopStage(args: {
     // O-1 (#364): forward the budget signal to memory inference + graph extraction.
     budgetSignal,
     eventsCtx,
+    improveProfile,
   });
 
   let deadUrls: DeadUrl[] | undefined;
@@ -2391,6 +2452,8 @@ async function runImproveMaintenancePasses(args: {
   /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
   budgetSignal?: AbortSignal;
   eventsCtx?: EventsContext;
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
 }): Promise<ImproveMaintenanceResult> {
   const {
     options,
@@ -2401,6 +2464,7 @@ async function runImproveMaintenancePasses(args: {
     consolidationRan,
     budgetSignal,
     eventsCtx,
+    improveProfile,
   } = args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
@@ -2440,7 +2504,10 @@ async function runImproveMaintenancePasses(args: {
     // own `collectPendingMemories` + `isPendingMemory` predicate find
     // candidates from the filesystem-of-truth. The this-run set is still
     // logged as a hint but no longer used as a filter.
-    {
+    const memoryInferenceDisabledByProfile = improveProfile?.processes?.memoryInference?.enabled === false;
+    if (memoryInferenceDisabledByProfile) {
+      info("[improve] memory inference skipped (disabled by improve profile)");
+    } else {
       const hintRefs = memoryRefsForInference.size;
       info(
         hintRefs > 0
@@ -2479,6 +2546,7 @@ async function runImproveMaintenancePasses(args: {
     }
 
     const graphEnabled = isProcessEnabled("index", "graph_extraction", config);
+    const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
     // Build the set of refs actually touched this run.
     const touchedRefs = new Set<string>();
     for (const r of args.actionableRefs) touchedRefs.add(r.ref);
@@ -2492,7 +2560,9 @@ async function runImproveMaintenancePasses(args: {
     // empty result without scanning. The pass is still invoked so that the
     // action is recorded, the D9 post-consolidation reindex still fires, and
     // mock injection (graphExtractionFn) used by tests stays exercised.
-    if (sources.length > 0 && graphEnabled) {
+    if (graphExtractionDisabledByProfile) {
+      info("[improve] graph extraction skipped (disabled by improve profile)");
+    } else if (sources.length > 0 && graphEnabled) {
       info("[improve] graph extraction starting");
       const extractionStart = Date.now();
       try {

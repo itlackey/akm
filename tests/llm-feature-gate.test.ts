@@ -17,16 +17,62 @@ import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../src/core/config";
 import { isLlmFeatureEnabled, LlmFeatureTimeoutError, tryLlmFeature } from "../src/llm/feature-gate";
 
-const baseLlm: AkmConfig["llm"] = {
-  endpoint: "http://example.invalid/v1/chat",
-  model: "test-model",
-};
+type FeatureKey =
+  | "memory_consolidation"
+  | "feedback_distillation"
+  | "memory_inference"
+  | "graph_extraction"
+  | "metadata_enhance"
+  | "curate_rerank"
+  | "lesson_quality_gate"
+  | "proposal_quality_gate"
+  | "memory_contradiction_detection";
 
-function configWith(features: Record<string, boolean>): AkmConfig {
-  return {
-    stashDir: "/tmp/stash",
-    llm: { ...baseLlm, features },
-  } as unknown as AkmConfig;
+/**
+ * Helper: build an AkmConfig where the named features are toggled on/off
+ * via the 0.8.0 config shape locations.
+ */
+function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
+  const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp/stash" };
+  const processes: Record<
+    string,
+    { enabled?: boolean; qualityGate?: { enabled?: boolean }; contradictionDetection?: { enabled?: boolean } }
+  > = {};
+  for (const [key, val] of Object.entries(features) as Array<[FeatureKey, boolean]>) {
+    switch (key) {
+      case "memory_consolidation":
+        processes.consolidate = { ...(processes.consolidate ?? {}), enabled: val };
+        break;
+      case "feedback_distillation":
+        processes.feedbackDistillation = { enabled: val };
+        break;
+      case "memory_inference":
+        processes.memoryInference = { enabled: val };
+        break;
+      case "graph_extraction":
+        processes.graphExtraction = { enabled: val };
+        break;
+      case "metadata_enhance":
+        cfg.index = { ...(cfg.index ?? {}), metadataEnhance: { enabled: val } };
+        break;
+      case "curate_rerank":
+        cfg.search = { ...(cfg.search ?? {}), curateRerank: { enabled: val } };
+        break;
+      case "lesson_quality_gate":
+        processes.distill = { ...(processes.distill ?? {}), qualityGate: { enabled: val } };
+        break;
+      case "proposal_quality_gate":
+        processes.reflect = { ...(processes.reflect ?? {}), qualityGate: { enabled: val } };
+        break;
+      case "memory_contradiction_detection":
+        processes.consolidate = { ...(processes.consolidate ?? {}), contradictionDetection: { enabled: val } };
+        break;
+    }
+  }
+  if (Object.keys(processes).length > 0) {
+    cfg.profiles = { improve: { default: { processes: processes as Record<string, never> } } };
+  }
+  return cfg;
 }
 
 describe("isLlmFeatureEnabled", () => {
@@ -35,10 +81,13 @@ describe("isLlmFeatureEnabled", () => {
     expect(isLlmFeatureEnabled({} as AkmConfig, "curate_rerank")).toBe(false);
   });
 
-  test("returns feature defaults when the features block is missing", () => {
-    const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
-    expect(isLlmFeatureEnabled(cfg, "feedback_distillation")).toBe(false);
+  test("returns feature defaults when the process block is missing", () => {
+    const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp" };
+    // 0.8.0 preserves legacy defaults: only memory_inference + graph_extraction default to true.
+    expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
+    expect(isLlmFeatureEnabled(cfg, "feedback_distillation")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
   });
 
   test("returns true when graph_extraction key is absent (default-true)", () => {
@@ -190,8 +239,8 @@ const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "graph_extraction"]);
 
 describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)", () => {
   for (const key of STABLE_FEATURE_KEYS) {
-    test(`${key}: defaults correctly when features block is missing`, () => {
-      const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
+    test(`${key}: defaults correctly when no profile is configured`, () => {
+      const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp" };
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
       expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });

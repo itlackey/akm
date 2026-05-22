@@ -43,10 +43,15 @@ curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
 # Initialize and configure in one step (no prompts)
 akm setup --config '{
-  "llm": {
-    "endpoint": "http://localhost:11434/v1/chat/completions",
-    "model": "llama3.2"
-  }
+  "profiles": {
+    "llm": {
+      "default": {
+        "endpoint": "http://localhost:11434/v1/chat/completions",
+        "model": "llama3.2"
+      }
+    }
+  },
+  "defaults": { "llm": "default" }
 }'
 
 akm index
@@ -106,29 +111,33 @@ akm setup --yes
 akm setup --yes --dir /path/to/stash
 
 # Pre-configure with known settings (no prompts)
-akm setup --config '{"llm":{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}}'
+akm setup --config '{"profiles":{"llm":{"default":{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}}},"defaults":{"llm":"default"}}'
 
 # Pre-configure LLM + agent connection in one step
 akm setup --config '{
-  "llm": {
-    "endpoint": "https://api.openai.com/v1/chat/completions",
-    "model": "gpt-4o-mini",
-    "apiKey": "'$OPENAI_API_KEY'"
-  },
-  "agent": {
-    "default": "opencode",
-    "profiles": {
-      "opencode": { "sdkMode": true, "model": "gpt-4o" }
+  "profiles": {
+    "llm": {
+      "default": {
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4o-mini",
+        "apiKey": "'$OPENAI_API_KEY'"
+      }
+    },
+    "agent": {
+      "opencode": { "platform": "opencode-sdk", "model": "gpt-4o" }
     }
-  }
+  },
+  "defaults": { "llm": "default", "agent": "opencode" }
 }'
 
 # Probe the configured endpoint after writing (verifies connectivity)
-akm setup --config '{"llm":{...}}' --probe
+akm setup --config '{"profiles":{"llm":{"default":{...}}}}' --probe
 ```
 
 The `--config` flag accepts a JSON object with any of these top-level keys:
-`stashDir`, `llm`, `embedding`, `agent`, `semanticSearchMode`, `output`.
+`stashDir`, `profiles`, `defaults`, `embedding`, `semanticSearchMode`, `output`.
+(Agent and LLM profiles live under `profiles.agent.*` and `profiles.llm.*`;
+the selected defaults live under `defaults.agent` / `defaults.llm`.)
 It **merges** with the existing config rather than replacing it, so
 subsequent runs are safe to use in idempotent scripts.
 
@@ -136,7 +145,7 @@ Verify:
 
 ```sh
 akm config get stashDir
-akm config get llm
+akm config get profiles.llm.default
 ```
 
 ## 4. Configure Semantic Search (Local Embeddings)

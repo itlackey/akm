@@ -284,7 +284,7 @@ function runAgentProbe(): HealthCheckResult {
     };
   }
 
-  if (!config.agent) {
+  if (!config.profiles?.agent && !config.defaults?.agent) {
     return {
       name: "agent-profile",
       kind: "deterministic",
@@ -296,7 +296,7 @@ function runAgentProbe(): HealthCheckResult {
 
   let profile: AgentProfile;
   try {
-    profile = requireAgentProfile(config.agent);
+    profile = requireAgentProfile(config);
   } catch (error) {
     return {
       name: "agent-profile",
@@ -319,7 +319,7 @@ function runAgentProbe(): HealthCheckResult {
     };
   }
 
-  const detections = detectAgentCliProfiles(config.agent);
+  const detections = detectAgentCliProfiles(config);
   const detection = detections.find((entry) => entry.name === profile.name);
   if (!detection?.available) {
     return {

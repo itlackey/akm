@@ -219,7 +219,8 @@ function withGraphDb<T>(name: string, fn: (db: import("bun:sqlite").Database) =>
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    llm: { ...SAMPLE_LLM },
+    profiles: { llm: { default: { ...SAMPLE_LLM } } },
+    defaults: { llm: "default" },
     ...overrides,
   };
 }
@@ -332,7 +333,11 @@ describe("runGraphExtractionPass — disabled paths", () => {
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { graphExtraction: { enabled: false } } } },
+      },
+      defaults: { llm: "default" },
       index: { graph: { llm: true } },
     };
     const result = await withGraphDb("feature-gated-off", (db) =>
@@ -368,7 +373,11 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
     extractor = () => ({ entities: ["E"], relations: [] });
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { graph_extraction: true } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { graphExtraction: { enabled: true } } } },
+      },
+      defaults: { llm: "default" },
     };
     const result = await withGraphDb("both-gates-allow", (db) => runGraphExtractionPass(cfg, sources(), undefined, db));
     expect(result.written).toBe(true);
@@ -407,7 +416,11 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
       runGraphExtractionPass(
         {
           semanticSearchMode: "auto",
-          llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
+          profiles: {
+            llm: { default: { ...SAMPLE_LLM } },
+            improve: { default: { processes: { graphExtraction: { enabled: false } } } },
+          },
+          defaults: { llm: "default" },
         },
         sources(),
         undefined,
@@ -420,7 +433,11 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
       runGraphExtractionPass(
         {
           semanticSearchMode: "auto",
-          llm: { ...SAMPLE_LLM, features: { graph_extraction: true } },
+          profiles: {
+            llm: { default: { ...SAMPLE_LLM } },
+            improve: { default: { processes: { graphExtraction: { enabled: true } } } },
+          },
+          defaults: { llm: "default" },
           index: { graph: { llm: false } },
         },
         sources(),

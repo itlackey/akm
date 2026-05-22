@@ -19,8 +19,8 @@
  *
  * # LLM Feature Gate
  *
- * The pass is gated behind `memory_contradiction_detection` in
- * `config.llm.features`. When the gate is disabled or no LLM is configured,
+ * The pass is gated behind `profiles.improve.default.processes.consolidate.contradictionDetection.enabled`.
+ * When the gate is disabled or no LLM is configured,
  * the pass is a no-op and `analyzeMemoryCleanup` proceeds with only manually
  * annotated edges.
  *
@@ -37,6 +37,7 @@ import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../
 import { tryLlmFeature } from "../llm/feature-gate";
 import { assembleAsset } from "./asset-serialize";
 import type { AkmConfig, LlmConnectionConfig } from "./config";
+import { getDefaultLlmConfig } from "./config";
 import { parseFrontmatter } from "./frontmatter";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -210,7 +211,8 @@ export async function detectAndWriteContradictions(
     warnings: [],
   };
 
-  if (!config.llm) return result;
+  const contradictionLlm = getDefaultLlmConfig(config);
+  if (!contradictionLlm) return result;
 
   // Collect derived memories grouped by parent.
   const memoriesDir = path.join(stashDir, "memories");
@@ -281,8 +283,7 @@ export async function detectAndWriteContradictions(
           "memory_contradiction_detection",
           config,
           async () => {
-            if (!config.llm) return null;
-            return chat(config.llm, [
+            return chat(contradictionLlm, [
               { role: "system", content: "Return only valid JSON. No prose." },
               { role: "user", content: prompt },
             ]);

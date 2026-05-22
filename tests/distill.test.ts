@@ -51,38 +51,44 @@ function makeStashDir(): string {
 }
 
 function configAbsentFeature(stashDir: string): AkmConfig {
-  // No `features` block at all → gate defaults to false per spec §14.
+  // No process binding → feedback_distillation defaults to true per 0.8.0.
   return {
+    semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    llm: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+    profiles: {
+      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+    },
+    defaults: { llm: "default" },
   } as AkmConfig;
 }
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
+    semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    llm: {
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "test-model",
-      features: { feedback_distillation: true },
+    profiles: {
+      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+      improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
     },
+    defaults: { llm: "default" },
   } as AkmConfig;
 }
 
 function configDisabled(stashDir: string): AkmConfig {
   return {
+    semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    llm: {
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "test-model",
-      features: { feedback_distillation: false },
+    profiles: {
+      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+      improve: { default: { processes: { feedbackDistillation: { enabled: false } } } },
     },
+    defaults: { llm: "default" },
   } as AkmConfig;
 }
 
@@ -393,7 +399,7 @@ describe("akmDistill — LLM error paths", () => {
       defaultWriteTarget: "stash",
       // Intentionally no `llm` block — gate cannot read `features`, defaults
       // to false per spec §14.
-    } as AkmConfig;
+    } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
       config,
@@ -1019,12 +1025,16 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
     // The gate is OPEN (feedback_distillation: true) but the inner LLM call
     // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
     // with reason "error" → outcome resolves to `llm_failed`.
-    const config = {
+    // Gate is open (feedbackDistillation enabled) but no llm profile is wired.
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      llm: { features: { feedback_distillation: true } },
-    } as unknown as AkmConfig;
+      profiles: {
+        improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
+      },
+    };
     const result = await akmDistill({
       ref: "skill:deploy",
       config,
@@ -1122,8 +1132,9 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
         stashDir: stash,
         sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
         defaultWriteTarget: "stash",
-        llm: { endpoint: "http://localhost/v1/chat", model: "test" },
-      } as import("../src/core/config").AkmConfig,
+        profiles: { llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } } },
+        defaults: { llm: "default" },
+      } as unknown as import("../src/core/config").AkmConfig,
       lookupFn: async (ref: string) => {
         if (ref === "memory:auth-guide") return memPath1;
         if (ref.includes("auth-guide")) return existingKnowledgePath;
@@ -1175,8 +1186,9 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
         stashDir: stash,
         sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
         defaultWriteTarget: "stash",
-        llm: { endpoint: "http://localhost/v1/chat", model: "test" },
-      } as import("../src/core/config").AkmConfig,
+        profiles: { llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } } },
+        defaults: { llm: "default" },
+      } as unknown as import("../src/core/config").AkmConfig,
       lookupFn: async (ref: string) => {
         if (ref === "memory:auth-guide2") return memPath2;
         if (ref.includes("auth-guide2")) return existingKnowledgePath;

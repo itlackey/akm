@@ -1,6 +1,6 @@
 /**
- * Unified AI call adapter: prefers `config.agent` (agent CLI shell-out),
- * falls back to `config.llm` (HTTP chat-completions).
+ * Unified AI call adapter: prefers the configured agent profile (agent CLI
+ * shell-out), falls back to the default LLM profile (HTTP chat-completions).
  *
  * NOT for use by background indexer passes — those call `chatCompletion`
  * directly to avoid the agent-CLI overhead and to stay on the HTTP path that
@@ -8,6 +8,7 @@
  */
 
 import type { AkmConfig } from "../core/config";
+import { getDefaultLlmConfig } from "../core/config";
 import { warn } from "../core/warn";
 import { resolveAgentProfile, runAgent } from "../integrations/agent";
 import { chatCompletion } from "./client";
@@ -25,28 +26,19 @@ export interface CallAiOptions {
 export type CallAiResult = { ok: true; content: string; path: "agent-cli" | "llm-http" } | { ok: false; error: string };
 
 /**
- * Unified AI call: prefers `config.agent` (agent CLI), falls back to
- * `config.llm` (HTTP). When neither is configured, returns a structured
+ * Unified AI call: prefers the default agent profile, falls back to the
+ * default LLM profile. When neither is configured, returns a structured
  * error pointing the user at `akm setup`.
- *
- * NOT for use by background indexer passes — those call `chatCompletion`
- * directly.
  */
 export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOptions = {}): Promise<CallAiResult> {
-  if (config.agent) {
+  const defaultAgentName = config.defaults?.agent;
+  if (defaultAgentName) {
     try {
-      const defaultName = config.agent.default;
-      if (!defaultName) {
-        return {
-          ok: false,
-          error: "No default agent profile configured. Set `agent.default` in config.json or run `akm setup`.",
-        };
-      }
-      const profile = resolveAgentProfile(defaultName, config.agent.profiles?.[defaultName]);
+      const profile = resolveAgentProfile(defaultAgentName, config.profiles?.agent?.[defaultAgentName]);
       if (!profile) {
         return {
           ok: false,
-          error: `Agent profile "${defaultName}" is not built-in and has no \`bin\` override.`,
+          error: `Agent profile "${defaultAgentName}" is not built-in and has no \`bin\` override.`,
         };
       }
       const result = await runAgent(profile, prompt, {
@@ -61,7 +53,8 @@ export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOpti
     }
   }
 
-  if (config.llm) {
+  const llmConfig = getDefaultLlmConfig(config);
+  if (llmConfig) {
     if (opts.draftFilePath) {
       warn(
         "[akm] No agent CLI configured — falling back to LLM API. " +
@@ -73,7 +66,7 @@ export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOpti
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
     messages.push({ role: "user", content: prompt });
     try {
-      const content = await chatCompletion(config.llm, messages, {
+      const content = await chatCompletion(llmConfig, messages, {
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       });
       return { ok: true, content, path: "llm-http" };
@@ -84,6 +77,6 @@ export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOpti
 
   return {
     ok: false,
-    error: "No AI connection configured. Run `akm setup` or set `agent` or `llm` in your config.",
+    error: "No AI connection configured. Run `akm setup` or set `defaults.agent`/`defaults.llm`.",
   };
 }

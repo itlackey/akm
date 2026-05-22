@@ -90,15 +90,13 @@ function enabledConfig(opts: { thresholdDays?: number } = {}): AkmConfig {
         },
       },
     },
-    features: {
-      index: {
-        staleness_detection: {
-          enabled: true,
-          ...(opts.thresholdDays !== undefined ? { options: { thresholdDays: opts.thresholdDays } } : {}),
-        },
+    index: {
+      stalenessDetection: {
+        enabled: true,
+        ...(opts.thresholdDays !== undefined ? { thresholdDays: opts.thresholdDays } : {}),
       },
     },
-  } as AkmConfig;
+  };
 }
 
 function disabledConfig(): AkmConfig {

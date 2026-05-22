@@ -705,11 +705,16 @@ test("akmIndex metadata enrichment progress events include visible per-entry pro
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "off",
-    llm: {
-      endpoint: "https://example.test/v1/chat/completions",
-      model: "demo-chat",
-      concurrency: 1,
+    profiles: {
+      llm: {
+        default: {
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "demo-chat",
+          concurrency: 1,
+        },
+      },
     },
+    defaults: { llm: "default" },
   });
 
   const metadataEnhance = await import("../src/llm/metadata-enhance");
@@ -783,11 +788,16 @@ test("akmIndex does not run slow passes", async () => {
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "off",
-    llm: {
-      endpoint: "https://example.test/v1/chat/completions",
-      model: "demo-chat",
-      concurrency: 1,
+    profiles: {
+      llm: {
+        default: {
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "demo-chat",
+          concurrency: 1,
+        },
+      },
     },
+    defaults: { llm: "default" },
   });
 
   const memoryInfer = await import("../src/indexer/memory-inference");
@@ -1563,7 +1573,10 @@ test("enhanceDirsWithLlm does not call LLM for entries that are already complete
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "off",
-    llm: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" },
+    profiles: {
+      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } },
+    },
+    defaults: { llm: "default" },
   });
 
   // Track whether any LLM/fetch call was made. The LLM client calls globalThis.fetch
