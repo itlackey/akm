@@ -1060,6 +1060,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
                 runnerSpec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
               priorDraft,
               iteration: iter,
+              responseSchema: REFLECT_JSON_SCHEMA,
               chat: options.chat,
             });
             break;
