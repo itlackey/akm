@@ -1,58 +1,36 @@
 #!/usr/bin/env bash
-# run-show — pretty per-run summary.
+# run-show — DEPRECATED thin shim around `akm-eval-collect`.
+#
+# The bespoke jq pipeline was superseded by the akm-eval toolkit's
+# improve-run ingestion (`scripts/akm-eval/bin/akm-eval-collect`), which
+# emits the equivalent per-run summary as deterministic JSON (and
+# optionally Markdown). This shim preserves the old `run-show
+# <id|latest>` invocation for muscle memory.
 #
 # Usage:
-#   run-show <run-id|latest> [--stash <path>]
+#   run-show <run-id|latest> [--stash <path>] [--format json|md]
 #
-# Resolves "latest" / "last" to the most recent run directory.
+# Prints the akm-eval invocation to stderr before exec'ing so the new
+# entry point is discoverable.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_lib.sh
-source "$SCRIPT_DIR/_lib.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+EVAL_BIN="$REPO_ROOT/scripts/akm-eval/bin/akm-eval-collect"
 
-REMAINING_ARGS=()
-resolve_stash "$@"
-set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
-
-if [[ $# -lt 1 ]]; then
-  echo "usage: run-show <run-id|latest> [--stash <path>]" >&2
+if [[ ! -x "$EVAL_BIN" ]]; then
+  echo "run-show: missing $EVAL_BIN (akm-eval toolkit not installed?)" >&2
   exit 2
 fi
 
-path="$(run_path "$1")"
-echo "# $path"
-echo
+if [[ $# -lt 1 ]]; then
+  echo "usage: run-show <run-id|latest> [--stash <path>] [--format json|md]" >&2
+  exit 2
+fi
 
-jq '{
-  ok,
-  scope,
-  plannedRefs: (.plannedRefs | length),
-  actions: (.actions | length),
-  modes: (
-    [.actions[]? | .mode]
-    | group_by(.)
-    | map({(.[0]): length})
-    | add
-  ),
-  memoryInference,
-  memorySummary,
-  graphExtraction: {
-    considered: .graphExtraction.considered,
-    extracted: .graphExtraction.extracted,
-    entities: .graphExtraction.totalEntities,
-    relations: .graphExtraction.totalRelations,
-    written: .graphExtraction.written,
-    warnings: (.graphExtraction.warnings | length)
-  },
-  stalenessDetection: {
-    considered: .stalenessDetection.considered,
-    deprecated: .stalenessDetection.deprecated,
-    confirmed: .stalenessDetection.confirmed,
-    durationMs: .stalenessDetection.durationMs
-  },
-  evalCasesWritten,
-  orphansPurged,
-  lintSummary
-}' "$path"
+RUN_ID="$1"
+shift
+
+echo "[run-show] forwarding to: $EVAL_BIN --from-improve-run $RUN_ID $*" >&2
+exec "$EVAL_BIN" --from-improve-run "$RUN_ID" "$@"

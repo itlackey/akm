@@ -1,59 +1,41 @@
 #!/usr/bin/env bash
-# actions-breakdown — modes + skip-reason counts for one run.
+# actions-breakdown — DEPRECATED thin shim around `akm-eval-collect`.
+#
+# The hand-rolled jq pipeline (mode counts + distill/reflect skip
+# reasons) is now first-class data on the akm-eval-collect summary:
+# `actionsByMode`, `actionsByOutcome`, and `proposalsByMode` all land in
+# the JSON output. Reflect-failure classification (schema-shape vs
+# content-policy vs gate-refused) now lives in the
+# `reflect-failure-breakdown` eval case under
+# `scripts/akm-eval/cases/improve-smoke/`.
 #
 # Usage:
-#   actions-breakdown <run-id|latest> [--stash <path>]
+#   actions-breakdown <run-id|latest> [--stash <path>] [--format json|md]
 #
-# Useful when "actions: 207" hides a single dominant skip reason.
+# Prints the akm-eval invocation to stderr before exec'ing so the new
+# entry point is discoverable.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_lib.sh
-source "$SCRIPT_DIR/_lib.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+EVAL_BIN="$REPO_ROOT/scripts/akm-eval/bin/akm-eval-collect"
 
-REMAINING_ARGS=()
-resolve_stash "$@"
-set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
-
-if [[ $# -lt 1 ]]; then
-  echo "usage: actions-breakdown <run-id|latest> [--stash <path>]" >&2
+if [[ ! -x "$EVAL_BIN" ]]; then
+  echo "actions-breakdown: missing $EVAL_BIN (akm-eval toolkit not installed?)" >&2
   exit 2
 fi
 
-path="$(run_path "$1")"
-echo "# $path"
-echo
+if [[ $# -lt 1 ]]; then
+  echo "usage: actions-breakdown <run-id|latest> [--stash <path>] [--format json|md]" >&2
+  exit 2
+fi
 
-echo "## modes"
-jq '
-  [.actions[]? | .mode]
-  | group_by(.)
-  | map({mode: .[0], count: length})
-  | sort_by(-.count)
-' "$path"
+RUN_ID="$1"
+shift
 
-echo
-echo "## distill skip reasons"
-jq '
-  [.actions[]? | select(.mode == "distill-skipped") | .result.reason]
-  | group_by(.)
-  | map({reason: .[0], count: length})
-  | sort_by(-.count)
-' "$path"
-
-echo
-echo "## reflect skip reasons"
-jq '
-  [.actions[]? | select(.mode == "reflect-skipped") | .result.reason]
-  | group_by(.)
-  | map({reason: .[0], count: length})
-  | sort_by(-.count)
-' "$path"
-
-echo
-echo "## non-skip outcomes (sample)"
-jq '
-  [.actions[]? | select(.mode != "distill-skipped" and .mode != "reflect-skipped")]
-  | .[0:5]
-' "$path"
+echo "[actions-breakdown] forwarding to: $EVAL_BIN --from-improve-run $RUN_ID $*" >&2
+echo "[actions-breakdown] reflect classification now lives in:" >&2
+echo "[actions-breakdown]   scripts/akm-eval/bin/akm-eval-run --suite improve-smoke" >&2
+echo "[actions-breakdown]   (case: reflect-failure-breakdown)" >&2
+exec "$EVAL_BIN" --from-improve-run "$RUN_ID" "$@"
