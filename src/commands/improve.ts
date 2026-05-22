@@ -1877,9 +1877,10 @@ async function runImproveLoopStage(args: {
         // These types are rejected by akmReflect with a parse_error — filter them
         // here to avoid wasting a reflect slot. Mirror of REFLECT_ALLOWED_TYPES in
         // reflect.ts (the authoritative source of truth, exported for this check).
-        // Name guard: skip wiki:*/raw/* — raw ingested snapshots across all wikis
-        // are source material and must never be altered by reflect.
-        const isRawWiki = parsedPlannedRef.type === "wiki" && parsedPlannedRef.name.includes("/raw/");
+        // Name guard: skip wiki:<name>/raw/* — raw ingested snapshots across all
+        // wikis are source material and must never be altered by reflect.
+        // "raw" must be the first segment after the wiki name, not anywhere in the path.
+        const isRawWiki = parsedPlannedRef.type === "wiki" && parsedPlannedRef.name.split("/")[1] === "raw";
         if (!REFLECT_ALLOWED_TYPES.has(parsedPlannedRef.type) || isRawWiki) {
           actions.push({
             ref: planned.ref,
