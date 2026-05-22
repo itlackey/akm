@@ -318,7 +318,13 @@ describe("akm reflect", () => {
     expect(events.events[0]?.metadata?.task).toBe("Focus on the highest-value recent signal");
   });
 
-  test("uses captured JSON contract for reflect prompts", async () => {
+  test("uses file-write contract for reflect prompts on agent runner (Issue A)", async () => {
+    // Issue A (reflect-pipeline file-write contract): the prompt sent to an
+    // agent/sdk runner instructs the agent to write the body to a tmp file
+    // and emit DRAFT_WRITTEN, replacing the legacy JSON contract. The agent
+    // here ignores the file-write instruction and emits JSON instead — that
+    // legacy path still works (stdout fallback) so the test stays green even
+    // without filesystem cooperation from the fake agent.
     const stash = makeStashDir();
     let capturedCmd: string[] = [];
     let capturedStdoutMode: string | undefined;
@@ -341,9 +347,159 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(true);
     expect(capturedStdoutMode).toBe("pipe");
     expect(capturedStderrMode).toBe("pipe");
-    expect(capturedCmd.at(-1)).toContain("Respond ONLY with a single JSON object.");
-    expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+    expect(capturedCmd.at(-1)).toContain("DRAFT_WRITTEN");
+    expect(capturedCmd.at(-1)).toContain("Write the complete improved asset content to:");
+    expect(capturedCmd.at(-1)).not.toContain("Respond ONLY with a single JSON object.");
     expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
+  });
+
+  // ── Issue A: file-write contract end-to-end ─────────────────────────────────
+  //
+  // The agent/sdk runners now receive a `draftFilePath` in the prompt. When the
+  // agent honours it (writes the body to disk and emits DRAFT_WRITTEN), reflect
+  // should load the body from disk rather than parsing stdout JSON. The legacy
+  // JSON stdout path remains supported for agents that ignore the instruction.
+  //
+  // These tests mirror `src/commands/propose.ts:215-226` end-to-end behaviour.
+
+  test("Issue A: file-write contract — reflect reads draft file when agent writes it", async () => {
+    const stash = makeStashDir();
+    const longBody =
+      "---\n" +
+      "description: Use ripgrep before grep\n" +
+      "when_to_use: Searching large repos for patterns\n" +
+      "---\n\n" +
+      // Long-asset shape that previously failed JSON-stdout parsing (e.g.
+      // knowledge:systems/KOKORO_USAGE_GUIDE at 8.4KB). The file-write
+      // contract sidesteps the JSON-escape brittleness entirely.
+      "# Ripgrep usage guide\n\n" +
+      "Prefer `rg` over `grep` for recursive search.\n\n" +
+      "```bash\nrg --hidden --no-ignore-vcs pattern .\n```\n\n" +
+      "Body content: " +
+      "x".repeat(8000) +
+      "\n";
+
+    // Capture the draftFilePath from the prompt and write `longBody` to it.
+    // Agent then emits DRAFT_WRITTEN on stdout, NO JSON body — matching the
+    // file-write contract from `src/integrations/agent/prompts.ts:95-102`.
+    let capturedDraftPath: string | undefined;
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: (cmd, opts) => {
+          const promptText = cmd.at(-1) ?? "";
+          const match = promptText.match(/Write the complete improved asset content to: (\S+)/);
+          capturedDraftPath = match?.[1];
+          if (capturedDraftPath) fs.writeFileSync(capturedDraftPath, longBody, "utf8");
+          return fakeSpawn("DRAFT_WRITTEN\n", "", 0)(cmd, opts);
+        },
+      },
+    });
+
+    expect(capturedDraftPath).toBeDefined();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.proposal.payload.content).toContain("# Ripgrep usage guide");
+    expect(result.proposal.payload.content).toContain("x".repeat(8000));
+    expect(result.proposal.ref).toBe("lesson:rg-over-grep");
+    // The proposal was queued.
+    expect(listProposals(stash).length).toBe(1);
+  });
+
+  test("Issue A: cleanup — draft tmp file is removed on success", async () => {
+    const stash = makeStashDir();
+    let capturedDraftPath: string | undefined;
+    const validBody =
+      "---\ndescription: Use ripgrep\nwhen_to_use: When searching repos\n---\n\nPrefer rg over grep for recursive search.\n";
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: (cmd, opts) => {
+          const match = (cmd.at(-1) ?? "").match(/Write the complete improved asset content to: (\S+)/);
+          capturedDraftPath = match?.[1];
+          if (capturedDraftPath) fs.writeFileSync(capturedDraftPath, validBody, "utf8");
+          return fakeSpawn("DRAFT_WRITTEN\n", "", 0)(cmd, opts);
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(capturedDraftPath).toBeDefined();
+    if (capturedDraftPath) {
+      expect(fs.existsSync(capturedDraftPath)).toBe(false);
+    }
+  });
+
+  test("Issue A: cleanup — draft tmp file is removed on agent failure", async () => {
+    const stash = makeStashDir();
+    let capturedDraftPath: string | undefined;
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: (cmd, opts) => {
+          const match = (cmd.at(-1) ?? "").match(/Write the complete improved asset content to: (\S+)/);
+          capturedDraftPath = match?.[1];
+          // Simulate file partially written before the agent crashes — cleanup
+          // must still unlink it.
+          if (capturedDraftPath) fs.writeFileSync(capturedDraftPath, "partial...", "utf8");
+          return fakeSpawn("", "boom", 7)(cmd, opts);
+        },
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("non_zero_exit");
+    expect(capturedDraftPath).toBeDefined();
+    if (capturedDraftPath) {
+      expect(fs.existsSync(capturedDraftPath)).toBe(false);
+    }
+  });
+
+  test("Issue A: DRAFT_WRITTEN without file content surfaces parse_error", async () => {
+    const stash = makeStashDir();
+    // Agent emits DRAFT_WRITTEN but never writes the file — surface this as a
+    // parse_error rather than fall through to JSON parsing (which would emit
+    // a confusing "unexpected token D" error from `parseAgentProposalPayload`).
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: fakeSpawn("DRAFT_WRITTEN\n", "", 0),
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("parse_error");
+    expect(result.error).toMatch(/DRAFT_WRITTEN.*missing|empty/i);
+    expect(listProposals(stash).length).toBe(0);
+  });
+
+  test("Issue A: prompt builder honors draftFilePath (unit)", () => {
+    // Pure unit test on buildReflectPrompt — when `draftFilePath` is set the
+    // prompt swaps the JSON contract for the file-write contract fragment.
+    const promptWith = buildReflectPrompt({
+      ref: "lesson:foo",
+      type: "lesson",
+      name: "foo",
+      draftFilePath: "/tmp/akm-reflect-test-foo.md",
+    });
+    expect(promptWith).toContain("DRAFT_WRITTEN");
+    expect(promptWith).toContain("Write the complete improved asset content to: /tmp/akm-reflect-test-foo.md");
+    expect(promptWith).not.toContain("Respond ONLY with a single JSON object.");
+
+    const promptWithout = buildReflectPrompt({
+      ref: "lesson:foo",
+      type: "lesson",
+      name: "foo",
+    });
+    expect(promptWithout).toContain("Respond ONLY with a single JSON object.");
+    expect(promptWithout).not.toContain("DRAFT_WRITTEN");
   });
 
   test("skill reflect includes related lessons and consolidation guidance", async () => {
