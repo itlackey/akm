@@ -114,8 +114,8 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `profiles.agent.<name>` | object | — | Named agent profile (`platform: "opencode"\|"claude"\|"opencode-sdk"`). See [Profile types](#profile-types). |
 | `defaults.llm` | string | — | Default LLM profile name. Used when a features entry omits `profile`. Also the target for `AKM_LLM_API_KEY` injection. |
 | `defaults.agent` | string | — | Default agent profile name. Fallback for `mode: "agent"` or `mode: "sdk"` entries that omit `profile`. |
-| `defaults.improve.limit` | number | 25 | Default refs per improve run; overridden by `--limit`. |
-| `defaults.improve.preset` | string | `"custom"` | Improve preset (`"fast"`, `"thorough"`, `"mixed"`, `"custom"`). |
+| `defaults.improve` | string | `"default"` | Default improve profile name. Selects one of the built-ins (`default`, `quick`, `thorough`, `memory-focus`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
+| `profiles.improve.<name>` | object | — | Improve profile defining per-process gating, type filters, cooldowns, and run-level `autoAccept` / `limit` defaults. See [Improve profiles](#improve-profiles). |
 | `features.improve.<name>` | process entry | — | Operation during `akm improve`. Unified shape: `true\|false\|{mode, profile, timeoutMs, options}`. |
 | `features.index.<name>` | process entry | — | Operation during `akm index`. |
 | `features.search.<name>` | process entry | — | Operation during `akm search` / `akm curate`. |
@@ -255,28 +255,27 @@ shorthand forms are accepted:
    `"opencode"` / `"claude"` platform → `"agent"`.
 2. If neither is set: `defaults.llm` is set → `"llm"`; else `defaults.agent` → `"agent"`.
 
-**`options`** holds process-specific tuning that doesn't fit the generic fields:
-
-- `features.improve.reflect.options.cooldown` — per-asset-type reflect cooldown
-  in days (replaces the old `improve.reflectCooldownByType`).
-- `features.improve.reflect.options.maxRefineIters` — self-refine cap (default 3).
-- `features.improve.distill.options.judgeRubric` — rubric override for distill.
-
+**`options`** holds process-specific tuning that doesn't fit the generic fields.
 Unknown keys under `options` warn-and-ignore.
+
+Reflect/distill cooldowns and per-process type filters now live under
+[`profiles.improve.<name>.processes.*`](#improve-profiles), not under
+`features.improve.*.options`.
 
 ## Known process names
 
 ### `features.improve.*`
 
-| Process | Default mode | Description |
+The `features.improve.*` tree carries orthogonal feature gates that operate
+independently of the active improve profile. Per-process runner gating
+(enabled / mode / profile / cooldowns / type filters) for `reflect`,
+`distill`, `consolidate`, `memoryInference`, and `graphExtraction` lives
+under [`profiles.improve.<name>.processes.*`](#improve-profiles).
+
+| Process | Default | Description |
 | --- | --- | --- |
-| `reflect` | `llm` | Per-asset reflection pass; multi-turn self-refine in LLM mode |
-| `distill` | `llm` | Quality judgement (use a larger `openai-judge` profile for better scoring) |
-| `memory_consolidation` | `llm` | Memory deduplication |
-| `graph_extraction` | `false` (improve cycle skips; handled at index) | Entity/relation extraction |
-| `propose` | `agent` | New-asset authoring; needs tool access |
-| `memory_improve` | `llm` | Memory enrichment |
-| `feedback_distillation` | `true` (defaults) | Turn collected feedback into lessons |
+| `memory_consolidation` | `false` | Global gate for memory deduplication. Must be `true` (or set to a process entry with `enabled: true`) for `akm consolidate` to run. The active improve profile additionally controls whether consolidation runs during `akm improve`. |
+| `feedback_distillation` | `false` | Global gate for turning collected feedback into lesson proposals. Must be `true` for `akm distill` to act on feedback events. |
 | `validation` | unset → falls back to `defaults.llm` | Lower-tier classifier model used by staleness detection, confidence scoring, and lesson classification. Configure with a smaller/cheaper LLM profile to keep validation cycles cheap. |
 
 #### Tuning the forgetting curve
@@ -317,6 +316,65 @@ is not configured, so there's zero overhead on the search hot path.
 | Process | Default | Description |
 | --- | --- | --- |
 | `curate_rerank` | `true` | LLM re-ranking during `akm curate` |
+
+## Improve profiles
+
+`profiles.improve.<name>` defines a named bundle of settings for an
+`akm improve` run: which sub-processes are enabled, which asset types each
+processes, per-process runner / cooldown overrides, and run-level
+`autoAccept` / `limit` defaults. Pick a profile per invocation with
+`--profile <name>` or set the default with `defaults.improve: "<name>"`.
+
+### Built-in profiles
+
+| Name | Description |
+| --- | --- |
+| `default` | Standard improve pass — all sub-processes, markdown asset types. |
+| `quick` | Reflect-only — distill, consolidate, memoryInference, graphExtraction all disabled. |
+| `thorough` | All sub-processes enabled (currently identical to `default`; reserved for future divergence). |
+| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. |
+
+### Schema
+
+```jsonc
+"profiles": {
+  "improve": {
+    "<profile-name>": {
+      "description": "Human-readable summary (optional).",
+      "autoAccept": 90,             // optional — default proposal auto-accept threshold (0-100)
+      "limit": 25,                  // optional — default refs per run; overridden by --limit
+      "processes": {
+        "reflect": {
+          "enabled": true,
+          "mode": "llm",            // optional — "llm" | "agent" | "sdk"
+          "profile": "openai-mini", // optional — runner profile name (profiles.llm.* / profiles.agent.*)
+          "timeoutMs": 60000,       // optional
+          "allowedTypes": ["memory", "lesson"],      // optional — whitelist of asset types
+          "cooldownByType": { "memory": 1 },         // optional — per-type cooldown (days)
+          "cooldownDays": 7                          // optional — uniform cooldown
+        },
+        "distill": { "enabled": true, "allowedTypes": ["memory"] },
+        "consolidate": { "enabled": true },
+        "memoryInference": { "enabled": true },
+        "graphExtraction": { "enabled": true }
+      }
+    }
+  }
+}
+```
+
+`allowedTypes` is only honoured by `reflect` and `distill` (per-ref
+operations). Setting it on `consolidate`, `memoryInference`, or
+`graphExtraction` (full-pass operations) triggers a parse-time warning.
+
+### Selection precedence
+
+1. `--profile <name>` CLI flag (this run only)
+2. `defaults.improve: "<name>"` in config
+3. Built-in `default`
+
+Profile name lookups search both built-ins and `profiles.improve.<name>`.
+An unknown name falls back to `default` with a warning.
 
 ## Migration from v1
 

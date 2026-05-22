@@ -163,6 +163,11 @@ export interface ImproveProcessConfig {
    *   reflect:     ["agent","command","knowledge","lesson","memory","skill","wiki","workflow"]
    *   distill:     ["memory"]
    *   consolidate: ["memory"]
+   *
+   * Only applied by per-ref processes — `reflect` and `distill`. The
+   * full-pass operations (`consolidate`, `memoryInference`, `graphExtraction`)
+   * do not iterate per asset and therefore ignore this field; setting it on
+   * those entries triggers a parse-time warning.
    */
   allowedTypes?: string[];
   /** Per-type cooldown overrides in days for this process. */
@@ -1316,7 +1321,10 @@ function parseDefaultsConfig(value: unknown): AkmConfig["defaults"] | undefined 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function parseImproveProcessConfig(value: unknown): ImproveProcessConfig | undefined {
+/** Process names where `allowedTypes` has no effect (full-pass operations). */
+const ALLOWED_TYPES_IGNORED_PROCESSES = new Set(["consolidate", "memoryInference", "graphExtraction"]);
+
+function parseImproveProcessConfig(value: unknown, processName?: string): ImproveProcessConfig | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
   const entry: ImproveProcessConfig = {};
@@ -1329,7 +1337,15 @@ function parseImproveProcessConfig(value: unknown): ImproveProcessConfig | undef
     entry.timeoutMs = obj.timeoutMs;
   }
   if (Array.isArray(obj.allowedTypes) && obj.allowedTypes.every((t) => typeof t === "string")) {
-    entry.allowedTypes = obj.allowedTypes as string[];
+    if (processName && ALLOWED_TYPES_IGNORED_PROCESSES.has(processName)) {
+      warn(
+        `[akm] profiles.improve.*.processes.${processName}.allowedTypes is ignored — ` +
+          `${processName} is a full-pass operation and does not iterate per ref. ` +
+          `Set allowedTypes on reflect or distill instead.`,
+      );
+    } else {
+      entry.allowedTypes = obj.allowedTypes as string[];
+    }
   }
   if (typeof obj.cooldownByType === "object" && obj.cooldownByType !== null && !Array.isArray(obj.cooldownByType)) {
     const byType: Record<string, number> = {};
@@ -1355,7 +1371,7 @@ function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfile
     const knownProcesses = ["reflect", "distill", "consolidate", "memoryInference", "graphExtraction"] as const;
     for (const key of knownProcesses) {
       if (key in processesRaw) {
-        const parsed = parseImproveProcessConfig(processesRaw[key]);
+        const parsed = parseImproveProcessConfig(processesRaw[key], key);
         if (parsed) processes[key] = parsed;
         else if (typeof processesRaw[key] === "object" && processesRaw[key] !== null) {
           // Empty object is a valid no-op config; don't warn

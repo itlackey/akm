@@ -232,6 +232,62 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
     }
   }
 
+  // ── Migrate legacy `defaults.improve` object form ({ limit, preset }) ────
+  // In 0.7.x users wrote `defaults.improve: { limit: 25, preset: "fast" }`.
+  // The 0.8.0 parser only accepts `defaults.improve` as a string (profile name)
+  // and silently drops the object form. Promote `limit` to
+  // `profiles.improve.default.limit` so it survives the upgrade, and warn that
+  // `preset` is no longer supported.
+  if (typeof raw.defaults === "object" && raw.defaults !== null && !Array.isArray(raw.defaults)) {
+    const defaultsRaw = raw.defaults as Record<string, unknown>;
+    const defaultsImprove = defaultsRaw.improve;
+    if (typeof defaultsImprove === "object" && defaultsImprove !== null && !Array.isArray(defaultsImprove)) {
+      const improveObj = defaultsImprove as Record<string, unknown>;
+      if (typeof improveObj.limit === "number") {
+        const profiles = (
+          typeof result.profiles === "object" && result.profiles !== null && !Array.isArray(result.profiles)
+            ? { ...(result.profiles as Record<string, unknown>) }
+            : {}
+        ) as Record<string, unknown>;
+        const profilesImprove = (
+          typeof profiles.improve === "object" && profiles.improve !== null && !Array.isArray(profiles.improve)
+            ? { ...(profiles.improve as Record<string, unknown>) }
+            : {}
+        ) as Record<string, unknown>;
+        const defaultProfile = (
+          typeof profilesImprove.default === "object" && profilesImprove.default !== null
+            ? { ...(profilesImprove.default as Record<string, unknown>) }
+            : {}
+        ) as Record<string, unknown>;
+        // Only set limit when the default profile doesn't already have one — a
+        // value migrated earlier from `improve.limit` takes precedence.
+        if (typeof defaultProfile.limit !== "number") {
+          defaultProfile.limit = improveObj.limit;
+        }
+        profilesImprove.default = defaultProfile;
+        profiles.improve = profilesImprove;
+        result.profiles = profiles;
+        changed = true;
+      }
+      if (improveObj.preset !== undefined) {
+        console.warn(
+          `[akm config-migrate] defaults.improve.preset is no longer supported. ` +
+            `Use \`--profile <name>\` (built-ins: default, quick, thorough, memory-focus) instead.`,
+        );
+      }
+      // Drop the object form so the parser doesn't see it. If `defaults` ends
+      // up empty after this, remove it entirely.
+      const defaultsCopy = { ...defaultsRaw };
+      delete defaultsCopy.improve;
+      if (Object.keys(defaultsCopy).length > 0) {
+        result.defaults = defaultsCopy;
+      } else {
+        delete result.defaults;
+      }
+      changed = true;
+    }
+  }
+
   // ── Strip legacy agent.processes.task and agent.profiles[*].sdkMode ────────
   if (typeof result.agent === "object" && result.agent !== null && !Array.isArray(result.agent)) {
     const agent = { ...(result.agent as Record<string, unknown>) };

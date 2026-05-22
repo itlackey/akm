@@ -40,6 +40,14 @@ Options:
                                                  will prompt interactively before Phase B
                         Note: until proposals carry real confidence scores, any non-`false`
                         value behaves like the legacy "safe" mode (whole-batch auto-accept).
+  --profile <name>     Improve profile to apply. Built-ins: default, quick,
+                        thorough, memory-focus. User-defined profiles under
+                        `profiles.improve.<name>` in config are also accepted.
+                        Profiles bundle process gating, type filters,
+                        cooldown overrides, and run-level autoAccept/limit
+                        defaults. Falls back to `defaults.improve` in config,
+                        then to "default". Unknown names fall back to default
+                        with a warning.
   --ignore-cooldown    Disable reflect/distill/consolidate cooldown checks for this run
   --reflect-cooldown-days <n>
                         Override reflect cooldown with a non-negative integer
@@ -64,3 +72,5 @@ Examples:
   akm improve skill
   akm improve skill:code-review
   akm improve workflow:incident-response --task "reduce duplication"
+  akm improve --profile quick
+  akm improve --profile memory-focus

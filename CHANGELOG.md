@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - **Config v2 shape**: `config.llm`, `config.agent.profiles`, `config.agent.processes`, and the old `llm.features.*` flags are deprecated. Configs without `configVersion: "0.8.0"` are auto-migrated at first run with a one-time notice. A timestamped backup is written before any in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress.
 
-- **`config.improve.reflectCooldownByType` removed**: Moved to `features.improve.reflect.options.cooldown`. Migrated automatically.
+- **`config.improve.reflectCooldownByType` removed**: Moved to `profiles.improve.default.processes.reflect.cooldownByType`. Migrated automatically.
 
 - **`config.agent.processes["task"]` removed**: Tasks now declare `mode` and `profile` in their stash YAML file directly.
 
@@ -55,7 +55,7 @@ All notable changes to this project will be documented in this file.
 
 - **Config v2: profiles + features tree**: Named LLM and agent profiles under `profiles.llm` and `profiles.agent`. All process-level config consolidated into `features.improve.*`, `features.index.*`, `features.search.*` with a unified `{mode, profile, timeoutMs, options}` shape. Replaces the old top-level `llm.features.*` boolean flags and the scattered `agent.processes` map. See [docs/configuration.md](docs/configuration.md) for the full v2 reference.
 
-- **reflect LLM mode**: `akm reflect` (and `akm improve`'s reflect pass) can now run as a direct LLM call — 3–5× faster than the agent subprocess path. Configure via `features.improve.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
+- **reflect LLM mode**: `akm reflect` (and `akm improve`'s reflect pass) can now run as a direct LLM call — 3–5× faster than the agent subprocess path. Configure via `profiles.improve.<name>.processes.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
 
 - **`akm config migrate`**: New command to explicitly migrate v1 config to v2. Includes `--dry-run` and `--no-wait` flags. Acquires a file lock before write for safety. All config layers (user + project) are visited and rewritten in place; read-only layers print the migrated content for manual apply.
 
@@ -105,7 +105,7 @@ All notable changes to this project will be documented in this file.
 
 ### Performance
 
-- **reflect LLM mode**: ~6–10s/call vs ~30s/call in agent subprocess mode. On a 69-ref improve run: ~8–10 min total vs ~35 min baseline. Enable with `features.improve.reflect.mode: "llm"` in your config.
+- **reflect LLM mode**: ~6–10s/call vs ~30s/call in agent subprocess mode. On a 69-ref improve run: ~8–10 min total vs ~35 min baseline. Enable with `profiles.improve.<name>.processes.reflect.mode: "llm"` in your config.
 
 - **`akm improve` cooldown pre-filter**: Assets under cooldown are now filtered out before the main improvement loop rather than inside it. Reduces LLM API calls and speeds up runs on large stashes with many recently-processed assets.
 

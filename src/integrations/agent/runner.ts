@@ -1,4 +1,4 @@
-import type { AkmConfig, LlmConnectionConfig, ProcessEntry } from "../../core/config";
+import type { AkmConfig, ImproveProcessConfig, LlmConnectionConfig, ProcessEntry } from "../../core/config";
 import { ConfigError } from "../../core/errors";
 import type { AgentProfile } from "./profiles";
 
@@ -233,6 +233,33 @@ export function resolveProcessRunner(section: ProcessSection, processName: strin
 export function resolveRunner(mode: "llm" | "agent" | "sdk", profileName: string, config: AkmConfig): RunnerSpec {
   if (mode === "llm") return buildLlmRunnerSpec(profileName, undefined, config);
   return buildAgentRunnerSpec(mode, profileName, undefined, config);
+}
+
+/**
+ * Resolve a RunnerSpec from an improve-profile process entry. Returns `null`
+ * when the entry is absent or provides no overrides — callers should fall
+ * back to the default per-process runner resolution path.
+ *
+ * Only `mode` + `profile` are sufficient to build a spec: when `mode` is
+ * "llm" we build an LLM runner; when `mode` is "agent" or "sdk" we build an
+ * agent runner. `timeoutMs` is forwarded when present.
+ */
+export function resolveImproveProcessRunnerFromProfile(
+  processConfig: ImproveProcessConfig | undefined,
+  config: AkmConfig,
+): RunnerSpec | null {
+  if (!processConfig) return null;
+  const { mode, profile, timeoutMs } = processConfig;
+  if (!mode && !profile) return null;
+  if (mode === "llm") {
+    if (!profile) return null;
+    return buildLlmRunnerSpec(profile, timeoutMs, config);
+  }
+  if (mode === "agent" || mode === "sdk") {
+    if (!profile) return null;
+    return buildAgentRunnerSpec(mode, profile, timeoutMs, config);
+  }
+  return null;
 }
 
 export function isProcessEnabled(section: ProcessSection, processName: string, config: AkmConfig): boolean {

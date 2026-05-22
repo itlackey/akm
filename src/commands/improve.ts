@@ -52,6 +52,7 @@ import {
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
+import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
@@ -1905,6 +1906,13 @@ async function runImproveLoopStage(args: {
           // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
           // bounded by the wall-clock deadline rather than the default per-profile timeout.
           const reflectBudgetMs = remainingBudgetMs();
+          // Wire profile.processes.reflect.{mode, profile, timeoutMs} into the reflect
+          // dispatch when present. Falls back to akmReflect's own config-based resolution
+          // (features.improve.reflect → defaults.llm) when the profile does not specify.
+          const reflectProfileRunner = resolveImproveProcessRunnerFromProfile(
+            improveProfile.processes?.reflect,
+            options.config ?? loadConfig(),
+          );
           const reflectCallArgs = {
             ref: planned.ref,
             task: options.task,
@@ -1913,6 +1921,7 @@ async function runImproveLoopStage(args: {
             agentProcess: options.agentProcess ?? "reflect",
             eventSource: "improve" as const,
             ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
+            ...(reflectProfileRunner ? { runner: reflectProfileRunner } : {}),
           };
           // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
           // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
@@ -2059,12 +2068,25 @@ async function runImproveLoopStage(args: {
       // isDistillOnly refs: no reflect action emitted — proceed directly to distill path below.
       const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
       const explicitRefScope = scope.mode === "ref";
+      // Profile gate: apply the full type-filter / raw-wiki / disabled rules to
+      // distill so callers who configure `profile.processes.distill.allowedTypes`
+      // or land on raw-wiki refs get a recorded skip action instead of silently
+      // proceeding.
+      const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
+      if (distillSkip.skip) {
+        actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: distillSkip.reason },
+        });
+        completedCount++;
+        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+        continue;
+      }
       // See `isDistillCandidateRef` — excludes `lesson:*` (and anything else in
       // DISTILL_REFUSED_INPUT_TYPES) so distill never gets queued for an input
       // it will refuse.
-      // Profile gate: if profile explicitly disables distill, treat as not a distill candidate.
-      const distillDisabledByProfile = improveProfile.processes?.distill?.enabled === false;
-      const shouldAttemptDistill = !distillDisabledByProfile && isDistillCandidateRef(planned.ref, options.stashDir);
+      const shouldAttemptDistill = isDistillCandidateRef(planned.ref, options.stashDir);
       const skipMemoryDistillForWeakSignal =
         !isDistillOnly && parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
 
@@ -2312,7 +2334,12 @@ async function runImprovePostLoopStage(args: {
       config: consolidationConfig,
       stashDir: options.stashDir,
       autoTriggered: volumeTriggered,
-      autoAccept: 90,
+      // Honor profile.autoAccept (already merged into options.autoAccept at the
+      // top of akmImprove). Falls back to 90 when no profile/flag value is set.
+      // options.consolidateOptions.autoAccept (if explicitly provided by caller)
+      // still wins because the spread above runs first — we override only when
+      // the caller didn't supply a value.
+      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept ?? 90,
     });
     if (consolidation.processed > 0) {
       appendEvent(

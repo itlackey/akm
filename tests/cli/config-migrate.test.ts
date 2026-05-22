@@ -103,6 +103,54 @@ describe("migrateConfigShape", () => {
     expect(defaultProfile.limit).toBe(50);
   });
 
+  test("migrates improve.reflectCooldownByType + improve.limit together", () => {
+    const input = { improve: { reflectCooldownByType: { memory: 5 }, limit: 25 } };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    const processes = defaultProfile.processes as Record<string, unknown>;
+    const reflect = processes.reflect as Record<string, unknown>;
+    expect(reflect.cooldownByType).toEqual({ memory: 5 });
+    expect(defaultProfile.limit).toBe(25);
+    expect(result.improve).toBeUndefined();
+  });
+
+  test("migrates defaults.improve.limit (legacy object form) to profiles.improve.default.limit", () => {
+    const input = { defaults: { improve: { limit: 17 } } };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    expect(defaultProfile.limit).toBe(17);
+    // Object form should be removed so the parser doesn't see it.
+    expect(result.defaults).toBeUndefined();
+  });
+
+  test("warns and drops defaults.improve.preset (no longer supported)", () => {
+    const input = { defaults: { improve: { preset: "fast", limit: 10 } } };
+    // Capture warning so it doesn't pollute test output and so we can assert it fires.
+    const originalWarn = console.warn;
+    const messages: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      messages.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      const { changed, result } = migrateConfigShape(input);
+      expect(changed).toBe(true);
+      const profiles = result.profiles as Record<string, unknown>;
+      const profilesImprove = profiles.improve as Record<string, unknown>;
+      const defaultProfile = profilesImprove.default as Record<string, unknown>;
+      expect(defaultProfile.limit).toBe(10);
+      expect(result.defaults).toBeUndefined();
+      expect(messages.some((m) => m.includes("preset"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test("strips improve.schedule", () => {
     const input = { improve: { schedule: "0 * * * *", limit: 10 } };
     const { result } = migrateConfigShape(input);

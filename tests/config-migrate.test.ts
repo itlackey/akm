@@ -107,6 +107,33 @@ describe("migrateConfigShape", () => {
     expect(result.improve).toBeUndefined();
   });
 
+  test("migrates improve.reflectCooldownByType + improve.limit together", () => {
+    const input = {
+      improve: { reflectCooldownByType: { memory: 5 }, limit: 25 },
+    };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    const processes = defaultProfile.processes as Record<string, unknown>;
+    const reflect = processes.reflect as Record<string, unknown>;
+    expect(reflect.cooldownByType).toEqual({ memory: 5 });
+    expect(defaultProfile.limit).toBe(25);
+    expect(result.improve).toBeUndefined();
+  });
+
+  test("migrates legacy defaults.improve object form → profiles.improve.default.limit", () => {
+    const input = { defaults: { improve: { limit: 17 } } };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    const profiles = result.profiles as Record<string, unknown>;
+    const profilesImprove = profiles.improve as Record<string, unknown>;
+    const defaultProfile = profilesImprove.default as Record<string, unknown>;
+    expect(defaultProfile.limit).toBe(17);
+    expect(result.defaults).toBeUndefined();
+  });
+
   test("strips agent.processes.task", () => {
     const input = {
       agent: {

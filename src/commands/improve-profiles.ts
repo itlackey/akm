@@ -1,7 +1,11 @@
 import { parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../core/config";
+import { warn } from "../core/warn";
 
 export type { ImproveProfileConfig } from "../core/config";
+
+/** Profile name used as the final fallback when nothing else resolves. */
+const FALLBACK_PROFILE_NAME = "default";
 
 // Built-in default allowed types per process
 export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate", string[]> = {
@@ -32,7 +36,10 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
     },
   },
   thorough: {
-    description: "All sub-processes enabled.",
+    // Reserved for future divergence; for now behaviorally identical to
+    // `default`. Documented here so callers picking `--profile thorough` do
+    // not expect a different code path until we wire stricter limits in.
+    description: "All sub-processes enabled (currently identical to default; reserved for future divergence).",
     processes: {
       reflect: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.reflect },
       distill: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.distill },
@@ -58,7 +65,11 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
   const result = { ...base };
   for (const key of Object.keys(override) as (keyof T)[]) {
     const ov = override[key];
-    if (ov !== undefined) {
+    // Treat `null` the same as `undefined` so user overrides never wipe a
+    // built-in field with `null`. The on-disk parser already strips nulls,
+    // but the programmatic API exposes this path and callers occasionally
+    // pass JSON-shaped objects with explicit nulls.
+    if (ov !== undefined && ov !== null) {
       const bv = base[key];
       if (typeof bv === "object" && bv !== null && typeof ov === "object" && ov !== null && !Array.isArray(bv)) {
         (result as Record<string, unknown>)[key as string] = deepMerge(bv, ov as Partial<typeof bv>);
@@ -71,9 +82,24 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
 }
 
 export function resolveImproveProfile(name: string | undefined, config: AkmConfig): ImproveProfileConfig {
-  const effectiveName =
-    name ?? (typeof config.defaults?.improve === "string" ? config.defaults.improve : undefined) ?? "default";
-  const builtin = BUILTIN_PROFILES[effectiveName] ?? BUILTIN_PROFILES.default;
+  const requestedName =
+    name ??
+    (typeof config.defaults?.improve === "string" ? config.defaults.improve : undefined) ??
+    FALLBACK_PROFILE_NAME;
+
+  const hasBuiltin = requestedName in BUILTIN_PROFILES;
+  const hasUserDefined = !!config.profiles?.improve?.[requestedName];
+
+  let effectiveName = requestedName;
+  if (!hasBuiltin && !hasUserDefined && requestedName !== FALLBACK_PROFILE_NAME) {
+    warn(
+      `[akm] Improve profile "${requestedName}" not found in built-ins or config. ` +
+        `Falling back to "${FALLBACK_PROFILE_NAME}".`,
+    );
+    effectiveName = FALLBACK_PROFILE_NAME;
+  }
+
+  const builtin = BUILTIN_PROFILES[effectiveName] ?? BUILTIN_PROFILES[FALLBACK_PROFILE_NAME];
   const userOverride = config.profiles?.improve?.[effectiveName] ?? {};
   return deepMerge(builtin, userOverride) as ImproveProfileConfig;
 }
