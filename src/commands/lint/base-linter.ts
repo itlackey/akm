@@ -27,6 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { findSafeInsertionPoint } from "./markdown-insertion";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -363,6 +364,36 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
 export abstract class BaseLinter implements AssetLinter {
   abstract readonly types: readonly string[];
   abstract lint(ctx: LintContext): LintIssue[];
+
+  /**
+   * Insert one or more lines into a markdown body at a safe location.
+   *
+   * "Safe" means: not inside a markdown table, HTML table, fenced code block,
+   * or indented code block. If `proposedLineNumber` falls inside one of those
+   * regions, the helper pushes the insertion to immediately after the region.
+   * This is a regression guard against the class of bug where an auto-fix
+   * splits a table fence by injecting a callout between the separator row
+   * and the first data row (broke `knowledge/akm-cli-reference.md` in 0.8.0).
+   *
+   * Subclasses that perform line-based body insertion MUST route through this
+   * helper instead of calling `splice` directly. Insertion fixers must NOT
+   * touch frontmatter — use `fixMissingUpdated` / `fixUnquotedColon` style
+   * regex edits for that case (those already operate inside the `---…---`
+   * fence and don't intersect with body line numbers).
+   *
+   * @param raw                 Full file contents (frontmatter + body).
+   * @param newLines            Lines to insert (without trailing newlines).
+   * @param proposedLineNumber  0-based line index within `raw` where the
+   *                            caller wants the new content to appear.
+   * @returns The mutated file contents with `newLines` spliced at the
+   *          adjusted safe position.
+   */
+  protected insertLinesSafely(raw: string, newLines: string[], proposedLineNumber: number): string {
+    const lines = raw.split(/\r?\n/);
+    const safeIdx = findSafeInsertionPoint(lines, proposedLineNumber);
+    lines.splice(safeIdx, 0, ...newLines);
+    return lines.join("\n");
+  }
 
   protected runBaseChecks(ctx: LintContext): LintIssue[] {
     const issues: LintIssue[] = [];
