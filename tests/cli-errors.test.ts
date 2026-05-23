@@ -82,7 +82,10 @@ describe("CLI error handling", () => {
   test("search --source invalid prints hint about source", () => {
     const { stderr, status } = runCli("search", "test", "--source", "invalid");
     expect(status).not.toBe(0);
-    expect(stderr).toContain("Invalid value for --source");
+    // Named-source validation: unknown source names produce INVALID_SOURCE_VALUE
+    // with a message that lists valid source names (or says none are configured).
+    expect(stderr).toContain("Unknown source name");
+    expect(stderr).toContain("INVALID_SOURCE_VALUE");
     expect(stderr).toContain("hint");
   });
 

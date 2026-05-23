@@ -79,10 +79,47 @@ export async function akmSearch(input: {
   const normalizedQuery = query.toLowerCase();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);
-  const source = parseSearchSource(input.source ?? "stash");
+  const parsedSource = parseSearchSource(input.source ?? "stash");
   const config = loadConfig();
-  const sources = resolveSourceEntries(undefined, config);
-  if (sources.length === 0) {
+
+  // Named-source filter: when --source is not a standard enum value, treat it
+  // as a named source from config.sources[].name. Validate early (before
+  // resolveSourceEntries, which can throw STASH_DIR_NOT_FOUND) so that a bad
+  // --source name always produces INVALID_SOURCE_VALUE regardless of stash state.
+  let namedSourceName: string | undefined;
+  let source: SearchSource;
+  if (parsedSource !== "stash" && parsedSource !== "registry" && parsedSource !== "both") {
+    namedSourceName = parsedSource as string;
+    // Check that the named source exists in the config before touching the stash.
+    const configSources = config.sources ?? [];
+    const foundInConfig =
+      configSources.some((s) => s.name === namedSourceName) || configSources.some((s) => s.path === namedSourceName);
+    if (!foundInConfig) {
+      const validNames = configSources.map((s) => s.name).filter((n): n is string => Boolean(n));
+      const hint =
+        validNames.length > 0
+          ? `Known source names: ${validNames.join(", ")}`
+          : "No named sources are configured. Run `akm list` to see installed stashes.";
+      throw new UsageError(`Unknown source name: "${namedSourceName}". ${hint}`, "INVALID_SOURCE_VALUE");
+    }
+    source = "stash";
+  } else {
+    source = parsedSource as SearchSource;
+  }
+
+  let allSources = resolveSourceEntries(undefined, config);
+
+  // When a named source was requested, narrow the sources list to just that entry.
+  // `resolveSourceEntries` sets `registryId` to `entry.name` for each config source.
+  if (namedSourceName !== undefined) {
+    const ns = namedSourceName;
+    allSources = allSources.filter((s) => s.registryId === ns || s.path === ns);
+    // allSources may still be empty if the configured source dir doesn't exist on
+    // disk (resolveSourceEntries skips non-existent dirs). Fall through to the
+    // zero-sources guard below which emits a friendly warning.
+  }
+
+  if (allSources.length === 0) {
     // stashDir: "" is a safe sentinel here — the response carries zero hits
     // and a warning, so no downstream code will try to use the empty path.
     const response: SearchResponse = {
@@ -98,7 +135,9 @@ export async function akmSearch(input: {
   }
   // Primary stash directory — used for DB path lookups and as the default
   // stash root. Safe because the empty-sources case is handled above.
-  const stashDir = sources[0].path;
+  const stashDir = allSources[0].path;
+  // Expose the filtered source list to downstream search calls.
+  const sources = allSources;
 
   const filters = normalizeScopeFilters(input.filters);
   const includeProposed = input.includeProposed === true;
@@ -300,15 +339,33 @@ function normalizeLimit(limit?: number): number {
   return Math.min(Math.floor(limit), 200);
 }
 
-export function parseSearchSource(source: SearchSource | string | undefined): SearchSource {
+/**
+ * Parse the `--source` flag value.
+ *
+ * Accepts:
+ *   - `stash` (default) — search the local stash index only
+ *   - `registry`        — search remote registries only
+ *   - `both`            — search stash and registries
+ *   - `local`           — alias for `stash`
+ *   - Any named source from `config.sources[].name` — filters stash results to
+ *     that single source only. The named-source path is detected and resolved
+ *     inside `akmSearch`; this function returns the raw name so the caller can
+ *     pass it through to `akmSearch` which accepts `SearchSource | string`.
+ *
+ * Unknown values that are not a known enum AND not a named source will still
+ * produce an error inside `akmSearch` when the config lookup finds nothing.
+ * This allows the CLI to accept named sources without requiring config access
+ * at parse time.
+ */
+export function parseSearchSource(source: SearchSource | string | undefined): SearchSource | string {
   if (source === "stash" || source === "registry" || source === "both") return source;
   // Accept "local" as alias for "stash"
   if (source === "local") return "stash";
   if (typeof source === "undefined") return "stash";
-  throw new UsageError(
-    `Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`,
-    "INVALID_SOURCE_VALUE",
-  );
+  // Pass through unknown strings — they may be valid named sources.
+  // `akmSearch` will validate against config.sources and throw a UsageError
+  // with a helpful message if the name isn't found.
+  return source;
 }
 
 export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMode {
