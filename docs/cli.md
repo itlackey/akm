@@ -1703,8 +1703,8 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
-**Per-task `timeoutMs` in task markdown files:** task markdown frontmatter may
-set `timeoutMs` to override the agent profile's `timeoutMs` (i.e.
+**Per-task `timeoutMs` in task YAML files:** a task `.yml` file may set
+`timeoutMs` to override the agent profile's `timeoutMs` (i.e.
 `profiles.agent.<name>.timeoutMs`) for that task only. Set `timeoutMs: null` to
 disable the kill timer entirely (useful for long-running local-model tasks), or
 a positive integer (milliseconds) to apply a task-specific limit.
