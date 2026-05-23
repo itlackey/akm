@@ -36,7 +36,9 @@
     "README.md",
     ".github/CHANGELOG.md",
     "LICENSE",
-    "docs/migration/release-notes"
+    "docs/migration/release-notes",
+    "scripts/migrate-storage.ts",
+    "scripts/migrations"
   ],
   "bin": {
     "akm": "dist/cli.js"

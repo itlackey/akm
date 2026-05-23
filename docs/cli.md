@@ -1651,7 +1651,9 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--consolidate-cooldown-days <n>` | Override consolidate cooldown (non-negative integer) |
 | `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
-| `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 5) |
+| `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 1; set 0 to include all assets regardless of retrieval history) |
+| `--profile <name>` | Override the active improve profile (e.g. `default`, `quick`, `thorough`, `memory-focus`, or any custom entry under `profiles.improve`) |
+| `--json-to-stdout` | Emit the full JSON result on stdout (legacy behaviour). Without this flag the full JSON is written to `<stash>/.akm/runs/<run-id>/improve-result.json` and stdout stays empty; pass `--json-to-stdout` to restore the pre-0.8.0 `akm improve \| jq` pipeline. |
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
@@ -1814,3 +1816,36 @@ and gains an optional `--reason <slug>` flag whose value is forwarded into
 feedback metadata and consumed by improve/distill proposal prompts.
 Backwards compatible: scripts without `--reason`
 behave exactly as today.
+
+### tasks
+
+**Status: Available since 0.8.0.**
+`akm tasks` is the scheduling surface for workflows, agent prompts, and
+shell commands. It manages on-disk task definitions under
+`<stash>/tasks/<id>.yml` and reconciles them with the OS-native scheduler
+(cron / launchd / schtasks). Task `.md` files from 0.7.x are not discovered
+— see the migration guide for the conversion path.
+
+```sh
+akm tasks list                              # List all tasks in the stash
+akm tasks show <id>                         # Show one parsed task
+akm tasks add <id> --schedule "@daily" \    # Register a new task and install it
+  --command "akm improve --auto-accept=90"
+akm tasks run <id>                          # Execute now (what the scheduler calls)
+akm tasks enable <id> / disable <id>        # Toggle scheduler entry
+akm tasks remove <id>                       # Delete task file and uninstall
+akm tasks history [--id <id>] [--limit <n>] # Recent runs from state.db
+akm tasks sync                              # Reconcile on-disk YAML with scheduler
+akm tasks doctor                            # Report scheduler backend + paths
+```
+
+Each task targets exactly one of `--workflow <ref>`, `--prompt <text-or-ref>`,
+or `--command <shell>`. Prompt targets dispatch through the configured agent
+profile; command targets run as plain shell. Optional fields include
+`--profile`, `--params` (JSON for workflow params), `--name`,
+`--when-to-use`, `--description`, and `--tags`. Per-task `timeoutMs` is set
+in the task YAML itself.
+
+`akm tasks run` is what cron / launchd / schtasks invoke at the scheduled
+time — `tasks_invoked` and `tasks_completed` events land in `state.db` so
+runs are auditable via `akm events`.

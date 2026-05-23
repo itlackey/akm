@@ -57,11 +57,11 @@ All notable changes to this project will be documented in this file.
 
 - **Unified profiles tree**: Named LLM and agent profiles under `profiles.llm.<name>` and `profiles.agent.<name>`. Per-process LLM/agent bindings live on `profiles.improve.<name>.processes.{reflect,distill,consolidate,memoryInference,graphExtraction,feedbackDistillation,validation}` with a `{mode, profile, timeoutMs}` shape plus optional `qualityGate` / `contradictionDetection` sub-objects. Non-improve feature gates moved to first-class top-level sections (`index.metadataEnhance`, `index.stalenessDetection`, `search.curateRerank`). See [docs/configuration.md](docs/configuration.md) for the full 0.8.0 reference.
 
-- **reflect LLM mode**: `akm reflect` (and `akm improve`'s reflect pass) can now run as a direct LLM call — 3–5× faster than the agent subprocess path. Configure via `profiles.improve.<name>.processes.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
+- **reflect LLM mode**: The reflect pass inside `akm improve` can now run as a direct LLM call — significantly faster than the agent subprocess path. Configure via `profiles.improve.<name>.processes.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
 
 - **`akm config migrate`**: New command to explicitly migrate pre-0.8.0 config shapes into the 0.8.0 unified shape. Includes `--dry-run` and `--no-wait` flags. Acquires a file lock before write for safety. All config layers (user + project) are visited and rewritten in place; read-only layers print the migrated content for manual apply.
 
-- **`--mode` and `--profile` flags on reflect/improve/propose**: `akm reflect`, `akm improve`, and `akm propose` now accept `--mode <llm|agent|sdk>` and `--profile <name>` to override the configured dispatch for a single run. `--dry-run-resolve` prints the resolved RunnerSpec without executing.
+- **`--profile` flag on improve/propose**: `akm improve` and `akm propose` now accept `--profile <name>` to override the configured dispatch profile for a single run.
 
 - **`vault set` reads from stdin by default**: Values are never passed via argv. `printf '%s' "$SECRET" | akm vault set vault:prod KEY` is the default pattern. Use `--from-env <VAR>` to read from a named environment variable instead.
 
@@ -73,7 +73,7 @@ All notable changes to this project will be documented in this file.
 
 - **`improve_skipped` event**: Emitted at every cooldown-guard skip in `akm improve`, making skip distribution and budget exhaustion observable in the event stream.
 
-- **`reflect_completed` event**: Emitted after `akm reflect` creates a proposal, linking the reflect invocation to its proposal ID for closed-loop outcome tracking.
+- **`reflect_completed` event**: Emitted after the reflect pass in `akm improve` creates a proposal, linking the reflect invocation to its proposal ID for closed-loop outcome tracking.
 
 - **Search mode metadata**: `search` events now include `mode: "semantic" | "keyword"` for long-term quality analysis of retrieval strategies.
 
@@ -107,7 +107,7 @@ All notable changes to this project will be documented in this file.
 
 ### Performance
 
-- **reflect LLM mode**: ~6–10s/call vs ~30s/call in agent subprocess mode. On a 69-ref improve run: ~8–10 min total vs ~35 min baseline. Enable with `profiles.improve.<name>.processes.reflect.mode: "llm"` in your config.
+- **reflect LLM mode**: The direct-LLM reflect path is order-of-magnitude faster per call than the agent subprocess path, with corresponding improvements on full improve runs. Enable with `profiles.improve.<name>.processes.reflect.mode: "llm"` in your config. (Specific numbers are preliminary; in-tree benchmarks live under `tests/bench/` once landed.)
 
 - **`akm improve` cooldown pre-filter**: Assets under cooldown are now filtered out before the main improvement loop rather than inside it. Reduces LLM API calls and speeds up runs on large stashes with many recently-processed assets.
 
@@ -122,15 +122,15 @@ All notable changes to this project will be documented in this file.
 - **Write lock on `vault set` / `vault unset`**: both commands now acquire an exclusive lock file (`<vault>.lock`) around the read-modify-write cycle. Concurrent writers in CI no longer silently drop each other's keys. Lock times out after 5 s.
 - **Orphaned comment cleanup in `vault unset`**: `vault unset KEY` now also removes the `# comment` line immediately above the removed key.
 - **Lint ref extension fix**: `akm lint` now correctly resolves `vault:<name>` refs to `vaults/<name>.env` (was incorrectly using `.md`).
-- **Dangerous vault key detection**: `akm lint` and `akm add` now scan vault files for 23 environment variable names that can be used for process-execution hijacking (`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, etc.). `akm lint` reports these as `dangerous-vault-key` findings (non-blocking). `akm add` pauses and prompts for confirmation (default: No) when dangerous keys are found; in non-interactive mode the install fails unless `--allow-insecure` is passed. `--allow-insecure` on `akm add` now covers both plain-HTTP sources and dangerous vault key bypass.
+- **Dangerous vault key detection**: `akm lint` and `akm add` now scan vault files against the dangerous vault key list — environment variable names that can be used for process-execution hijacking (`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, etc.). `akm lint` reports these as `dangerous-vault-key` findings (non-blocking). `akm add` pauses and prompts for confirmation (default: No) when dangerous keys are found; in non-interactive mode the install fails unless `--allow-insecure` is passed. `--allow-insecure` on `akm add` now covers both plain-HTTP sources and dangerous vault key bypass.
 
 ### Graph Extraction Improvements
 
 - **`candidatePaths` filter**: Graph extraction now refreshes only touched assets per improve cycle. Massive perf win on cold cache and large stashes — extraction sweeps no longer revisit every asset on every run.
 - **Default `graphExtractionBatchSize` raised from 1 to 4**: Auto-tuned against `llm.contextLength`, so larger context windows produce wider batches without manual tuning.
-- **Incremental `replaceStoredGraph`**: Unchanged entries skip; only changed entries delete child rows and re-insert; removed entries get cleaned up. Roughly 700× fewer row writes on small re-extractions vs. the previous wipe-and-rewrite path.
-- **SQL-backed `listRelatedPathsForFile`**: Rewritten as a SQL self-join on `graph_file_entities` plus a relation-count subquery, scoped by `stash_root`. Cold-call latency on typical stashes drops from ~30ms to ~2ms.
-- **Graph schema redesign (DB_VERSION 12 → 13)**: `graph_files` now keys on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE`. Child tables (`graph_file_entities`, `graph_file_relations`) re-keyed on `entry_id` and cascade through. `body_hash` is now `NOT NULL`. New columns `extraction_run_id` (graph_files + graph_meta) and `extractor_id` (graph_meta) record extraction provenance. New indexes `idx_graph_file_entities_entity` and `idx_entries_file_path`; two redundant indexes dropped. Migration uses the existing DROP+rebuild path — graph data re-extracts on the first `akm improve` after upgrade; a warning is logged during the upgrade.
+- **Incremental `replaceStoredGraph`**: Unchanged entries skip; only changed entries delete child rows and re-insert; removed entries get cleaned up. Order-of-magnitude reduction in row writes on small re-extractions vs. the previous wipe-and-rewrite path.
+- **SQL-backed `listRelatedPathsForFile`**: Rewritten as a SQL self-join on `graph_file_entities` plus a relation-count subquery, scoped by `stash_root`. Significantly faster cold-call latency on typical stashes.
+- **Graph schema redesign (DB_VERSION 10 → 17)**: `graph_files` now keys on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE`. Child tables (`graph_file_entities`, `graph_file_relations`) re-keyed on `entry_id` and cascade through. `body_hash` is now `NOT NULL`. New columns `extraction_run_id` (graph_files + graph_meta) and `extractor_id` (graph_meta) record extraction provenance. New indexes `idx_graph_file_entities_entity_norm` and `idx_entries_file_path`; two redundant indexes dropped. Migration uses the existing DROP+rebuild path — graph data re-extracts on the first `akm improve` after upgrade; a warning is logged during the upgrade.
 - **Stash removal cleans up graph rows**: Removing a stash now correctly cascades through the graph tables. Earlier versions left orphaned graph rows behind.
 - **New: `akm graph entity <name>`**: Inverts the entities view — list every asset that mentions a given entity, ordered by per-asset extraction confidence.
 - **New: `akm graph orphans`**: List assets that produced zero entities during the extraction pass — useful for quality triage and re-extraction targeting.

@@ -518,6 +518,17 @@ export interface ImproveConfig {
      */
     feedbackStabilityBoost?: number;
   };
+  /**
+   * Retention window (days) for rows in state.db's `events` table. The improve
+   * post-loop maintenance pass calls `purgeOldEvents()` with this value so
+   * state.db doesn't grow unbounded — `akm health` writes a `health_probe` row
+   * on every invocation, and the events table accumulates one row per command
+   * surface besides.
+   *
+   * Default: 90 days. Set to 0 to disable purging entirely (rows accumulate
+   * forever, equivalent to pre-0.8.0 behaviour).
+   */
+  eventRetentionDays?: number;
 }
 
 export interface OutputConfig {
@@ -1197,6 +1208,18 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
         warn(`[akm] Ignoring improve.utilityDecay.feedbackStabilityBoost: expected a number ≥ 1.0.`);
       }
       if (Object.keys(decay).length > 0) improveConfig.utilityDecay = decay;
+    }
+    // Fix #2 (observability 0.8.0): events-table retention window. Drives
+    // `purgeOldEvents()` in the improve post-loop maintenance pass so state.db
+    // doesn't grow unbounded.
+    if (
+      typeof improveRaw.eventRetentionDays === "number" &&
+      Number.isFinite(improveRaw.eventRetentionDays) &&
+      improveRaw.eventRetentionDays >= 0
+    ) {
+      improveConfig.eventRetentionDays = improveRaw.eventRetentionDays;
+    } else if (improveRaw.eventRetentionDays !== undefined) {
+      warn(`[akm] Ignoring improve.eventRetentionDays: expected a number ≥ 0.`);
     }
     if (Object.keys(improveConfig).length > 0) config.improve = improveConfig;
   }

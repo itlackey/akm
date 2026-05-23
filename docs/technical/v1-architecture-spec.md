@@ -4,6 +4,16 @@
 **Target:** v1.0 freeze
 **Audience:** akm core contributors
 
+> **Note (0.8.0):** Some configuration examples below — particularly
+> references to `llm.features.*` — predate the 0.8.0 profiles tree. The
+> shipping 0.8.0 config uses `profiles.improve.<name>.processes.*` for
+> improve-bound gates and first-class `index.*` / `search.*` sections for
+> non-improve features. See [`docs/configuration.md`](../configuration.md)
+> for the current keys and
+> [`docs/migration/v0.7-to-v0.8.md`](../migration/v0.7-to-v0.8.md) for the
+> full old → new mapping. The spec sections below are retained for
+> historical context and the v1.0 contract framing.
+
 > **Reading guide.** This spec defines the v1.0 contract. It mixes shipped pre-release surfaces (sources, indexer, search, show, write-source, registry providers, vault, wiki, workflow, agent CLI integration, LLM/agent boundary) with **planned v1 surfaces** (proposal queue, `quality: "proposed"`, `lesson` asset type, `llm.features.*`). Planned surfaces are explicitly marked **`Planned for v1`** in their section heading and in §9. Implementation tracks against these declarations via `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md`. Anything in §9 — shipped or planned — is part of the locked contract once v1.0 ships.
 
 ---

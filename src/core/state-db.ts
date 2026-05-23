@@ -622,11 +622,20 @@ export function readStateEvents(
 /**
  * Delete events older than `retentionDays` (default: 90). Safe to call from
  * a maintenance cron; uses a single DELETE with an index-covered ts predicate.
+ *
+ * Returns the number of rows actually deleted so callers can emit an
+ * `events_purged` observability event. A non-positive or non-finite
+ * `retentionDays` is treated as "disabled" and returns 0 without scanning.
  */
-export function purgeOldEvents(db: Database, retentionDays = 90): void {
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+export function purgeOldEvents(db: Database, retentionDays = 90): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  db.prepare("DELETE FROM events WHERE ts < ?").run(cutoff);
+  const result = db.prepare("DELETE FROM events WHERE ts < ?").run(cutoff);
+  // bun:sqlite's run() returns { changes, lastInsertRowid }. `changes` may be
+  // a number or bigint depending on the underlying lib; coerce to number for
+  // the metadata payload.
+  const changes = (result as { changes?: number | bigint }).changes ?? 0;
+  return typeof changes === "bigint" ? Number(changes) : changes;
 }
 
 // ── proposals table helpers ──────────────────────────────────────────────────
@@ -814,20 +823,35 @@ export function queryTaskHistory(
  * monotonic integer ids. Callers that persisted a byte-offset cursor must
  * discard it after migration and use the returned `maxId` as the new cursor.
  *
- * The import is wrapped in a single transaction for atomicity. If the file
- * has already been imported (the events table is non-empty and the file
- * has not changed since last import), callers should skip calling this
- * function — de-duplication is NOT performed here to keep the hot path fast.
+ * **Idempotency**: each line is pre-checked against the `events` table using
+ * `(event_type, ts, ref, metadata_json)` as the duplicate key. Lines whose
+ * exact tuple is already present are skipped and reported as `skipped` in the
+ * return value. This makes the migration safe to re-run (the v0.7→v0.8
+ * migration guide recommends re-running the script as a recovery path; without
+ * this guard, every re-run would double-import the entire event log).
+ *
+ * Duplicate detection is per-import-tuple, not a table-wide UNIQUE constraint:
+ * the events table has no UNIQUE constraint at runtime so that
+ * `appendEvent` can write multiple events with the same ts (sub-millisecond
+ * bursts produce identical `(event_type, ts, ref)` triples in practice). The
+ * SELECT-first check is scoped to the import path only.
+ *
+ * The import is wrapped in a single transaction for atomicity.
  *
  * @param db       - Open state.db connection.
  * @param jsonlPath - Absolute path to the events.jsonl file to import.
- * @returns         Number of rows inserted and the max id assigned.
+ * @returns         Number of rows inserted, the max id assigned, and the
+ *                  count of rows skipped because an identical event already
+ *                  existed in the table.
  */
-export async function importEventsJsonl(db: Database, jsonlPath: string): Promise<{ imported: number; maxId: number }> {
+export async function importEventsJsonl(
+  db: Database,
+  jsonlPath: string,
+): Promise<{ imported: number; maxId: number; skipped: number }> {
   const { readFileSync, existsSync } = await import("node:fs");
 
   if (!existsSync(jsonlPath)) {
-    return { imported: 0, maxId: 0 };
+    return { imported: 0, maxId: 0, skipped: 0 };
   }
 
   const text = readFileSync(jsonlPath, "utf8");
@@ -835,11 +859,26 @@ export async function importEventsJsonl(db: Database, jsonlPath: string): Promis
 
   let imported = 0;
   let maxId = 0;
+  let skipped = 0;
 
-  const stmt = db.prepare(
+  const insertStmt = db.prepare(
     `INSERT INTO events (event_type, ts, ref, metadata_json)
      VALUES (?, ?, ?, ?)
      RETURNING id`,
+  );
+  // Dedup pre-check: matches by the full tuple including metadata_json so an
+  // import is idempotent over identical rows but does not collide with two
+  // genuinely different events that happen to share (event_type, ts, ref).
+  //
+  // Uses IS for ref so two NULL refs compare equal (a plain `=` would treat
+  // NULL = NULL as NULL and the row would be re-inserted on every run).
+  const existsStmt = db.prepare(
+    `SELECT 1 FROM events
+     WHERE event_type = ?
+       AND ts = ?
+       AND ref IS ?
+       AND metadata_json = ?
+     LIMIT 1`,
   );
 
   db.transaction(() => {
@@ -856,7 +895,13 @@ export async function importEventsJsonl(db: Database, jsonlPath: string): Promis
       const metadata =
         parsed.metadata !== undefined && typeof parsed.metadata === "object" ? JSON.stringify(parsed.metadata) : "{}";
 
-      const result = stmt.get(eventType, ts, ref, metadata) as { id: number } | undefined;
+      const duplicate = existsStmt.get(eventType, ts, ref, metadata) as { 1: number } | undefined;
+      if (duplicate) {
+        skipped++;
+        continue;
+      }
+
+      const result = insertStmt.get(eventType, ts, ref, metadata) as { id: number } | undefined;
       if (result) {
         imported++;
         if (result.id > maxId) maxId = result.id;
@@ -864,7 +909,7 @@ export async function importEventsJsonl(db: Database, jsonlPath: string): Promis
     }
   })();
 
-  return { imported, maxId };
+  return { imported, maxId, skipped };
 }
 
 // ── registry_index_cache (goes in index.db, not state.db) ───────────────────

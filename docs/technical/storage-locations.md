@@ -316,9 +316,9 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
 | `promoted` | `akm proposal accept` | `proposalId`, `source`, `assetPath` |
 | `rejected` | `akm proposal reject` | `proposalId`, `source`, `reason` |
-| `reflect_invoked` | `akm reflect` | `task`, `profile` |
+| `reflect_invoked` | reflect pass inside `akm improve` | `task`, `profile` |
 | `propose_invoked` | `akm propose` | `type`, `name`, `task`, `profile` |
-| `distill_invoked` | `akm distill` | `outcome` (queued\|skipped\|validation_failed\|quality_rejected), `lessonRef`, `score`, `reason` |
+| `distill_invoked` | distill pass inside `akm improve` | `outcome` (queued\|skipped\|validation_failed\|quality_rejected), `lessonRef`, `score`, `reason` |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `show` | `akm show` | `type`, `name` |
 | `select` | `akm show` (when preceded by search within 60s) | `query`, `searchTs`, `rankPosition` |
@@ -326,7 +326,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `improve_skipped` | `akm improve` (cooldown guards) | `reason` (reflect_cooldown\|distill_cooldown\|consolidation_cooldown\|budget_exhausted), `cooldownDays`, `lastEventTs` |
 | `consolidate_completed` | `akm improve` (post-consolidation) | `processed`, `merged` |
 | `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (written\|error), `reason`, `error?` |
-| `reflect_completed` | `akm reflect` (after proposal created) | `proposalId`, `source` |
+| `reflect_completed` | reflect pass inside `akm improve` (after proposal created) | `proposalId`, `source` |
 | `workflow_started` | workflow engine | `runId` |
 | `workflow_step_completed` | workflow engine | `runId`, `stepId` |
 | `workflow_finished` | workflow engine | `runId` |
@@ -342,8 +342,8 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `akm improve` | `distill_invoked` per ref | Distill cooldown guard (30d) |
 | `akm improve` | `consolidate_completed` | Consolidation cooldown guard (14d) |
 | `akm improve` | `schema_repair_invoked` per ref | Schema repair cooldown guard (7d) |
-| `akm distill` | `feedback` per ref | Builds LLM prompt context (last 20 events) |
-| `akm reflect` | `feedback` per ref | Builds agent prompt context (last 10 per-ref / 20 global) |
+| `akm improve` (distill pass) | `feedback` per ref | Builds LLM prompt context (last 20 events) |
+| `akm improve` (reflect pass) | `feedback` per ref | Builds agent prompt context (last 10 per-ref / 20 global) |
 | `akm show` | `show` per ref | Loop detection: warns at 3+ repeated shows |
 | `akm history` | `promoted`, `rejected` | Unified lifecycle trail |
 | `akm events` | user-supplied | Direct inspection / tail |
@@ -397,7 +397,7 @@ All asset files live under `$STASH/` in type-specific subdirectories defined by 
 | `vaults/<name>.env` | vault | `KEY=VALUE` pairs |
 | `wikis/<name>/` | wiki | See wiki structure below |
 | `lessons/<name>.md` | lesson | YAML-FM + Markdown (required: `description`, `when_to_use`) |
-| `tasks/<name>.md` | task | YAML-FM + Markdown |
+| `tasks/<name>.yml` | task | pure YAML (see `docs/migration/v0.7-to-v0.8.md` for the `.md` → `.yml` conversion) |
 
 ### Wiki File Structure
 
