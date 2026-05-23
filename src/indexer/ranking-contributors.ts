@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { UtilityScoreRow } from "./db";
 import { computeGraphBoost, type GraphBoostContext } from "./graph-boost";
+import type { ProjectContext } from "./project-context";
 import type { RankedEntryInput } from "./ranking";
 
 const TYPE_BOOST: Record<string, number> = {
@@ -37,6 +38,8 @@ export interface RankingContext {
   queryLower: string;
   queryTokens: string[];
   graphContext: GraphBoostContext | null;
+  /** Project-context tokens derived from the current working directory. */
+  projectContext?: ProjectContext | null;
 }
 
 export interface RankingContributor {
@@ -291,6 +294,42 @@ const utilityRankingContributor: UtilityRankingContributor = {
   },
 };
 
+/**
+ * Project-context boost.
+ *
+ * Auto-boosts assets whose name, tags, aliases, or search hints contain tokens
+ * derived from the current working directory's project name. For example, when
+ * running `akm search` from the `akm` git repo, assets tagged `akm` or named
+ * `akm-*` receive an additive boost.
+ *
+ * The boost is capped at 0.5 so it can never overpower an exact-name match
+ * (which contributes 2.0). Each matching token adds 0.2 up to the cap.
+ *
+ * Skipped entirely when `projectContext` is absent or has no tokens (e.g.
+ * when running from home dir, /tmp, or when disabled via
+ * `--no-project-context` / `AKM_DISABLE_PROJECT_CONTEXT=1`).
+ */
+const projectContextRankingContributor: RankingContributor = {
+  name: "project-context-ranking",
+  appliesTo(_item, ctx) {
+    return ctx.projectContext != null && ctx.projectContext.tokens.size > 0;
+  },
+  adjust(item, ctx) {
+    if (!ctx.projectContext) return 0;
+    const fields = [
+      item.entry.name ?? "",
+      ...(item.entry.tags ?? []),
+      ...(item.entry.aliases ?? []),
+      ...(item.entry.searchHints ?? []),
+    ].map((s) => s.toLowerCase());
+    let hits = 0;
+    for (const token of ctx.projectContext.tokens) {
+      if (fields.some((f) => f.includes(token))) hits++;
+    }
+    return Math.min(0.5, hits * 0.2);
+  },
+};
+
 export const defaultRankingContributors: RankingContributor[] = [
   exactNameRankingContributor,
   typeRankingContributor,
@@ -303,6 +342,7 @@ export const defaultRankingContributors: RankingContributor[] = [
   graphRankingContributor,
   captureModeRankingContributor,
   lessonStrengthContributor,
+  projectContextRankingContributor,
 ];
 
 export const defaultUtilityRankingContributors: UtilityRankingContributor[] = [utilityRankingContributor];

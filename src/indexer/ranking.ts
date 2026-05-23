@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { type DbSearchResult, getUtilityScoresByIds } from "./db";
 import type { GraphBoostContext } from "./graph-boost";
 import type { StashEntry } from "./metadata";
+import type { ProjectContext } from "./project-context";
 import { applyScoreContributors, applyUtilityContributors } from "./ranking-contributors";
 
 export interface RankedEntryInput {
@@ -18,6 +19,12 @@ export interface RankEntriesOptions {
   query: string;
   items: RankedEntryInput[];
   graphContext: GraphBoostContext | null;
+  /**
+   * Project-context tokens derived from the current working directory.
+   * When supplied, assets that match these tokens receive an additive
+   * ranking boost. Pass `null` to explicitly disable (e.g. `--no-project-context`).
+   */
+  projectContext?: ProjectContext | null;
   /**
    * Phase 2A / Rec 5: optional configurable forgetting curve. When absent,
    * the utility recency decay falls back to its pre-2A default
@@ -103,6 +110,7 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
     queryLower,
     queryTokens,
     graphContext: options.graphContext,
+    projectContext: options.projectContext,
   };
 
   for (const item of options.items) {

@@ -40,6 +40,7 @@ import {
   loadGraphBoostContext,
 } from "./graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
+import { resolveProjectContext } from "./project-context";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -329,6 +330,11 @@ async function searchDatabase(
     return loadGraphBoostContext(allSourceDirs, query, config, db);
   })();
 
+  // Resolve project-context tokens from the current working directory once
+  // per search invocation. Returns null when running from home dir / /tmp,
+  // or when the caller has set AKM_DISABLE_PROJECT_CONTEXT=1.
+  const projectContext = process.env.AKM_DISABLE_PROJECT_CONTEXT === "1" ? null : resolveProjectContext(process.cwd());
+
   // Phase 2A / Rec 5: resolve forgetting-curve config and skip the feedback
   // count query when the boost cannot make a difference (default ≤ 1.0 means
   // boost^count == 1 — zero overhead for the common case).
@@ -353,6 +359,7 @@ async function searchDatabase(
     query,
     items: scored,
     graphContext,
+    projectContext,
     utilityDecayConfig,
     positiveFeedbackCounts,
   });
