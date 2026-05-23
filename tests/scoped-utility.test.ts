@@ -299,14 +299,16 @@ describe("schema migration safety", () => {
         .run();
       bumpUtilityScoresBatch(existingDb, [1], 1.0, 0.1);
       const { global: before } = getUtilityScoresByIds(existingDb, [1]);
-      expect(before.get(1)?.utility).toBeGreaterThan(0);
+      const beforeUtility = before.get(1)?.utility;
+      expect(beforeUtility).toBeGreaterThan(0);
 
       // Re-open the same DB (simulates a binary restart / second ensureSchema call)
       closeDatabase(existingDb);
       const reopenedDb = openDatabase(existingPath);
       const { global: after } = getUtilityScoresByIds(reopenedDb, [1]);
-      expect(after.get(1)?.utility).toBeGreaterThan(0);
-      expect(after.get(1)?.utility).toBeCloseTo(before.get(1)?.utility, 5);
+      const afterUtility = after.get(1)?.utility;
+      expect(afterUtility).toBeGreaterThan(0);
+      expect(afterUtility).toBeCloseTo(beforeUtility as number, 5);
       closeDatabase(reopenedDb);
     } catch (err) {
       try {
