@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - **Unified 0.8.0 config shape**: The legacy top-level `llm`, `agent`, and `features` blocks are **removed**. LLM and agent connections now live exclusively under `profiles.llm.<name>` and `profiles.agent.<name>` (with `defaults.llm` / `defaults.agent` selecting the active entry). Per-process LLM/agent gates moved into `profiles.improve.<name>.processes.*`, and feature sections that are not improve-process-bound moved to first-class `index.metadataEnhance`, `index.stalenessDetection`, and `search.curateRerank` blocks. Configs without `configVersion: "0.8.0"` are auto-migrated at first run with a one-time notice; a timestamped backup is written before any in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress.
 
+- **`akm wiki ingest <name>` now dispatches an agent instead of just printing the workflow**: The print-only mode and the `--execute` flag are gone — calling ingest resolves an agent profile (from `--profile` or `config.defaults.agent`) and dispatches that agent with the workflow as its prompt. Without an accessible agent profile the command fails with a clear error pointing at `profiles.agent`. New flags: `--profile <name>`, `--model <model>`, `--timeout-ms <ms>`.
+
 - **`config.improve.reflectCooldownByType` removed**: Moved to `profiles.improve.default.processes.reflect.cooldownByType`. Migrated automatically.
 
 - **`config.agent.processes["task"]` removed**: Tasks now declare `mode` and `profile` in their stash YAML file directly.

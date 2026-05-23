@@ -49,7 +49,7 @@ akm show wiki:research                        # Wiki summary (same as akm wiki s
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
 | vault | `keys`, `comments` (values are never returned) |
-| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. |
+| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
 | lesson | `content` plus `when_to_use` from frontmatter — read both before applying the lesson |
 
 `akm show wiki:<name>` returns the same summary as `akm wiki show <name>`: path,
@@ -127,13 +127,17 @@ akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug
 akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index, broken sources
-akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
+akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
+akm wiki ingest research --profile claude --model sonnet  # Override agent profile and model
+akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout
 akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
 akm wiki remove research --force --with-sources # Full nuke, including raw/
 ```
 
-**For any wiki task, start with `akm wiki list`, then `akm wiki ingest <name>`
-to get the step-by-step workflow.** Wiki pages are also addressable as
+**For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`
+dispatches the configured agent (defaults.agent or `--profile`) to execute
+the wiki's ingest workflow end-to-end — schema read, source dedup, search,
+page create/update, log entry, lint, reindex.** Wiki pages are also addressable as
 `wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
 `type: wiki`. Files under `raw/` and the wiki root infrastructure files
 `schema.md`, `index.md`, and `log.md` are not indexed and do not appear in

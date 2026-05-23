@@ -33,7 +33,7 @@ akm remember "note" --target my-stash         # Route write to a named writable 
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm import ./doc.md --target my-stash         # Route import to a named writable stash source
 akm wiki list                                 # List available wikis
-akm wiki ingest <name>                        # Print the ingest workflow for a wiki
+akm wiki ingest <name>                        # Dispatch an agent to run the ingest workflow (uses defaults.agent or --profile)
 akm wiki stash <name> ./paper.md --target my-stash # Route wiki stash write to a named source
 akm diff skill:akm-dream                      # Diff proposal by ref, UUID, or 8-char prefix
 akm accept 7c115132                           # Accept by UUID prefix (proposal positional optional)
@@ -57,7 +57,7 @@ akm registry search "<query>"                 # Search all registries
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
 | vault | Key names only; use `akm vault path` or `akm vault run` to use values safely |
-| wiki | A page in a multi-wiki knowledge base. For any wiki task, start with `akm wiki list`, then `akm wiki ingest <name>` for the workflow. Run `akm wiki -h` for the full surface. |
+| wiki | A page in a multi-wiki knowledge base. For any wiki task, start with `akm wiki list`. To ingest sources, run `akm wiki ingest <name>` — it dispatches the configured agent profile to execute the ingest workflow against the wiki's `raw/` directory. Run `akm wiki -h` for the full surface. |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.

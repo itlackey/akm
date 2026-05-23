@@ -413,8 +413,10 @@ Workflows now include authoring, validation, execution, and recovery flows.
       writes converted markdown into `wikis/my-wiki/raw/` without crawling.
 - [ ] Re-running the same explicit slug with `--as raw-source` fails rather than
       overwriting.
-- [ ] `akm wiki ingest my-wiki` prints the ingest workflow and does not mutate
-      content.
+- [ ] `akm wiki ingest my-wiki` dispatches the configured agent profile (from
+      `defaults.agent` or `--profile`) to execute the ingest workflow. Without
+      an accessible profile it fails with a clear `UsageError` pointing at
+      `profiles.agent`.
 - [ ] `akm wiki lint my-wiki` returns deterministic findings or a clean pass;
       findings may exit non-zero but should still be structured and not crash.
 - [ ] `akm show wiki:my-wiki` returns the same summary class as

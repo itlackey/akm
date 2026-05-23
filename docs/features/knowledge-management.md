@@ -100,7 +100,7 @@ echo "# Notes" | akm wiki stash research - --as my-notes
 akm wiki pages research
 akm wiki search research "attention mechanism"
 akm wiki lint research       # structural checks: orphans, broken xrefs, stale index
-akm wiki ingest research     # print the agent ingest workflow
+akm wiki ingest research     # dispatch defaults.agent to run the ingest workflow
 ```
 
 Three layers: **raw sources** (`raw/`) that you never edit after stashing,
@@ -113,7 +113,7 @@ Three layers: **raw sources** (`raw/`) that you never edit after stashing,
 ```sh
 akm wiki create ml-research
 akm wiki stash ml-research https://arxiv.org/abs/1706.03762 --as attention
-akm wiki ingest ml-research   # agent follows the printed workflow to write pages
+akm wiki ingest ml-research   # agent runs the ingest workflow and writes the pages
 akm index
 akm wiki lint ml-research
 ```

@@ -1447,7 +1447,8 @@ echo "# Attention Is All You Need" | akm wiki stash research - --as attention
 akm wiki pages research
 akm wiki search research "attention"
 akm wiki lint research
-akm wiki ingest research               # prints the workflow; does nothing else
+akm wiki ingest research               # dispatches defaults.agent to run the ingest workflow
+akm wiki ingest research --profile claude --model sonnet  # explicit overrides
 akm wiki remove research --force       # preserves raw/ by default
 akm wiki remove research --force --with-sources
 ```
@@ -1465,7 +1466,7 @@ Subcommands:
 | `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
 | `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index, broken sources |
-| `ingest <name>` | Print the step-by-step ingest workflow for the named wiki. Does not perform any ingest |
+| `ingest <name>` | Dispatch the configured agent (`--profile` or `config.defaults.agent`) to execute the ingest workflow end-to-end. Requires an accessible agent profile. Flags: `--profile <name>`, `--model <model>`, `--timeout-ms <ms>` |
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$` — lowercase letters and digits
 only; must start with a lowercase letter or digit.

@@ -45,7 +45,7 @@ akm owns only operations with invariants an agent could get wrong:
 - Raw immutability + unique slug generation (`stash`)
 - Structural lint — deterministic checks only, no LLM (`lint`)
 - Index regeneration (side effect of `akm index`)
-- Workflow discovery (`ingest` — prints the recipe; does nothing else)
+- Workflow execution (`ingest` — dispatches an agent to run the wiki's ingest workflow)
 
 Page writes — create, append, xref, log — all use the agent's native
 `Read` / `Write` / `Edit` tools. akm surfaces the paths; the agent does
@@ -83,7 +83,7 @@ Registered external wikis also show up in `akm list`.
 ```sh
 akm wiki pages <name>        # list page refs + frontmatter descriptions
 akm wiki search <name> <q>   # scope-filtered search (see below)
-akm wiki ingest <name>       # print the ingest workflow; no action
+akm wiki ingest <name>       # dispatch defaults.agent (or --profile) to run the ingest workflow
 ```
 
 `akm wiki search <n> <q>` is a convenience — wiki pages are first-class
@@ -150,11 +150,16 @@ sources:
 using them in a page's frontmatter; the next `akm index` run surfaces
 them in `index.md` as a new section automatically.
 
-## The ingest workflow (what agents do)
+## The ingest workflow (what the dispatched agent does)
 
-Run `akm wiki ingest <name>` to see the workflow inline — it prints the
-full recipe parameterised with the wiki's absolute path and schema
-location. The workflow in prose:
+`akm wiki ingest <name>` resolves an agent profile (from `--profile` or
+`config.defaults.agent`) and dispatches that agent with the wiki's
+ingest workflow as the prompt. The agent then drives every step in the
+recipe below — `akm` provides the schema-aware commands; the agent
+provides the reasoning. Calling ingest without an accessible agent
+profile fails with a clear error pointing at `profiles.agent`.
+
+The workflow steps:
 
 1. **Read the schema.** Open `wikis/<name>/schema.md`. It defines the
    voice, page kinds, contradiction policy, and any wiki-specific
@@ -186,12 +191,13 @@ akm wiki list
 echo "# Attention Is All You Need" | akm wiki stash research - --as attention
 # { "slug": "attention", "path": "…/wikis/research/raw/attention.md", ... }
 
-# Get the workflow for this wiki
+# Run the ingest — dispatches the configured agent
 akm wiki ingest research
-# (prints the recipe — agent follows it)
+# Agent reads schema, finds related pages, creates new pages,
+# updates xrefs, appends to log.md, then reindexes and lints.
 
-# Agent creates pages with its native file tools, then:
-akm index
+# Override the agent profile and model if needed:
+akm wiki ingest research --profile claude --model sonnet --timeout-ms 600000
 akm wiki pages research
 akm wiki lint research        # → "0 finding(s) — clean."
 

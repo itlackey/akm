@@ -111,7 +111,7 @@ akm wiki create ops
 akm wiki create research                   # scaffold wikis/research/ with schema/index/log/raw/
 akm wiki stash research https://arxiv.org/abs/2404.01744  # fetch raw source into raw/
 akm wiki stash research ./notes/meeting.md # stash local notes as immutable raw
-akm wiki ingest research                   # print the ingest workflow — agent writes the pages
+akm wiki ingest research                   # dispatch defaults.agent to run the ingest workflow end-to-end
 ```
 
 akm implements [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: raw sources live in `raw/` (immutable), the agent writes synthesized pages alongside them, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. akm surfaces paths and invariants; your agent does the writing. See [docs/wikis.md](docs/wikis.md).

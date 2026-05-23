@@ -87,7 +87,7 @@ Now ask your agent to start the ingest workflow:
 akm wiki ingest research
 ```
 
-This prints a step-by-step recipe for what the agent should do next. Something like: read `schema.md` to understand the page structure, check `index.md` to see what pages already exist, read each unprocessed file in `raw/`, synthesize content into pages using Write or Edit, update `index.md`, append a summary to `log.md`. The command itself writes nothing — it just prints the workflow. Execution is entirely the agent's job, using its native file tools.
+This dispatches the configured agent (from `config.defaults.agent` or `--profile`) with the wiki's ingest workflow as its prompt. The workflow tells the agent to: read `schema.md` to understand the page structure, check `index.md` to see what pages already exist, read each unprocessed file in `raw/`, synthesize content into pages using Write or Edit, update `index.md`, append a summary to `log.md`. `akm` owns the schema-aware commands (stash, search, lint, index, show); the agent owns the reasoning.
 
 After the agent runs the ingest workflow:
 
@@ -204,7 +204,7 @@ Multi-wiki is not a document management system. If you want to store and retriev
 
 It's not a notes app. Single notes go in memories. Reference material goes in knowledge. Wikis are specifically for synthesized, structured knowledge that grows over time through an active ingest process.
 
-It's also not autonomous. akm prints the ingest recipe; your agent runs it. If you want fully automated ingestion, you'd wire up a workflow that calls `akm wiki ingest`, then asks the agent to execute the printed steps. The wiki tooling is the substrate, not the automation layer.
+As of 0.8.0, `akm wiki ingest <name>` dispatches the configured agent (`defaults.agent` or `--profile`) to execute the ingest workflow end-to-end. The agent reads the schema, finds related pages, creates new pages, updates xrefs, appends to `log.md`, and reindexes — all through `akm`'s schema-aware commands. The wiki tooling owns the invariants; the agent owns the reasoning.
 
 ## Getting Started
 
