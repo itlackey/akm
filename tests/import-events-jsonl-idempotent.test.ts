@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 function writeJsonl(lines: Array<Record<string, unknown>>): void {
-  fs.writeFileSync(jsonlPath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
+  fs.writeFileSync(jsonlPath, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`, "utf8");
 }
 
 function countEvents(): number {

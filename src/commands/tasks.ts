@@ -153,11 +153,52 @@ export interface TasksListResult {
   }>;
 }
 
+/**
+ * Emit a single grouped stderr warning for legacy `.md` task files in the
+ * tasks directory. 0.8.0 requires task definitions to be pure `.yml`; any
+ * leftover `.md` files from 0.7.x would otherwise be silently skipped, which
+ * makes scheduled tasks vanish without operator notice. We do NOT auto-migrate
+ * — that is a separate workstream — but operators must see the affected files.
+ *
+ * `seen` is module-level so the warning is emitted at most once per process,
+ * even when both `akm tasks list` and `akm tasks sync` are invoked in the same
+ * akm run.
+ */
+const warnedLegacyMdDirs = new Set<string>();
+
+function warnLegacyMdTaskFiles(typeRoot: string): void {
+  if (warnedLegacyMdDirs.has(typeRoot)) return;
+  let mdFiles: string[];
+  try {
+    mdFiles = fs.readdirSync(typeRoot).filter((f) => f.endsWith(".md"));
+  } catch {
+    return;
+  }
+  if (mdFiles.length === 0) return;
+  warnedLegacyMdDirs.add(typeRoot);
+  const affected = mdFiles.map((f) => `tasks/${f}`).join(", ");
+  process.stderr.write(
+    `WARNING: ${mdFiles.length} task file(s) use the legacy .md format and were ignored.\n` +
+      `         AKM 0.8.0 requires tasks as pure .yml. See docs/migration/v0.7-to-v0.8.md#task-definition-files-mdfrontmatter--yml.\n` +
+      `         Affected: ${affected}\n`,
+  );
+}
+
+/**
+ * Reset the legacy `.md` task warning de-duplication state. Test-only escape
+ * hatch — production code should never call this.
+ */
+export function _resetLegacyMdTaskWarningStateForTests(): void {
+  warnedLegacyMdDirs.clear();
+}
+
 export async function akmTasksList(): Promise<TasksListResult> {
   const stashDir = resolveStashDir();
   const typeRoot = path.join(stashDir, "tasks");
   if (!fs.existsSync(typeRoot)) return { tasks: [] };
-  const files = fs.readdirSync(typeRoot).filter((f) => f.endsWith(".yml"));
+  const entries = fs.readdirSync(typeRoot);
+  warnLegacyMdTaskFiles(typeRoot);
+  const files = entries.filter((f) => f.endsWith(".yml"));
   const tasks: TasksListResult["tasks"] = [];
   for (const file of files) {
     const id = file.slice(0, -4);
@@ -299,6 +340,7 @@ export interface TasksSyncResult {
 export async function akmTasksSync(): Promise<TasksSyncResult> {
   const stashDir = resolveStashDir();
   const typeRoot = path.join(stashDir, "tasks");
+  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const fileIds = fs.existsSync(typeRoot)
     ? fs
         .readdirSync(typeRoot)
