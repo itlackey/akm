@@ -12,10 +12,12 @@
 import { loadConfig } from "../core/config";
 import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
+import { isTransientStashPath } from "../core/paths";
 import { bumpUtilityScoresBatch, closeDatabase, openExistingDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
 import type { StashEntryScope } from "../indexer/metadata";
 import { resolveSourceEntries } from "../indexer/search-source";
+import { getCurrentWorkflowScopeKey } from "../workflows/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
 import "../sources/providers/index";
@@ -303,7 +305,16 @@ function logSearchEvent(
       // The indexer overwrites these at next reindex; bumps are temporary hints.
       const resolvedIds = resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined);
       if (resolvedIds.length > 0) {
-        bumpUtilityScoresBatch(db, resolvedIds, 1.0);
+        let scopeKey: string | undefined;
+        try {
+          const stashPath = response.stashDir;
+          const disabled =
+            process.env.AKM_DISABLE_SCOPED_UTILITY === "1" || (stashPath && isTransientStashPath(stashPath));
+          scopeKey = disabled ? undefined : getCurrentWorkflowScopeKey();
+        } catch {
+          // Non-fatal — fall back to global-only bumps on any error.
+        }
+        bumpUtilityScoresBatch(db, resolvedIds, 1.0, 0.1, scopeKey);
       }
       // Count registry hits separately so registry-only searches record a
       // non-zero resultCount. response.hits is always [] when source="registry".

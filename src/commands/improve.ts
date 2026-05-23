@@ -2810,7 +2810,7 @@ function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
     }
     const ids = [...idToRef.keys()];
     if (ids.length > 0) {
-      const scores = getUtilityScoresByIds(db, ids);
+      const { global: scores } = getUtilityScoresByIds(db, ids);
       for (const [id, score] of scores) {
         const ref = idToRef.get(id);
         if (ref) map.set(ref, score.utility);

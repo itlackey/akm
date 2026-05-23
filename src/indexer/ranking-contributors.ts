@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { UtilityScoreRow } from "./db";
+import type { ScopedUtilityRow, UtilityScoreRow } from "./db";
 import { computeGraphBoost, type GraphBoostContext } from "./graph-boost";
 import type { ProjectContext } from "./project-context";
 import type { RankedEntryInput } from "./ranking";
@@ -50,6 +50,13 @@ export interface RankingContributor {
 
 export interface UtilityRankingContext extends RankingContext {
   utilityScores: Map<number, UtilityScoreRow>;
+  /**
+   * Per-project scoped utility scores loaded from `utility_scores_scoped`.
+   * Keyed by entry_id. When a scoped row exists for an entry the contributor
+   * blends: `finalUtility = scopedUtility * 0.7 + globalUtility * 0.3`.
+   * Absent or empty map falls back to global-only behaviour.
+   */
+  scopedUtilityScores?: Map<number, ScopedUtilityRow>;
   /**
    * Phase 2A / Rec 5: configurable forgetting curve parameters. When absent
    * the contributor falls back to {@link DEFAULT_RECENCY_HALF_LIFE_DAYS} and
@@ -257,18 +264,44 @@ const lessonStrengthContributor: RankingContributor = {
   },
 };
 
+/**
+ * Blend ratio for scoped vs. global utility signals.
+ *
+ * When a scoped row exists: `effectiveUtility = scoped * 0.7 + global * 0.3`
+ * This ensures the in-project signal strongly dominates while the global
+ * cold-start signal still helps when scoped history is sparse.
+ */
+const SCOPED_UTILITY_BLEND_SCOPED = 0.7;
+const SCOPED_UTILITY_BLEND_GLOBAL = 1 - SCOPED_UTILITY_BLEND_SCOPED;
+
 const utilityRankingContributor: UtilityRankingContributor = {
   name: "utility-ranking",
   appliesTo(item, ctx) {
     const utilScore = ctx.utilityScores.get(item.id);
-    return Boolean(utilScore && utilScore.utility > 0);
+    const scopedScore = ctx.scopedUtilityScores?.get(item.id);
+    return Boolean((utilScore && utilScore.utility > 0) || (scopedScore && scopedScore.utility > 0));
   },
   apply(item, ctx) {
     const utilScore = ctx.utilityScores.get(item.id);
-    if (!utilScore || utilScore.utility <= 0) return;
+    const scopedScore = ctx.scopedUtilityScores?.get(item.id);
+
+    // Determine effective utility: prefer scoped when present, blend with global.
+    const globalUtility = utilScore?.utility ?? 0;
+    const scopedUtility = scopedScore?.utility ?? 0;
+    const effectiveUtility =
+      scopedUtility > 0
+        ? scopedUtility * SCOPED_UTILITY_BLEND_SCOPED + globalUtility * SCOPED_UTILITY_BLEND_GLOBAL
+        : globalUtility;
+
+    if (effectiveUtility <= 0) return;
+
+    // Recency decay: use the global lastUsedAt for the decay factor (it's an
+    // ISO string with full resolution), falling back to scoped lastUsedAt (ms).
     let recencyFactor = 1;
-    if (utilScore.lastUsedAt) {
-      const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
+    const lastUsedRaw =
+      utilScore?.lastUsedAt ?? (scopedScore ? new Date(scopedScore.lastUsedAt).toISOString() : undefined);
+    if (lastUsedRaw) {
+      const lastUsedMs = new Date(lastUsedRaw).getTime();
       const daysSinceLastUse = Number.isNaN(lastUsedMs)
         ? Infinity
         : Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
@@ -288,7 +321,7 @@ const utilityRankingContributor: UtilityRankingContributor = {
 
       recencyFactor = Math.exp(-daysSinceLastUse / safeHalfLife);
     }
-    const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
+    const rawBoost = 1 + effectiveUtility * recencyFactor * UTILITY_WEIGHT;
     item.score *= Math.min(rawBoost, UTILITY_MAX_BOOST);
     item.utilityBoosted = true;
   },
