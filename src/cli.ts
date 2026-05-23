@@ -439,11 +439,24 @@ const healthCommand = defineCommand({
       description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(() => {
+  async run({ args }) {
+    // Capture the health result so we can propagate its overall status into the
+    // process exit code AFTER the JSON envelope is flushed to stdout. The
+    // CHANGELOG advertises `akm health` as a CI/runtime monitoring command —
+    // callers rely on `akm health && deploy` style chaining, which requires
+    // non-zero exit on failure (and parseable JSON on stdout for diagnostics).
+    let resultStatus: "pass" | "warn" | "fail" | undefined;
+    await runWithJsonErrors(() => {
       const result = akmHealth({ since: args.since });
+      resultStatus = result.status;
       output("health", result);
     });
+    if (resultStatus === "fail") {
+      process.exit(EXIT_GENERAL);
+    }
+    if (resultStatus === "warn") {
+      process.exit(EXIT_HEALTH_WARN);
+    }
   },
 });
 
@@ -4538,6 +4551,10 @@ const WIKI_SUBCOMMAND_SET = new Set([
 // ── Exit codes ──────────────────────────────────────────────────────────────
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
+/** `akm health` warn status — emitted when overall status is "warn" (advisories
+ *  fired but no hard failure). Chosen as 4 to avoid colliding with EXIT_GENERAL
+ *  (1 / fail) and EXIT_USAGE (2). CI monitors can map: 0=pass, 4=warn, 1=fail. */
+const EXIT_HEALTH_WARN = 4;
 const EXIT_CONFIG = 78;
 
 // citty reads process.argv directly and does not accept a custom argv array,
