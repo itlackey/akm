@@ -21,7 +21,8 @@ import type {
   SourceConfigEntry,
 } from "../core/config";
 import { DEFAULT_CONFIG, getDefaultLlmConfig, loadUserConfig, saveConfig } from "../core/config";
-import { getConfigPath, getDefaultStashDir } from "../core/paths";
+import { ConfigError } from "../core/errors";
+import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
 import { akmIndex } from "../indexer/indexer";
@@ -35,6 +36,36 @@ import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectOllama } from "./detect";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
+
+// ── Setup sandbox guard ─────────────────────────────────────────────────────
+
+/**
+ * Refuse to persist an explicit `--dir /tmp/...` stashDir to the user's
+ * config. The OS may reap the directory at any time, and the next run will
+ * see a `stashDir` that points at a deleted path (falling back to ~/akm
+ * silently). Mirrors the `assertInitSandbox` check in commands/init.ts, but
+ * fires under all runtimes (not just `bun test`) because `akm setup --dir
+ * /tmp/X` is a documented isolation pattern that has been observed to
+ * silently clobber the host config — see BUG-setup-clobbers-user-config.md.
+ *
+ * Escape hatch: set `AKM_FORCE_SETUP_TMP_STASH=1` to override (combine with
+ * `AKM_CONFIG_DIR` if you also want to redirect the resulting config write).
+ * Together with the `isTransientStashPath` rule in `getConfigDir`, this
+ * means: even when the user opts out of the guard, config writes still
+ * isolate into the stash rather than clobbering the host.
+ */
+function assertSetupSandbox(stashDir: string, dirExplicitlyProvided: boolean): void {
+  if (!dirExplicitlyProvided) return;
+  if (process.env.AKM_FORCE_SETUP_TMP_STASH === "1") return;
+  if (!isTransientStashPath(stashDir)) return;
+  throw new ConfigError(
+    `refusing to run \`akm setup --dir ${stashDir}\`: the path is in a transient/sandbox directory family the OS may reap. ` +
+      "Persisting it as the user's stashDir would leave the next run pointing at a deleted path (silently falling back to ~/akm). " +
+      "Use a persistent directory, OR set AKM_FORCE_SETUP_TMP_STASH=1 if you intentionally want a sandbox setup " +
+      "(in which case config is routed to $stashDir/.akm/config.json automatically — host config is preserved).",
+    "SETUP_TMP_STASH_REFUSED",
+  );
+}
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -1753,6 +1784,10 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   // Resolve stash directory early so akmInit can run before any prompts
   const resolvedStashDir = opts?.dir ? path.resolve(opts.dir) : (current.stashDir ?? getDefaultStashDir());
 
+  // Refuse explicit --dir /tmp/... before doing any work — protects the host
+  // config from being clobbered with a stashDir that the OS may reap.
+  assertSetupSandbox(resolvedStashDir, opts?.dir != null);
+
   // Bootstrap directory structure before any prompts so the stash exists
   // even if the wizard is interrupted after this point.
   if (!opts?.noInit) {
@@ -1941,6 +1976,8 @@ export async function runSetupWithDefaults(opts: {
   const current = loadUserConfig();
   const stashDir = opts.dir ? path.resolve(opts.dir) : (current.stashDir ?? getDefaultStashDir());
 
+  assertSetupSandbox(stashDir, opts.dir != null);
+
   // Bootstrap directory structure first
   let initResult: InitResponse | undefined;
   if (!opts.noInit) {
@@ -2038,6 +2075,8 @@ export async function runSetupFromConfig(opts: {
     : incoming.stashDir
       ? path.resolve(incoming.stashDir)
       : (current.stashDir ?? getDefaultStashDir());
+
+  assertSetupSandbox(stashDir, opts.dir != null || incoming.stashDir != null);
 
   let merged: AkmConfig = { ...current, stashDir };
   // Apply non-llm/agent keys directly.

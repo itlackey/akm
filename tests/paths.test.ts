@@ -129,6 +129,54 @@ describe("getConfigDir", () => {
     const result = getConfigDir({ AKM_CONFIG_DIR: "/override/config", HOME: "/home/user" }, "linux");
     expect(result).toBe("/override/config");
   });
+
+  // Regression: BUG-setup-clobbers-user-config.md. When the user (or a
+  // test harness) sets AKM_STASH_DIR to a transient path, config writes
+  // must NOT target the user's host ~/.config/akm — they must route into
+  // the stash so saveConfig() can never silently clobber the host.
+  test("AKM_STASH_DIR=/tmp/X routes config to /tmp/X/.akm (isolation safety)", () => {
+    const result = getConfigDir({ AKM_STASH_DIR: "/tmp/test-stash", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/tmp/test-stash", ".akm"));
+  });
+
+  test("AKM_STASH_DIR=/var/tmp/X also triggers isolation", () => {
+    const result = getConfigDir({ AKM_STASH_DIR: "/var/tmp/build-1234", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/var/tmp/build-1234", ".akm"));
+  });
+
+  test("AKM_STASH_DIR=/private/var/folders/... (macOS mktemp) also triggers isolation", () => {
+    const result = getConfigDir(
+      { AKM_STASH_DIR: "/private/var/folders/zz/abc/T/akm-test", HOME: "/Users/user" },
+      "darwin",
+    );
+    expect(result).toBe(path.join("/private/var/folders/zz/abc/T/akm-test", ".akm"));
+  });
+
+  test("AKM_STASH_DIR=~/my-stash (persistent path) does NOT redirect — daily users unaffected", () => {
+    const result = getConfigDir({ AKM_STASH_DIR: "/home/user/my-stash", HOME: "/home/user" }, "linux");
+    expect(result).toBe(path.join("/home/user", ".config", "akm"));
+  });
+
+  test("AKM_CONFIG_DIR override beats AKM_STASH_DIR isolation rule (explicit wins)", () => {
+    const result = getConfigDir(
+      { AKM_CONFIG_DIR: "/keep/host/config", AKM_STASH_DIR: "/tmp/transient", HOME: "/home/user" },
+      "linux",
+    );
+    expect(result).toBe("/keep/host/config");
+  });
+
+  test("XDG_CONFIG_HOME also beats AKM_STASH_DIR isolation rule (existing tests rely on this)", () => {
+    const result = getConfigDir(
+      { XDG_CONFIG_HOME: "/iso/cfg", AKM_STASH_DIR: "/tmp/transient", HOME: "/home/user" },
+      "linux",
+    );
+    expect(result).toBe(path.join("/iso/cfg", "akm"));
+  });
+
+  test("APPDATA on Windows also beats AKM_STASH_DIR isolation rule", () => {
+    const result = getConfigDir({ APPDATA: String.raw`C:\iso\cfg`, AKM_STASH_DIR: "/tmp/transient" }, "win32");
+    expect(result).toBe(path.join(String.raw`C:\iso\cfg`, "akm"));
+  });
 });
 
 // ── getConfigPath ───────────────────────────────────────────────────────────
@@ -170,6 +218,43 @@ describe("getCacheDir", () => {
     process.env.AKM_CACHE_DIR = "/override/cache";
     const result = getCacheDir();
     expect(result).toBe("/override/cache");
+  });
+
+  // Regression: BUG-setup-clobbers-user-config.md companion fix. When
+  // AKM_STASH_DIR is transient, cache (which holds config-backups/) must
+  // also isolate into the stash so saveConfig backup writes do not
+  // pollute the user's host ~/.cache/akm/config-backups/.
+  test("AKM_STASH_DIR=/tmp/X routes cache to /tmp/X/.akm/cache (isolation safety)", () => {
+    delete process.env.AKM_CACHE_DIR;
+    delete process.env.XDG_CACHE_HOME;
+    process.env.HOME = "/home/user";
+    process.env.AKM_STASH_DIR = "/tmp/test-cache-stash";
+    const result = getCacheDir();
+    expect(result).toBe(path.join("/tmp/test-cache-stash", ".akm", "cache"));
+  });
+
+  test("AKM_STASH_DIR=~/persistent does NOT redirect cache (daily users unaffected)", () => {
+    delete process.env.AKM_CACHE_DIR;
+    delete process.env.XDG_CACHE_HOME;
+    process.env.HOME = "/home/user";
+    process.env.AKM_STASH_DIR = "/home/user/my-stash";
+    const result = getCacheDir();
+    expect(result).toBe(path.join("/home/user", ".cache", "akm"));
+  });
+
+  test("AKM_CACHE_DIR beats AKM_STASH_DIR isolation rule", () => {
+    process.env.AKM_CACHE_DIR = "/override/cache";
+    process.env.AKM_STASH_DIR = "/tmp/transient";
+    const result = getCacheDir();
+    expect(result).toBe("/override/cache");
+  });
+
+  test("XDG_CACHE_HOME also beats AKM_STASH_DIR isolation rule (existing tests rely on this)", () => {
+    delete process.env.AKM_CACHE_DIR;
+    process.env.XDG_CACHE_HOME = "/iso/cache";
+    process.env.AKM_STASH_DIR = "/tmp/transient";
+    const result = getCacheDir();
+    expect(result).toBe(path.join("/iso/cache", "akm"));
   });
 });
 
