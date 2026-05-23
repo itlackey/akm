@@ -29,6 +29,7 @@ export type ConfigErrorCode =
   // refuse persisting a temp-dir stashDir to the user's real config.
   // See src/commands/init.ts.
   | "INIT_TMP_STASH_REFUSED"
+  | "SETUP_TMP_STASH_REFUSED"
   // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
   // when a test sets AKM_STASH_DIR but forgets to also point
   // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
@@ -73,6 +74,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     'Run `akm setup` or `akm config set profiles.llm.default \'{"endpoint":"...","model":"..."}\' to configure an LLM profile.',
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_STASH_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
+  SETUP_TMP_STASH_REFUSED:
+    "Use a persistent directory, or set AKM_FORCE_SETUP_TMP_STASH=1 to opt in to a sandboxed setup (setup also pre-sets AKM_STASH_DIR so config and cache writes auto-isolate into $stashDir/.akm/ — host config is preserved).",
 };
 
 /** Default hint for each UsageError code. */
