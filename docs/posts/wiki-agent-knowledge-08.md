@@ -127,7 +127,7 @@ The agent handles everything that requires judgment:
 
 The reason this split matters: agents are good at synthesis and bad at reliability. If you ask an agent to "update the index," it will sometimes do it correctly, sometimes produce a subtly wrong format, and sometimes forget. If you ask it to write a page on attention mechanisms from three source documents, it will do that well every time. The tool enforces the boring, brittle parts so the agent can focus on what it's actually good at.
 
-There are no unconditional LLM calls inside akm for wiki operations. The wiki commands are pure file operations, SQLite, and structural analysis — fast, deterministic, and usable offline. (akm does ship bounded opt-in LLM calls for other workflows, like `akm improve` and `akm curate`, gated behind per-process toggles under `profiles.improve.<name>.processes.*` and the first-class `index.*` / `search.*` feature sections — all off by default. But the wiki tooling itself never touches an LLM.)
+There are no unconditional LLM calls inside akm for wiki operations. The wiki commands are pure file operations, SQLite, and structural analysis — fast, deterministic, and usable offline. (akm does ship bounded opt-in LLM calls for other workflows, like `akm improve` and `akm curate`, gated behind `llm.features.*` flags that are all off by default. But the wiki tooling itself never touches an LLM.)
 
 ## akm wiki search vs akm search --type wiki
 

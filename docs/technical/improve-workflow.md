@@ -371,7 +371,7 @@ Reviewed against `src/commands/improve.ts` (full `akmImprove` function), `src/co
 - Maintenance placement relative to consolidation and reindex
 - Per-asset loop branch ordering (validation skip vs. budget check)
 - Memory cleanup step sequencing (analyzeMemoryCleanup, applyMemoryCleanup, reindexFn)
-- Feature flag gating for consolidation (`profiles.improve.<name>.processes.consolidate.enabled`)
+- Feature flag gating for consolidation (`llm.features.memory_consolidation`)
 - Dry-run early-return node completeness
 - Budget-exhausted break path
 - Mermaid syntax and subgraph labels

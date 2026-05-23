@@ -238,12 +238,11 @@ async function migrateEventsJsonl(ctx: MigrationContext): Promise<void> {
     const { openStateDatabase, importEventsJsonl } = await import("../src/core/state-db");
     const db = openStateDatabase(ctx.paths.stateDbPath);
     try {
-      const { imported, maxId, skipped } = await importEventsJsonl(db, src);
-      const dedupNote = skipped > 0 ? ` (${skipped} duplicate(s) skipped — re-run idempotency)` : "";
+      const { imported, maxId } = await importEventsJsonl(db, src);
       ctx.recordStep({
         name: "events.jsonl → state.db",
         status: "success",
-        detail: `imported ${imported} events (max id: ${maxId})${dedupNote} — source left at ${src} (delete manually when ready)`,
+        detail: `imported ${imported} events (max id: ${maxId}) — source left at ${src} (delete manually when ready)`,
       });
     } finally {
       db.close();

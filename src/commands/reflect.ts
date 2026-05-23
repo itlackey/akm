@@ -832,34 +832,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     },
   });
 
-  // Fix #3 (observability 0.8.0): every failure path below MUST emit
-  // `reflect_completed` so observers can close the invoke/complete loop. The
-  // three success-side `reflect_completed` emit sites carry rich metadata
-  // (qualityRejected, sanitized, proposalId, etc.); the failure-side emits
-  // carry `{ok: false, reason}` plus the ref when known. Stable failure
-  // reasons line up with `AgentFailureReason`: "parse_error", "non_zero_exit",
-  // "cooldown", "timeout", "spawn_failed", "llm_*", plus the synthetic
-  // "ref_mismatch" / "enoent" / "draft_missing" subtypes for cases the agent
-  // surface conflates as "parse_error". Sub-reasons land in `subreason`.
-  const emitReflectFailed = (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ): void => {
-    appendEvent({
-      eventType: "reflect_completed",
-      ...(ref ? { ref } : {}),
-      metadata: {
-        source: "reflect",
-        ok: false,
-        reason,
-        subreason,
-        ...(extra ?? {}),
-      },
-    });
-  };
-
   // 2. Resolve target asset content (if a ref is supplied).
   let assetContent: string | undefined;
   let parsedRef: { type: string; name: string } | undefined;
@@ -871,7 +843,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // (script / vault / task) up-front so reflect never prepends YAML to a
     // `.ts` file or rewrites a `.env` blob as prose. See REFLECT_ALLOWED_TYPES.
     if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
-      emitReflectFailed("parse_error", "unsupported_type", options.ref, { type: parsedRef.type });
       return {
         schemaVersion: 1,
         ok: false,
@@ -1139,19 +1110,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     if (!finalResult.ok) {
       // B3: ENOENT / not-found gives an actionable hint.
       if (isEnoentFailure(finalResult)) {
-        emitReflectFailed("spawn_failed", "enoent", options.ref, {
-          ...(finalResult.exitCode !== undefined ? { exitCode: finalResult.exitCode } : {}),
-        });
         return {
           ...failureEnvelope(finalResult, options.ref),
           error: enoentHintMessage(profile?.bin ?? resolvedProfileName),
         };
       }
-      const envelope = failureEnvelope(finalResult, options.ref);
-      emitReflectFailed(envelope.reason, "agent_crash", options.ref, {
-        ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
-      });
-      return envelope;
+      return failureEnvelope(finalResult, options.ref);
     }
 
     // Re-alias to `result` for the downstream code that references it.
@@ -1177,9 +1141,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // Surface as a parse_error rather than silently falling through — the
       // alternative would be parsing the `DRAFT_WRITTEN` sentinel as JSON,
       // which is guaranteed to fail with a confusing message.
-      emitReflectFailed("parse_error", "draft_missing", options.ref, {
-        ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-      });
       return {
         schemaVersion: 1,
         ok: false,
@@ -1218,14 +1179,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           // and should not pollute reflectFailedActions or recentErrors injection.
           const stdoutText = result.stdout ?? "";
           const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
-          const reason: AgentFailureReason = isCooldownSignal ? "cooldown" : "parse_error";
-          emitReflectFailed(reason, isCooldownSignal ? "stdout_cooldown_signal" : "parse_error", options.ref, {
-            ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-          });
           return {
             schemaVersion: 1,
             ok: false,
-            reason,
+            reason: isCooldownSignal ? "cooldown" : "parse_error",
             error: err instanceof Error ? err.message : String(err),
             ...(options.ref ? { ref: options.ref } : {}),
             exitCode: result.exitCode,
@@ -1254,11 +1211,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       const actualParsed = parseAssetRef(payload.ref);
       // Compare type + name (drop origin — agent may omit origin prefix).
       if (expectedParsed.type !== actualParsed.type || expectedParsed.name !== actualParsed.name) {
-        emitReflectFailed("parse_error", "ref_mismatch", options.ref, {
-          expectedRef: options.ref,
-          actualRef: payload.ref,
-          ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-        });
         return {
           schemaVersion: 1,
           ok: false,
@@ -1456,9 +1408,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // Dedup/cooldown guard fired — surface as a "cooldown" reason (not "parse_error")
     // so the improve orchestrator can distinguish legitimate skips from real failures
     // and exclude them from recentErrors/avoidPatterns injection.
-    emitReflectFailed("cooldown", "proposal_skipped", options.ref, {
-      proposalSkipReason: proposalResult.reason,
-    });
     return {
       schemaVersion: 1,
       ok: false,

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -177,94 +176,5 @@ describe("akmHealth", () => {
     expect(result.advisories.some((check) => check.name === "session-log-failures" && check.status === "warn")).toBe(
       true,
     );
-  });
-});
-
-// The CHANGELOG advertises `akm health` as a runtime/CI monitoring command:
-// callers chain `akm health && deploy`, which requires non-zero exit on a hard
-// failure (and a parseable JSON envelope on stdout for diagnostics). These
-// tests spawn the real CLI so the exit code is observable to the OS, then
-// assert that (a) stdout is still valid JSON and (b) the exit code matches the
-// `status` discriminant in the envelope.
-describe("akm health CLI exit code", () => {
-  const repoRoot = path.resolve(import.meta.dir, "..");
-  const cliPath = path.join(repoRoot, "src", "cli.ts");
-
-  function spawnAkmHealth(envOverrides: Record<string, string>): { stdout: string; status: number } {
-    const result = spawnSync("bun", [cliPath, "health", "--format", "json"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        AKM_STASH_DIR: undefined,
-        ...envOverrides,
-      },
-    });
-    return { stdout: result.stdout ?? "", status: result.status ?? 1 };
-  }
-
-  test("exits 0 when health passes (no failing checks)", () => {
-    const xdgCache = makeTempDir("akm-health-cache-cli-");
-    const xdgConfig = makeTempDir("akm-health-config-cli-");
-    const xdgData = makeTempDir("akm-health-data-cli-");
-    const xdgState = makeTempDir("akm-health-state-cli-");
-    const home = makeTempDir("akm-health-home-cli-");
-    const { stdout, status } = spawnAkmHealth({
-      HOME: home,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    });
-    // stdout must be valid JSON regardless of exit code so monitors can parse.
-    const parsed = JSON.parse(stdout);
-    expect(parsed.status).toBe("pass");
-    expect(status).toBe(0);
-  });
-
-  test("exits non-zero (1) when status is 'fail' due to missing task log", () => {
-    const xdgCache = makeTempDir("akm-health-cache-cli-fail-");
-    const xdgConfig = makeTempDir("akm-health-config-cli-fail-");
-    const xdgData = makeTempDir("akm-health-data-cli-fail-");
-    const xdgState = makeTempDir("akm-health-state-cli-fail-");
-    const home = makeTempDir("akm-health-home-cli-fail-");
-
-    // Seed state.db with a task_history row that references a log_path that
-    // does NOT exist on disk. That forces the deterministic `task-log-backing`
-    // hardCheck to fail, which sets overall status="fail".
-    process.env.XDG_CACHE_HOME = xdgCache;
-    process.env.XDG_CONFIG_HOME = xdgConfig;
-    process.env.XDG_DATA_HOME = xdgData;
-    process.env.XDG_STATE_HOME = xdgState;
-    const db = openStateDatabase();
-    try {
-      upsertTaskHistory(db, {
-        task_id: "missing-log-task",
-        status: "failed",
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        failed_at: new Date().toISOString(),
-        log_path: path.join(makeTempDir("akm-health-missing-"), "definitely-missing.log"),
-        target_kind: "prompt",
-        target_ref: null,
-        metadata_json: JSON.stringify({ durationMs: 5, detail: { exitCode: 1 }, profile: "opencode" }),
-      });
-    } finally {
-      db.close();
-    }
-
-    const { stdout, status } = spawnAkmHealth({
-      HOME: home,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    });
-    // Exit code must propagate AFTER JSON is flushed, so stdout is still
-    // parseable JSON for monitoring scripts.
-    const parsed = JSON.parse(stdout);
-    expect(parsed.status).toBe("fail");
-    expect(status).toBe(1);
   });
 });

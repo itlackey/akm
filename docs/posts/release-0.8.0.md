@@ -165,19 +165,18 @@ on 0.7.x. See the migration guide section
 ## Config v2 and reflect LLM mode
 
 0.8.0 introduces a new config shape (`configVersion: "0.8.0"`) that replaces
-the scattered v1 keys with a unified `profiles` + first-class feature tree.
-Named LLM connections live under `profiles.llm.<name>` and named agent
-connections under `profiles.agent.<name>`, each declared once and referenced
-by name from process entries on `profiles.improve.<name>`. The old
-`llm.features.*` boolean flags and `agent.processes` map are replaced by
-`profiles.improve.<name>.processes.*` (improve-bound work), plus top-level
-`index.metadataEnhance`, `index.stalenessDetection`, and `search.curateRerank`
-sections (non-improve features) — each entry using a unified `{mode, profile,
+the scattered v1 keys with a unified `profiles` + `features` tree. Named LLM
+connections live under `profiles.llm.<name>` and named agent connections under
+`profiles.agent.<name>`, each declared once and referenced by name from
+`features` process entries. The old `llm.features.*` boolean flags and
+`agent.processes` map are replaced by `features.improve.*`, `features.index.*`,
+and `features.search.*` — each entry using a unified `{mode, profile,
 timeoutMs, options}` shape. Configs without `configVersion` are auto-migrated
 at first run; a timestamped backup is written before any in-place rewrite.
 
-With the new config in place, the reflect pass inside `akm improve` can now
-run as a direct LLM call instead of spawning an opencode subprocess. For reflect, the context is statically pre-assembled, so a direct
+With the new config in place, `akm reflect` (and the reflect pass inside
+`akm improve`) can now run as a direct LLM call instead of spawning an opencode
+subprocess. For reflect, the context is statically pre-assembled, so a direct
 HTTP call captures the full quality benefit at a fraction of the cost. LLM mode
 also adds multi-turn self-refine (the prior draft is sent back as an assistant
 turn) and structured JSON output for providers that set `supportsJsonSchema:
@@ -269,8 +268,8 @@ akm accept <id>
 # Define and run a task
 akm task run daily-code-review
 
-# Run improve with a specific profile (reflect mode comes from the profile)
-akm improve memory:my-note --profile fast-llm
+# Run reflect in LLM mode for this invocation
+akm reflect memory:my-note --mode llm --profile openai-mini
 ```
 
 ## Verification

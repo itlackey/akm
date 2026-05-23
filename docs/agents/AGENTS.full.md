@@ -247,8 +247,8 @@ akm hints                                     # Print this reference
 
 ## Tasks — Per-task timeoutMs
 
-Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
-(set under `profiles.agent.<name>.timeoutMs`) for a single task:
+Task markdown frontmatter supports `timeoutMs` to override `config.agent.timeoutMs`
+for a single task:
 
 - `timeoutMs: null` — disable the agent kill timer (useful for long-running local-model tasks)
 - `timeoutMs: 120000` — override with a specific value in milliseconds

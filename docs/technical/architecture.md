@@ -249,10 +249,9 @@ state, do not share modules, and do not share import graphs. The boundary is
 locked by v1 spec §9.7 and is enforced at two concrete seams.
 
 A unified adapter (`src/llm/call-ai.ts`) bridges the two paths for interactive
-commands (`akm propose`, the reflect pass inside `akm improve`, etc.): it
-routes to the resolved agent profile under `profiles.agent.<name>` (agent CLI
-shell-out or SDK) when an agent is configured, and falls back to the resolved
-LLM profile under `profiles.llm.<name>` (HTTP chat-completions) otherwise. The indexer LLM passes do
+commands (`akm propose`, `akm reflect`, etc.): it routes to `config.agent`
+(agent CLI shell-out or SDK) when an agent is configured, and falls back to
+`config.llm` (HTTP chat-completions) otherwise. The indexer LLM passes do
 **not** use this adapter — they call `chatCompletion` directly to stay on the
 HTTP path and avoid agent-CLI overhead.
 
@@ -270,14 +269,9 @@ Concretely:
   pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
   stateless model handle (see the comment in that file). It exposes
   `resetLocalEmbedder()` so tests can construct a fresh pipeline.
-- Each call site is gated behind exactly one configuration flag — either a
-  `processes.<name>.enabled` toggle under `profiles.improve.<name>` (improve-
-  bound features such as memory inference, graph extraction, consolidation,
-  feedback distillation) or a first-class section toggle
-  (`index.metadataEnhance.enabled`, `index.stalenessDetection.enabled`,
-  `search.curateRerank.enabled`) — and falls back to a deterministic path
-  when the flag is `false`, the endpoint is unreachable, or parsing fails.
-  See `docs/configuration.md` for canonical paths.
+- Each call site is gated behind exactly one `llm.features.*` flag (v1 spec
+  §14) and falls back to a deterministic path when the flag is `false`,
+  the endpoint is unreachable, or parsing fails.
 
 The seam is locked by `tests/architecture/llm-stateless-seam.test.ts`, which
 inspects the module shape of each `src/llm/*` entry — not the source text.
@@ -308,10 +302,8 @@ External coding agents are reachable via two execution paths:
 **Shared pipeline** (`src/integrations/agent/pipeline.ts`):
 
 - `runProposalAgentPipeline(opts)` is the shared entry point for
-  `akm propose` and the reflect pass inside `akm improve`. It routes to
-  `runAgentSdk` when `profile.sdkMode` is true (or the agent profile's
-  `platform` is `"opencode-sdk"`), and to `runAgent` (spawn path)
-  otherwise.
+  `akm propose` and `akm reflect`. It routes to `runAgentSdk` when
+  `profile.sdkMode` is true, and to `runAgent` (spawn path) otherwise.
 
 No file under `src/integrations/agent/` imports an in-tree LLM helper
 (`src/llm/`). The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`,
@@ -352,7 +344,7 @@ accidental introduction of in-tree LLM imports under that path.
 | `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `profiles.improve.<name>.processes.memoryInference.enabled`) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `llm.features.memory_inference`) |
 | `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
