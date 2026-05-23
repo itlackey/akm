@@ -14,7 +14,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmLint } from "../src/commands/lint";
-import { checkVaultForDangerousKeys, DANGEROUS_VAULT_KEYS } from "../src/commands/lint/vault-key-rules";
+import {
+  checkVaultForDangerousKeys,
+  DANGEROUS_VAULT_KEY_PATTERNS,
+  DANGEROUS_VAULT_KEYS,
+  isDangerousVaultKey,
+} from "../src/commands/lint/vault-key-rules";
 
 // ── Temp dir helpers ──────────────────────────────────────────────────────────
 
@@ -65,6 +70,70 @@ describe("DANGEROUS_VAULT_KEYS", () => {
     expect(DANGEROUS_VAULT_KEYS.has("MY_APP_SECRET")).toBe(false);
     expect(DANGEROUS_VAULT_KEYS.has("DATABASE_URL")).toBe(false);
     expect(DANGEROUS_VAULT_KEYS.has("API_TOKEN")).toBe(false);
+  });
+
+  test("contains newly-added extended LD_* hijack vectors", () => {
+    expect(DANGEROUS_VAULT_KEYS.has("LD_BIND_NOW")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("LD_PROFILE")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("LD_ASSUME_KERNEL")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("LD_TRACE_LOADED_OBJECTS")).toBe(true);
+  });
+
+  test("contains NODE_TLS_REJECT_UNAUTHORIZED (MITM enabler)", () => {
+    expect(DANGEROUS_VAULT_KEYS.has("NODE_TLS_REJECT_UNAUTHORIZED")).toBe(true);
+  });
+
+  test("contains git RCE-via-invocation hijack keys", () => {
+    expect(DANGEROUS_VAULT_KEYS.has("GIT_SSH_COMMAND")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("GIT_EXTERNAL_DIFF")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("GIT_PAGER")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("GIT_EDITOR")).toBe(true);
+  });
+
+  test("contains shell/startup hijack keys (IFS, ZDOTDIR, PYTHONHOME)", () => {
+    expect(DANGEROUS_VAULT_KEYS.has("IFS")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("ZDOTDIR")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("PYTHONHOME")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("PYTHONNOUSERSITE")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("PYTHONINSPECT")).toBe(true);
+  });
+
+  test("contains interactive-tool invocation hijack keys (EDITOR/VISUAL/PAGER)", () => {
+    // High false-positive rate — see header comment in vault-key-rules.ts.
+    expect(DANGEROUS_VAULT_KEYS.has("EDITOR")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("VISUAL")).toBe(true);
+    expect(DANGEROUS_VAULT_KEYS.has("PAGER")).toBe(true);
+  });
+});
+
+// ── DANGEROUS_VAULT_KEY_PATTERNS / isDangerousVaultKey ────────────────────────
+
+describe("DANGEROUS_VAULT_KEY_PATTERNS", () => {
+  test("includes the BASH_FUNC_ prefix pattern (Shellshock CVE-2014-6271)", () => {
+    const hit = DANGEROUS_VAULT_KEY_PATTERNS.some(({ pattern }) => pattern.test("BASH_FUNC_x%%"));
+    expect(hit).toBe(true);
+  });
+
+  test("isDangerousVaultKey matches BASH_FUNC_-prefixed names", () => {
+    expect(isDangerousVaultKey("BASH_FUNC_x%%")).toBe(true);
+    expect(isDangerousVaultKey("BASH_FUNC_evil()")).toBe(true);
+    expect(isDangerousVaultKey("BASH_FUNC_foo")).toBe(true);
+  });
+
+  test("isDangerousVaultKey does NOT match unrelated keys containing BASH_FUNC", () => {
+    // pattern is anchored at start, so a key like FOO_BASH_FUNC must not match
+    expect(isDangerousVaultKey("FOO_BASH_FUNC_x")).toBe(false);
+    expect(isDangerousVaultKey("MY_BASH_FUNC")).toBe(false);
+  });
+
+  test("isDangerousVaultKey returns true for literal-set keys", () => {
+    expect(isDangerousVaultKey("LD_PRELOAD")).toBe(true);
+    expect(isDangerousVaultKey("GIT_SSH_COMMAND")).toBe(true);
+  });
+
+  test("isDangerousVaultKey returns false for benign keys", () => {
+    expect(isDangerousVaultKey("API_TOKEN")).toBe(false);
+    expect(isDangerousVaultKey("DATABASE_URL")).toBe(false);
   });
 });
 
@@ -145,6 +214,44 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/staging.env", "vault:staging");
 
     expect(findings[0].detail).toContain("vault:staging");
+  });
+
+  test("flags LD_BIND_NOW (extended LD_* family)", () => {
+    const stashDir = makeTempStash();
+    const vaultPath = writeVault(stashDir, "ld.env", "LD_BIND_NOW=1\nSAFE=ok\n");
+    const findings = checkVaultForDangerousKeys(vaultPath, "vaults/ld.env", "vault:ld");
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].detail).toContain("LD_BIND_NOW");
+  });
+
+  test("flags GIT_SSH_COMMAND (git RCE vector)", () => {
+    const stashDir = makeTempStash();
+    const vaultPath = writeVault(stashDir, "git.env", "GIT_SSH_COMMAND=/evil/ssh-wrapper.sh\nSAFE=ok\n");
+    const findings = checkVaultForDangerousKeys(vaultPath, "vaults/git.env", "vault:git");
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].detail).toContain("GIT_SSH_COMMAND");
+  });
+
+  test("flags NODE_TLS_REJECT_UNAUTHORIZED (MITM enabler)", () => {
+    const stashDir = makeTempStash();
+    const vaultPath = writeVault(stashDir, "tls.env", "NODE_TLS_REJECT_UNAUTHORIZED=0\nAPI_TOKEN=abc\n");
+    const findings = checkVaultForDangerousKeys(vaultPath, "vaults/tls.env", "vault:tls");
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].detail).toContain("NODE_TLS_REJECT_UNAUTHORIZED");
+  });
+
+  test("flags BASH_FUNC_ prefixed keys (Shellshock pattern check)", () => {
+    const stashDir = makeTempStash();
+    // .env parsing rejects "()" and "%%" in keys, so we test with a clean
+    // BASH_FUNC_<name> form — the pattern still matches.
+    const vaultPath = writeVault(stashDir, "shock.env", "BASH_FUNC_evil=value\nSAFE=ok\n");
+    const findings = checkVaultForDangerousKeys(vaultPath, "vaults/shock.env", "vault:shock");
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].detail).toContain("BASH_FUNC_evil");
   });
 });
 
