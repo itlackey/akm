@@ -3316,17 +3316,61 @@ const wikiLintCommand = defineCommand({
 const wikiIngestCommand = defineCommand({
   meta: {
     name: "ingest",
-    description: "Print the ingest workflow for this wiki. Does not perform the ingest; instructs the agent to.",
+    description:
+      "Dispatch an agent to execute the ingest workflow for this wiki. Uses --profile or config.defaults.agent.",
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
+    profile: {
+      type: "string",
+      description: "Agent profile to use (default: config.defaults.agent).",
+    },
+    model: {
+      type: "string",
+      description: "Model override — accepts aliases (opus, sonnet, haiku) or exact platform model IDs.",
+    },
+    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds." },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { buildIngestWorkflow } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
-      const result = buildIngestWorkflow(stashDir, args.name);
-      output("wiki-ingest", result);
+      const built = buildIngestWorkflow(stashDir, args.name);
+
+      const config = loadConfig();
+      const profileName = getStringArg(args, "profile") ?? config.defaults?.agent;
+      if (!profileName) {
+        throw new UsageError(
+          "akm wiki ingest requires an agent profile. Pass --profile <name> or set defaults.agent in config.",
+          "MISSING_REQUIRED_ARGUMENT",
+          "Available profiles are listed under profiles.agent in your config. Run `akm config get profiles.agent` to inspect.",
+        );
+      }
+
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+      const model = getStringArg(args, "model");
+
+      const { getDefaultLlmConfig } = await import("./core/config.js");
+      const dispatchResult = await akmAgentDispatch({
+        profileName,
+        agentConfig: config,
+        llmConfig: getDefaultLlmConfig(config),
+        prompt: built.workflow,
+        dispatch: {
+          prompt: built.workflow,
+          ...(model !== undefined ? { model } : {}),
+        },
+        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+
+      output("wiki-ingest", {
+        wiki: built.wiki,
+        path: built.path,
+        schemaPath: built.schemaPath,
+        dispatched: true,
+        profile: profileName,
+        agentResult: dispatchResult,
+      });
     });
   },
 });
