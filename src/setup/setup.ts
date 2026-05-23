@@ -1300,7 +1300,7 @@ export async function stepAgentConnection(
     [
       "This connection is used for agentic commands:",
       "  • akm propose   (generate improvement proposals)",
-      "  • akm reflect   (reflect on assets and generate proposals)",
+      "  • akm improve   (run the reflect/distill/consolidate self-improvement pipeline)",
       "  • akm tasks run (run automated task prompts)",
     ].join("\n"),
   );
@@ -1366,7 +1366,7 @@ export async function stepAgentConnection(
       [
         "Agentic features disabled:",
         '  • akm propose — will show "no agent configured" error',
-        '  • akm reflect — will show "no agent configured" error',
+        '  • akm improve — will show "no agent configured" error',
         '  • akm tasks run — will show "no agent configured" error',
         "",
         "You can configure this later with `akm setup`.",
@@ -1490,9 +1490,9 @@ function printCapabilitySummary(smallModelSkipped: boolean, agentConfigured: boo
   }
 
   if (agentConfigured) {
-    lines.push("  ✓ akm propose, akm reflect, akm tasks — agent configured");
+    lines.push("  ✓ akm propose, akm improve, akm tasks — agent configured");
   } else {
-    lines.push("  ✗ akm propose, akm reflect, akm tasks — run `akm setup` to enable");
+    lines.push("  ✗ akm propose, akm improve, akm tasks — run `akm setup` to enable");
   }
 
   p.note(lines.join("\n"), "Feature Summary");
