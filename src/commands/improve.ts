@@ -29,7 +29,7 @@ import {
   promoteProposal,
   purgeOrphanProposals,
 } from "../core/proposals";
-import { openStateDatabase } from "../core/state-db";
+import { openStateDatabase, purgeOldEvents } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
   closeDatabase,
@@ -2690,6 +2690,46 @@ async function runImproveMaintenancePasses(args: {
         );
       } catch (err) {
         allWarnings.push(`proposal expiration failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Fix #2 (observability 0.8.0): trim the events table in state.db so it
+    // doesn't grow unbounded. `akm health` writes a `health_probe` row on every
+    // invocation, and every command surface emits at least one event besides —
+    // without this trim, state.db is a permanent append-only log. Config key
+    // `improve.eventRetentionDays` (default 90, set 0 to disable) controls the
+    // window. `purgeOldEvents()` opens its own state.db handle separate from
+    // the index `db` above (different SQLite file).
+    {
+      const retentionDays =
+        typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
+      if (retentionDays > 0) {
+        let stateDb: ReturnType<typeof openStateDatabase> | undefined;
+        try {
+          stateDb = openStateDatabase();
+          const purgedCount = purgeOldEvents(stateDb, retentionDays);
+          if (purgedCount > 0) {
+            info(`[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`);
+          }
+          appendEvent(
+            {
+              eventType: "events_purged",
+              ref: "events:_purge",
+              metadata: { purgedCount, retentionDays },
+            },
+            eventsCtx,
+          );
+        } catch (err) {
+          allWarnings.push(`events purge failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          if (stateDb) {
+            try {
+              stateDb.close();
+            } catch {
+              // best-effort
+            }
+          }
+        }
       }
     }
 

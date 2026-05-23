@@ -70,6 +70,8 @@ export type EventType =
   | "improve_completed"
   /** Emitted by `runImproveMaintenancePasses` after rejecting proposals whose target assets no longer exist on disk. */
   | "proposal_orphan_purge"
+  /** Emitted by `runImproveMaintenancePasses` after running `purgeOldEvents()` on state.db. Metadata: `{purgedCount, retentionDays}`. */
+  | "events_purged"
   /** Emitted by `createProposal()` when input validation fails before write — metadata carries `reason` and `source`. */
   | "proposal_creation_rejected"
   /** Emitted by the improve loop after each per-asset reflect call — carries `ok`, `durationMs`, `reason`. */
