@@ -397,7 +397,7 @@ All asset files live under `$STASH/` in type-specific subdirectories defined by 
 | `vaults/<name>.env` | vault | `KEY=VALUE` pairs |
 | `wikis/<name>/` | wiki | See wiki structure below |
 | `lessons/<name>.md` | lesson | YAML-FM + Markdown (required: `description`, `when_to_use`) |
-| `tasks/<name>.md` | task | YAML-FM + Markdown |
+| `tasks/<name>.yml` | task | pure YAML (see `docs/migration/v0.7-to-v0.8.md` for the `.md` → `.yml` conversion) |
 
 ### Wiki File Structure
 

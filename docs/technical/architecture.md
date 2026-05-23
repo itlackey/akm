@@ -269,9 +269,14 @@ Concretely:
   pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
   stateless model handle (see the comment in that file). It exposes
   `resetLocalEmbedder()` so tests can construct a fresh pipeline.
-- Each call site is gated behind exactly one `llm.features.*` flag (v1 spec
-  §14) and falls back to a deterministic path when the flag is `false`,
-  the endpoint is unreachable, or parsing fails.
+- Each call site is gated behind exactly one configuration flag — either a
+  `processes.<name>.enabled` toggle under `profiles.improve.<name>` (improve-
+  bound features such as memory inference, graph extraction, consolidation,
+  feedback distillation) or a first-class section toggle
+  (`index.metadataEnhance.enabled`, `index.stalenessDetection.enabled`,
+  `search.curateRerank.enabled`) — and falls back to a deterministic path
+  when the flag is `false`, the endpoint is unreachable, or parsing fails.
+  See `docs/configuration.md` for canonical paths.
 
 The seam is locked by `tests/architecture/llm-stateless-seam.test.ts`, which
 inspects the module shape of each `src/llm/*` entry — not the source text.
@@ -344,7 +349,7 @@ accidental introduction of in-tree LLM imports under that path.
 | `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `llm.features.memory_inference`) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `profiles.improve.<name>.processes.memoryInference.enabled`) |
 | `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
