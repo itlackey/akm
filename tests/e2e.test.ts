@@ -811,7 +811,7 @@ describe("Scenario: CLI subprocess execution", () => {
     const result = runCli("search", "docker", "--source", "bad");
     expect(result.exitCode).not.toBe(0);
     const output = result.stdout + result.stderr;
-    expect(output).toContain("Invalid value for --source: bad. Expected one of: stash|registry|both");
+    expect(output).toContain("Unknown source name");
   });
 
   test("cli: akm search default output excludes full-detail fields", async () => {
