@@ -8,10 +8,14 @@
  *   - the memory-safety runner (mandatory isolation; mutates the stash),
  *   - Phase 5's graph A/B harness (will reuse this verbatim).
  *
- * Mirrors the test-isolation contract from release/0.8.0
- * (`7d8b28a`, `23373b5`, `cc95085`, `35ec047`): AKM_STASH_DIR + AKM_DATA_DIR
- * + HOME all point inside the sandbox, so no akm code path can escape into
- * the real user directories.
+ * Isolation contract (updated for PR #449 / 2026-05-23 incident):
+ *   - AKM_STASH_DIR   → $root/stash  (transient path, triggers paths.ts
+ *                        transient-isolation rule → config writes go to
+ *                        $STASH/.akm instead of $HOME/.config/akm)
+ *   - AKM_DATA_DIR    → $root/data   (index.db, workflow.db, akm.lock)
+ *   - HOME            → $root        (state dir falls to $HOME/.local/state/akm;
+ *                        cache dir falls to $HOME/.cache/akm — both isolated)
+ * No akm code path can escape into the real user directories.
  */
 
 import fs from "node:fs";
