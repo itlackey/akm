@@ -501,8 +501,8 @@ Run only inside the sandbox.
 ### 15.3 improve / lesson
 
 - [ ] `akm improve skill:k8s-deploy` returns `outcome: "skipped"` when
-      `llm.features.feedback_distillation` is disabled, or queues a lesson
-      proposal when enabled.
+      `profiles.improve.default.processes.feedbackDistillation.enabled` is
+      `false`, or queues a lesson proposal when enabled.
 - [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
       accepts valid refs.
 - [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "not-a-ref"` fails
@@ -514,11 +514,12 @@ Run only inside the sandbox.
 ## 16. Config and Migration
 
 - [ ] `akm config list` reports current state.
-- [ ] `akm config set llm '{"endpoint":"http://localhost:1234/v1"}'` persists
-      the whole section.
-- [ ] `akm config set llm.endpoint http://localhost:1234/v1` updates the subkey.
-- [ ] `akm config get llm.endpoint` reads it back.
-- [ ] `akm config unset llm.apiKey` removes the subkey cleanly.
+- [ ] `akm config set profiles.llm.default '{"endpoint":"http://localhost:1234/v1"}'`
+      persists the whole named LLM profile entry.
+- [ ] `akm config set profiles.llm.default.endpoint http://localhost:1234/v1`
+      updates the subkey.
+- [ ] `akm config get profiles.llm.default.endpoint` reads it back.
+- [ ] `akm config unset profiles.llm.default.apiKey` removes the subkey cleanly.
 - [ ] `akm config set defaultWriteTarget <source-name>` now works.
 - [ ] `akm help migrate 0.6.0` prints bundled migration notes.
 - [ ] `akm help migrate v0.6.0-rc1` normalizes to the stable note.
@@ -540,6 +541,77 @@ Run only inside the sandbox.
 - [ ] `akm list` fails with a structured `ConfigError` that points at migration
       guidance.
 - [ ] Remove it; normal commands work again.
+
+### 16.3 New 0.8.0 surfaces
+
+These cover surfaces introduced in 0.8.0 that previous revisions of this
+checklist did not exercise.
+
+#### `akm health` exit codes
+
+- [ ] `akm health` on a healthy install exits 0 and emits a JSON envelope with
+      `ok: true`.
+- [ ] `akm health` on an install with a missing `state.db` exits non-zero and
+      reports the missing artifact with a structured envelope.
+- [ ] `akm health --since 24h` filters telemetry to the last 24 hours.
+
+#### `akm config migrate` + `AKM_NO_AUTO_MIGRATE=1`
+
+- [ ] Drop in a pre-0.8.0 `config.json` (legacy top-level `llm` / `agent` /
+      `features` blocks). `akm config migrate --dry-run` prints the
+      transformed shape without writing.
+- [ ] `akm config migrate` rewrites the file, writes a timestamped backup to
+      `$DATA/config-backups/`, and sets `configVersion: "0.8.0"`.
+- [ ] `AKM_NO_AUTO_MIGRATE=1 akm config list` loads a legacy config for the
+      current run without touching the file on disk (no backup written).
+- [ ] `akm config migrate --no-wait` fails immediately rather than blocking
+      when another migrate holds the lock.
+
+#### Task `.md` → `.yml` migration verification
+
+- [ ] Drop a pre-0.8.0 `.md` task with YAML frontmatter into
+      `<stash>/tasks/<id>.md`. `akm tasks list` does **not** show it.
+- [ ] Convert it to `<stash>/tasks/<id>.yml`. `akm tasks list` shows it.
+- [ ] `akm tasks show <id>.md` strips the suffix and resolves to the `.yml`
+      file; missing `.yml` yields a structured "task not found", not a parse
+      error.
+- [ ] `akm tasks add` writes a new `.yml` and refuses to overwrite an existing
+      `.md` without `--force`.
+
+#### `vault set --from-env` and stdin behaviour
+
+- [ ] `printf '%s' "secret" | akm vault set vault:prod KEY` writes via stdin.
+- [ ] `AKM_VAL=secret akm vault set vault:prod KEY --from-env AKM_VAL` writes
+      from the named env var; unset var exits with code 2.
+- [ ] Piping a payload > 1 MB to `akm vault set` is rejected with a
+      `UsageError`.
+- [ ] `akm vault set vault:prod KEY=value` (positional value or KEY=VALUE
+      form) is rejected with `UsageError`.
+
+#### `--auto-accept=false` regression check
+
+- [ ] `akm improve <ref>` (no flag) auto-accepts at threshold 90 (does not
+      prompt on the HTTP path).
+- [ ] `akm improve <ref> --auto-accept=false` restores the interactive
+      prompt on the HTTP consolidation path.
+- [ ] `akm improve <ref> --auto-accept=safe` is accepted as a permanent alias
+      for `--auto-accept=90`.
+
+#### Proposal resolution by ref or UUID prefix
+
+- [ ] `akm accept <full-uuid>` works (regression check).
+- [ ] `akm accept <8-char prefix>` works.
+- [ ] `akm accept memory:my-note` resolves the pending proposal by ref.
+- [ ] `akm reject` / `akm diff` accept the same forms.
+
+#### `--target` uniformity
+
+- [ ] `akm remember "note" --target <stash>` writes to the named target.
+- [ ] `akm import ./file.md --target <stash>` writes to the named target.
+- [ ] `akm wiki stash <wiki> ./page.md --target <stash>` writes to the named
+      target.
+- [ ] Legacy `--stash` on any of the above is rejected with a structured
+      usage error.
 
 ---
 
