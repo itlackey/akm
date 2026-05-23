@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_ALLOWED_TYPES, resolveImproveProfile, shouldSkipRef } from "../../src/commands/improve-profiles";
+import {
+  DEFAULT_ALLOWED_TYPES,
+  resolveImproveProfile,
+  resolveProcessEnabled,
+  shouldSkipRef,
+} from "../../src/commands/improve-profiles";
 import type { AkmConfig } from "../../src/core/config";
 
 const MINIMAL_CONFIG: AkmConfig = {
@@ -214,5 +219,64 @@ describe("shouldSkipRef", () => {
     // wiki:my-wiki/content/raw/file → raw is NOT second segment → not raw-wiki skip
     const r2 = shouldSkipRef("wiki:my-wiki/content/raw/file", "reflect", profile);
     expect(r2.skip).toBe(false);
+  });
+});
+
+// ── resolveProcessEnabled ────────────────────────────────────────────────────
+
+describe("resolveProcessEnabled", () => {
+  test("returns true for known process when profile explicitly enables it", () => {
+    const profile = resolveImproveProfile(undefined, MINIMAL_CONFIG);
+    expect(resolveProcessEnabled("reflect", profile)).toBe(true);
+    expect(resolveProcessEnabled("distill", profile)).toBe(true);
+    expect(resolveProcessEnabled("consolidate", profile)).toBe(true);
+    expect(resolveProcessEnabled("memoryInference", profile)).toBe(true);
+    expect(resolveProcessEnabled("graphExtraction", profile)).toBe(true);
+    expect(resolveProcessEnabled("feedbackDistillation", profile)).toBe(true);
+  });
+
+  test("returns false for 'validation' (opt-in only, not in default profile)", () => {
+    const profile = resolveImproveProfile(undefined, MINIMAL_CONFIG);
+    expect(resolveProcessEnabled("validation", profile)).toBe(false);
+  });
+
+  test("returns false for unknown process names", () => {
+    const profile = resolveImproveProfile(undefined, MINIMAL_CONFIG);
+    expect(resolveProcessEnabled("nonExistentProcess", profile)).toBe(false);
+  });
+
+  test("profile explicit false overrides IMPROVE_PROCESS_DEFAULTS true", () => {
+    const profile = resolveImproveProfile("quick", MINIMAL_CONFIG);
+    expect(resolveProcessEnabled("distill", profile)).toBe(false);
+    expect(resolveProcessEnabled("consolidate", profile)).toBe(false);
+    expect(resolveProcessEnabled("memoryInference", profile)).toBe(false);
+    expect(resolveProcessEnabled("graphExtraction", profile)).toBe(false);
+  });
+
+  test("profile explicit true is returned directly", () => {
+    const profile = resolveImproveProfile("quick", MINIMAL_CONFIG);
+    expect(resolveProcessEnabled("reflect", profile)).toBe(true);
+  });
+
+  test("user override false beats builtin default true", () => {
+    const config: AkmConfig = {
+      ...MINIMAL_CONFIG,
+      profiles: {
+        improve: {
+          default: {
+            processes: { reflect: { enabled: false } },
+          },
+        },
+      },
+    };
+    const profile = resolveImproveProfile("default", config);
+    expect(resolveProcessEnabled("reflect", profile)).toBe(false);
+  });
+
+  test("empty profile falls back to IMPROVE_PROCESS_DEFAULTS", () => {
+    expect(resolveProcessEnabled("reflect", {})).toBe(true);
+    expect(resolveProcessEnabled("distill", {})).toBe(true);
+    expect(resolveProcessEnabled("validation", {})).toBe(false);
+    expect(resolveProcessEnabled("unknownThing", {})).toBe(false);
   });
 });

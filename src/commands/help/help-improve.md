@@ -31,15 +31,14 @@ Options:
   --dry-run            Show planned actions without generating proposals
   --target <source>    Override the write target for accepted proposals
   --auto-accept[=<value>]
-                        Confidence threshold (0-100) for auto-accepting reflect/distill proposals.
-                        --auto-accept            accept at threshold 90 (same as =90)
+                        Confidence threshold (0-100) for auto-accepting proposals.
+                        Default when flag is absent: ON at threshold 90 (all sub-processes).
+                        --auto-accept            same as --auto-accept=90
                         --auto-accept=<N>        integer 0-100; accept proposals at or above N
                         --auto-accept=safe       alias for 90 (back-compat, not deprecated)
-                        --auto-accept=false      disable; proposals go to the queue for manual review
-                        Default when flag is absent: reflect/distill proposals are NOT auto-accepted
-                        (they go to the proposal queue). Consolidation proposals always auto-accept
-                        at threshold 90 regardless of this flag; pass --auto-accept=false to
-                        disable consolidation auto-accept too.
+                        --auto-accept=false      disable auto-accept for all sub-processes;
+                                                 reflect/distill proposals go to the queue and
+                                                 consolidation will prompt interactively on HTTP paths
                         Note: until proposals carry real confidence scores, any non-`false`
                         value behaves like the legacy "safe" mode (whole-batch auto-accept).
   --profile <name>     Improve profile to apply. Built-ins: default, quick,

@@ -71,8 +71,11 @@ export interface AkmImproveOptions {
   dryRun?: boolean;
   target?: string;
   /**
-   * Confidence threshold (0-100). Undefined disables auto-accept and enables
-   * interactive confirmation on the HTTP consolidation path.
+   * Confidence threshold (0-100). Undefined disables auto-accept for all
+   * sub-processes (consolidation will prompt interactively on HTTP paths).
+   * The CLI parser supplies 90 when --auto-accept is absent, so CLI callers
+   * get auto-accept on by default. Programmatic callers must pass 90 explicitly
+   * to match that behaviour.
    */
   autoAccept?: number;
   stashDir?: string;
@@ -2348,11 +2351,12 @@ async function runImprovePostLoopStage(args: {
       stashDir: options.stashDir,
       autoTriggered: volumeTriggered,
       // Honor profile.autoAccept (already merged into options.autoAccept at the
-      // top of akmImprove). Falls back to 90 when no profile/flag value is set.
+      // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
+      // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
+      // (which maps to undefined) from disabling consolidation auto-accept.
       // options.consolidateOptions.autoAccept (if explicitly provided by caller)
-      // still wins because the spread above runs first — we override only when
-      // the caller didn't supply a value.
-      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept ?? 90,
+      // still wins because the spread above runs first.
+      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
     });
     if (consolidation.processed > 0) {
       appendEvent(
