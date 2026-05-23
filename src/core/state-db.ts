@@ -622,11 +622,20 @@ export function readStateEvents(
 /**
  * Delete events older than `retentionDays` (default: 90). Safe to call from
  * a maintenance cron; uses a single DELETE with an index-covered ts predicate.
+ *
+ * Returns the number of rows actually deleted so callers can emit an
+ * `events_purged` observability event. A non-positive or non-finite
+ * `retentionDays` is treated as "disabled" and returns 0 without scanning.
  */
-export function purgeOldEvents(db: Database, retentionDays = 90): void {
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+export function purgeOldEvents(db: Database, retentionDays = 90): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  db.prepare("DELETE FROM events WHERE ts < ?").run(cutoff);
+  const result = db.prepare("DELETE FROM events WHERE ts < ?").run(cutoff);
+  // bun:sqlite's run() returns { changes, lastInsertRowid }. `changes` may be
+  // a number or bigint depending on the underlying lib; coerce to number for
+  // the metadata payload.
+  const changes = (result as { changes?: number | bigint }).changes ?? 0;
+  return typeof changes === "bigint" ? Number(changes) : changes;
 }
 
 // ── proposals table helpers ──────────────────────────────────────────────────
