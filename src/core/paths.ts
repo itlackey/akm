@@ -29,11 +29,17 @@ function isUnderBunTest(env: NodeJS.ProcessEnv): boolean {
 /**
  * Returns true when the given path is in a directory family the OS may
  * reap (or that the user has clearly designated as a sandbox by virtue
- * of placing it under `/tmp` or `/private/var/folders`). Used to decide
- * whether `AKM_STASH_DIR=$tmpdir` should also isolate config + cache
- * writes (so a test harness's `akm setup --yes --dir .` cannot silently
- * clobber the user's `~/.config/akm/config.json`). See
- * BUG-setup-clobbers-user-config.md for the incident that motivated this.
+ * of placing it under `/tmp` or a macOS per-user temp dir). Used to
+ * decide whether `AKM_STASH_DIR=$tmpdir` should also isolate config +
+ * cache writes (so a test harness's `akm setup --yes --dir .` cannot
+ * silently clobber the user's `~/.config/akm/config.json`). See
+ * `docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md`
+ * for the incident that motivated this.
+ *
+ * Both `/var/folders/*` and `/private/var/folders/*` are matched because
+ * `os.tmpdir()` on macOS may return either form depending on whether the
+ * caller has canonicalised the path (the realpath of `/var/folders` is
+ * `/private/var/folders`, but `path.resolve()` does not follow symlinks).
  */
 export function isTransientStashPath(p: string): boolean {
   return (
@@ -42,7 +48,8 @@ export function isTransientStashPath(p: string): boolean {
     p.startsWith("/var/tmp/") ||
     p === "/var/tmp" ||
     p.startsWith("/private/tmp/") ||
-    p.startsWith("/private/var/folders/")
+    p.startsWith("/private/var/folders/") ||
+    p.startsWith("/var/folders/")
   );
 }
 
@@ -87,7 +94,7 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
   // isolation pattern
   //   AKM_DATA_DIR=/tmp/x AKM_STASH_DIR=/tmp/x akm setup --yes --dir .
   // from silently clobbering the host config. See
-  // BUG-setup-clobbers-user-config.md for the incident.
+  // docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md for the incident.
   // Daily users with a persistent AKM_STASH_DIR=~/my-stash are unaffected.
   const stashOverride = env.AKM_STASH_DIR?.trim();
   if (stashOverride && isTransientStashPath(stashOverride)) {
@@ -132,9 +139,26 @@ export function getCacheDir(): string {
   if (override) return override;
 
   // Explicit XDG/platform overrides win before the transient-stash isolation
-  // rule below — tests that pre-arrange XDG_CACHE_HOME (or %LOCALAPPDATA%)
-  // must be honored without being silently moved into the stash dir.
-  if (!IS_WINDOWS) {
+  // rule below — tests and operators that pre-arrange XDG_CACHE_HOME (or
+  // %LOCALAPPDATA% / %USERPROFILE% / %APPDATA% on Windows) must be honored
+  // as set, so the AKM_STASH_DIR transient rule does not silently move cache
+  // writes away from where they pointed them.
+  if (IS_WINDOWS) {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) return path.join(localAppData, "akm");
+
+    const userProfile = process.env.USERPROFILE?.trim();
+    if (userProfile) return path.join(userProfile, "AppData", "Local", "akm");
+
+    const appData = process.env.APPDATA?.trim();
+    if (appData) {
+      // Heuristic fallback: APPDATA points to %APPDATA% (Roaming), so
+      // navigate to the sibling "Local" directory. This is typically
+      // C:\Users\<name>\AppData\Roaming → C:\Users\<name>\AppData\Local\akm.
+      // Preferred: set LOCALAPPDATA to avoid this navigation.
+      return path.join(appData, "..", "Local", "akm");
+    }
+  } else {
     const xdgCacheHome = process.env.XDG_CACHE_HOME?.trim();
     if (xdgCacheHome) return path.join(xdgCacheHome, "akm");
   }
@@ -150,28 +174,12 @@ export function getCacheDir(): string {
   }
 
   if (IS_WINDOWS) {
-    const localAppData = process.env.LOCALAPPDATA?.trim();
-    if (localAppData) return path.join(localAppData, "akm");
-
-    const userProfile = process.env.USERPROFILE?.trim();
-    if (userProfile) return path.join(userProfile, "AppData", "Local", "akm");
-
-    const appData = process.env.APPDATA?.trim();
-    if (!appData) {
-      throw new ConfigError(
-        "Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
-        "CONFIG_DIR_UNRESOLVABLE",
-      );
-    }
-    // Heuristic fallback: APPDATA points to %APPDATA% (Roaming), so navigate
-    // to the sibling "Local" directory. This is typically
-    // C:\Users\<name>\AppData\Roaming → C:\Users\<name>\AppData\Local\akm.
-    // Preferred: set LOCALAPPDATA to avoid this navigation.
-    return path.join(appData, "..", "Local", "akm");
+    // None of LOCALAPPDATA / USERPROFILE / APPDATA were set above.
+    throw new ConfigError(
+      "Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
+      "CONFIG_DIR_UNRESOLVABLE",
+    );
   }
-
-  const xdgCacheHome = process.env.XDG_CACHE_HOME?.trim();
-  if (xdgCacheHome) return path.join(xdgCacheHome, "akm");
 
   const home = process.env.HOME?.trim();
   if (!home) return path.join("/tmp", "akm-cache");

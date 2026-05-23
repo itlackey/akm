@@ -75,7 +75,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_STASH_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   SETUP_TMP_STASH_REFUSED:
-    "Use a persistent directory, or set AKM_FORCE_SETUP_TMP_STASH=1 to opt in to a sandboxed setup (config is then routed to $stashDir/.akm/ automatically).",
+    "Use a persistent directory, or set AKM_FORCE_SETUP_TMP_STASH=1 to opt in to a sandboxed setup (setup also pre-sets AKM_STASH_DIR so config and cache writes auto-isolate into $stashDir/.akm/ — host config is preserved).",
 };
 
 /** Default hint for each UsageError code. */

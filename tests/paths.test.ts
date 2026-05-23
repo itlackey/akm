@@ -130,7 +130,7 @@ describe("getConfigDir", () => {
     expect(result).toBe("/override/config");
   });
 
-  // Regression: BUG-setup-clobbers-user-config.md. When the user (or a
+  // Regression: docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md. When the user (or a
   // test harness) sets AKM_STASH_DIR to a transient path, config writes
   // must NOT target the user's host ~/.config/akm — they must route into
   // the stash so saveConfig() can never silently clobber the host.
@@ -201,6 +201,10 @@ describe("getCacheDir", () => {
   test("falls back to HOME/.cache on Unix when XDG_CACHE_HOME is unset", () => {
     delete process.env.AKM_CACHE_DIR;
     delete process.env.XDG_CACHE_HOME;
+    // Clear AKM_STASH_DIR too — under CI, it can be inherited from outer
+    // test isolation pointing at a transient dir, which would trigger the
+    // new isolation rule and override this test's HOME-based expectation.
+    delete process.env.AKM_STASH_DIR;
     process.env.HOME = "/home/user";
     const result = getCacheDir();
     expect(result).toBe(path.join("/home/user", ".cache", "akm"));
@@ -209,6 +213,7 @@ describe("getCacheDir", () => {
   test("falls back to /tmp/akm-cache when HOME is also unset", () => {
     delete process.env.AKM_CACHE_DIR;
     delete process.env.XDG_CACHE_HOME;
+    delete process.env.AKM_STASH_DIR;
     delete process.env.HOME;
     const result = getCacheDir();
     expect(result).toBe(path.join("/tmp", "akm-cache"));
@@ -220,7 +225,7 @@ describe("getCacheDir", () => {
     expect(result).toBe("/override/cache");
   });
 
-  // Regression: BUG-setup-clobbers-user-config.md companion fix. When
+  // Regression: docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md companion fix. When
   // AKM_STASH_DIR is transient, cache (which holds config-backups/) must
   // also isolate into the stash so saveConfig backup writes do not
   // pollute the user's host ~/.cache/akm/config-backups/.

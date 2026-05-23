@@ -1,4 +1,4 @@
-// Regression tests for BUG-setup-clobbers-user-config.md.
+// Regression tests for docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md.
 //
 // Two layers of defense, both tested here:
 //   1. assertSetupSandbox (in src/setup/setup.ts): refuses `akm setup --dir
@@ -125,6 +125,84 @@ describe("setup tmp-stash guard (layer 1: assertSetupSandbox)", () => {
       });
     } finally {
       fs.rmSync(persistentDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Layer 1.5: --dir alone (no AKM_STASH_DIR pre-set) still isolates ───────
+
+describe("setup pre-sets AKM_STASH_DIR when --dir is given (so layer 2 fires)", () => {
+  test("--dir /tmp/X without pre-set AKM_STASH_DIR routes config into the stash too", async () => {
+    // Reproduces the exact bug Copilot flagged: a CLI caller who passes
+    // --dir /tmp/X but does NOT pre-export AKM_STASH_DIR would, without
+    // applyStashIsolationToEnv, still see getConfigDir() fall through to
+    // the host ~/.config/akm and clobber it. Setup must propagate the
+    // operator's --dir choice to AKM_STASH_DIR so the isolation rule fires.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-isolation-cli-"));
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-fakehome-cli-"));
+    const hostConfigDir = path.join(fakeHome, ".config", "akm");
+    fs.mkdirSync(hostConfigDir, { recursive: true });
+    const hostConfigPath = path.join(hostConfigDir, "config.json");
+    const hostConfigContent = '{"cliCanary":true}\n';
+    fs.writeFileSync(hostConfigPath, hostConfigContent);
+    const hostMtimeBefore = fs.statSync(hostConfigPath).mtimeMs;
+
+    try {
+      process.env.HOME = fakeHome;
+      // CRITICALLY: do NOT set AKM_STASH_DIR before the call. We want the
+      // setup code to set it for us. This mirrors the CLI invocation
+      // `akm setup --dir /tmp/X` with no env pre-arrangement.
+      delete process.env.AKM_STASH_DIR;
+      process.env.AKM_DATA_DIR = path.join(tmpDir, "data");
+      process.env.AKM_STATE_DIR = path.join(tmpDir, "state");
+      process.env.XDG_DATA_HOME = path.join(tmpDir, "data");
+      process.env.XDG_STATE_HOME = path.join(tmpDir, "state");
+      delete process.env.AKM_CONFIG_DIR;
+      delete process.env.XDG_CONFIG_HOME;
+      process.env.AKM_FORCE_SETUP_TMP_STASH = "1"; // opt past layer 1
+
+      await runSetupWithDefaults({ dir: tmpDir, noInit: true });
+
+      // The host config must be byte-identical, even though we did not
+      // pre-set AKM_STASH_DIR ourselves.
+      const hostConfigAfter = fs.readFileSync(hostConfigPath, "utf8");
+      expect(hostConfigAfter).toBe(hostConfigContent);
+      expect(fs.statSync(hostConfigPath).mtimeMs).toBe(hostMtimeBefore);
+
+      // And the isolated config must have landed in the stash.
+      expect(fs.existsSync(path.join(tmpDir, ".akm", "config.json"))).toBe(true);
+
+      // Setup is expected to have pre-set AKM_STASH_DIR for the duration
+      // of the call (we don't reset it; the afterEach hook does).
+      expect(process.env.AKM_STASH_DIR ?? "").toBe(tmpDir);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  test("operator-set AKM_STASH_DIR wins over the auto-set (existing env preserved)", async () => {
+    // If the operator already exported AKM_STASH_DIR=somewhere-else, do not
+    // overwrite it. (Defense against a setup call that uses --dir for stash
+    // bootstrap but expects config to follow a different env-anchored path.)
+    const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-prefer-env-stash-"));
+    const envStashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-prefer-env-other-"));
+
+    try {
+      process.env.AKM_STASH_DIR = envStashDir;
+      process.env.AKM_DATA_DIR = path.join(stashDir, "data");
+      process.env.AKM_STATE_DIR = path.join(stashDir, "state");
+      process.env.XDG_DATA_HOME = path.join(stashDir, "data");
+      process.env.XDG_STATE_HOME = path.join(stashDir, "state");
+      process.env.AKM_FORCE_SETUP_TMP_STASH = "1";
+
+      await runSetupWithDefaults({ dir: stashDir, noInit: true });
+
+      // The pre-existing AKM_STASH_DIR was NOT overwritten by the --dir value.
+      expect(process.env.AKM_STASH_DIR ?? "").toBe(envStashDir);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+      fs.rmSync(envStashDir, { recursive: true, force: true });
     }
   });
 });

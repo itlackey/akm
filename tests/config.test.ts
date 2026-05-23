@@ -123,6 +123,12 @@ describe("getConfigPath", () => {
   test("defaults to ~/.config/akm when XDG_CONFIG_HOME is unset", () => {
     const home = makeTmpDir();
     delete process.env.XDG_CONFIG_HOME;
+    // Defense against CI environments where AKM_STASH_DIR is inherited
+    // from outer test isolation: if it points at a transient path,
+    // getConfigDir's isolation rule fires and overrides the HOME-based
+    // fallback this test is verifying. See
+    // docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md.
+    delete process.env.AKM_STASH_DIR;
     process.env.HOME = home;
 
     expect(getConfigPath()).toBe(path.join(home, ".config", "akm", "config.json"));
