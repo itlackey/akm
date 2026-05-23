@@ -330,6 +330,21 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     );
   `);
 
+  // Per-project scoped utility scores — tracks usage per (entry, cwd-anchor)
+  // so assets useful in project A don't pollute rankings in project B.
+  // The global utility_scores table is preserved as a fallback / cold-start aid.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS utility_scores_scoped (
+      entry_id     INTEGER NOT NULL,
+      scope_key    TEXT NOT NULL,
+      utility      REAL NOT NULL DEFAULT 0,
+      last_used_at INTEGER NOT NULL,
+      PRIMARY KEY (entry_id, scope_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_utility_scores_scoped_entry_id
+      ON utility_scores_scoped(entry_id);
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_dir_state (
       dir_path          TEXT PRIMARY KEY,
@@ -558,6 +573,8 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   }
 
   db.exec("DROP TABLE IF EXISTS utility_scores");
+  db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
+  db.exec("DROP INDEX IF EXISTS idx_utility_scores_scoped_entry_id");
   db.exec("DROP TABLE IF EXISTS usage_events");
   db.exec("DROP TABLE IF EXISTS embeddings");
   db.exec("DROP TABLE IF EXISTS entries_vec");
@@ -1024,6 +1041,11 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
     // Clean up utility scores before deleting entries
     try {
       db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* ignore */
+    }
+    try {
+      db.prepare(`DELETE FROM utility_scores_scoped WHERE entry_id IN (${placeholders})`).run(...chunk);
     } catch {
       /* ignore */
     }
@@ -1536,12 +1558,31 @@ export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow 
 }
 
 /**
- * Batch-load utility scores for multiple entry IDs in a single query.
- * Returns a Map keyed by entry_id for O(1) lookup.
+ * A single row from `utility_scores_scoped`.
  */
-export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, UtilityScoreRow> {
-  if (ids.length === 0) return new Map();
-  const result = new Map<number, UtilityScoreRow>();
+export interface ScopedUtilityRow {
+  entryId: number;
+  scopeKey: string;
+  utility: number;
+  lastUsedAt: number;
+}
+
+/**
+ * Batch-load utility scores for multiple entry IDs in a single query.
+ * Returns a `{ global, scoped }` pair, both Maps keyed by entry_id.
+ *
+ * When `scopeKey` is provided a second query runs against
+ * `utility_scores_scoped` and the result is returned as `scoped`.
+ * Both maps are always present; `scoped` is empty when `scopeKey` is absent.
+ */
+export function getUtilityScoresByIds(
+  db: Database,
+  ids: number[],
+  scopeKey?: string,
+): { global: Map<number, UtilityScoreRow>; scoped: Map<number, ScopedUtilityRow> } {
+  const global = new Map<number, UtilityScoreRow>();
+  const scoped = new Map<number, ScopedUtilityRow>();
+  if (ids.length === 0) return { global, scoped };
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
@@ -1560,7 +1601,7 @@ export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, 
       updated_at: string;
     }>;
     for (const row of rows) {
-      result.set(row.entry_id, {
+      global.set(row.entry_id, {
         entryId: row.entry_id,
         utility: row.utility,
         showCount: row.show_count,
@@ -1570,8 +1611,28 @@ export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, 
         updatedAt: row.updated_at,
       });
     }
+    if (scopeKey) {
+      const scopedRows = db
+        .prepare(
+          `SELECT entry_id, scope_key, utility, last_used_at FROM utility_scores_scoped WHERE scope_key = ? AND entry_id IN (${placeholders})`,
+        )
+        .all(scopeKey, ...chunk) as Array<{
+        entry_id: number;
+        scope_key: string;
+        utility: number;
+        last_used_at: number;
+      }>;
+      for (const row of scopedRows) {
+        scoped.set(row.entry_id, {
+          entryId: row.entry_id,
+          scopeKey: row.scope_key,
+          utility: row.utility,
+          lastUsedAt: row.last_used_at,
+        });
+      }
+    }
   }
-  return result;
+  return { global, scoped };
 }
 
 /**
@@ -1767,12 +1828,23 @@ export function getRetrievalCounts(db: Database, refs: string[]): Map<string, nu
  * The indexer (`akm index`) will overwrite these values at next reindex run;
  * bumps are intentionally temporary hints between index runs, not permanent
  * overrides.
+ *
+ * When `scopeKey` is provided, also writes a scoped bump to
+ * `utility_scores_scoped` so per-project usage signals accumulate alongside
+ * the global ones. The global table is always updated regardless.
  */
-export function bumpUtilityScoresBatch(db: Database, entryIds: number[], reward: number, lr = 0.1): void {
+export function bumpUtilityScoresBatch(
+  db: Database,
+  entryIds: number[],
+  reward: number,
+  lr = 0.1,
+  scopeKey?: string,
+): void {
   if (entryIds.length === 0) return;
   db.transaction(() => {
-    const scoreMap = getUtilityScoresByIds(db, entryIds);
+    const { global: scoreMap } = getUtilityScoresByIds(db, entryIds);
     const now = new Date().toISOString();
+    const nowMs = Date.now();
     const stmt = db.prepare(
       `INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
        VALUES (?, ?, 0, 0, 0, ?, ?)
@@ -1780,13 +1852,40 @@ export function bumpUtilityScoresBatch(db: Database, entryIds: number[], reward:
          utility = excluded.utility,
          updated_at = excluded.updated_at`,
     );
+    // Prepare scoped upsert once outside the loop when scopeKey is present.
+    const scopedStmt = scopeKey
+      ? db.prepare(
+          `INSERT INTO utility_scores_scoped (entry_id, scope_key, utility, last_used_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(entry_id, scope_key) DO UPDATE SET
+             utility = excluded.utility,
+             last_used_at = excluded.last_used_at`,
+        )
+      : null;
     for (const entryId of entryIds) {
       const existing = scoreMap.get(entryId);
       const current = existing?.utility ?? 0;
       const next = Math.max(0, Math.min(1, current + lr * (reward - current)));
       stmt.run(entryId, next, now, now);
+      if (scopedStmt && scopeKey) {
+        // Retrieve the current scoped utility so we can apply the same EMA.
+        const scopedCurrent = getScopedUtility(db, entryId, scopeKey);
+        const scopedNext = Math.max(0, Math.min(1, scopedCurrent + lr * (reward - scopedCurrent)));
+        scopedStmt.run(entryId, scopeKey, scopedNext, nowMs);
+      }
     }
   })();
+}
+
+/**
+ * Return the current utility value for a single (entry_id, scope_key) pair.
+ * Returns 0 when no row exists yet.
+ */
+function getScopedUtility(db: Database, entryId: number, scopeKey: string): number {
+  const row = db
+    .prepare("SELECT utility FROM utility_scores_scoped WHERE entry_id = ? AND scope_key = ?")
+    .get(entryId, scopeKey) as { utility: number } | undefined;
+  return row?.utility ?? 0;
 }
 
 // ── Indexer-phase helpers (moved from indexer.ts) ────────────────────────────

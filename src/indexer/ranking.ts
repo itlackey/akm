@@ -41,6 +41,13 @@ export interface RankEntriesOptions {
    * the contributor behaves exactly as it did pre-2A.
    */
   positiveFeedbackCounts?: Map<number, number>;
+  /**
+   * Scoped utility: SHA-256 project-anchor key from
+   * `getCurrentWorkflowScopeKey()`. When provided the ranking pipeline loads
+   * per-project utility scores in addition to the global ones and prefers the
+   * scoped signal when it exists (blend 0.7 scoped + 0.3 global).
+   */
+  scopeKey?: string;
 }
 
 export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
@@ -117,13 +124,15 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
     applyScoreContributors(item, rankingContext);
   }
 
-  const utilScoresMap = getUtilityScoresByIds(
+  const { global: utilScoresMap, scoped: scopedUtilScoresMap } = getUtilityScoresByIds(
     options.db,
     options.items.map((item) => item.id),
+    options.scopeKey,
   );
   const utilityContext = {
     ...rankingContext,
     utilityScores: utilScoresMap,
+    scopedUtilityScores: scopedUtilScoresMap,
     utilityDecayConfig: options.utilityDecayConfig,
     positiveFeedbackCounts: options.positiveFeedbackCounts,
   };

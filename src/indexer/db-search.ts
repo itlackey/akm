@@ -20,6 +20,7 @@ import type { AkmConfig, ImproveConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../sources/types";
+import { getCurrentWorkflowScopeKey } from "../workflows/scope-key";
 import {
   closeDatabase,
   getAllEntries,
@@ -354,6 +355,15 @@ async function searchDatabase(
       )
     : undefined;
 
+  // Resolve per-project scope key for scoped utility scoring.
+  // AKM_DISABLE_SCOPED_UTILITY=1 opts out (e.g. for registry searches or tests).
+  let scopeKey: string | undefined;
+  try {
+    scopeKey = process.env.AKM_DISABLE_SCOPED_UTILITY === "1" ? undefined : getCurrentWorkflowScopeKey();
+  } catch {
+    // Non-fatal — ranking proceeds without scoped utility on any error.
+  }
+
   applyRankingRules({
     db,
     query,
@@ -362,6 +372,7 @@ async function searchDatabase(
     projectContext,
     utilityDecayConfig,
     positiveFeedbackCounts,
+    scopeKey,
   });
 
   // ── minScore floor ──────────────────────────────────────────────────────
