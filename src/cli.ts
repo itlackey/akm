@@ -674,6 +674,12 @@ const searchCommand = defineCommand({
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    "no-project-context": {
+      type: "boolean",
+      description:
+        "Disable the automatic project-context ranking boost (also disabled by AKM_DISABLE_PROJECT_CONTEXT=1).",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -694,6 +700,10 @@ const searchCommand = defineCommand({
       const filters = parseScopeFilterFlags(filterTokens, "--filter");
       const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
       const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
+      const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
+      // --no-project-context sets env so searchDatabase picks it up without
+      // threading the flag through the entire call stack.
+      if (noProjectContext) process.env.AKM_DISABLE_PROJECT_CONTEXT = "1";
       const result = await akmSearch({
         query,
         type,
