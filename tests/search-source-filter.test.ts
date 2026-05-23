@@ -129,5 +129,19 @@ describe("akm search --source <name> filters hits to that source", () => {
     const narrowedNames = narrowedHits.map((h) => h.name);
     expect(narrowedNames).toContain("library-skill");
     expect(narrowedNames).not.toContain("primary-skill");
+
+    // And vice versa — `--source primary` returns only the primary hit.
+    // Regression for a related bug: `resolveSourceEntries` injects the primary
+    // stash into `sources[0]` before iterating the config sources. The dedupe
+    // loop used to skip the matching config entry, so the primary stash entry
+    // never received its config name and `--source <primary-name>` matched
+    // zero entries. addSource now enriches the existing entry with config
+    // metadata when the path is already in the source list.
+    const narrowedPrimary = runCli(["search", "shared-keyword", "--source", "primary", "--format=json"], primary);
+    expect(narrowedPrimary.status).toBe(0);
+    const narrowedPrimaryHits = (JSON.parse(narrowedPrimary.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
+    const narrowedPrimaryNames = narrowedPrimaryHits.map((h) => h.name);
+    expect(narrowedPrimaryNames).toContain("primary-skill");
+    expect(narrowedPrimaryNames).not.toContain("library-skill");
   });
 });
