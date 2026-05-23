@@ -114,6 +114,14 @@ export async function searchLocal(input: {
    */
   includeProposed?: boolean;
   beliefFilter?: BeliefFilterMode;
+  /**
+   * When true, hits are restricted to entries whose file path lives under one of
+   * the provided `sources`. Set by callers that narrowed `sources` via a
+   * `--source <name>` filter so the FTS index (which spans all sources) does
+   * not leak hits from sources the caller did not request. Default false
+   * preserves prior behavior for the unnamed default search path.
+   */
+  restrictToSources?: boolean;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -127,6 +135,7 @@ export async function searchLocal(input: {
   const filters = input.filters;
   const includeProposed = input.includeProposed === true;
   const beliefFilter = input.beliefFilter ?? "all";
+  const restrictToSources = input.restrictToSources === true;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -188,6 +197,7 @@ export async function searchLocal(input: {
       filters,
       includeProposed,
       beliefFilter,
+      restrictToSources,
     );
     return {
       hits,
@@ -220,6 +230,7 @@ async function searchDatabase(
   filters?: StashEntryScope,
   includeProposed = false,
   beliefFilter: BeliefFilterMode = "all",
+  restrictToSources = false,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -240,12 +251,19 @@ async function searchDatabase(
       seenFilePaths.add(ie.filePath);
       return true;
     });
+    // Source filter: when the caller narrowed `sources` via `--source <name>`,
+    // drop entries whose filePath does not live under any of the requested
+    // sources. The FTS index spans every configured source, so without this
+    // filter a narrowed --source request would still leak results.
+    const sourceFiltered = restrictToSources
+      ? uniqueEntries.filter((ie) => findSourceForPath(ie.filePath, sources) !== undefined)
+      : uniqueEntries;
     // Scope filter: drop entries whose stored scope does not satisfy every
     // supplied scope key. Filtering happens BEFORE the limit slice so a
     // restrictive filter still returns up to `limit` results.
     const scopeFiltered = filters
-      ? uniqueEntries.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
-      : uniqueEntries;
+      ? sourceFiltered.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
+      : sourceFiltered;
     // Proposed-quality filter (v1 spec §4.2): exclude entries with
     // `quality: "proposed"` unless the caller explicitly opts in.
     const qualityFiltered = includeProposed
@@ -392,10 +410,21 @@ async function searchDatabase(
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
 
+  // Source filter: when the caller narrowed `sources` via `--source <name>`,
+  // drop hits whose filePath does not live under any of the requested
+  // sources. The FTS/vector index spans every configured source, so without
+  // this filter a narrowed --source request would still leak results from
+  // other sources that happened to match the query text.
+  const sourceFiltered = restrictToSources
+    ? deduped.filter((item) => findSourceForPath(item.filePath, sources) !== undefined)
+    : deduped;
+
   // Scope filter: drop hits whose stored scope does not satisfy every supplied
   // key. Applied AFTER ranking — filtering narrows the result set without
   // touching the single FTS5+boosts scoring pipeline.
-  const scopeFiltered = filters ? deduped.filter((item) => entryMatchesScope(item.entry.scope, filters)) : deduped;
+  const scopeFiltered = filters
+    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
+    : sourceFiltered;
 
   // Proposed-quality filter (v1 spec §4.2): exclude entries with
   // `quality: "proposed"` unless the caller passed `--include-proposed`.

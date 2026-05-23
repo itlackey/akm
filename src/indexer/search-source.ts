@@ -59,7 +59,21 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 
   const addSource = (dir: string, registryId?: string, wikiName?: string, writable?: boolean) => {
     const resolved = path.resolve(dir);
-    if (seen.has(resolved)) return;
+    if (seen.has(resolved)) {
+      // Already in the source list — typically the primary stash injected at
+      // sources[0] before this loop. Enrich that entry with whatever metadata
+      // the matching config source carries so `--source <config-name>` can
+      // find it via registryId. Without this, the primary stash entry stays
+      // identity-less and a user-named primary source ("name": "my-stash")
+      // would validate but match zero entries when filtering.
+      const existing = sources.find((s) => s.path === resolved);
+      if (existing) {
+        if (registryId && !existing.registryId) existing.registryId = registryId;
+        if (wikiName && !existing.wikiName) existing.wikiName = wikiName;
+        if (writable && !existing.writable) existing.writable = true;
+      }
+      return;
+    }
     seen.add(resolved);
     if (isSuspiciousStashRoot(dir)) {
       warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`);

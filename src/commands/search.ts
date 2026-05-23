@@ -157,6 +157,12 @@ export async function akmSearch(input: {
           filters,
           includeProposed,
           beliefFilter: belief,
+          // When `--source <name>` narrowed the source list above, propagate
+          // that intent down to the database layer so FTS/vector hits from
+          // sources outside the narrowed set are filtered out post-ranking.
+          // Without this, the index (which spans every configured source)
+          // would leak hits from sources the caller did not request.
+          restrictToSources: namedSourceName !== undefined,
         });
 
   const registryResult =
