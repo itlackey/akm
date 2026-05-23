@@ -249,9 +249,10 @@ state, do not share modules, and do not share import graphs. The boundary is
 locked by v1 spec §9.7 and is enforced at two concrete seams.
 
 A unified adapter (`src/llm/call-ai.ts`) bridges the two paths for interactive
-commands (`akm propose`, `akm reflect`, etc.): it routes to `config.agent`
-(agent CLI shell-out or SDK) when an agent is configured, and falls back to
-`config.llm` (HTTP chat-completions) otherwise. The indexer LLM passes do
+commands (`akm propose`, the reflect pass inside `akm improve`, etc.): it
+routes to the resolved agent profile under `profiles.agent.<name>` (agent CLI
+shell-out or SDK) when an agent is configured, and falls back to the resolved
+LLM profile under `profiles.llm.<name>` (HTTP chat-completions) otherwise. The indexer LLM passes do
 **not** use this adapter — they call `chatCompletion` directly to stay on the
 HTTP path and avoid agent-CLI overhead.
 
@@ -307,8 +308,10 @@ External coding agents are reachable via two execution paths:
 **Shared pipeline** (`src/integrations/agent/pipeline.ts`):
 
 - `runProposalAgentPipeline(opts)` is the shared entry point for
-  `akm propose` and `akm reflect`. It routes to `runAgentSdk` when
-  `profile.sdkMode` is true, and to `runAgent` (spawn path) otherwise.
+  `akm propose` and the reflect pass inside `akm improve`. It routes to
+  `runAgentSdk` when `profile.sdkMode` is true (or the agent profile's
+  `platform` is `"opencode-sdk"`), and to `runAgent` (spawn path)
+  otherwise.
 
 No file under `src/integrations/agent/` imports an in-tree LLM helper
 (`src/llm/`). The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`,
