@@ -1530,7 +1530,7 @@ async function runImprovePreparationStage(args: {
   const signalFiltered = processableRefs.filter((candidate) => feedbackSummary.get(candidate.ref)?.hasSignal === true);
 
   // P0-A: also surface zero-feedback assets that have been retrieved many times.
-  const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 1;
+  const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
 
   const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
   const noFeedbackCandidates = processableRefs.filter((r) => !signalBearingSet.has(r.ref));
