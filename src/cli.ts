@@ -2912,6 +2912,35 @@ const vaultSetCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      // Trap the legacy 3-positional / KEY=VALUE forms removed in 0.8.0.
+      //
+      // Without this trap, citty silently accepts the extra positional and the
+      // command falls through to read stdin. In cron/CI where stdin is empty,
+      // the existing secret would be silently overwritten with an empty string
+      // (silent data loss). Detect both removed forms and hard-error before
+      // touching the vault file.
+      //
+      // Case 1: `akm vault set <ref> KEY=VALUE` — the second positional
+      //         contains `=`. Argv looks like:
+      //           [..., "vault", "set", "<ref>", "KEY=VALUE", ...]
+      //         citty binds `args.key = "KEY=VALUE"`.
+      // Case 2: `akm vault set <ref> KEY VALUE` — a third positional follows
+      //         the key. citty mirrors every positional (including the
+      //         declared ones) into `args._`, so we detect this by length:
+      //         more than 2 positionals means an extra `<VALUE>` was passed.
+      const allPositionals = Array.isArray(args._) ? (args._ as unknown[]).filter((v) => typeof v === "string") : [];
+      const hasExtraPositional = allPositionals.length > 2;
+      const keyHasEquals = typeof args.key === "string" && args.key.includes("=");
+      if (hasExtraPositional || keyHasEquals) {
+        throw new UsageError(
+          "'akm vault set' no longer accepts the value via argv (removed in 0.8.0 for security).\n" +
+            "       Pass the value via stdin or --from-env <VAR> instead:\n" +
+            "         printf '%s' \"$SECRET\" | akm vault set <ref> <KEY>\n" +
+            '         AKM_VALUE="$SECRET" akm vault set <ref> <KEY> --from-env AKM_VALUE',
+          "INVALID_FLAG_VALUE",
+        );
+      }
+
       const { setKey } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.ref);
 
