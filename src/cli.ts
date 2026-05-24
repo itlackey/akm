@@ -4610,6 +4610,23 @@ try {
 } catch (error: unknown) {
   emitJsonError(error);
 }
+
+// One-time cleanup of stale 0.7.x index file at the old cache location.
+// 0.8.0 moved the index to $XDG_DATA_HOME/akm/index.db (getDataDir()).
+// If the old file exists at $XDG_CACHE_HOME/akm/index.db, remove it so the
+// user isn't confused by a phantom DB. Best-effort; never fatal.
+try {
+  const oldIndexPath = path.join(getCacheDir(), "index.db");
+  if (fs.existsSync(oldIndexPath)) {
+    fs.rmSync(oldIndexPath, { force: true });
+    fs.rmSync(`${oldIndexPath}-shm`, { force: true });
+    fs.rmSync(`${oldIndexPath}-wal`, { force: true });
+    warn(`Cleaned up stale 0.7.x index from ${oldIndexPath}. Canonical path is now ${getDbPath()}.`);
+  }
+} catch {
+  // Non-fatal; one-time warning only.
+}
+
 runMain(main);
 
 function classifyExitCode(error: unknown): number {
