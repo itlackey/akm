@@ -2,37 +2,626 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
   "title": "AKM Configuration",
-  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). The 0.8.0 shape uses profiles, defaults, and per-section process configs.",
+  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). Auto-generated from src/core/config-schema.ts by scripts/gen-config-schema.ts — do NOT edit by hand.",
   "type": "object",
   "properties": {
     "configVersion": {
-      "type": "string",
-      "description": "Schema version marker. \"0.8.0\" = current shape (profiles/defaults). Configs without this field are auto-migrated to the current shape at load time.",
-      "pattern": "^\\d+\\.\\d+\\.\\d+"
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "number"
+        }
+      ]
     },
     "profiles": {
       "type": "object",
-      "description": "v2: Named connection profiles. profiles.llm holds OpenAI-compatible LLM connections; profiles.agent holds CLI and in-process agent profiles; profiles.improve holds improve pipeline profiles.",
       "properties": {
         "llm": {
           "type": "object",
-          "description": "Named LLM connection profiles. Each key is a profile name; value is an LlmProfileConfig.",
           "additionalProperties": {
-            "$ref": "#/$defs/LlmProfileConfig"
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "apiKey": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number"
+              },
+              "maxTokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "concurrency": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "capabilities": {
+                "type": "object",
+                "properties": {
+                  "structuredOutput": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "extraParams": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "contextLength": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "judgeModel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "supportsJsonSchema": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "endpoint",
+              "model"
+            ],
+            "additionalProperties": false
           }
         },
         "agent": {
           "type": "object",
-          "description": "Named agent profiles. Each key is a profile name; value is an AgentProfileConfigV2.",
           "additionalProperties": {
-            "$ref": "#/$defs/AgentProfileConfigV2"
+            "type": "object",
+            "properties": {
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "opencode",
+                  "claude",
+                  "opencode-sdk"
+                ]
+              },
+              "bin": {
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "workspace": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "platform"
+            ],
+            "additionalProperties": false
           }
         },
         "improve": {
           "type": "object",
-          "description": "Named improve pipeline profiles. Each key is a profile name; value is an ImproveProfileConfig. Built-in profiles: default, quick, thorough, memory-focus.",
           "additionalProperties": {
-            "$ref": "#/$defs/ImproveProfileConfig"
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "processes": {
+                "type": "object",
+                "properties": {
+                  "reflect": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "distill": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "consolidate": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "memoryInference": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "graphExtraction": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "feedbackDistillation": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "validation": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "cooldownByType": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "cooldownDays": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "autoAccept": {
+                "type": "number",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -40,21 +629,17 @@
     },
     "defaults": {
       "type": "object",
-      "description": "v2: Default profile names and improve pipeline defaults.",
       "properties": {
         "llm": {
           "type": "string",
-          "description": "Name of the default LLM profile from profiles.llm.",
           "minLength": 1
         },
         "agent": {
           "type": "string",
-          "description": "Name of the default agent profile from profiles.agent.",
           "minLength": 1
         },
         "improve": {
           "type": "string",
-          "description": "Name of the default improve profile from profiles.improve. Built-in options: default, quick, thorough, memory-focus.",
           "minLength": 1
         }
       },
@@ -62,152 +647,434 @@
     },
     "stashDir": {
       "type": "string",
-      "description": "Path to the working stash directory.",
       "minLength": 1
     },
     "semanticSearchMode": {
       "type": "string",
-      "enum": ["off", "auto"],
-      "description": "Semantic vector search mode. \"auto\" enables embedding generation and hybrid FTS5 + vector search. \"off\" disables embeddings and uses text-only search."
+      "enum": [
+        "off",
+        "auto"
+      ],
+      "default": "auto"
     },
     "embedding": {
-      "$ref": "#/$defs/EmbeddingConnectionConfig"
-    },
-    "output": {
-      "$ref": "#/$defs/OutputConfig"
-    },
-    "registries": {
-      "type": "array",
-      "description": "Configured registries for kit discovery. When absent, built-in defaults are used (official registry + skills.sh). An explicit empty array disables all registries.",
-      "items": {
-        "$ref": "#/$defs/RegistryConfigEntry"
-      }
-    },
-    "stashes": {
-      "type": "array",
-      "description": "Additional stash sources (filesystem paths and remote providers).",
-      "items": {
-        "$ref": "#/$defs/StashConfigEntry"
-      }
-    },
-    "sources": {
-      "type": "array",
-      "description": "Canonical key for additional sources (filesystem paths and remote providers).",
-      "items": {
-        "$ref": "#/$defs/StashConfigEntry"
-      }
-    },
-    "defaultWriteTarget": {
-      "type": "string",
-      "description": "Default destination for `akm remember` / `akm import` and any other write helper that does not receive an explicit `--target`.",
-      "minLength": 1
-    },
-    "installed": {
-      "type": "array",
-      "description": "Installed kit metadata. Managed automatically by akm install/uninstall commands — do not edit manually.",
-      "items": {
-        "$ref": "#/$defs/InstalledKitEntry"
-      }
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "dimension": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "localModel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "batchSize": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "chunkSize": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "contextLength": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "ollamaOptions": {
+          "type": "object",
+          "properties": {
+            "num_ctx": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "endpoint",
+        "model"
+      ],
+      "additionalProperties": false
     },
     "index": {
       "type": "object",
-      "description": "Per-pass indexer configuration. Reserved keys: `metadataEnhance` and `stalenessDetection` gate the corresponding passes. Other keys are pass names whose values are IndexPassConfig.",
       "properties": {
         "metadataEnhance": {
           "type": "object",
-          "description": "Gates the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` flag. Default: enabled.",
           "properties": {
-            "enabled": { "type": "boolean", "default": true }
+            "enabled": {
+              "type": "boolean"
+            }
           },
           "additionalProperties": false
         },
         "stalenessDetection": {
           "type": "object",
-          "description": "Gates the `akm index` staleness-detection pass. Default: disabled.",
           "properties": {
-            "enabled": { "type": "boolean", "default": false },
-            "thresholdDays": { "type": "integer", "exclusiveMinimum": 0 }
+            "enabled": {
+              "type": "boolean"
+            },
+            "thresholdDays": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
           },
           "additionalProperties": false
         }
       },
-      "additionalProperties": true
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "llm": {
+            "type": "boolean"
+          },
+          "graphExtractionBatchSize": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "graphExtractionIncludeTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "memory",
+                "knowledge",
+                "skill",
+                "command",
+                "agent",
+                "workflow",
+                "lesson",
+                "task",
+                "wiki"
+              ]
+            },
+            "minItems": 1
+          },
+          "memoryInferenceBatchSize": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
     },
-    "security": {
-      "type": "object",
-      "description": "Security controls for install-time auditing and registry allowlists.",
-      "additionalProperties": true
+    "installed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "npm",
+              "github",
+              "git",
+              "local"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifactUrl": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stashRoot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cacheDir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "installedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "resolvedVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolvedRevision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "wikiName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "ref",
+          "artifactUrl",
+          "stashRoot",
+          "cacheDir",
+          "installedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "registries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
     },
     "stashInheritance": {
       "type": "string",
-      "description": "Controls how a config layer's stashes interact with stashes inherited from earlier layers.",
-      "enum": ["merge", "replace"]
+      "enum": [
+        "merge",
+        "replace"
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "primary": {
+            "type": "boolean"
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "pushOnCommit": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true
+          },
+          "wikiName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "installAudit": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "blockOnCritical": {
+              "type": "boolean"
+            },
+            "blockUnlistedRegistries": {
+              "type": "boolean"
+            },
+            "registryAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "registryWhitelist": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "allowedFindings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "yaml",
+            "text"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "enum": [
+            "brief",
+            "normal",
+            "full"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "writable": {
-      "type": "boolean",
-      "description": "When true, the primary stash is treated as a writable git repo and `akm save` will push after committing."
+      "type": "boolean"
+    },
+    "defaultWriteTarget": {
+      "type": "string",
+      "minLength": 1
     },
     "search": {
       "type": "object",
-      "description": "Search-specific tuning parameters.",
       "properties": {
         "minScore": {
           "type": "number",
-          "description": "Minimum score floor for semantic-only hits. Hits below this score are dropped.",
-          "minimum": 0,
-          "maximum": 1
+          "minimum": 0
+        },
+        "curateRerank": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
         },
         "graphBoost": {
           "type": "object",
-          "description": "Graph boost tuning for search-time ranking.",
           "properties": {
             "directBoostPerEntity": {
               "type": "number",
-              "minimum": 0,
-              "description": "Additive direct-match boost per matched entity."
+              "minimum": 0
             },
             "directBoostCap": {
               "type": "number",
-              "minimum": 0,
-              "description": "Maximum direct-match additive boost per hit."
+              "minimum": 0
             },
             "hopBoostPerEntity": {
               "type": "number",
-              "minimum": 0,
-              "description": "Additive connected-entity boost per matched graph entity."
+              "minimum": 0
             },
             "hopBoostCap": {
               "type": "number",
-              "minimum": 0,
-              "description": "Maximum connected-entity additive boost per hit."
+              "minimum": 0
             },
             "maxHops": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 3,
-              "description": "Maximum graph traversal depth from query-matched entities."
+              "exclusiveMinimum": 0,
+              "maximum": 3
             },
             "confidenceMode": {
               "type": "string",
-              "enum": ["off", "blend", "multiply"],
-              "description": "Confidence integration mode for graph boost scoring.",
+              "enum": [
+                "off",
+                "blend",
+                "multiply"
+              ],
               "default": "blend"
             },
             "confidenceWeight": {
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "description": "Blend strength in [0,1] when confidenceMode is \"blend\".",
               "default": 0.2
             }
-          },
-          "additionalProperties": false
-        },
-        "curateRerank": {
-          "type": "object",
-          "description": "Gates the `akm curate` LLM-rerank pass. Replaces the legacy `features.search.curate_rerank` flag. Default: disabled.",
-          "properties": {
-            "enabled": { "type": "boolean", "default": false }
           },
           "additionalProperties": false
         }
@@ -216,37 +1083,1170 @@
     },
     "feedback": {
       "type": "object",
-      "description": "Feedback-specific configuration.",
       "properties": {
         "requireReason": {
-          "type": "boolean",
-          "description": "When true, negative feedback without --reason throws a hard error."
+          "type": "boolean"
         },
         "allowedFailureModes": {
           "type": "array",
-          "description": "Allowed failure mode values for --failure-mode.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "additionalProperties": false
     },
+    "archiveRetentionDays": {
+      "type": "number",
+      "minimum": 0
+    },
     "improve": {
       "type": "object",
-      "description": "Improve pipeline tuning.",
       "properties": {
         "utilityDecay": {
           "type": "object",
-          "description": "Phase 2A / Rec 5: configurable forgetting curve for the utility-recency boost used during search ranking. Default-safe: omitting this object preserves the legacy exp(-days/30) decay.",
           "properties": {
             "halfLifeDays": {
               "type": "number",
-              "description": "Recency half-life in days for the utility decay curve. Default: 30 (matches the legacy hardcoded RECENCY_DECAY_DAYS).",
               "minimum": 0.1
             },
             "feedbackStabilityBoost": {
               "type": "number",
-              "description": "Multiplicative half-life extension per positive feedback event recorded against the entry. Effective half-life is capped at halfLifeDays * 4. Default: 1.5. Set to 1.0 to disable the boost entirely.",
-              "minimum": 1.0
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "eventRetentionDays": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "AkmConfig": {
+      "type": "object",
+      "properties": {
+        "configVersion": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "profiles": {
+          "type": "object",
+          "properties": {
+            "llm": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "endpoint": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "apiKey": {
+                    "type": "string"
+                  },
+                  "temperature": {
+                    "type": "number"
+                  },
+                  "maxTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "timeoutMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "concurrency": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "capabilities": {
+                    "type": "object",
+                    "properties": {
+                      "structuredOutput": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "extraParams": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "contextLength": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "judgeModel": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "supportsJsonSchema": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "endpoint",
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "agent": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "opencode",
+                      "claude",
+                      "opencode-sdk"
+                    ]
+                  },
+                  "bin": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "platform"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "improve": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "processes": {
+                    "type": "object",
+                    "properties": {
+                      "reflect": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "distill": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "consolidate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "memoryInference": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "graphExtraction": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "feedbackDistillation": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "validation": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "cooldownByType": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "cooldownDays": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "autoAccept": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "defaults": {
+          "type": "object",
+          "properties": {
+            "llm": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agent": {
+              "type": "string",
+              "minLength": 1
+            },
+            "improve": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "stashDir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semanticSearchMode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "auto"
+          ],
+          "default": "auto"
+        },
+        "embedding": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "apiKey": {
+              "type": "string"
+            },
+            "dimension": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "localModel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxTokens": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "batchSize": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "chunkSize": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "contextLength": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "ollamaOptions": {
+              "type": "object",
+              "properties": {
+                "num_ctx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "endpoint",
+            "model"
+          ],
+          "additionalProperties": false
+        },
+        "index": {
+          "type": "object",
+          "properties": {
+            "metadataEnhance": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "stalenessDetection": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "thresholdDays": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "llm": {
+                "type": "boolean"
+              },
+              "graphExtractionBatchSize": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "graphExtractionIncludeTypes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "memory",
+                    "knowledge",
+                    "skill",
+                    "command",
+                    "agent",
+                    "workflow",
+                    "lesson",
+                    "task",
+                    "wiki"
+                  ]
+                },
+                "minItems": 1
+              },
+              "memoryInferenceBatchSize": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "installed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "npm",
+                  "github",
+                  "git",
+                  "local"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "artifactUrl": {
+                "type": "string",
+                "minLength": 1
+              },
+              "stashRoot": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cacheDir": {
+                "type": "string",
+                "minLength": 1
+              },
+              "installedAt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "writable": {
+                "type": "boolean"
+              },
+              "resolvedVersion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resolvedRevision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "wikiName": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "source",
+              "ref",
+              "artifactUrl",
+              "stashRoot",
+              "cacheDir",
+              "installedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "registries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "options": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "stashInheritance": {
+          "type": "string",
+          "enum": [
+            "merge",
+            "replace"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "writable": {
+                "type": "boolean"
+              },
+              "primary": {
+                "type": "boolean"
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "pushOnCommit": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": true
+              },
+              "wikiName": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "security": {
+          "type": "object",
+          "properties": {
+            "installAudit": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "blockOnCritical": {
+                  "type": "boolean"
+                },
+                "blockUnlistedRegistries": {
+                  "type": "boolean"
+                },
+                "registryAllowlist": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "registryWhitelist": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "allowedFindings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "ref": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string",
+              "enum": [
+                "json",
+                "yaml",
+                "text"
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "enum": [
+                "brief",
+                "normal",
+                "full"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "writable": {
+          "type": "boolean"
+        },
+        "defaultWriteTarget": {
+          "type": "string",
+          "minLength": 1
+        },
+        "search": {
+          "type": "object",
+          "properties": {
+            "minScore": {
+              "type": "number",
+              "minimum": 0
+            },
+            "curateRerank": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "graphBoost": {
+              "type": "object",
+              "properties": {
+                "directBoostPerEntity": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "directBoostCap": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hopBoostPerEntity": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hopBoostCap": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "maxHops": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 3
+                },
+                "confidenceMode": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "blend",
+                    "multiply"
+                  ],
+                  "default": "blend"
+                },
+                "confidenceWeight": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "default": 0.2
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "requireReason": {
+              "type": "boolean"
+            },
+            "allowedFailureModes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "archiveRetentionDays": {
+          "type": "number",
+          "minimum": 0
+        },
+        "improve": {
+          "type": "object",
+          "properties": {
+            "utilityDecay": {
+              "type": "object",
+              "properties": {
+                "halfLifeDays": {
+                  "type": "number",
+                  "minimum": 0.1
+                },
+                "feedbackStabilityBoost": {
+                  "type": "number",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "eventRetentionDays": {
+              "type": "number",
+              "minimum": 0
             }
           },
           "additionalProperties": false
@@ -254,68 +2254,185 @@
       },
       "additionalProperties": true
     },
-    "archiveRetentionDays": {
-      "type": "number",
-      "description": "Number of days to retain soft-invalidated memory assets in .akm/archive/ before TTL cleanup. Also gates proposal expiration: pending proposals older than this threshold are archived as \"expired: no action within retention window\" during the improve maintenance pass. Set to 0 to disable both TTL cleanup and proposal expiration.",
-      "minimum": 0
-    }
-  },
-  "additionalProperties": false,
-  "$defs": {
+    "LlmProfileConfig": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "concurrency": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "structuredOutput": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "extraParams": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "contextLength": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "judgeModel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportsJsonSchema": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "endpoint",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "EmbeddingConnectionConfig": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "dimension": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "localModel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "batchSize": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "chunkSize": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "contextLength": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "ollamaOptions": {
+          "type": "object",
+          "properties": {
+            "num_ctx": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "endpoint",
+        "model"
+      ],
+      "additionalProperties": false
+    },
     "ImproveProcessConfig": {
       "type": "object",
-      "description": "Per-process configuration within an ImproveProfileConfig.",
       "properties": {
         "enabled": {
-          "type": "boolean",
-          "description": "Whether this process is enabled. Default: true.",
-          "default": true
+          "type": "boolean"
         },
         "mode": {
           "type": "string",
-          "description": "Dispatch mode: llm = direct HTTP call, agent = CLI subprocess, sdk = in-process opencode.",
-          "enum": ["llm", "agent", "sdk"]
+          "enum": [
+            "llm",
+            "agent",
+            "sdk"
+          ]
         },
         "profile": {
           "type": "string",
-          "description": "Named runner profile from profiles.llm or profiles.agent.",
           "minLength": 1
         },
         "timeoutMs": {
-          "oneOf": [
-            { "type": "integer", "exclusiveMinimum": 0 },
-            { "type": "null", "description": "null = unlimited timeout" }
-          ],
-          "description": "Per-process timeout in milliseconds. null = unlimited."
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "allowedTypes": {
           "type": "array",
-          "description": "Whitelist of asset types for this process. Absent = built-in default applies.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "cooldownByType": {
           "type": "object",
-          "description": "Per-type cooldown overrides in days for this process.",
-          "additionalProperties": { "type": "number", "minimum": 0 }
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
         },
         "cooldownDays": {
           "type": "number",
-          "description": "Uniform cooldown in days for types not covered by cooldownByType.",
           "minimum": 0
         },
         "qualityGate": {
           "type": "object",
-          "description": "LLM-as-judge quality gate. For distill: replaces lesson_quality_gate. For reflect: replaces proposal_quality_gate. Default: disabled.",
           "properties": {
-            "enabled": { "type": "boolean", "default": false }
+            "enabled": {
+              "type": "boolean"
+            }
           },
           "additionalProperties": false
         },
         "contradictionDetection": {
           "type": "object",
-          "description": "Pairwise contradiction-detection on derived memories. Only meaningful on `consolidate`. Default: disabled.",
           "properties": {
-            "enabled": { "type": "boolean", "default": false }
+            "enabled": {
+              "type": "boolean"
+            }
           },
           "additionalProperties": false
         }
@@ -324,428 +2441,577 @@
     },
     "ImproveProfileConfig": {
       "type": "object",
-      "description": "Named improve pipeline profile. Controls which sub-processes run, which asset types are processed, and default autoAccept/limit values.",
       "properties": {
         "description": {
           "type": "string",
-          "description": "Human-readable description of this profile."
+          "minLength": 1
         },
         "processes": {
           "type": "object",
-          "description": "Per-process configuration.",
           "properties": {
-            "reflect": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "distill": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "consolidate": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "memoryInference": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "graphExtraction": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "feedbackDistillation": { "$ref": "#/$defs/ImproveProcessConfig" },
-            "validation": { "$ref": "#/$defs/ImproveProcessConfig" }
+            "reflect": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "distill": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "consolidate": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "memoryInference": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "graphExtraction": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "feedbackDistillation": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "validation": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cooldownByType": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "cooldownDays": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },
         "autoAccept": {
           "type": "number",
-          "description": "Default auto-accept confidence threshold (0-100) for this profile. CLI --auto-accept overrides.",
-          "minimum": 0,
-          "maximum": 100
+          "minimum": 0
         },
         "limit": {
           "type": "integer",
-          "description": "Default --limit for this profile. CLI --limit overrides.",
           "exclusiveMinimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
-    "LlmProfileConfig": {
-      "description": "Named LLM connection profile. Extends LlmConnectionConfig with supportsJsonSchema.",
-      "allOf": [
-        { "$ref": "#/$defs/LlmConnectionConfig" },
-        {
-          "type": "object",
-          "properties": {
-            "supportsJsonSchema": {
-              "type": "boolean",
-              "description": "When true, chatCompletion sends response_format: json_schema for structured output. Requires provider support (OpenAI, compatible endpoints).",
-              "default": false
-            }
-          }
-        }
-      ]
-    },
-    "AgentProfileConfigV2": {
-      "type": "object",
-      "description": "Named agent profile. platform discriminates between CLI subprocess and in-process opencode SDK.",
-      "properties": {
-        "platform": {
-          "type": "string",
-          "description": "Agent runtime: opencode = opencode CLI subprocess, claude = claude CLI subprocess, opencode-sdk = in-process opencode programmatic API.",
-          "enum": ["opencode", "claude", "opencode-sdk"]
-        },
-        "bin": {
-          "type": "string",
-          "description": "Binary name or path for opencode/claude platforms.",
-          "minLength": 1
-        },
-        "args": {
-          "type": "array",
-          "description": "Extra CLI arguments for opencode/claude platforms.",
-          "items": { "type": "string" }
-        },
-        "workspace": {
-          "type": "string",
-          "description": "Workspace directory for opencode-sdk platform. ${PWD} is expanded at runtime.",
-          "minLength": 1
-        },
-        "model": {
-          "type": "string",
-          "description": "Model identifier for opencode-sdk platform (e.g. \"anthropic/claude-sonnet-4-5\").",
-          "minLength": 1
-        }
-      },
-      "required": ["platform"],
-      "additionalProperties": false
-    },
-    "BaseConnectionConfig": {
-      "type": "object",
-      "description": "Shared fields for OpenAI-compatible connection configurations.",
-      "properties": {
-        "provider": {
-          "type": "string",
-          "description": "Provider name for display purposes (e.g. \"openai\", \"ollama\").",
-          "minLength": 1
-        },
-        "endpoint": {
-          "type": "string",
-          "description": "OpenAI-compatible endpoint URL.",
-          "format": "uri",
-          "pattern": "^https?://"
-        },
-        "model": {
-          "type": "string",
-          "description": "Model name to use.",
-          "minLength": 1
-        },
-        "apiKey": {
-          "type": "string",
-          "description": "API key for authenticated endpoints. Prefer environment variables — API keys are stripped from the config file on save.",
-          "minLength": 1
-        }
-      },
-      "required": ["endpoint", "model"]
-    },
-    "EmbeddingConnectionConfig": {
-      "description": "OpenAI-compatible embedding endpoint configuration. When not set, uses local @huggingface/transformers with Xenova/bge-small-en-v1.5.",
-      "allOf": [
-        { "$ref": "#/$defs/BaseConnectionConfig" },
-        {
-          "type": "object",
-          "properties": {
-            "provider": true,
-            "endpoint": true,
-            "model": true,
-            "apiKey": true,
-            "dimension": {
-              "type": "integer",
-              "description": "Output vector dimension. Must match the index dimension (typically 384).",
-              "exclusiveMinimum": 0
-            }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
-    "LlmConnectionConfig": {
-      "description": "OpenAI-compatible LLM endpoint configuration for metadata generation. When not set, the indexer uses heuristic metadata generation instead.",
-      "allOf": [
-        { "$ref": "#/$defs/BaseConnectionConfig" },
-        {
-          "type": "object",
-          "properties": {
-            "provider": true,
-            "endpoint": true,
-            "model": true,
-            "apiKey": true,
-            "temperature": {
-              "type": "number",
-              "description": "Sampling temperature for generation.",
-              "minimum": 0,
-              "maximum": 2
-            },
-            "maxTokens": {
-              "type": "integer",
-              "description": "Maximum response token limit.",
-              "exclusiveMinimum": 0
-            },
-            "timeoutMs": {
-              "type": "integer",
-              "description": "Request timeout in milliseconds.",
-              "exclusiveMinimum": 0
-            },
-            "concurrency": {
-              "type": "integer",
-              "description": "Max parallel LLM requests issued by index passes.",
-              "exclusiveMinimum": 0
-            },
-            "contextLength": {
-              "type": "integer",
-              "description": "Model context window size in tokens used for prompt chunk sizing.",
-              "exclusiveMinimum": 0
-            },
-            "judgeModel": {
-              "type": "string",
-              "description": "Optional model override for the LLM-as-judge lesson quality gate.",
-              "minLength": 1
-            },
-            "capabilities": {
-              "type": "object",
-              "description": "Capability flags learned at setup time.",
-              "properties": {
-                "structuredOutput": {
-                  "type": "boolean",
-                  "description": "Whether the model reliably emits strict JSON."
-                }
-              },
-              "additionalProperties": false
-            },
-            "extraParams": {
-              "type": "object",
-              "description": "Arbitrary provider-specific parameters forwarded to chat completions.",
-              "additionalProperties": true
-            }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
-    "OutputConfig": {
-      "type": "object",
-      "description": "Default CLI output formatting options.",
-      "properties": {
-        "format": {
-          "type": "string",
-          "description": "Default output format for CLI commands.",
-          "enum": ["json", "yaml", "text"]
-        },
-        "detail": {
-          "type": "string",
-          "description": "Default output detail level for CLI commands.",
-          "enum": ["brief", "normal", "full"]
         }
       },
       "additionalProperties": false
     },
     "RegistryConfigEntry": {
       "type": "object",
-      "description": "Configuration for a kit registry used for discovery and installation.",
       "properties": {
         "url": {
-          "type": "string",
-          "description": "URL of the registry index.",
-          "pattern": "^https?://",
-          "examples": [
-            "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
-            "https://skills.sh"
-          ]
+          "type": "string"
         },
         "name": {
           "type": "string",
-          "description": "Human-friendly label for this registry.",
-          "minLength": 1,
-          "examples": ["official", "skills.sh"]
+          "minLength": 1
         },
         "enabled": {
-          "type": "boolean",
-          "description": "Whether this registry is active."
+          "type": "boolean"
         },
         "provider": {
           "type": "string",
-          "description": "Provider type that handles this registry. Built-in providers: \"static-index\", \"skills-sh\".",
-          "minLength": 1,
-          "examples": ["static-index", "skills-sh"]
+          "minLength": 1
         },
         "options": {
           "type": "object",
-          "description": "Arbitrary provider-specific options passed through to the provider.",
-          "additionalProperties": true
+          "additionalProperties": {}
         }
       },
-      "required": ["url"],
+      "required": [
+        "url"
+      ],
       "additionalProperties": false
     },
     "StashConfigEntry": {
       "type": "object",
-      "description": "Configuration for an additional source (filesystem or remote).",
       "properties": {
         "type": {
           "type": "string",
-          "description": "Provider type for this source.",
-          "enum": ["filesystem", "git", "website", "npm"]
+          "minLength": 1
         },
         "path": {
           "type": "string",
-          "description": "Filesystem path. Used when type is \"filesystem\".",
           "minLength": 1
         },
         "url": {
           "type": "string",
-          "description": "Remote URL. Used for remote providers (\"git\", \"website\").",
           "minLength": 1
         },
         "name": {
           "type": "string",
-          "description": "Human-friendly label for this source.",
           "minLength": 1
         },
         "enabled": {
-          "type": "boolean",
-          "description": "Whether this source is active."
+          "type": "boolean"
         },
         "writable": {
-          "type": "boolean",
-          "description": "Whether akm may write assets to this source."
+          "type": "boolean"
         },
         "primary": {
-          "type": "boolean",
-          "description": "Marks this entry as the primary working stash (replaces the top-level `stashDir`)."
+          "type": "boolean"
         },
         "options": {
           "type": "object",
-          "description": "Arbitrary provider-specific options.",
+          "properties": {
+            "pushOnCommit": {
+              "type": "boolean"
+            }
+          },
           "additionalProperties": true
         },
         "wikiName": {
           "type": "string",
-          "description": "When set, .md files in this source are indexed as wiki pages under this name.",
           "minLength": 1
         }
       },
-      "required": ["type"],
-      "additionalProperties": false
-    },
-    "InstalledKitEntry": {
-      "type": "object",
-      "description": "Metadata for an installed kit. Managed by akm — do not edit manually.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Kit identifier.",
-          "minLength": 1
-        },
-        "source": {
-          "type": "string",
-          "description": "Installation source type.",
-          "enum": ["npm", "github", "git", "local"]
-        },
-        "ref": {
-          "type": "string",
-          "description": "Full reference string used to resolve the kit.",
-          "minLength": 1
-        },
-        "artifactUrl": {
-          "type": "string",
-          "description": "URL to the kit artifact.",
-          "minLength": 1
-        },
-        "stashRoot": {
-          "type": "string",
-          "description": "Filesystem path where the kit assets are installed.",
-          "minLength": 1
-        },
-        "cacheDir": {
-          "type": "string",
-          "description": "Filesystem path to the kit's cache directory.",
-          "minLength": 1
-        },
-        "installedAt": {
-          "type": "string",
-          "description": "ISO 8601 timestamp of when the kit was installed.",
-          "format": "date-time"
-        },
-        "resolvedVersion": {
-          "type": "string",
-          "description": "Resolved version or tag (source-dependent).",
-          "minLength": 1
-        },
-        "resolvedRevision": {
-          "type": "string",
-          "description": "Resolved commit or revision (source-dependent).",
-          "minLength": 1
-        },
-        "wikiName": {
-          "type": "string",
-          "description": "When set, all .md files in this kit are indexed as wiki pages.",
-          "minLength": 1
-        },
-        "writable": {
-          "type": "boolean",
-          "description": "Whether the installed kit source is writable."
-        }
-      },
-      "required": ["id", "source", "ref", "artifactUrl", "stashRoot", "cacheDir", "installedAt"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     }
-  },
-  "examples": [
-    {
-      "configVersion": "0.8.0",
-      "profiles": {
-        "llm": {
-          "openai-mini": {
-            "endpoint": "https://api.openai.com/v1/chat/completions",
-            "model": "gpt-4o-mini",
-            "temperature": 0.3,
-            "supportsJsonSchema": true
-          }
-        },
-        "agent": {
-          "opencode-default": { "platform": "opencode", "bin": "opencode", "args": ["run"] }
-        },
-        "improve": {
-          "default": {
-            "processes": {
-              "reflect": { "enabled": true, "mode": "llm", "profile": "openai-mini", "timeoutMs": 60000 },
-              "distill": { "enabled": true, "qualityGate": { "enabled": false } },
-              "consolidate": { "enabled": true },
-              "memoryInference": { "enabled": true },
-              "graphExtraction": { "enabled": false },
-              "feedbackDistillation": { "enabled": true }
-            }
-          }
-        }
-      },
-      "defaults": { "llm": "openai-mini", "agent": "opencode-default", "improve": "default" },
-      "index": {
-        "metadataEnhance": { "enabled": true },
-        "stalenessDetection": { "enabled": false, "thresholdDays": 90 }
-      },
-      "search": {
-        "curateRerank": { "enabled": false }
-      },
-      "semanticSearchMode": "auto"
-    },
-    {
-      "configVersion": "0.8.0",
-      "semanticSearchMode": "auto",
-      "stashDir": "/home/user/my-stash",
-      "embedding": {
-        "provider": "ollama",
-        "endpoint": "http://localhost:11434/v1/embeddings",
-        "model": "nomic-embed-text"
-      },
-      "profiles": {
-        "llm": {
-          "default": {
-            "provider": "ollama",
-            "endpoint": "http://localhost:11434/v1/chat/completions",
-            "model": "llama3.2",
-            "temperature": 0.3,
-            "maxTokens": 512
-          }
-        }
-      },
-      "defaults": { "llm": "default" }
-    }
-  ]
+  }
 }

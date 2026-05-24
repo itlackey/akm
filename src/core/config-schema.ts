@@ -276,8 +276,8 @@ const SearchGraphBoostSchema = z
     hopBoostPerEntity: nonNegativeNumber.optional(),
     hopBoostCap: nonNegativeNumber.optional(),
     maxHops: positiveInt.max(3).optional(),
-    confidenceMode: z.enum(["off", "blend", "multiply"]).optional(),
-    confidenceWeight: z.number().finite().min(0).max(1).optional(),
+    confidenceMode: z.enum(["off", "blend", "multiply"]).default("blend").optional(),
+    confidenceWeight: z.number().finite().min(0).max(1).default(0.2).optional(),
   })
   .strict();
 

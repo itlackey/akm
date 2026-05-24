@@ -74,4 +74,18 @@ describe("config schema drift pins", () => {
     expect(provider.description ?? "").not.toMatch(/openviking/i);
     expect(provider.examples ?? []).not.toContain("openviking");
   });
+
+  test("schemas/akm-config.json matches the generator output", async () => {
+    // Drift detector: re-run scripts/gen-config-schema.ts and compare against
+    // the committed file. Catches manual edits to schemas/akm-config.json that
+    // weren't replicated back into the Zod source (or vice versa).
+    const { spawnSync } = await import("node:child_process");
+    const result = spawnSync("bun", ["scripts/gen-config-schema.ts", "--check"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    if (result.status !== 0) {
+      throw new Error(`gen-config-schema --check failed:\n${result.stdout}\n${result.stderr}`);
+    }
+  });
 });
