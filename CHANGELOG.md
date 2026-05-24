@@ -101,6 +101,13 @@ All notable changes to this project will be documented in this file.
 
 - **`akm improve` orphan-purge maintenance pass**: After graph extraction (and after any reindex following consolidation or memory inference), `akm improve` now rejects pending `reflect` proposals whose target asset no longer exists on disk. This prevents stale proposals from polluting the queue when assets are removed or consolidated mid-run. Lesson proposals (which target new assets by definition) and non-reflect proposals (which legitimately target not-yet-created assets) are always kept. Emits a `proposal_orphan_purge` event with `checked`, `rejected`, `durationMs`, `byType`, and `orphans` for observability.
 
+- **`improve_runs` table in `state.db`** (migration 003): Every `akm improve` invocation is now recorded as a single row with first-class indexed `dry_run`, `started_at`, `stash_dir`, and `scope_mode` columns. `improve-result.json` files under `<stash>/.akm/runs/<id>/` are no longer written — existing files from older runs become historical artifacts and can be safely deleted by users (zero current code paths read them). The dedicated `dry_run` index closes the productivity-audit artifact-trap where dry-run probes shared the same on-disk path as real runs. Query recent runs with:
+  ```sh
+  sqlite3 "$AKM_DATA_DIR/state.db" \
+    "SELECT id, started_at, ok, dry_run FROM improve_runs ORDER BY started_at DESC LIMIT 10"
+  ```
+  Retention defaults to 90 days, governed by the same `improve.eventRetentionDays` config knob used for the `events` table. `purgeOldImproveRuns()` runs in the post-loop maintenance pass alongside `purgeOldEvents()`.
+
 - **Per-reflect outcome event `improve_reflect_outcome`**: Emitted once per reflect call during `akm improve` with `{ok, durationMs, agentProfile, reason}`, enabling per-asset latency tracking and per-run failure-shape analysis.
 
 - **Enriched `improve_completed` event**: Now includes `durationMs` (total wall-clock), `warningCount`, `orphansPurged`, `reflectCooldownActions`, `graphCoverage`, `graphDensity`, and `graphEntities` for richer self-tuning telemetry without requiring a separate stats query.

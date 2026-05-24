@@ -50,6 +50,7 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import type { AkmImproveResult } from "../commands/improve";
 import type { EventEnvelope } from "./events";
 import { getDataDir } from "./paths";
 import type { Proposal } from "./proposals";
@@ -343,6 +344,78 @@ const MIGRATIONS: Migration[] = [
         ON task_history(target_kind, target_ref);
       CREATE INDEX IF NOT EXISTS idx_task_history_status
         ON task_history(status);
+    `,
+  },
+
+  // ── Migration 003 — improve_runs ────────────────────────────────────────────
+  //
+  // Records every `akm improve` invocation as a durable row, replacing the
+  // legacy `<stash>/.akm/runs/<runId>/improve-result.json` artifact files.
+  //
+  // The `dry_run` column is FIRST-CLASS and indexed so productivity audits can
+  // cleanly filter dry-run probes out of real-run analyses without parsing
+  // `result_json`. The dry-run/real-run artifact-trap (recorded in
+  // feedback_akm_dryrun_artifact_trap) was the specific motivating bug.
+  //
+  // Indexed (query) columns:
+  //   id            TEXT PK   — runId (`buildImproveRunId()` output).
+  //   started_at    TEXT      — ISO-8601; indexed for time-range queries.
+  //   stash_dir     TEXT      — absolute stash root; multi-stash scoping.
+  //   dry_run       INTEGER   — 0/1; indexed for productivity audits.
+  //   scope_mode    TEXT      — "all" | "type" | "ref"; indexed via composite
+  //                              with stash_dir for stash-scoped scope queries.
+  //
+  // Non-indexed payload:
+  //   completed_at  TEXT      — ISO-8601 or NULL if interrupted.
+  //   profile       TEXT      — improve profile name (nullable).
+  //   scope_value   TEXT      — type name or asset ref (nullable).
+  //   guidance      TEXT      — user-provided guidance text, if any.
+  //   ok            INTEGER   — 0/1; whether the run produced ok=true.
+  //   result_json   TEXT      — full AkmImproveResult JSON.
+  //   metrics_json  TEXT      — aggregate counts extracted from result, cheap
+  //                              to query without parsing result_json.
+  //
+  // Extensible (metadata_json) columns:
+  //   metadata_json TEXT      — JSON object for future improve-run fields.
+  //
+  // ADD COLUMN extension points (future migrations):
+  //   ALTER TABLE improve_runs ADD COLUMN duration_ms INTEGER DEFAULT NULL;
+  //   ALTER TABLE improve_runs ADD COLUMN host TEXT DEFAULT NULL;
+  //
+  // TTL: rows where started_at < NOW() - 90 days can be deleted by
+  // `purgeOldImproveRuns()`. No automatic deletion occurs here.
+  {
+    id: "003-improve-runs",
+    up: `
+      CREATE TABLE IF NOT EXISTS improve_runs (
+        id            TEXT    PRIMARY KEY,
+        started_at    TEXT    NOT NULL,
+        completed_at  TEXT,
+        stash_dir     TEXT    NOT NULL,
+        dry_run       INTEGER NOT NULL DEFAULT 0,
+        profile       TEXT,
+        scope_mode    TEXT    NOT NULL,
+        scope_value   TEXT,
+        guidance      TEXT,
+        ok            INTEGER NOT NULL,
+        result_json   TEXT    NOT NULL,
+        metrics_json  TEXT,
+        metadata_json TEXT    NOT NULL DEFAULT '{}'
+      );
+
+      -- Query patterns supported:
+      --   SELECT … WHERE started_at >= ? AND started_at <= ?
+      --     → idx_improve_runs_started
+      --   SELECT … WHERE dry_run = 0
+      --     → idx_improve_runs_dry_run (productivity audits filter trap)
+      --   SELECT … WHERE stash_dir = ? AND scope_mode = ?
+      --     → idx_improve_runs_stash_scope
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_started
+        ON improve_runs(started_at);
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_dry_run
+        ON improve_runs(dry_run);
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_stash_scope
+        ON improve_runs(stash_dir, scope_mode);
     `,
   },
 ];
@@ -910,6 +983,168 @@ export async function importEventsJsonl(
   })();
 
   return { imported, maxId, skipped };
+}
+
+// ── improve_runs table helpers ───────────────────────────────────────────────
+
+/**
+ * Raw SQLite row shape for the `improve_runs` table.
+ */
+export interface ImproveRunRow {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  stash_dir: string;
+  dry_run: number;
+  profile: string | null;
+  scope_mode: string;
+  scope_value: string | null;
+  guidance: string | null;
+  ok: number;
+  result_json: string;
+  metrics_json: string | null;
+  metadata_json: string;
+}
+
+/**
+ * Aggregate metrics derived from an `AkmImproveResult` envelope. These are the
+ * counts that are useful for productivity audits, run-comparison dashboards,
+ * and ad-hoc SQL queries without having to parse the full `result_json`.
+ *
+ * Only fields that actually exist on the result shape are included — the
+ * helper never fabricates data.
+ */
+export interface ImproveRunMetrics {
+  /** Number of refs that the improve loop intended to process this run. */
+  plannedCount: number;
+  /** Number of action results emitted (one per processed ref/op). */
+  actionsCount: number;
+  /** Action modes that imply a write (reflect/distill/memory-inference/graph-extraction succeeded). */
+  acceptedCount: number;
+  /** Action modes that were skipped (cooldown / skipped / failed). */
+  rejectedCount: number;
+  /** Subset of actions whose underlying result claimed `autoAccepted: true`. */
+  autoAcceptedCount: number;
+  /** Action modes that ended in `error`. */
+  errorCount: number;
+}
+
+/**
+ * Compute the cheap aggregate metrics blob from a full improve result.
+ *
+ * Pure function — no I/O. Used by {@link recordImproveRun} to populate
+ * `metrics_json`. Exposed for tests and for any future call site that wants
+ * the same aggregation logic without hitting state.db.
+ */
+export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMetrics {
+  const plannedCount = Array.isArray(result.plannedRefs) ? result.plannedRefs.length : 0;
+  const actions = Array.isArray(result.actions) ? result.actions : [];
+  const actionsCount = actions.length;
+
+  let acceptedCount = 0;
+  let rejectedCount = 0;
+  let autoAcceptedCount = 0;
+  let errorCount = 0;
+
+  for (const action of actions) {
+    switch (action.mode) {
+      case "reflect":
+      case "distill":
+      case "memory-inference":
+      case "graph-extraction":
+        acceptedCount++;
+        break;
+      case "reflect-cooldown":
+      case "reflect-skipped":
+      case "distill-skipped":
+        rejectedCount++;
+        break;
+      case "reflect-failed":
+      case "error":
+        errorCount++;
+        break;
+      case "memory-prune":
+        // Prune is bookkeeping, not "accepted" content authoring; count
+        // separately as a no-op for the audit aggregate.
+        break;
+    }
+    // Some action result variants carry an `autoAccepted` flag (reflect path).
+    // The safe pattern is to read via `Record<string, unknown>` indexing.
+    const r = action.result as Record<string, unknown> | undefined;
+    if (r && r.autoAccepted === true) autoAcceptedCount++;
+  }
+
+  return { plannedCount, actionsCount, acceptedCount, rejectedCount, autoAcceptedCount, errorCount };
+}
+
+/**
+ * Insert a single improve-run row into `improve_runs`. Uses parameterised SQL.
+ *
+ * Idempotency: the table's PRIMARY KEY is `id`, so re-running with the same
+ * runId would error. Callers mint a fresh runId per invocation via
+ * {@link buildImproveRunId} so this is not a concern in practice — but the
+ * default behaviour is INSERT (not REPLACE) so accidental dupes surface as
+ * a SQLite constraint error rather than silently overwriting a prior record.
+ *
+ * The `metrics` parameter defaults to the output of
+ * {@link computeImproveRunMetrics} when not supplied. Pass an explicit
+ * `metrics` object to override the derivation (e.g. tests).
+ */
+export function recordImproveRun(
+  db: Database,
+  input: {
+    id: string;
+    startedAt: string;
+    completedAt: string | null;
+    stashDir: string;
+    dryRun: boolean;
+    profile: string | null;
+    scopeMode: "all" | "type" | "ref";
+    scopeValue: string | null;
+    guidance: string | null;
+    ok: boolean;
+    result: AkmImproveResult;
+    metrics?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  },
+): void {
+  const metricsObj = input.metrics ?? computeImproveRunMetrics(input.result);
+  db.prepare(`
+    INSERT INTO improve_runs
+      (id, started_at, completed_at, stash_dir, dry_run, profile,
+       scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.id,
+    input.startedAt,
+    input.completedAt,
+    input.stashDir,
+    input.dryRun ? 1 : 0,
+    input.profile,
+    input.scopeMode,
+    input.scopeValue,
+    input.guidance,
+    input.ok ? 1 : 0,
+    JSON.stringify(input.result),
+    JSON.stringify(metricsObj),
+    JSON.stringify(input.metadata ?? {}),
+  );
+}
+
+/**
+ * Delete improve_runs rows older than `retentionDays` (default: 90). Mirrors
+ * {@link purgeOldEvents} — same default, same return shape (number of rows
+ * actually deleted), same disabled-when-non-finite semantics.
+ *
+ * Safe to call from the improve post-loop maintenance pass alongside
+ * `purgeOldEvents(db, retentionDays)`.
+ */
+export function purgeOldImproveRuns(db: Database, retentionDays = 90): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+  const result = db.prepare("DELETE FROM improve_runs WHERE started_at < ?").run(cutoff);
+  const changes = (result as { changes?: number | bigint }).changes ?? 0;
+  return typeof changes === "bigint" ? Number(changes) : changes;
 }
 
 // ── registry_index_cache (goes in index.db, not state.db) ───────────────────

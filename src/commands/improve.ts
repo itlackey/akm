@@ -29,7 +29,7 @@ import {
   promoteProposal,
   purgeOrphanProposals,
 } from "../core/proposals";
-import { openStateDatabase, purgeOldEvents } from "../core/state-db";
+import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../core/state-db";
 import { info, warn } from "../core/warn";
 import {
   closeDatabase,
@@ -2720,6 +2720,25 @@ async function runImproveMaintenancePasses(args: {
               eventType: "events_purged",
               ref: "events:_purge",
               metadata: { purgedCount, retentionDays },
+            },
+            eventsCtx,
+          );
+
+          // improve_runs uses the same retention window as events — both are
+          // observability/audit data, both grow append-only, both have a
+          // dedicated purge helper. Mirroring the events purge here means a
+          // single retention knob (improve.eventRetentionDays) governs both.
+          const improveRunsPurged = purgeOldImproveRuns(stateDb, retentionDays);
+          if (improveRunsPurged > 0) {
+            info(
+              `[improve] improve_runs purge: ${improveRunsPurged} run(s) older than ${retentionDays}d removed from state.db`,
+            );
+          }
+          appendEvent(
+            {
+              eventType: "improve_runs_purged",
+              ref: "improve_runs:_purge",
+              metadata: { purgedCount: improveRunsPurged, retentionDays },
             },
             eventsCtx,
           );

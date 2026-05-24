@@ -4138,7 +4138,7 @@ const improveCommand = defineCommand({
     "json-to-stdout": {
       type: "boolean",
       description:
-        "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full JSON is written to .akm/runs/<run-id>/improve-result.json and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve | jq`.)",
+        "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full result is recorded in the improve_runs table of state.db and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve --json-to-stdout | jq`.)",
       default: false,
     },
     profile: {
@@ -4238,15 +4238,21 @@ const improveCommand = defineCommand({
         process.exit(0);
       }
 
-      // Default mode (0.8.0+): persist the full result under
-      // `<stash>/.akm/runs/<run-id>/improve-result.json` and emit NOTHING
+      // Default mode (0.8.0+): persist the full result as a row in the
+      // `improve_runs` table of state.db (migration 003) and emit NOTHING
       // on stdout. The verbose JSON would otherwise scroll earlier progress
       // logs out of the terminal buffer. The existing `[improve] ...`
       // progress log lines on stderr remain the canonical console UX —
       // do NOT add any new console output here.
+      //
+      // Pre-0.8.0 wrote `<stash>/.akm/runs/<run-id>/improve-result.json`;
+      // those files are no longer authored. Query recent runs with:
+      //   sqlite3 "$AKM_DATA_DIR/state.db" \
+      //     "SELECT id, started_at, ok, dry_run FROM improve_runs \
+      //      ORDER BY started_at DESC LIMIT 10"
       const runId = buildImproveRunId();
       const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
-      const resultPathFallback = relativeImproveResultPath(runId);
+      const resultRef = relativeImproveResultPath(runId);
       if (primaryStashDir) {
         try {
           writeImproveResultFile(primaryStashDir, runId, improveResult);
@@ -4254,12 +4260,12 @@ const improveCommand = defineCommand({
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.
           process.stderr.write(
-            `warning: failed to write improve result file at ${path.join(primaryStashDir, resultPathFallback)}: ${err instanceof Error ? err.message : String(err)}\n`,
+            `warning: failed to record improve run ${resultRef}: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       } else {
         process.stderr.write(
-          `warning: no writable stash directory resolved; improve result not persisted to disk (use --json-to-stdout to capture)\n`,
+          `warning: no writable stash directory resolved; improve result not persisted to state.db (use --json-to-stdout to capture)\n`,
         );
       }
 
