@@ -1,11 +1,35 @@
 # improve-stats — analysis toolkit for `akm improve` runs
 
-Quick jq-based scripts for digging into the structured run logs in
-`~/akm/.akm/runs/<run-id>/improve-result.json`. Built from the patterns
-that came out of tuning the improve pipeline in May 2026.
+Quick scripts for digging into improve-run envelopes. Built from the
+patterns that came out of tuning the improve pipeline in May 2026.
 
-All scripts read from the stash directory in `$AKM_STASH_DIR` (default:
-`~/akm`). Override with `--stash <path>`.
+## Storage
+
+As of 0.8.0 every run is persisted as a row in the `improve_runs`
+table of `state.db` (`$XDG_DATA_HOME/akm/state.db`, default
+`~/.local/share/akm/state.db`). The legacy
+`<stash>/.akm/runs/<run-id>/improve-result.json` layout was archived
+once by `scripts/migrations/import-fs-improve-runs-to-db.ts`. All
+helpers below read from the DB directly via `sqlite3`. `--stash` is
+preserved for back-compat but no longer reads from the filesystem.
+
+Override the DB path with `AKM_STATE_DB_PATH` for tests or relocated
+installs.
+
+## Backfilling legacy runs
+
+If you find another machine still on the filesystem layout, run:
+
+```sh
+bun scripts/migrations/import-fs-improve-runs-to-db.ts          # import + archive
+bun scripts/migrations/import-fs-improve-runs-to-db.ts --dry-run # report only
+bun scripts/migrations/import-fs-improve-runs-to-db.ts --no-archive
+```
+
+The import is idempotent — `INSERT OR IGNORE` on the run-id PK, so
+re-running adds nothing. After a clean import the script renames
+`<stash>/.akm/runs/` to `<stash>/.akm/runs.archived-<ts>/` (skip with
+`--no-archive`).
 
 | Script              | What it answers                                                       | Status                                        |
 | ------------------- | --------------------------------------------------------------------- | --------------------------------------------- |

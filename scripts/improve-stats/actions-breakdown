@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# actions-breakdown — DEPRECATED thin shim around `akm-eval-collect`.
-#
-# The hand-rolled jq pipeline (mode counts + distill/reflect skip
-# reasons) is now first-class data on the akm-eval-collect summary:
-# `actionsByMode`, `actionsByOutcome`, and `proposalsByMode` all land in
-# the JSON output. Reflect-failure classification (schema-shape vs
-# content-policy vs gate-refused) now lives in the
-# `reflect-failure-breakdown` eval case under
-# `scripts/akm-eval/cases/improve-smoke/`.
+# actions-breakdown — actions-by-mode/outcome breakdown for a single run.
 #
 # Usage:
-#   actions-breakdown <run-id|latest> [--stash <path>] [--format json|md]
+#   actions-breakdown <run-id|latest> [--format json|md] [--stash <path>]
 #
-# Prints the akm-eval invocation to stderr before exec'ing so the new
-# entry point is discoverable.
+# Pulls the run envelope from the `improve_runs` table in state.db,
+# stages it back into the legacy `<stash>/.akm/runs/<id>/improve-result.json`
+# shape under a temp dir, then forwards to `akm-eval-collect` whose
+# `actionsByMode`, `actionsByOutcome`, and `proposalsByMode` cover the
+# old jq pipeline. The temp dir is removed on exit.
+#
+# Reflect-failure classification (schema-shape vs content-policy vs
+# gate-refused) lives in the `reflect-failure-breakdown` eval case:
+#   scripts/akm-eval/bin/akm-eval-run --suite improve-smoke
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 EVAL_BIN="$REPO_ROOT/scripts/akm-eval/bin/akm-eval-collect"
+# shellcheck source=./_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
 
 if [[ ! -x "$EVAL_BIN" ]]; then
   echo "actions-breakdown: missing $EVAL_BIN (akm-eval toolkit not installed?)" >&2
@@ -27,15 +28,16 @@ if [[ ! -x "$EVAL_BIN" ]]; then
 fi
 
 if [[ $# -lt 1 ]]; then
-  echo "usage: actions-breakdown <run-id|latest> [--stash <path>] [--format json|md]" >&2
+  echo "usage: actions-breakdown <run-id|latest> [--format json|md] [--stash <path>]" >&2
   exit 2
 fi
 
-RUN_ID="$1"
+INPUT_ID="$1"
 shift
 
-echo "[actions-breakdown] forwarding to: $EVAL_BIN --from-improve-run $RUN_ID $*" >&2
-echo "[actions-breakdown] reflect classification now lives in:" >&2
-echo "[actions-breakdown]   scripts/akm-eval/bin/akm-eval-run --suite improve-smoke" >&2
-echo "[actions-breakdown]   (case: reflect-failure-breakdown)" >&2
-exec "$EVAL_BIN" --from-improve-run "$RUN_ID" "$@"
+RUN_ID="$(resolve_run_id "$INPUT_ID")"
+TMP="$(stage_run_to_tmp "$RUN_ID")"
+trap 'rm -rf "$TMP"' EXIT
+
+echo "[actions-breakdown] forwarding to: $EVAL_BIN --stash $TMP --from-improve-run $RUN_ID $*" >&2
+exec "$EVAL_BIN" --stash "$TMP" --from-improve-run "$RUN_ID" "$@"

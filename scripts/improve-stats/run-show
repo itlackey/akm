@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-# run-show — DEPRECATED thin shim around `akm-eval-collect`.
-#
-# The bespoke jq pipeline was superseded by the akm-eval toolkit's
-# improve-run ingestion (`scripts/akm-eval/bin/akm-eval-collect`), which
-# emits the equivalent per-run summary as deterministic JSON (and
-# optionally Markdown). This shim preserves the old `run-show
-# <id|latest>` invocation for muscle memory.
+# run-show — show a full improve-run summary.
 #
 # Usage:
-#   run-show <run-id|latest> [--stash <path>] [--format json|md]
+#   run-show <run-id|latest> [--format json|md] [--stash <path>]
 #
-# Prints the akm-eval invocation to stderr before exec'ing so the new
-# entry point is discoverable.
+# Pulls the run envelope from the `improve_runs` table in state.db and
+# forwards to `akm-eval-collect`, which renders the rich summary. The
+# DB row is materialised to a temp directory in the legacy
+# `<stash>/.akm/runs/<id>/improve-result.json` shape so the collector
+# can ingest it unchanged. The temp dir is removed on exit.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 EVAL_BIN="$REPO_ROOT/scripts/akm-eval/bin/akm-eval-collect"
+# shellcheck source=./_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
 
 if [[ ! -x "$EVAL_BIN" ]]; then
   echo "run-show: missing $EVAL_BIN (akm-eval toolkit not installed?)" >&2
@@ -25,12 +24,16 @@ if [[ ! -x "$EVAL_BIN" ]]; then
 fi
 
 if [[ $# -lt 1 ]]; then
-  echo "usage: run-show <run-id|latest> [--stash <path>] [--format json|md]" >&2
+  echo "usage: run-show <run-id|latest> [--format json|md] [--stash <path>]" >&2
   exit 2
 fi
 
-RUN_ID="$1"
+INPUT_ID="$1"
 shift
 
-echo "[run-show] forwarding to: $EVAL_BIN --from-improve-run $RUN_ID $*" >&2
-exec "$EVAL_BIN" --from-improve-run "$RUN_ID" "$@"
+RUN_ID="$(resolve_run_id "$INPUT_ID")"
+TMP="$(stage_run_to_tmp "$RUN_ID")"
+trap 'rm -rf "$TMP"' EXIT
+
+echo "[run-show] forwarding to: $EVAL_BIN --stash $TMP --from-improve-run $RUN_ID $*" >&2
+exec "$EVAL_BIN" --stash "$TMP" --from-improve-run "$RUN_ID" "$@"
