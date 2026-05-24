@@ -202,6 +202,12 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 | [Wikis](docs/wikis.md) | Multi-wiki knowledge bases |
 | [Release Notes — 0.8.0](docs/migration/release-notes/0.8.0.md) | Latest release notes and migration guide |
 
+## Privacy & data
+
+AKM stores data locally and has **no remote telemetry**. Events, proposals, and improve history are written to `~/.local/share/akm/state.db`. Registry packages and config backups go to `~/.cache/akm/`. Nothing leaves your machine except requests to sources you explicitly configure (GitHub, npm, your own LLM endpoint).
+
+See [docs/data-and-telemetry.md](docs/data-and-telemetry.md) for the complete on-disk inventory, event type reference, and instructions for inspecting or clearing local data.
+
 ## License
 
 [MPL-2.0](LICENSE)
