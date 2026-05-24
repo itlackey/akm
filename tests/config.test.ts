@@ -266,97 +266,25 @@ describe("loadConfig", () => {
     }
   });
 
-  test("merges ancestor project config files on top of user config", () => {
-    const workspaceRoot = makeTmpDir();
-    const nestedProjectDir = path.join(workspaceRoot, "apps", "demo");
-    try {
-      fs.mkdirSync(nestedProjectDir, { recursive: true });
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          output: { format: "text" },
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(workspaceRoot, ".akm", "config.json"),
-        JSON.stringify({
-          output: { detail: "full" },
-          sources: [{ type: "filesystem", path: "/workspace-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(workspaceRoot, "apps", ".akm", "config.json"),
-        JSON.stringify({
-          semanticSearchMode: "off",
-          sources: [{ type: "filesystem", path: "/apps-stash" }],
-        }),
-      );
-
-      process.chdir(nestedProjectDir);
-
-      expect(loadConfig()).toEqual({
-        ...DEFAULT_CONFIG,
-        semanticSearchMode: "off",
-        output: { format: "text", detail: "full" },
-        sources: [
-          { type: "filesystem", path: "/user-stash" },
-          { type: "filesystem", path: "/workspace-stash" },
-          { type: "filesystem", path: "/apps-stash" },
-        ],
-      });
-    } finally {
-      cleanup(workspaceRoot);
-    }
-  });
-
-  test("project config can replace inherited sources while keeping project sources", () => {
+  test("project-level .akm/config.json is no longer merged (single-layer load)", () => {
+    // Multi-layer project config was removed; only the user-level config is
+    // read. A project-level file under cwd-ancestors emits a deprecation
+    // warning but does NOT contribute settings.
     const projectDir = makeTmpDir();
     try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
+      writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
-          stashInheritance: "replace",
+          semanticSearchMode: "off",
           sources: [{ type: "filesystem", path: "/project-stash" }],
         }),
       );
-
       process.chdir(projectDir);
-
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
-    } finally {
-      cleanup(projectDir);
-    }
-  });
-
-  test("project config can replace inherited sources without defining replacements", () => {
-    const projectDir = makeTmpDir();
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(projectDir, ".akm", "config.json"),
-        JSON.stringify({
-          stashInheritance: "replace",
-        }),
-      );
-
-      process.chdir(projectDir);
-
-      expect(loadConfig().sources).toEqual([]);
+      const loaded = loadConfig();
+      expect(loaded.semanticSearchMode).toBe("auto");
+      // sources from project config are ignored
+      expect(loaded.sources).toBeUndefined();
     } finally {
       cleanup(projectDir);
     }
@@ -445,33 +373,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow("writable: true is only supported on filesystem and git sources");
   });
 
-  test("recomputes merged config when cwd changes", () => {
-    const firstProject = makeTmpDir();
-    const secondProject = makeTmpDir();
-    try {
-      writeRawConfig(
-        path.join(firstProject, ".akm", "config.json"),
-        JSON.stringify({ sources: [{ type: "filesystem", path: "/first-project-stash" }] }),
-      );
-      writeRawConfig(
-        path.join(secondProject, ".akm", "config.json"),
-        JSON.stringify({ sources: [{ type: "filesystem", path: "/second-project-stash" }] }),
-      );
-
-      process.chdir(firstProject);
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
-
-      // Intentionally do not reset the cache here; loadConfig() should notice
-      // the cwd change because the discovered project config path set changes.
-      process.chdir(secondProject);
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
-    } finally {
-      cleanup(firstProject);
-      cleanup(secondProject);
-    }
-  });
-
-  test("emits a one-time deprecation warning when discovering a project-level config (#457)", () => {
+  test("emits a one-time deprecation warning when a project-level config is discovered (#457)", () => {
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
@@ -490,9 +392,9 @@ describe("loadConfig", () => {
       } finally {
         console.warn = originalWarn;
       }
-      // The warning fires at least once and mentions the config path + 0.9.0
+      // Warning mentions deprecation + project-level + that the file is ignored.
       expect(messages.some((m) => m.includes("DEPRECATED") && m.includes("project-level"))).toBe(true);
-      expect(messages.some((m) => m.includes("0.9.0"))).toBe(true);
+      expect(messages.some((m) => m.includes("ignored"))).toBe(true);
     } finally {
       cleanup(projectDir);
     }
@@ -594,7 +496,10 @@ describe("updateConfig", () => {
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
 
-  test("writes only user config when project config is present", () => {
+  test("writes only user config and ignores any project-level .akm/config.json", () => {
+    // Project-level config files are no longer merged (single-layer load).
+    // updateConfig writes to the user-level file; project-level files are
+    // left untouched and their settings have no effect on loadConfig().
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
@@ -605,7 +510,8 @@ describe("updateConfig", () => {
       process.chdir(projectDir);
       updateConfig({ semanticSearchMode: "off" });
 
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      // Project sources are NOT merged in.
+      expect(loadConfig().sources).toBeUndefined();
       expect(loadUserConfig().sources).toBeUndefined();
       expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
       expect(loadUserConfig().semanticSearchMode).toBe("off");

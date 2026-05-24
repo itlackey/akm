@@ -375,7 +375,6 @@ export const AkmConfigShape = {
   index: IndexConfigSchema.optional(),
   installed: z.array(InstalledStashEntrySchema).optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
-  stashInheritance: z.enum(["merge", "replace"]).optional(),
   sources: z.array(SourceConfigEntrySchema).optional(),
   security: SecurityConfigSchema.optional(),
   output: OutputConfigSchema.optional(),

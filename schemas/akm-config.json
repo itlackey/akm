@@ -871,13 +871,6 @@
         "additionalProperties": false
       }
     },
-    "stashInheritance": {
-      "type": "string",
-      "enum": [
-        "merge",
-        "replace"
-      ]
-    },
     "sources": {
       "type": "array",
       "items": {
@@ -1996,13 +1989,6 @@
             ],
             "additionalProperties": false
           }
-        },
-        "stashInheritance": {
-          "type": "string",
-          "enum": [
-            "merge",
-            "replace"
-          ]
         },
         "sources": {
           "type": "array",

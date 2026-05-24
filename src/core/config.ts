@@ -370,13 +370,6 @@ export interface AkmConfig {
    * - `[...]` (non-empty array): use exactly the listed registries, overriding defaults.
    */
   registries?: RegistryConfigEntry[];
-  /**
-   * When set on a later config layer (typically project config), controls how
-   * the layer's `stashes` interact with stashes inherited from earlier layers.
-   * - `"merge"` (default): append the layer's stashes to the inherited list.
-   * - `"replace"`: discard the inherited stashes before applying this layer's.
-   */
-  stashInheritance?: "merge" | "replace";
   /** Additional asset sources (filesystem paths and remote providers) */
   sources?: SourceConfigEntry[];
   /**
@@ -719,22 +712,10 @@ function clearAllCaches(): void {
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
 
 let cachedConfig: { config: AkmConfig; signature: string } | undefined;
-let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number; contentHash: string } | undefined;
+let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number } | undefined;
 
 export function resetConfigCache(): void {
   clearAllCaches();
-}
-
-function hashString(text: string): string {
-  // Simple, fast non-cryptographic hash (FNV-1a 32-bit) — sufficient to detect
-  // content changes between config writes when filesystem mtime resolution is
-  // too coarse to reflect rapid back-to-back writes (common in tests).
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
 }
 
 export function loadUserConfig(): AkmConfig {
@@ -748,10 +729,18 @@ export function loadUserConfig(): AkmConfig {
     return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
   }
 
-  // Cache key combines mtimeMs + size + content hash. mtimeMs alone is unreliable
-  // when tests write multiple times within the filesystem mtime resolution
-  // window (often 1ms+). Reading + hashing on cache miss is cheap and ensures
-  // we never serve stale config.
+  // Cache key: mtimeMs + size. Tests that write rapidly back-to-back inside
+  // the mtime resolution window MUST call resetConfigCache() between writes —
+  // every public test helper already does.
+  if (
+    cachedUserConfig &&
+    cachedUserConfig.path === configPath &&
+    cachedUserConfig.mtime === stat.mtimeMs &&
+    cachedUserConfig.size === stat.size
+  ) {
+    return cachedUserConfig.config;
+  }
+
   let text: string;
   try {
     text = fs.readFileSync(configPath, "utf8");
@@ -765,18 +754,6 @@ export function loadUserConfig(): AkmConfig {
   // every cache miss so we catch configs written before the feature shipped.
   // AKM_NO_AUTO_MIGRATE=1 skips the disk rewrite (still applies in-memory).
   text = maybeAutoMigrateConfigFile(configPath, text);
-
-  const contentHash = hashString(text);
-
-  if (
-    cachedUserConfig &&
-    cachedUserConfig.path === configPath &&
-    cachedUserConfig.mtime === stat.mtimeMs &&
-    cachedUserConfig.size === stat.size &&
-    cachedUserConfig.contentHash === contentHash
-  ) {
-    return cachedUserConfig.config;
-  }
 
   const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(text));
   const finalConfig = applyRuntimeEnvApiKeys(config);
@@ -793,7 +770,6 @@ export function loadUserConfig(): AkmConfig {
     path: configPath,
     mtime: finalStat.mtimeMs,
     size: finalStat.size,
-    contentHash,
   };
   return finalConfig;
 }
@@ -904,19 +880,20 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
 }
 
 export function loadConfig(): AkmConfig {
-  const configPaths = getEffectiveConfigPaths();
-  const signature = getConfigSignature(configPaths);
+  // Single-layer load: only the user-level config file is read. Project-level
+  // .akm/config.json files discovered under cwd-ancestors emit a one-time
+  // deprecation warning (#457) but are NOT merged. Removed in this release;
+  // the warning stays for one cycle to help users notice they have a now-dead
+  // file on disk.
+  warnIfProjectConfigPresent(process.cwd());
+
+  const userConfigPath = getConfigPath();
+  const signature = `${userConfigPath}:${getFileSignatureToken(userConfigPath)}`;
   if (cachedConfig && cachedConfig.signature === signature) {
     return cachedConfig.config;
   }
 
-  let config = loadUserConfig();
-  const userConfigPath = getConfigPath();
-  for (const configPath of configPaths) {
-    if (configPath === userConfigPath) continue;
-    config = mergeLoadedConfig(config, readNormalizedConfig(configPath));
-  }
-
+  const config = loadUserConfig();
   const finalConfig = applyRuntimeEnvApiKeys(config);
   cachedConfig = { config: finalConfig, signature };
   return finalConfig;
@@ -1069,10 +1046,6 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
-
-  if (isOneOf(raw.stashInheritance, ["replace", "merge"] as const)) {
-    config.stashInheritance = raw.stashInheritance;
-  }
 
   if (Array.isArray((raw as Record<string, unknown>).stashes)) {
     throw new ConfigError(
@@ -1437,19 +1410,6 @@ function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfile
 
 function parseConfigText(text: string, sourcePath?: string): Partial<AkmConfig> {
   const raw = parseConfigObjectFromText(text, sourcePath);
-  return parseConfigLayer(raw);
-}
-
-function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
-  let text: string;
-  try {
-    text = fs.readFileSync(configPath, "utf8");
-  } catch {
-    return undefined;
-  }
-  // #458: parse-failure now propagates as a ConfigError instead of being
-  // silently dropped.
-  const raw = parseConfigObjectFromText(text, configPath);
   return parseConfigLayer(raw);
 }
 
@@ -2191,31 +2151,16 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
   return entry;
 }
 
-function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
-  if (!base && !override) return undefined;
-  const installAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
-  return installAudit ? { installAudit } : undefined;
-}
-
-function mergeInstallAuditConfig(
-  base?: InstallAuditConfig,
-  override?: InstallAuditConfig,
-): InstallAuditConfig | undefined {
-  if (!base && !override) return undefined;
-  const merged: InstallAuditConfig = {
-    ...(base ?? {}),
-    ...(override ?? {}),
-  };
-  return Object.values(merged).some((value) => value !== undefined) ? merged : undefined;
-}
-
 /**
- * Merge a normalized config layer into an accumulated config.
+ * Merge a partial user-config override onto a base config. Used for two
+ * single-layer cases:
+ *   1) {@link loadUserConfig} layering normalized disk config on top of
+ *      {@link DEFAULT_CONFIG}.
+ *   2) {@link updateConfig} layering a partial patch on top of the currently
+ *      loaded user config.
  *
- * Scalar fields follow normal override semantics. Known nested objects are
- * deep-merged so project config files can override individual fields without
- * clobbering sibling settings. `sources` are additive by default, but a later
- * layer can set `stashInheritance: "replace"` to drop inherited sources first.
+ * Multi-layer (project + user) merging is no longer supported — see
+ * {@link loadConfig} and {@link warnIfProjectConfigPresent}.
  */
 function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
   if (!override) return { ...base };
@@ -2231,50 +2176,31 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.embedding && override.embedding) {
     merged.embedding = { ...base.embedding, ...override.embedding };
   }
-  if (base.index || override.index) {
-    // Deep-merge per-pass entries so a project layer can opt one pass out
-    // without dropping siblings configured in user config.
-    const mergedIndex: IndexConfig = { ...(base.index ?? {}) };
-    for (const [passName, passOverride] of Object.entries(override.index ?? {})) {
-      const baseEntry = (mergedIndex as Record<string, unknown>)[passName];
-      const baseObj = baseEntry && typeof baseEntry === "object" ? (baseEntry as Record<string, unknown>) : {};
-      (mergedIndex as Record<string, unknown>)[passName] = {
-        ...baseObj,
-        ...(passOverride as Record<string, unknown> | undefined),
-      };
-    }
-    if (Object.keys(mergedIndex).length > 0) merged.index = mergedIndex;
+  if (base.index && override.index) {
+    merged.index = { ...base.index, ...override.index };
   }
-  // Deep merge for the profiles tree so a later layer can override one profile
-  // entry without dropping siblings.
-  if (base.profiles || override.profiles) {
-    const mergedProfiles: NonNullable<AkmConfig["profiles"]> = { ...(base.profiles ?? {}) };
-    if (override.profiles?.llm) {
+  if (base.profiles && override.profiles) {
+    const mergedProfiles: NonNullable<AkmConfig["profiles"]> = { ...base.profiles };
+    if (override.profiles.llm) {
       mergedProfiles.llm = { ...(mergedProfiles.llm ?? {}), ...override.profiles.llm };
     }
-    if (override.profiles?.agent) {
+    if (override.profiles.agent) {
       mergedProfiles.agent = { ...(mergedProfiles.agent ?? {}), ...override.profiles.agent };
     }
-    if (override.profiles?.improve) {
+    if (override.profiles.improve) {
       mergedProfiles.improve = { ...(mergedProfiles.improve ?? {}), ...override.profiles.improve };
     }
-    if (Object.keys(mergedProfiles).length > 0) merged.profiles = mergedProfiles;
+    merged.profiles = mergedProfiles;
   }
-  if (base.defaults || override.defaults) {
-    merged.defaults = { ...(base.defaults ?? {}), ...(override.defaults ?? {}) };
+  if (base.defaults && override.defaults) {
+    merged.defaults = { ...base.defaults, ...override.defaults };
   }
   if (base.security && override.security) {
-    merged.security = mergeSecurityConfig(base.security, override.security);
+    merged.security = { ...base.security, ...override.security };
   }
-  const replaceSources = override.stashInheritance === "replace";
-  const overrideSources = override.sources ?? [];
-  const baseSources = base.sources ?? [];
-  if (replaceSources) {
-    merged.sources = [...overrideSources];
-  } else if (overrideSources.length > 0) {
-    merged.sources = [...baseSources, ...overrideSources];
-  } else if (baseSources.length > 0) {
-    merged.sources = [...baseSources];
+  // sources: override wins entirely when provided (single-layer semantics).
+  if (override.sources !== undefined) {
+    merged.sources = override.sources;
   }
 
   return merged;
@@ -2329,60 +2255,29 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
 }
 
 /**
- * Return config file paths in merge order: user config first, then project
- * config files from the outermost parent directory down to the current working
- * directory. Later entries have higher precedence when merged.
- */
-function getEffectiveConfigPaths(): string[] {
-  const configPath = getConfigPath();
-  const paths: string[] = [];
-  if (isFile(configPath)) {
-    paths.push(configPath);
-  }
-  return [...paths, ...discoverProjectConfigPaths(process.cwd())];
-}
-
-/**
- * Walk from `startDir` up to the filesystem root and collect `.akm/config.json`
- * files. Paths are returned from outermost parent to innermost directory so
- * nearer project directories override broader project settings.
- *
- * #457 deprecation: project-level config files (.akm/config.json anywhere
- * under cwd-ancestors) will be ignored in 0.9.0+. For 0.8.x they continue to
- * merge but the first discovery in a process triggers a one-time warning.
+ * Walk cwd-ancestors looking for `.akm/config.json`. If one is found, emit a
+ * one-time deprecation warning per path. The file's contents are NOT read —
+ * multi-layer project config was removed in this release; the warning stays
+ * for one cycle so users notice they have a now-dead file on disk and can
+ * migrate its settings to the user-level config.
  */
 const PROJECT_CONFIG_DEPRECATION_WARNED = new Set<string>();
-function discoverProjectConfigPaths(startDir: string): string[] {
-  const paths: string[] = [];
+function warnIfProjectConfigPresent(startDir: string): void {
   let currentDir = path.resolve(startDir);
-
   while (true) {
     const configPath = path.join(currentDir, PROJECT_CONFIG_RELATIVE_PATH);
-    if (isFile(configPath)) {
-      paths.unshift(configPath);
-      if (!PROJECT_CONFIG_DEPRECATION_WARNED.has(configPath)) {
-        PROJECT_CONFIG_DEPRECATION_WARNED.add(configPath);
-        warn(
-          `[akm] DEPRECATED: project-level config file found at ${configPath}. ` +
-            "Project-level config files will be ignored in 0.9.0+. " +
-            "Move your settings to ~/.config/akm/config.json.",
-        );
-      }
+    if (isFile(configPath) && !PROJECT_CONFIG_DEPRECATION_WARNED.has(configPath)) {
+      PROJECT_CONFIG_DEPRECATION_WARNED.add(configPath);
+      warn(
+        `[akm] DEPRECATED: project-level config file found at ${configPath}. ` +
+          "Project-level config files are no longer merged (removed after 0.8.x deprecation). " +
+          "Move any needed settings to ~/.config/akm/config.json; this file is ignored.",
+      );
     }
-
     const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) {
-      break;
-    }
+    if (parentDir === currentDir) break;
     currentDir = parentDir;
   }
-
-  return paths;
-}
-
-function getConfigSignature(configPaths: string[]): string {
-  if (configPaths.length === 0) return "defaults";
-  return configPaths.map((configPath) => `${configPath}:${getFileSignatureToken(configPath)}`).join("|");
 }
 
 function isFile(filePath: string): boolean {
@@ -2396,17 +2291,7 @@ function isFile(filePath: string): boolean {
 function getFileSignatureToken(filePath: string): string {
   try {
     const stat = fs.statSync(filePath);
-    // mtimeMs alone is unreliable on filesystems with low-resolution mtime
-    // (HFS+, some network FS, or very fast back-to-back writes in tests).
-    // Combine mtime + size + content hash so the signature actually changes
-    // when content does.
-    let contentHash = "";
-    try {
-      contentHash = hashString(fs.readFileSync(filePath, "utf8"));
-    } catch {
-      // ignore — fall back to stat-only signature
-    }
-    return `${stat.mtimeMs}:${stat.size}:${contentHash}`;
+    return `${stat.mtimeMs}:${stat.size}`;
   } catch {
     return "missing";
   }
