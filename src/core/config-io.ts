@@ -10,8 +10,10 @@
  * `saveConfig`, the migrate command, and the setup wizard (#464.c).
  */
 import fs from "node:fs";
+import path from "node:path";
 import { writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
+import { getCacheDir } from "./paths";
 
 /**
  * Read the raw text of a config file. Returns `undefined` when the file does
@@ -76,6 +78,58 @@ function describeJsonRoot(value: unknown): string {
  */
 export function writeConfigAtomic(configPath: string, config: Record<string, unknown>): void {
   writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+/** Maximum number of timestamped config backups to retain (#459). */
+const MAX_CONFIG_BACKUPS = 5;
+
+/**
+ * Snapshot the current config file to `<cacheDir>/config-backups/`. Writes
+ * both a timestamped copy and a `config.latest.json` pointer, then prunes the
+ * timestamped set to {@link MAX_CONFIG_BACKUPS} most-recent entries.
+ *
+ * No-op when the source file does not exist (cold-start safe).
+ */
+export function backupExistingConfig(configPath: string): void {
+  if (!fs.existsSync(configPath)) return;
+
+  const backupDir = path.join(getCacheDir(), "config-backups");
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
+  fs.copyFileSync(configPath, path.join(backupDir, `config-${timestamp}.json`));
+  fs.copyFileSync(configPath, path.join(backupDir, "config.latest.json"));
+
+  pruneOldBackups(backupDir);
+}
+
+function pruneOldBackups(backupDir: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(backupDir);
+  } catch {
+    return;
+  }
+  const timestamped = entries
+    .filter((n) => n.startsWith("config-") && n.endsWith(".json") && n !== "config.latest.json")
+    .map((name) => {
+      const full = path.join(backupDir, name);
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(full).mtimeMs;
+      } catch {
+        // Unreadable — sorts to the end via mtime 0.
+      }
+      return { path: full, mtime };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+  for (const stale of timestamped.slice(MAX_CONFIG_BACKUPS)) {
+    try {
+      fs.unlinkSync(stale.path);
+    } catch {
+      // Best-effort prune; next save will retry.
+    }
+  }
 }
 
 /**

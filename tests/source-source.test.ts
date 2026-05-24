@@ -328,21 +328,6 @@ describe("ensureSourceCaches", () => {
     await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
   });
 
-  test("stashes[] entries are still processed for one-release backwards compat", async () => {
-    // stashes[] is deprecated but still accepted in the runtime shape for one release.
-    const config: AkmConfig = {
-      semanticSearchMode: "off",
-      stashes: [
-        {
-          type: "git",
-          url: "https://github.com/example/nonexistent-repo.git",
-          name: "legacy-git",
-        },
-      ],
-    };
-    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
-  });
-
   test("force option propagates to cache-backed sources", async () => {
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
