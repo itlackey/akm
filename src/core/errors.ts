@@ -54,7 +54,8 @@ export type UsageErrorCode =
   | "TARGET_NOT_UPDATABLE"
   | "PATH_ESCAPE_VIOLATION"
   | "RESOURCE_ALREADY_EXISTS"
-  | "INVALID_PROPOSAL";
+  | "INVALID_PROPOSAL"
+  | "NON_INTERACTIVE_REQUIRES_YES";
 
 /** Stable, machine-readable codes for NotFoundError. */
 export type NotFoundErrorCode =

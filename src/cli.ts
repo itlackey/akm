@@ -1104,9 +1104,18 @@ const removeCommand = defineCommand({
   meta: { name: "remove", description: "Remove a source by id, ref, path, URL, or name" },
   args: {
     target: { type: "positional", description: "Source to remove (id, ref, path, URL, or name)", required: true },
+    yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const { confirmDestructive } = await import("./cli/confirm.js");
+      const confirmed = await confirmDestructive(`Remove source "${args.target}"? This cannot be undone.`, {
+        yes: args.yes === true,
+      });
+      if (!confirmed) {
+        process.stderr.write("Aborted.\n");
+        return;
+      }
       const result = await akmRemove({ target: args.target });
       appendEvent({
         eventType: "remove",
@@ -3060,9 +3069,19 @@ const vaultUnsetCommand = defineCommand({
   args: {
     ref: { type: "positional", description: "Vault ref", required: true },
     key: { type: "positional", description: "Key name to remove", required: true },
+    yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      const { confirmDestructive } = await import("./cli/confirm.js");
+      const confirmed = await confirmDestructive(
+        `Remove key "${args.key}" from vault "${args.ref}"? This cannot be undone.`,
+        { yes: args.yes === true },
+      );
+      if (!confirmed) {
+        process.stderr.write("Aborted.\n");
+        return;
+      }
       const { unsetKey } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
@@ -3854,6 +3873,12 @@ const rejectCommand = defineCommand({
       description: "F-6: List proposals that would be bulk-rejected without rejecting them.",
       default: false,
     },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip confirmation prompt (required in non-interactive mode)",
+      default: false,
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
@@ -3865,6 +3890,15 @@ const rejectCommand = defineCommand({
       }
       // F-6 / #393: Bulk-reject when --source is provided without a positional id.
       if (args.source && !args.id) {
+        const { confirmDestructive } = await import("./cli/confirm.js");
+        const confirmed = await confirmDestructive(
+          `Bulk-reject all matching proposals from source "${args.source}"? This cannot be undone.`,
+          { yes: args.yes === true || args["dry-run"] === true },
+        );
+        if (!confirmed) {
+          process.stderr.write("Aborted.\n");
+          return;
+        }
         const { listProposals } = await import("./core/proposals");
         const stashDir = resolveStashDir();
         const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
@@ -3906,6 +3940,14 @@ const rejectCommand = defineCommand({
           "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
           "MISSING_REQUIRED_ARGUMENT",
         );
+      }
+      const { confirmDestructive } = await import("./cli/confirm.js");
+      const confirmed = await confirmDestructive(`Reject proposal "${args.id}"? This cannot be undone.`, {
+        yes: args.yes === true,
+      });
+      if (!confirmed) {
+        process.stderr.write("Aborted.\n");
+        return;
       }
       const result = akmProposalReject({ id: args.id as string, reason: String(args.reason) });
       output("proposal-reject", result);
@@ -4578,7 +4620,15 @@ const main = defineCommand({
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)", default: "brief" },
-    quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
+    quiet: {
+      type: "boolean",
+      alias: "q",
+      description:
+        "Suppress non-essential stderr output (banners, spinners, progress info). " +
+        "Safety-critical output is never suppressed: errors, destructive-action confirmation prompts, " +
+        "and auto-migration banners always appear regardless of --quiet.",
+      default: false,
+    },
     verbose: {
       type: "boolean",
       description: "Print per-spec diagnostics to stderr (also honours AKM_VERBOSE env var)",
