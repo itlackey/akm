@@ -712,45 +712,6 @@ function isValidHttpUrl(url: unknown, fieldName: string): string | undefined {
 function clearAllCaches(): void {
   cachedConfig = undefined;
   cachedUserConfig = undefined;
-  configReadOnlyReason = undefined;
-}
-
-// ── Newer-config-than-binary guard (Fix 2 / migration safety) ───────────────
-//
-// When ANY loaded config layer declares a `configVersion` higher than the
-// binary's `CURRENT_CONFIG_VERSION`, this module enters a read-only mode for
-// the current process. Reads still succeed (unknown fields are silently
-// dropped by `parseConfigLayer`, preserving existing behaviour), but writes
-// via `saveConfig` are refused so we don't strip the newer fields on the way
-// back to disk.
-//
-// `AKM_FORCE_DOWNGRADE_CONFIG=1` is the explicit escape hatch: writes proceed
-// after emitting a stderr warning that fields will be stripped.
-let configReadOnlyReason: { path: string; foundVersion: string | number; binaryVersion: string } | undefined;
-
-/**
- * Returns the read-only reason if a newer-than-binary config layer was loaded
- * in the current process, otherwise undefined. Exposed for diagnostics/tests.
- */
-export function getConfigReadOnlyReason():
-  | { path: string; foundVersion: string | number; binaryVersion: string }
-  | undefined {
-  return configReadOnlyReason;
-}
-
-function markConfigReadOnlyIfNewer(configPath: string, rawVersion: unknown): void {
-  if (typeof rawVersion !== "string" && typeof rawVersion !== "number") return;
-  const cmp = compareConfigVersion(rawVersion, CURRENT_CONFIG_VERSION);
-  if (cmp === 1) {
-    // First-seen newer layer wins (don't overwrite if an earlier layer was already newer).
-    if (!configReadOnlyReason) {
-      configReadOnlyReason = {
-        path: configPath,
-        foundVersion: rawVersion,
-        binaryVersion: CURRENT_CONFIG_VERSION,
-      };
-    }
-  }
 }
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
@@ -901,9 +862,6 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
     return text; // Malformed JSON — let the normal loader surface the error
   }
 
-  // Track newer-than-binary layers so saveConfig can refuse to write later.
-  markConfigReadOnlyIfNewer(configPath, raw.configVersion);
-
   // If the on-disk config is newer than this binary, do NOT attempt to
   // "migrate" — `migrateConfigShape` only knows how to upgrade to
   // CURRENT_CONFIG_VERSION, and downgrading would silently strip fields. We
@@ -965,21 +923,6 @@ export function loadConfig(): AkmConfig {
 }
 
 export function saveConfig(config: AkmConfig): void {
-  // Refuse to write if any loaded config layer in this process declared a
-  // configVersion newer than the binary. Writing back would strip whatever
-  // fields parseConfigLayer didn't recognize, silently losing the user's
-  // newer-format settings. The escape hatch is AKM_FORCE_DOWNGRADE_CONFIG=1.
-  const readOnly = configReadOnlyReason;
-  if (readOnly) {
-    if (process.env.AKM_FORCE_DOWNGRADE_CONFIG !== "1") {
-      throw new ConfigError(
-        `config v${String(readOnly.foundVersion)} (at ${readOnly.path}) is newer than this binary (v${readOnly.binaryVersion}); refusing to write to avoid stripping fields. Upgrade akm or set AKM_FORCE_DOWNGRADE_CONFIG=1 to override.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-    warn("[akm] WARNING: config downgrade forced; non-recognised fields will be stripped");
-  }
-
   clearAllCaches();
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
@@ -1508,7 +1451,6 @@ function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefine
   // #458: parse-failure now propagates as a ConfigError instead of being
   // silently dropped.
   const raw = parseConfigObjectFromText(text, configPath);
-  markConfigReadOnlyIfNewer(configPath, raw.configVersion);
   const expanded = expandEnvVars(raw);
   return parseConfigLayer(expanded);
 }
