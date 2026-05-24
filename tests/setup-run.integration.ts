@@ -607,7 +607,11 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: () => false,
+      // Return true so the wizard skips the `bun add` auto-install attempt
+      // (the install path is environment-dependent and makes the test flaky).
+      // The mocked checkEmbeddingAvailability still reports missing-package,
+      // which exercises the "warn and report" code path we want to test.
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
         available: false,
         reason: "missing-package",
