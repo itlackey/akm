@@ -1221,6 +1221,34 @@ describe("auto-migration in loadConfig", () => {
     const loaded = loadConfig();
     expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
   });
+
+  test("throws ConfigError when migrated write fails (no infinite re-run loop) (#461)", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // Simulate write failure by making the config directory read-only just
+    // after the initial read but before the migration write. The simplest way
+    // is to make the config FILE read-only AND chmod the dir to drop write
+    // permission so the atomic rename can't replace it.
+    const configDir = path.dirname(configPath);
+    fs.chmodSync(configDir, 0o555);
+    try {
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(/Failed to write migrated config/);
+    } finally {
+      // Restore so cleanup() can rm -rf the tmp dir.
+      fs.chmodSync(configDir, 0o755);
+    }
+  });
 });
 
 // ── Newer-than-binary config guard (Fix 2 / migration safety) ──────────────

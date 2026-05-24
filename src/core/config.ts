@@ -927,8 +927,18 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
       warn(
         `[akm] Config at ${configPath} migrated to ${result.configVersion ?? "0.8.0"} format. Backup written to cache dir.`,
       );
-    } catch {
-      warn(`[akm] Could not write migrated config to ${configPath}. Run 'akm config migrate' manually.`);
+    } catch (err) {
+      // #461: if we can't persist the migration, do NOT return the migrated
+      // in-memory shape — that triggers an infinite re-migrate loop on every
+      // load. Throw a hard error so the user notices and resolves the disk
+      // issue (or sets AKM_NO_AUTO_MIGRATE=1 + runs `akm config migrate`).
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new ConfigError(
+        `Failed to write migrated config to ${configPath}: ${detail}`,
+        "INVALID_CONFIG_FILE",
+        "Check filesystem permissions, free space, and disk health. To skip the auto-migration " +
+          "until the issue is resolved, set AKM_NO_AUTO_MIGRATE=1.",
+      );
     }
   }
 
