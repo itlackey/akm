@@ -8,23 +8,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// HOME / XDG_CONFIG_HOME are snapshotted and restored by tests/_preload.ts.
+// This file only owns the per-test tmp dir lifecycle.
 let tmpHome: string;
-let originalHome: string | undefined;
-let originalXdg: string | undefined;
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-agent-cfg-"));
-  originalHome = process.env.HOME;
-  originalXdg = process.env.XDG_CONFIG_HOME;
   process.env.HOME = tmpHome;
   process.env.XDG_CONFIG_HOME = path.join(tmpHome, ".config");
 });
 
 afterEach(() => {
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
-  if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdg;
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 

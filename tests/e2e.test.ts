@@ -140,11 +140,9 @@ async function withMockedFetch<T>(handler: (input: string) => Response, run: () 
   }
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
+// XDG_* / AKM_STASH_DIR snapshot+restore is provided by tests/_preload.ts.
+// This file still creates per-test tmp dirs and points the XDG vars at them
+// so each scenario operates against an isolated cache/data/state tree.
 let testCacheDir = "";
 let testConfigDir = "";
 let testDataDir = "";
@@ -172,31 +170,6 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
   if (testCacheDir) {
     fs.rmSync(testCacheDir, { recursive: true, force: true });
     testCacheDir = "";

@@ -86,9 +86,9 @@ function makeProvider(url: string, name = "skills.sh"): RegistryProvider {
   return factory({ url, name });
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
+// XDG_* snapshot+restore is provided by tests/_preload.ts. This block only
+// points the XDG vars at per-test tmp dirs and stops the per-test Bun.serve
+// instances.
 
 beforeEach(() => {
   // The skills-sh registry cache lives in index.db under XDG_DATA_HOME, not
@@ -109,22 +109,6 @@ afterEach(() => {
     }
   }
   servers.length = 0;
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
 });
 
 afterAll(() => {

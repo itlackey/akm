@@ -210,15 +210,39 @@ export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[]
 }
 
 /**
+ * Resolve the name of the default LLM profile.
+ *
+ * Resolution order:
+ *   1. `defaults.llm` — explicit pointer set by the user.
+ *   2. A profile literally named `default` under `profiles.llm` — implicit
+ *      fallback. The convention "name your default profile `default`" is
+ *      what `akm setup` produces, so an unset `defaults.llm` next to a
+ *      `profiles.llm.default` block is overwhelmingly a config-rewrite
+ *      casualty (see [[project_akm_config_clobber_trap]]) rather than
+ *      intent. Treating that shape as configured avoids the silent
+ *      `getDefaultLlmConfig → undefined → pass-returns-zero` failure mode
+ *      that produced 18h of no-op memory-inference runs on 2026-05-23.
+ *
+ * Returns `undefined` when neither path resolves to a profile name.
+ */
+function resolveDefaultLlmProfileName(config: AkmConfig): string | undefined {
+  const explicit = config.defaults?.llm;
+  if (explicit) return explicit;
+  if (config.profiles?.llm?.default) return "default";
+  return undefined;
+}
+
+/**
  * Resolve the default LLM connection from `profiles.llm[defaults.llm]`.
  *
- * Throws {@link ConfigError} when `defaults.llm` is unset or points at a
- * profile that does not exist under `profiles.llm`. Use this in code paths
- * that must have an LLM configured (per-pass index calls, distill,
- * consolidate, etc).
+ * Throws {@link ConfigError} when no default profile can be resolved (neither
+ * `defaults.llm` nor an implicit `profiles.llm.default`) or when the named
+ * profile does not exist under `profiles.llm`. Use this in code paths that
+ * must have an LLM configured (per-pass index calls, distill, consolidate,
+ * etc).
  */
 export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
-  const defaultName = config.defaults?.llm;
+  const defaultName = resolveDefaultLlmProfileName(config);
   if (!defaultName) {
     throw new ConfigError(
       "LLM is not configured. Run `akm setup` or set `defaults.llm` to a profile defined in `profiles.llm`.",
@@ -241,7 +265,7 @@ export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
  * when no LLM is configured. Use in code paths where the LLM is optional.
  */
 export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | undefined {
-  const defaultName = config.defaults?.llm;
+  const defaultName = resolveDefaultLlmProfileName(config);
   if (!defaultName) return undefined;
   return config.profiles?.llm?.[defaultName];
 }
