@@ -2153,3 +2153,67 @@ export async function runSetupFromConfig(opts: {
     ripgrep: initResult?.ripgrep,
   };
 }
+
+// ── Setup --from <file> bootstrap helper ────────────────────────────────────
+
+/**
+ * Resolve a `--from <file>` argument to a JSON-encoded config payload suitable
+ * for `runSetupFromConfig({ configJson })`. Used by the CLI to bootstrap from
+ * a JSON or YAML file on disk; extracted as a standalone function so its
+ * filesystem and parser behaviour can be unit-tested directly.
+ *
+ * - Expands a leading `~` to the current user's home directory.
+ * - Resolves the path against `cwd ?? process.cwd()` for relative inputs.
+ * - Detects YAML vs JSON via the file extension (`.yml`/`.yaml` → YAML;
+ *   anything else, including `.json`, parses as JSON).
+ * - Throws `ConfigError("INVALID_CONFIG_FILE")` when the file does not exist,
+ *   cannot be read, cannot be parsed, or contains a non-object top level.
+ *
+ * Returns `{ configJson, resolvedPath, format }` so callers can log which
+ * file was actually loaded and which parser was used.
+ */
+export async function loadSetupConfigFromFile(
+  filePath: string,
+  opts?: { cwd?: string; homeDir?: string },
+): Promise<{ configJson: string; resolvedPath: string; format: "json" | "yaml" }> {
+  const cwd = opts?.cwd ?? process.cwd();
+  const homeDir = opts?.homeDir ?? os.homedir();
+  const expanded = filePath.startsWith("~") ? path.join(homeDir, filePath.slice(1)) : filePath;
+  const resolvedPath = path.resolve(cwd, expanded);
+
+  if (!fs.existsSync(resolvedPath)) {
+    throw new ConfigError(`Config file not found: ${resolvedPath}`, "INVALID_CONFIG_FILE");
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(resolvedPath, "utf8");
+  } catch (err) {
+    throw new ConfigError(
+      `Failed to read config file ${resolvedPath}: ${err instanceof Error ? err.message : String(err)}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  const ext = path.extname(resolvedPath).toLowerCase();
+  const format: "json" | "yaml" = ext === ".yml" || ext === ".yaml" ? "yaml" : "json";
+  let parsed: unknown;
+  try {
+    if (format === "yaml") {
+      const { parse: yamlParse } = await import("yaml");
+      parsed = yamlParse(raw);
+    } else {
+      parsed = JSON.parse(raw);
+    }
+  } catch (err) {
+    throw new ConfigError(
+      `Failed to parse ${format.toUpperCase()} config file ${resolvedPath}: ${err instanceof Error ? err.message : String(err)}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ConfigError(
+      `Config file ${resolvedPath} must contain a top-level object, got ${Array.isArray(parsed) ? "array" : typeof parsed}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return { configJson: JSON.stringify(parsed), resolvedPath, format };
+}

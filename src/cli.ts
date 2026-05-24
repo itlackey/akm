@@ -276,6 +276,11 @@ const setupCommand = defineCommand({
       type: "string",
       description: 'Config JSON to apply non-interactively, e.g. \'{"llm":{"endpoint":"...","model":"..."}}\'',
     },
+    from: {
+      type: "string",
+      description:
+        "Path to a config file (JSON or YAML) to bootstrap from. Skips prompts for keys present in the file.",
+    },
     yes: {
       type: "boolean",
       default: false,
@@ -294,7 +299,24 @@ const setupCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = getHyphenatedBoolean(args, "no-init");
-      if (args.config) {
+      if (args.from && args.config) {
+        throw new UsageError("Pass either --from <file> or --config <json>, not both.", "INVALID_FLAG_VALUE");
+      }
+      if (args.from) {
+        // File-based bootstrap. `loadSetupConfigFromFile` expands a leading
+        // `~`, resolves relative paths against cwd, picks the YAML or JSON
+        // parser based on the file extension, and surfaces any
+        // read/parse/shape errors as ConfigError("INVALID_CONFIG_FILE").
+        const { loadSetupConfigFromFile, runSetupFromConfig } = await import("./setup/setup");
+        const loaded = await loadSetupConfigFromFile(args.from);
+        const result = await runSetupFromConfig({
+          configJson: loaded.configJson,
+          dir: args.dir,
+          noInit,
+          probe: args.probe,
+        });
+        output("setup", result);
+      } else if (args.config) {
         // Non-interactive config mode
         const { runSetupFromConfig } = await import("./setup/setup");
         const result = await runSetupFromConfig({
