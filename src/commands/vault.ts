@@ -56,7 +56,23 @@ function withVaultLock<T>(vaultPath: string, fn: () => T): T {
       break;
     } catch {
       if (Date.now() > deadline) {
-        throw new Error(`Could not acquire vault lock for ${vaultPath} after 5s. Is another process holding it?`);
+        const holderHint = (() => {
+          try {
+            const rawPid = fs.readFileSync(lockPath, "utf8").trim();
+            const pid = Number.parseInt(rawPid, 10);
+            if (!Number.isNaN(pid) && pid > 0) {
+              return isProcessAlive(pid)
+                ? ` Lock file ${lockPath} is held by live PID ${pid}.`
+                : ` Lock file ${lockPath} references PID ${pid} which is no longer running — remove ${lockPath} manually if this persists.`;
+            }
+          } catch {
+            /* ignore */
+          }
+          return ` Lock file ${lockPath} could not be inspected.`;
+        })();
+        throw new Error(
+          `Could not acquire vault lock for ${vaultPath} after 5s.${holderHint} Retry once any other akm vault operation finishes, or remove the stale lock file.`,
+        );
       }
       // Check for stale lock: read PID and test if that process is alive
       try {

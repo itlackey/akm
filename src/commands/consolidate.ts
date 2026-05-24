@@ -265,6 +265,39 @@ export function isHotCapturedMemory(filePath: string): boolean {
   }
 }
 
+/**
+ * Strict guard for the consolidate delete/merge paths.
+ *
+ * Returns a verdict that distinguishes "hot" (refuse, user-explicit) from
+ * "unparseable" (refuse, frontmatter integrity broken — could have hidden a
+ * hot flag) from "safe" (proceed). The legacy `isHotCapturedMemory` returns
+ * false on read/parse errors, which would let consolidate delete a memory
+ * whose frontmatter was corrupted between capture and consolidate runs.
+ *
+ * Use this for any destructive operation; use `isHotCapturedMemory` only
+ * when a missing/unparseable file is genuinely safe to ignore.
+ */
+export type ConsolidateGuardVerdict = "hot" | "safe" | "unparseable" | "missing";
+
+export function consolidateGuardStatus(filePath: string): ConsolidateGuardVerdict {
+  if (!fs.existsSync(filePath)) return "missing";
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return "unparseable";
+  }
+  let parsed: ReturnType<typeof parseFrontmatter>;
+  try {
+    parsed = parseFrontmatter(content);
+  } catch {
+    return "unparseable";
+  }
+  const data = parsed.data as Record<string, unknown> | undefined;
+  if (!data || Object.keys(data).length === 0) return "unparseable";
+  return hasHotCaptureMode(data) ? "hot" : "safe";
+}
+
 // ── Chunk sizing ─────────────────────────────────────────────────────────────
 
 /**
@@ -1040,18 +1073,25 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
 
       // captureMode:hot guard — refuse the merge if ANY participating memory
-      // (primary or secondary) was user-captured. Hot memories are user-
-      // explicit and must not be deleted/overwritten by the consolidate LLM.
-      // 14 user memories were silent-deleted by consolidate before this guard
-      // landed; recovery required copying from .akm/archive/ by hand.
+      // (primary or secondary) was user-captured or has unparseable frontmatter
+      // (could have hidden a hot flag). Hot memories are user-explicit and
+      // must not be deleted/overwritten by the consolidate LLM. 14 user
+      // memories were silent-deleted by consolidate before this guard landed;
+      // recovery required copying from .akm/archive/ by hand.
       const mergeParticipants: string[] = [op.primary, ...op.secondaries];
-      const hotParticipants = mergeParticipants.filter((ref) => {
-        const e = memoryByRef.get(ref);
-        return e ? isHotCapturedMemory(e.filePath) : false;
-      });
-      if (hotParticipants.length > 0) {
+      const blockedParticipants = mergeParticipants.flatMap<{ ref: string; verdict: ConsolidateGuardVerdict }>(
+        (ref) => {
+          const e = memoryByRef.get(ref);
+          if (!e) return [];
+          const verdict = consolidateGuardStatus(e.filePath);
+          if (verdict === "hot" || verdict === "unparseable") return [{ ref, verdict }];
+          return [];
+        },
+      );
+      if (blockedParticipants.length > 0) {
+        const detail = blockedParticipants.map((p) => `${p.ref} (${p.verdict})`).join(", ");
         warnings.push(
-          `Merge: refused for ${op.primary} — ${hotParticipants.length} participant(s) have captureMode:hot (user-explicit, never auto-merge): ${hotParticipants.join(", ")}`,
+          `Merge: refused for ${op.primary} — ${blockedParticipants.length} participant(s) blocked by hot/unparseable frontmatter guard: ${detail}`,
         );
         continue;
       }
@@ -1098,14 +1138,16 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
-      // captureMode:hot guard — refuse to delete user-captured memories.
-      // The consolidate LLM was deleting hot-captured user memos as
+      // captureMode:hot guard — refuse to delete user-captured memories OR
+      // memories whose frontmatter is unparseable (could have hidden the hot
+      // flag). The consolidate LLM was deleting hot-captured user memos as
       // "redundant" — 14 such deletes were silently archived between
       // 2026-05-19 and 2026-05-20 before this guard. Hot memories are
       // user-explicit and may only be deleted by the user.
-      if (isHotCapturedMemory(entry.filePath)) {
+      const guard = consolidateGuardStatus(entry.filePath);
+      if (guard === "hot" || guard === "unparseable") {
         warnings.push(
-          `Delete: refused for ${op.ref} — captureMode:hot (user-explicit; never auto-delete). Reason from LLM: "${op.reason ?? "n/a"}"`,
+          `Delete: refused for ${op.ref} — ${guard === "hot" ? "captureMode:hot (user-explicit; never auto-delete)" : "frontmatter unparseable (cannot verify hot flag absent)"}. Reason from LLM: "${op.reason ?? "n/a"}"`,
         );
         continue;
       }
