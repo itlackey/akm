@@ -17,7 +17,16 @@ run shell commands, including [Claude Code](https://claude.ai/code),
 bun install -g akm-cli
 ```
 
-Requires [Bun](https://bun.sh) runtime. Upgrade in place with `akm upgrade`.
+Requires [Bun](https://bun.sh) >= 1.0. Upgrade in place with `akm upgrade`.
+
+Alternatively, download a prebuilt binary (no Bun needed) from the
+[GitHub releases](https://github.com/itlackey/akm/releases) page or run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+```
+
+> **AKM 0.8 requires the Bun runtime or the prebuilt binary. Node.js is not supported in 0.8.0.** Running `npm install -g akm-cli` on a Node.js-only machine will not produce a working install. Cross-runtime support is planned for 0.9.0.
 
 ## Quick Start
 

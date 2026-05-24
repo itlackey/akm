@@ -10,17 +10,34 @@ akm gives agents a curated, searchable library built from local directories, Git
 
 ## Install
 
+**Option 1 — Prebuilt binary (recommended, no runtime required):**
+
 ```sh
-# Standalone binary
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
-# Or via npm / pnpm / bun
-npm install -g akm-cli
-pnpm add -g akm-cli
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/itlackey/akm/main/install.ps1 | iex
+```
+
+**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
+
+```sh
 bun install -g akm-cli
 ```
 
 Upgrade in place: `akm upgrade`
+
+> **AKM 0.8 requires the Bun runtime or the prebuilt binary. Node.js is not supported in this release.** Cross-runtime compatibility is planned for 0.9.0. See [Privacy & data](docs/data-and-telemetry.md) for details on what akm stores locally.
+
+### From source (contributors only)
+
+```sh
+git clone https://github.com/itlackey/akm.git
+cd akm
+bun install
+bun run build
+```
 
 ## What akm does
 

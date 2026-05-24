@@ -3,16 +3,30 @@
 This guide walks you through installing akm, adding your first asset, and
 using search and show to discover capabilities.
 
+## Runtime Requirement
+
+> **AKM 0.8 requires the Bun runtime or the prebuilt binary. Node.js is not supported in this release.** Cross-runtime compatibility is planned for 0.9.0.
+
 ## Install
 
-Install from npm:
+**Option 1 — Prebuilt binary (no runtime required):**
+
+```sh
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/itlackey/akm/main/install.ps1 | iex
+```
+
+Or download a standalone binary directly from the
+[GitHub releases](https://github.com/itlackey/akm/releases) page.
+
+**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
 
 ```sh
 bun install -g akm-cli
 ```
-
-Or download a standalone binary from the
-[GitHub releases](https://github.com/itlackey/akm/releases) page.
 
 ## First-Time Setup
 
