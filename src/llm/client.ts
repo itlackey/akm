@@ -9,7 +9,7 @@
  */
 
 import { fetchWithTimeout } from "../core/common";
-import type { LlmConnectionConfig } from "../core/config";
+import { type LlmConnectionConfig, resolveSecret } from "../core/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
@@ -119,8 +119,9 @@ export async function chatCompletion(
 ): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (config.apiKey) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
+  const resolvedKey = resolveSecret(config.apiKey);
+  if (resolvedKey) {
+    headers.Authorization = `Bearer ${resolvedKey}`;
   }
 
   // Only include max_tokens when explicitly set. The model/API knows its own

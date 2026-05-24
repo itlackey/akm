@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
-  getConfigReadOnlyReason,
   loadConfig,
   loadUserConfig,
   resetConfigCache,
@@ -184,18 +183,26 @@ describe("loadConfig", () => {
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
-  test("handles corrupted JSON gracefully", () => {
+  test("throws ConfigError on corrupted JSON (#458)", () => {
     writeRawConfig(getConfigPath(), "not valid json {{{");
-    expect(loadConfig()).toEqual(DEFAULT_CONFIG);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Failed to parse config JSON/);
   });
 
-  test("handles non-object JSON gracefully", () => {
+  test("throws ConfigError on non-object root (#458)", () => {
     writeRawConfig(getConfigPath(), '"just a string"');
-    expect(loadConfig()).toEqual(DEFAULT_CONFIG);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/must contain a JSON object/);
   });
 
-  test("handles JSON array gracefully", () => {
+  test("throws ConfigError on JSON array root (#458)", () => {
     writeRawConfig(getConfigPath(), "[1, 2, 3]");
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/must contain a JSON object/);
+  });
+
+  test("returns DEFAULT_CONFIG when file does not exist (legitimate cold start)", () => {
+    // Sanity: cold-start case is preserved. Only malformed CONTENT throws.
     expect(loadConfig()).toEqual(DEFAULT_CONFIG);
   });
 
@@ -259,97 +266,25 @@ describe("loadConfig", () => {
     }
   });
 
-  test("merges ancestor project config files on top of user config", () => {
-    const workspaceRoot = makeTmpDir();
-    const nestedProjectDir = path.join(workspaceRoot, "apps", "demo");
-    try {
-      fs.mkdirSync(nestedProjectDir, { recursive: true });
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          output: { format: "text" },
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(workspaceRoot, ".akm", "config.json"),
-        JSON.stringify({
-          output: { detail: "full" },
-          sources: [{ type: "filesystem", path: "/workspace-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(workspaceRoot, "apps", ".akm", "config.json"),
-        JSON.stringify({
-          semanticSearchMode: "off",
-          sources: [{ type: "filesystem", path: "/apps-stash" }],
-        }),
-      );
-
-      process.chdir(nestedProjectDir);
-
-      expect(loadConfig()).toEqual({
-        ...DEFAULT_CONFIG,
-        semanticSearchMode: "off",
-        output: { format: "text", detail: "full" },
-        sources: [
-          { type: "filesystem", path: "/user-stash" },
-          { type: "filesystem", path: "/workspace-stash" },
-          { type: "filesystem", path: "/apps-stash" },
-        ],
-      });
-    } finally {
-      cleanup(workspaceRoot);
-    }
-  });
-
-  test("project config can replace inherited sources while keeping project sources", () => {
+  test("project-level .akm/config.json is no longer merged (single-layer load)", () => {
+    // Multi-layer project config was removed; only the user-level config is
+    // read. A project-level file under cwd-ancestors emits a deprecation
+    // warning but does NOT contribute settings.
     const projectDir = makeTmpDir();
     try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
+      writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
-          stashInheritance: "replace",
+          semanticSearchMode: "off",
           sources: [{ type: "filesystem", path: "/project-stash" }],
         }),
       );
-
       process.chdir(projectDir);
-
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
-    } finally {
-      cleanup(projectDir);
-    }
-  });
-
-  test("project config can replace inherited sources without defining replacements", () => {
-    const projectDir = makeTmpDir();
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(projectDir, ".akm", "config.json"),
-        JSON.stringify({
-          stashInheritance: "replace",
-        }),
-      );
-
-      process.chdir(projectDir);
-
-      expect(loadConfig().sources).toEqual([]);
+      const loaded = loadConfig();
+      expect(loaded.semanticSearchMode).toBe("auto");
+      // sources from project config are ignored
+      expect(loaded.sources).toBeUndefined();
     } finally {
       cleanup(projectDir);
     }
@@ -438,29 +373,30 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow("writable: true is only supported on filesystem and git sources");
   });
 
-  test("recomputes merged config when cwd changes", () => {
-    const firstProject = makeTmpDir();
-    const secondProject = makeTmpDir();
+  test("emits a one-time deprecation warning when a project-level config is discovered (#457)", () => {
+    const projectDir = makeTmpDir();
     try {
       writeRawConfig(
-        path.join(firstProject, ".akm", "config.json"),
-        JSON.stringify({ sources: [{ type: "filesystem", path: "/first-project-stash" }] }),
-      );
-      writeRawConfig(
-        path.join(secondProject, ".akm", "config.json"),
-        JSON.stringify({ sources: [{ type: "filesystem", path: "/second-project-stash" }] }),
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({ sources: [{ type: "filesystem", path: "/project-stash" }] }),
       );
 
-      process.chdir(firstProject);
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
-
-      // Intentionally do not reset the cache here; loadConfig() should notice
-      // the cwd change because the discovered project config path set changes.
-      process.chdir(secondProject);
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
+      const messages: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        messages.push(args.map(String).join(" "));
+      };
+      try {
+        process.chdir(projectDir);
+        loadConfig();
+      } finally {
+        console.warn = originalWarn;
+      }
+      // Warning mentions deprecation + project-level + that the file is ignored.
+      expect(messages.some((m) => m.includes("DEPRECATED") && m.includes("project-level"))).toBe(true);
+      expect(messages.some((m) => m.includes("ignored"))).toBe(true);
     } finally {
-      cleanup(firstProject);
-      cleanup(secondProject);
+      cleanup(projectDir);
     }
   });
 });
@@ -518,6 +454,27 @@ describe("saveConfig", () => {
     const backups = fs.readdirSync(backupDir).filter((name) => name.startsWith("config-") && name.endsWith(".json"));
     expect(backups.length).toBeGreaterThan(0);
   });
+
+  test("prunes config backups to the 5 most-recent (#459)", () => {
+    // 10 saves → 10 distinct backup timestamps (but at most 5 should remain).
+    for (let i = 0; i < 10; i++) {
+      saveConfig({ semanticSearchMode: i % 2 === 0 ? "off" : "auto" });
+      // The timestamp is ISO-second-resolution; introduce a small delay so
+      // each backup gets a unique filename. mtimeMs is what we sort on.
+      const target = Date.now() + 10;
+      while (Date.now() < target) {
+        /* spin briefly */
+      }
+    }
+
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const timestamped = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("config-") && name.endsWith(".json") && name !== "config.latest.json");
+    expect(timestamped.length).toBeLessThanOrEqual(5);
+    // config.latest.json is always preserved
+    expect(fs.existsSync(path.join(backupDir, "config.latest.json"))).toBe(true);
+  });
 });
 
 // ── updateConfig ────────────────────────────────────────────────────────────
@@ -539,7 +496,10 @@ describe("updateConfig", () => {
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
 
-  test("writes only user config when project config is present", () => {
+  test("writes only user config and ignores any project-level .akm/config.json", () => {
+    // Project-level config files are no longer merged (single-layer load).
+    // updateConfig writes to the user-level file; project-level files are
+    // left untouched and their settings have no effect on loadConfig().
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
@@ -550,7 +510,8 @@ describe("updateConfig", () => {
       process.chdir(projectDir);
       updateConfig({ semanticSearchMode: "off" });
 
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      // Project sources are NOT merged in.
+      expect(loadConfig().sources).toBeUndefined();
       expect(loadUserConfig().sources).toBeUndefined();
       expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
       expect(loadUserConfig().semanticSearchMode).toBe("off");
@@ -730,21 +691,6 @@ describe("llm config", () => {
     });
   });
 
-  test("warns when llm endpoint does not end in /chat/completions", () => {
-    const originalWarn = console.warn;
-    const messages: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost/v1", model: "gpt-4" } }));
-      loadConfig();
-      expect(messages.some((msg) => msg.includes("/chat/completions"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
   test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
     // After QA #36, `akm config set llm.endpoint <url>` persists a partial
     // llm config with `model: ""`. The loader must accept this so the value
@@ -877,35 +823,27 @@ describe("search config", () => {
     expect(loadConfig().search?.graphBoost?.maxHops).toBe(3);
   });
 
-  test("warns and ignores unknown search and search.graphBoost keys", () => {
-    const originalWarn = console.warn;
-    const messages: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          search: {
-            minScore: 0.2,
-            unsupportedTopLevel: true,
-            graphBoost: {
-              maxHops: 2,
-              unsupportedNested: "x",
-            },
+  test("silently passes through unknown search and search.graphBoost keys", () => {
+    // Behaviour change: the legacy parser warned on unknown nested keys; the
+    // Zod schema now uses .passthrough() at this level so unknown keys
+    // round-trip without noise. Recognised keys still parse as before.
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          minScore: 0.2,
+          unsupportedTopLevel: true,
+          graphBoost: {
+            maxHops: 2,
+            unsupportedNested: "x",
           },
-        }),
-      );
+        },
+      }),
+    );
 
-      const loaded = loadConfig();
-      expect(loaded.search?.minScore).toBe(0.2);
-      expect(loaded.search?.graphBoost?.maxHops).toBe(2);
-      expect(messages.some((m) => m.includes('Ignoring unknown search key "unsupportedTopLevel"'))).toBe(true);
-      expect(messages.some((m) => m.includes('Ignoring unknown search.graphBoost key "unsupportedNested"'))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
+    const loaded = loadConfig();
+    expect(loaded.search?.minScore).toBe(0.2);
+    expect(loaded.search?.graphBoost?.maxHops).toBe(2);
   });
 });
 
@@ -957,25 +895,19 @@ describe("v2 config shape parsing", () => {
     expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
   });
 
-  test("warns and skips agent profile with invalid platform", () => {
-    const messages: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          profiles: { agent: { bad: { platform: "invalid-platform" } } },
-        }),
-      );
-      const loaded = loadConfig();
-      expect(loaded.profiles?.agent?.bad).toBeUndefined();
-      expect(messages.some((m) => m.includes("platform"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
+  test("silently skips agent profile with invalid platform", () => {
+    // Behaviour change: the legacy parser warned + dropped; Zod-driven load
+    // silently drops the individual malformed profile (via looseRecord) and
+    // keeps siblings. Aligned with the lossy semantics applied to other
+    // sub-objects across the new schema.
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        profiles: { agent: { bad: { platform: "invalid-platform" } } },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.agent?.bad).toBeUndefined();
   });
 
   test("parses defaults.llm, defaults.agent, defaults.improve", () => {
@@ -1165,123 +1097,32 @@ describe("auto-migration in loadConfig", () => {
     const loaded = loadConfig();
     expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
   });
-});
 
-// ── Newer-than-binary config guard (Fix 2 / migration safety) ──────────────
+  test("throws ConfigError when migrated write fails (no infinite re-run loop) (#461)", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
 
-describe("newer-than-binary config guard", () => {
-  const originalForceDowngrade = process.env.AKM_FORCE_DOWNGRADE_CONFIG;
-
-  afterEach(() => {
-    if (originalForceDowngrade === undefined) {
-      delete process.env.AKM_FORCE_DOWNGRADE_CONFIG;
-    } else {
-      process.env.AKM_FORCE_DOWNGRADE_CONFIG = originalForceDowngrade;
-    }
-  });
-
-  test("loadConfig reads a newer-than-binary config successfully", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.99.0",
-        semanticSearchMode: "off",
-        // Field the older binary does not know about — must be silently dropped
-        // on read (existing behaviour) but preserved on disk.
-        unknownFutureField: { foo: "bar" },
-      }),
-    );
-
-    const loaded = loadConfig();
-    expect(loaded.semanticSearchMode).toBe("off");
-    // Disk bytes must be untouched (no auto-migration of a newer config).
-    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(onDisk.configVersion).toBe("0.99.0");
-    expect(onDisk.unknownFutureField).toEqual({ foo: "bar" });
-    // Read-only reason is recorded for diagnostics.
-    expect(getConfigReadOnlyReason()?.foundVersion).toBe("0.99.0");
-  });
-
-  test("saveConfig throws when the loaded config is newer than the binary", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.99.0", semanticSearchMode: "off" }));
-    const loaded = loadConfig();
-
-    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).toThrow(ConfigError);
-    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).toThrow(
-      /config v0\.99\.0 .* is newer than this binary .* refusing to write/,
-    );
-    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).toThrow(/AKM_FORCE_DOWNGRADE_CONFIG=1/);
-  });
-
-  test("AKM_FORCE_DOWNGRADE_CONFIG=1 lets the write proceed", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.99.0",
-        semanticSearchMode: "off",
-        unknownFutureField: { foo: "bar" },
-      }),
-    );
-    const loaded = loadConfig();
-
-    process.env.AKM_FORCE_DOWNGRADE_CONFIG = "1";
-    expect(() => saveConfig({ ...loaded, semanticSearchMode: "auto" })).not.toThrow();
-
-    // The unknown future field was stripped by sanitizeConfigForWrite as the
-    // user explicitly opted in to a downgrade.
-    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(onDisk.unknownFutureField).toBeUndefined();
-    expect(onDisk.semanticSearchMode).toBe("auto");
-  });
-
-  test("maybeAutoMigrateConfigFile does not rewrite a newer config", () => {
-    const newerConfig = {
-      configVersion: "0.99.0",
-      // legacy llm.features key that WOULD normally trigger an auto-migration
-      llm: { endpoint: "http://localhost", model: "qwen3", features: { graph_extraction: false } },
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
     };
-    const original = JSON.stringify(newerConfig, null, 2);
-    writeRawConfig(getConfigPath(), original);
-    const mtimeBefore = fs.statSync(getConfigPath()).mtimeMs;
+    writeRawConfig(configPath, JSON.stringify(v1Config));
 
-    loadConfig();
-
-    const onDisk = fs.readFileSync(getConfigPath(), "utf8");
-    expect(onDisk).toBe(`${JSON.stringify(newerConfig, null, 2)}`);
-    // No write occurred — file bytes unchanged.
-    const mtimeAfter = fs.statSync(getConfigPath()).mtimeMs;
-    expect(mtimeAfter).toBe(mtimeBefore);
-  });
-
-  test("project config with newer version triggers the same guard", () => {
-    const projectDir = makeTmpDir();
+    // Simulate write failure by making the config directory read-only just
+    // after the initial read but before the migration write. The simplest way
+    // is to make the config FILE read-only AND chmod the dir to drop write
+    // permission so the atomic rename can't replace it.
+    const configDir = path.dirname(configPath);
+    fs.chmodSync(configDir, 0o555);
     try {
-      // User config at current version — safe on its own.
-      writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.8.0" }));
-      writeRawConfig(
-        path.join(projectDir, ".akm", "config.json"),
-        JSON.stringify({ configVersion: "0.99.0", semanticSearchMode: "off" }),
-      );
-
-      process.chdir(projectDir);
-
-      // Reading still works.
-      const loaded = loadConfig();
-      expect(loaded.semanticSearchMode).toBe("off");
-      // …but saveConfig is blocked because a project layer was newer.
-      expect(() => saveConfig(loaded)).toThrow(/is newer than this binary/);
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(/Failed to write migrated config/);
     } finally {
-      cleanup(projectDir);
+      // Restore so cleanup() can rm -rf the tmp dir.
+      fs.chmodSync(configDir, 0o755);
     }
-  });
-
-  test("legacy numeric configVersion at current shape does not trigger the guard", () => {
-    // legacy `configVersion: 2` is treated as "already migrated to v2 shape"
-    // by migrateConfigShape; it must NOT be flagged as newer than 0.8.0.
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: 2, semanticSearchMode: "off" }));
-    const loaded = loadConfig();
-    expect(loaded.semanticSearchMode).toBe("off");
-    expect(getConfigReadOnlyReason()).toBeUndefined();
-    expect(() => saveConfig(loaded)).not.toThrow();
   });
 });

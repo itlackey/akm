@@ -1,393 +1,155 @@
-import {
-  type AkmConfig,
-  DEFAULT_CONFIG,
-  type EmbeddingConnectionConfig,
-  getSources,
-  type InstallAuditConfig,
-  type LlmConnectionConfig,
-  type LlmProfileConfig,
-  type OutputConfig,
-  type RegistryConfigEntry,
-  type SecurityConfig,
-  type SourceConfigEntry,
-} from "../core/config";
+/**
+ * Config CLI commands — `akm config get/set/unset/list`.
+ *
+ * Thin wrappers around the schema walker in `core/config-walker.ts`. Adding a
+ * new config field is one line of Zod schema in `core/config-schema.ts` and
+ * zero lines here — the walker handles get/set/unset/coercion uniformly.
+ *
+ * Legacy behaviour preserved:
+ *   - `akm config set llm.<x>` writes to `profiles.llm.<defaults.llm>` (or
+ *     auto-creates a "default" profile), mirroring the pre-rewrite shim.
+ *   - `akm config set embedding.ollamaOptions.numCtx` is sugar for
+ *     `embedding.ollamaOptions.num_ctx` (camelCase ↔ snake_case bridge).
+ *   - `parseConfigValue` returns a Partial<AkmConfig> so it can be merged with
+ *     the runtime config object via `mergeConfigValue`.
+ */
+import { type AkmConfig, DEFAULT_CONFIG, getSources } from "../core/config";
+import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config-walker";
 import { UsageError } from "../core/errors";
-import { assertWritableAllowedForKind } from "../core/write-source";
 
-// ── Merge helpers for LLM/embedding subkey set ───────────────────────────────
+// ── Legacy `llm.*` → `profiles.llm.<default>.*` aliasing ────────────────────
 
 /**
- * Build a Partial<AkmConfig> that places an LLM connection patch into the
- * `profiles.llm.default` slot and sets `defaults.llm = "default"`. Used by
- * the legacy `llm.*` config-cli paths so existing scripts that ran
- * `akm config set llm.endpoint <url>` continue to work after the 0.8.0
- * migration.
+ * Map a legacy top-level `llm.<sub>` path onto the actual schema path. The
+ * default profile name is "default" when `defaults.llm` is unset.
  */
-function buildDefaultLlmProfilePatch(patch: Partial<LlmConnectionConfig>): Partial<AkmConfig> {
-  const profile: LlmProfileConfig = { endpoint: "", model: "", ...patch };
-  return {
-    profiles: { llm: { default: profile } },
-    defaults: { llm: "default" },
-  };
+function rewriteLegacyLlmPath(config: AkmConfig, key: string): string {
+  if (key !== "llm" && !key.startsWith("llm.")) return key;
+  const sub = key === "llm" ? "" : key.slice("llm.".length);
+  const profileName = config.defaults?.llm ?? "default";
+  return sub ? `profiles.llm.${profileName}.${sub}` : `profiles.llm.${profileName}`;
 }
 
-function getDefaultLlmProfile(config: AkmConfig): LlmConnectionConfig | undefined {
-  const name = config.defaults?.llm;
-  if (!name) return undefined;
-  return config.profiles?.llm?.[name];
+/**
+ * Translate the legacy `embedding.ollamaOptions.numCtx` to the actual schema
+ * key `embedding.ollamaOptions.num_ctx`.
+ */
+function rewriteEmbeddingPath(key: string): string {
+  if (key === "embedding.ollamaOptions.numCtx") return "embedding.ollamaOptions.num_ctx";
+  return key;
 }
 
-function setDefaultLlmProfile(config: AkmConfig, patch: Partial<LlmConnectionConfig>): AkmConfig {
-  const name = config.defaults?.llm ?? "default";
-  const existing = config.profiles?.llm?.[name];
-  const updated: LlmProfileConfig = { endpoint: "", model: "", ...(existing ?? {}), ...patch };
-  return {
-    ...config,
-    profiles: {
-      ...(config.profiles ?? {}),
-      llm: {
-        ...(config.profiles?.llm ?? {}),
-        [name]: updated,
-      },
-    },
-    defaults: {
-      ...(config.defaults ?? {}),
-      llm: name,
-    },
-  };
+/**
+ * Translate the deprecated `stashes` alias for `sources` (one-way: both read
+ * and write go through `sources`).
+ */
+function rewriteSourcesAlias(key: string): string {
+  if (key === "stashes") return "sources";
+  if (key.startsWith("stashes.")) return `sources.${key.slice("stashes.".length)}`;
+  return key;
 }
 
-function removeDefaultLlmField<K extends keyof LlmConnectionConfig>(config: AkmConfig, field: K): AkmConfig {
-  const name = config.defaults?.llm;
-  if (!name) return config;
-  const existing = config.profiles?.llm?.[name];
-  if (!existing) return config;
-  const { [field]: _dropped, ...rest } = existing;
-  return {
-    ...config,
-    profiles: {
-      ...(config.profiles ?? {}),
-      llm: {
-        ...(config.profiles?.llm ?? {}),
-        [name]: rest as LlmProfileConfig,
-      },
-    },
-  };
-}
-
-function mergeLlmLikeEmbedding(
-  base: EmbeddingConnectionConfig | undefined,
-  patch: Partial<EmbeddingConnectionConfig>,
-): EmbeddingConnectionConfig {
-  return { endpoint: "", model: "", ...(base ?? {}), ...patch };
-}
-
-function validateSources(entries: SourceConfigEntry[] | undefined): SourceConfigEntry[] | undefined {
-  if (!entries) return undefined;
-  for (const entry of entries) {
-    assertWritableAllowedForKind(entry);
+/**
+ * Translate the legacy `security.installAudit.registryWhitelist` alias.
+ */
+function rewriteSecurityAlias(key: string): string {
+  if (key === "security.installAudit.registryWhitelist") {
+    return "security.installAudit.registryAllowlist";
   }
-  return entries;
+  return key;
 }
 
-export function parseConfigValue(key: string, value: string): Partial<AkmConfig> {
-  switch (key) {
-    case "stashDir":
-      return { stashDir: requireNonEmptyString(value, key) };
-    case "defaultWriteTarget":
-      return { defaultWriteTarget: requireNonEmptyString(value, key) };
-    case "semanticSearchMode":
-      // Accept legacy boolean-style strings from CLI
-      if (value === "true") return { semanticSearchMode: "auto" };
-      if (value === "false") return { semanticSearchMode: "off" };
-      if (value !== "off" && value !== "auto") {
-        throw new UsageError(`Invalid value for semanticSearchMode: expected "off" or "auto"`);
-      }
-      return { semanticSearchMode: value };
-    case "embedding":
-      return { embedding: parseEmbeddingConnectionValue(value) };
-    case "embedding.endpoint":
-      return { embedding: mergeLlmLikeEmbedding(undefined, { endpoint: requireNonEmptyString(value, key) }) };
-    case "embedding.model":
-      return { embedding: mergeLlmLikeEmbedding(undefined, { model: requireNonEmptyString(value, key) }) };
-    case "embedding.apiKey":
-      return { embedding: mergeLlmLikeEmbedding(undefined, { apiKey: requireNonEmptyString(value, key) }) };
-    case "embedding.contextLength":
-      return { embedding: mergeLlmLikeEmbedding(undefined, { contextLength: parsePositiveInteger(value, key) }) };
-    case "embedding.ollamaOptions.numCtx":
-      return {
-        embedding: mergeLlmLikeEmbedding(undefined, { ollamaOptions: { num_ctx: parsePositiveInteger(value, key) } }),
-      };
-    case "llm": {
-      const parsed = parseLlmConnectionValue(value);
-      if (!parsed) {
-        throw new UsageError("Invalid value for llm: expected a JSON object with at least endpoint and model.");
-      }
-      return buildDefaultLlmProfilePatch(parsed);
-    }
-    case "llm.endpoint":
-      return buildDefaultLlmProfilePatch({ endpoint: requireNonEmptyString(value, key) });
-    case "llm.model":
-      return buildDefaultLlmProfilePatch({ model: requireNonEmptyString(value, key) });
-    case "llm.apiKey":
-      return buildDefaultLlmProfilePatch({ apiKey: requireNonEmptyString(value, key) });
-    case "llm.contextLength":
-      return buildDefaultLlmProfilePatch({ contextLength: parsePositiveInteger(value, key) });
-    case "registries":
-      return { registries: parseRegistriesValue(value) };
-    case "sources":
-    case "stashes":
-      // "stashes" is kept as an alias for backwards-compat; both write to `sources`.
-      return { sources: validateSources(parseStashesValue(value)) };
-    case "output.format":
-      return { output: { format: parseOutputFormat(value) } };
-    case "output.detail":
-      return { output: { detail: parseOutputDetail(value) } };
-    case "security.installAudit.enabled":
-      return { security: { installAudit: { enabled: parseBooleanValue(value, key) } } };
-    case "security.installAudit.blockOnCritical":
-      return { security: { installAudit: { blockOnCritical: parseBooleanValue(value, key) } } };
-    case "security.installAudit.blockUnlistedRegistries":
-      return { security: { installAudit: { blockUnlistedRegistries: parseBooleanValue(value, key) } } };
-    case "security.installAudit.registryAllowlist":
-      return { security: { installAudit: { registryAllowlist: parseStringArrayValue(value, key) } } };
-    case "security.installAudit.registryWhitelist":
-      return { security: { installAudit: { registryAllowlist: parseStringArrayValue(value, key) } } };
-    case "security.installAudit.allowedFindings":
-      return { security: { installAudit: { allowedFindings: parseAllowedFindingsValue(value, key) } } };
-    default:
-      throw new UsageError(`Unknown config key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
-  }
+function rewriteKey(config: AkmConfig, key: string): string {
+  let k = rewriteLegacyLlmPath(config, key);
+  k = rewriteEmbeddingPath(k);
+  k = rewriteSourcesAlias(k);
+  k = rewriteSecurityAlias(k);
+  return k;
 }
 
-const UNKNOWN_CONFIG_KEY_HINT =
-  "Valid top-level keys: stashDir, embedding, llm, registries, sources, agent, output, semanticSearchMode. Use dotted paths like `embedding.endpoint` or `output.format` for nested values.";
+// ── Public API ──────────────────────────────────────────────────────────────
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
-  switch (key) {
-    case "stashDir":
-      return config.stashDir ?? null;
-    case "defaultWriteTarget":
-      return config.defaultWriteTarget ?? null;
-    case "semanticSearchMode":
-      return config.semanticSearchMode;
-    case "embedding":
-      return config.embedding ?? null;
-    case "embedding.endpoint":
-      return config.embedding?.endpoint ?? null;
-    case "embedding.model":
-      return config.embedding?.model ?? null;
-    case "embedding.apiKey":
-      return config.embedding?.apiKey ?? null;
-    case "embedding.contextLength":
-      return config.embedding?.contextLength ?? null;
-    case "embedding.ollamaOptions.numCtx":
-      return config.embedding?.ollamaOptions?.num_ctx ?? null;
-    case "llm":
-      return getDefaultLlmProfile(config) ?? null;
-    case "llm.endpoint":
-      return getDefaultLlmProfile(config)?.endpoint ?? null;
-    case "llm.model":
-      return getDefaultLlmProfile(config)?.model ?? null;
-    case "llm.apiKey":
-      return getDefaultLlmProfile(config)?.apiKey ?? null;
-    case "llm.contextLength":
-      return getDefaultLlmProfile(config)?.contextLength ?? null;
-    case "registries":
-      return config.registries ?? DEFAULT_CONFIG.registries ?? [];
-    case "sources":
-    case "stashes":
-      // "stashes" is an alias for "sources" for backwards-compat.
-      return getSources(config);
-    case "output.format":
-      return config.output?.format ?? null;
-    case "output.detail":
-      return config.output?.detail ?? null;
-    case "security":
-      return config.security ?? null;
-    case "security.installAudit.enabled":
-      return config.security?.installAudit?.enabled ?? null;
-    case "security.installAudit.blockOnCritical":
-      return config.security?.installAudit?.blockOnCritical ?? null;
-    case "security.installAudit.blockUnlistedRegistries":
-      return config.security?.installAudit?.blockUnlistedRegistries ?? null;
-    case "security.installAudit.registryAllowlist":
-      return getInstallAuditAllowlist(config);
-    case "security.installAudit.registryWhitelist":
-      return getInstallAuditAllowlist(config);
-    case "security.installAudit.allowedFindings":
-      return config.security?.installAudit?.allowedFindings ?? null;
-    default:
-      throw new UsageError(`Unknown config key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
-  }
+  const k = rewriteKey(config, key);
+  return configGet(config as unknown as Record<string, unknown>, k);
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
-  switch (key) {
-    case "stashDir":
-    case "semanticSearchMode":
-    case "embedding":
-    case "llm":
-    case "registries":
-    case "sources":
-    case "stashes":
-    case "output.format":
-    case "output.detail":
-    case "security.installAudit.enabled":
-    case "security.installAudit.blockOnCritical":
-    case "security.installAudit.blockUnlistedRegistries":
-    case "security.installAudit.registryAllowlist":
-    case "security.installAudit.registryWhitelist":
-    case "security.installAudit.allowedFindings":
-      return mergeConfigValue(config, parseConfigValue(key, rawValue));
-    // Subkey setters use deep-merge so sibling fields are preserved
-    case "embedding.endpoint":
-      return {
-        ...config,
-        embedding: mergeLlmLikeEmbedding(config.embedding, { endpoint: requireNonEmptyString(rawValue, key) }),
-      };
-    case "embedding.model":
-      return {
-        ...config,
-        embedding: mergeLlmLikeEmbedding(config.embedding, { model: requireNonEmptyString(rawValue, key) }),
-      };
-    case "embedding.apiKey":
-      return {
-        ...config,
-        embedding: mergeLlmLikeEmbedding(config.embedding, { apiKey: requireNonEmptyString(rawValue, key) }),
-      };
-    case "embedding.contextLength":
-      return {
-        ...config,
-        embedding: mergeLlmLikeEmbedding(config.embedding, { contextLength: parsePositiveInteger(rawValue, key) }),
-      };
-    case "embedding.ollamaOptions.numCtx":
-      return {
-        ...config,
-        embedding: mergeLlmLikeEmbedding(config.embedding, {
-          ollamaOptions: { ...(config.embedding?.ollamaOptions ?? {}), num_ctx: parsePositiveInteger(rawValue, key) },
-        }),
-      };
-    case "llm.endpoint":
-      return setDefaultLlmProfile(config, { endpoint: requireNonEmptyString(rawValue, key) });
-    case "llm.model":
-      return setDefaultLlmProfile(config, { model: requireNonEmptyString(rawValue, key) });
-    case "llm.apiKey":
-      return setDefaultLlmProfile(config, { apiKey: requireNonEmptyString(rawValue, key) });
-    case "llm.contextLength":
-      return setDefaultLlmProfile(config, { contextLength: parsePositiveInteger(rawValue, key) });
-    case "defaultWriteTarget": {
-      const name = requireNonEmptyString(rawValue, key);
-      const knownNames = getSources(config)
-        .map((s) => s.name)
-        .filter((n): n is string => typeof n === "string");
-      if (knownNames.length > 0 && !knownNames.includes(name)) {
-        throw new UsageError(
-          `Unknown source name "${name}" for defaultWriteTarget; configured source names: ${knownNames.map((n) => `"${n}"`).join(", ")}`,
-        );
-      }
-      return { ...config, defaultWriteTarget: name };
-    }
-    default:
-      throw new UsageError(`Unknown config key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
+  // #454: reject the legacy aliases up front so the error message names the
+  // env var the user typed (AKM_LLM_API_KEY) rather than the rewritten profile
+  // env var (AKM_PROFILE_DEFAULT_API_KEY) — both work at runtime, but the
+  // shorter name matches the user's mental model.
+  if (key === "llm.apiKey") {
+    throw new UsageError(
+      "apiKey cannot be persisted in config; export AKM_LLM_API_KEY instead. (key: llm.apiKey)",
+      "INVALID_FLAG_VALUE",
+      "Storing API keys in config.json leaks them through backups, logs, and version control. " +
+        "Use the corresponding environment variable. AKM reads it at request time.",
+    );
   }
+  if (key === "embedding.apiKey") {
+    throw new UsageError(
+      "apiKey cannot be persisted in config; export AKM_EMBED_API_KEY instead. (key: embedding.apiKey)",
+      "INVALID_FLAG_VALUE",
+      "Storing API keys in config.json leaks them through backups, logs, and version control. " +
+        "Use the corresponding environment variable. AKM reads it at request time.",
+    );
+  }
+
+  const k = rewriteKey(config, key);
+  // Legacy ergonomic: `akm config set semanticSearchMode true|false`
+  let coerced = rawValue;
+  if (k === "semanticSearchMode") {
+    if (rawValue === "true") coerced = "auto";
+    else if (rawValue === "false") coerced = "off";
+  }
+  let next = configSet(config as unknown as Record<string, unknown>, k, coerced) as unknown as AkmConfig;
+
+  // Legacy ergonomic shim: when the user sets `llm.<field>` and no
+  // `defaults.llm` is set, point it at the freshly-created profile so the
+  // value actually takes effect at runtime.
+  if (key === "llm" || key.startsWith("llm.")) {
+    if (!next.defaults?.llm) {
+      next = {
+        ...next,
+        defaults: { ...(next.defaults ?? {}), llm: "default" },
+      };
+    }
+  }
+
+  return next;
 }
 
 export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
-  switch (key) {
-    case "stashDir":
-      return { ...config, stashDir: undefined };
-    case "defaultWriteTarget":
-      return { ...config, defaultWriteTarget: undefined };
-    case "embedding":
-      return { ...config, embedding: undefined };
-    case "embedding.endpoint":
-      return { ...config, embedding: mergeLlmLikeEmbedding(config.embedding, { endpoint: "" }) };
-    case "embedding.model":
-      return { ...config, embedding: mergeLlmLikeEmbedding(config.embedding, { model: "" }) };
-    case "embedding.apiKey": {
-      if (!config.embedding) return config;
-      const { apiKey: _a, ...rest } = config.embedding;
-      return { ...config, embedding: rest as EmbeddingConnectionConfig };
+  const k = rewriteKey(config, key);
+  return configUnset(config as unknown as Record<string, unknown>, k) as unknown as AkmConfig;
+}
+
+/**
+ * Compatibility shim: returns a `Partial<AkmConfig>` containing just the
+ * change. Older code merged this onto the live config — new code should call
+ * `setConfigValue` directly (which returns the full merged config).
+ */
+export function parseConfigValue(key: string, value: string): Partial<AkmConfig> {
+  // Use a "marker" base so we can detect which top-level fields actually got
+  // touched by the set call. Anything still equal to the marker is untouched.
+  const SENTINEL = Symbol("untouched");
+  const base: Record<string, unknown> = { semanticSearchMode: SENTINEL };
+  const next = setConfigValue(base as unknown as AkmConfig, key, value) as unknown as Record<string, unknown>;
+  const patch: Record<string, unknown> = {};
+  for (const k of Object.keys(next)) {
+    if (next[k] !== SENTINEL) {
+      patch[k] = next[k];
     }
-    case "embedding.contextLength": {
-      if (!config.embedding) return config;
-      const { contextLength: _cl, ...rest } = config.embedding;
-      return { ...config, embedding: rest as EmbeddingConnectionConfig };
-    }
-    case "embedding.ollamaOptions.numCtx": {
-      if (!config.embedding?.ollamaOptions) return config;
-      const { num_ctx: _nc, ...restOpts } = config.embedding.ollamaOptions;
-      const ollamaOptions = Object.keys(restOpts).length > 0 ? restOpts : undefined;
-      return { ...config, embedding: { ...config.embedding, ollamaOptions } };
-    }
-    case "llm": {
-      // Clear the default LLM profile entry entirely.
-      const name = config.defaults?.llm;
-      if (!name) return config;
-      const { [name]: _dropped, ...rest } = config.profiles?.llm ?? {};
-      return {
-        ...config,
-        profiles: { ...(config.profiles ?? {}), llm: rest },
-      };
-    }
-    case "llm.endpoint":
-      return setDefaultLlmProfile(config, { endpoint: "" });
-    case "llm.model":
-      return setDefaultLlmProfile(config, { model: "" });
-    case "llm.apiKey":
-      return removeDefaultLlmField(config, "apiKey");
-    case "llm.contextLength":
-      return removeDefaultLlmField(config, "contextLength");
-    case "registries":
-      return { ...config, registries: undefined };
-    case "sources":
-    case "stashes":
-      // "stashes" is kept as an alias for backwards-compat; both clear `sources`.
-      return { ...config, sources: undefined };
-    case "output.format":
-      return { ...config, output: mergeOutputConfig(config.output, { format: undefined }) };
-    case "output.detail":
-      return { ...config, output: mergeOutputConfig(config.output, { detail: undefined }) };
-    case "security":
-      return { ...config, security: undefined };
-    case "security.installAudit.enabled":
-      return { ...config, security: mergeSecurityConfig(config.security, { installAudit: { enabled: undefined } }) };
-    case "security.installAudit.blockOnCritical":
-      return {
-        ...config,
-        security: mergeSecurityConfig(config.security, { installAudit: { blockOnCritical: undefined } }),
-      };
-    case "security.installAudit.blockUnlistedRegistries":
-      return {
-        ...config,
-        security: mergeSecurityConfig(config.security, { installAudit: { blockUnlistedRegistries: undefined } }),
-      };
-    case "security.installAudit.registryAllowlist":
-    case "security.installAudit.registryWhitelist":
-      return {
-        ...config,
-        security: mergeSecurityConfig(config.security, {
-          installAudit: { registryAllowlist: undefined, registryWhitelist: undefined },
-        }),
-      };
-    case "security.installAudit.allowedFindings":
-      return {
-        ...config,
-        security: mergeSecurityConfig(config.security, {
-          installAudit: { allowedFindings: undefined },
-        }),
-      };
-    default:
-      throw new UsageError(`Unknown or unsupported unset key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
   }
+  return patch as Partial<AkmConfig>;
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
   const result: Record<string, unknown> = {
     semanticSearchMode: config.semanticSearchMode,
     registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
-    output: mergeOutputConfig(DEFAULT_CONFIG.output, config.output) ?? null,
+    output: { ...(DEFAULT_CONFIG.output ?? {}), ...(config.output ?? {}) },
     stashDir: config.stashDir ?? null,
     installed: config.installed ?? [],
     sources: getSources(config),
@@ -397,246 +159,13 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   if (config.profiles) result.profiles = config.profiles;
   if (config.defaults) result.defaults = config.defaults;
   if (config.security) result.security = config.security;
+  if (config.search) result.search = config.search;
+  if (config.index) result.index = config.index;
+  if (config.feedback) result.feedback = config.feedback;
+  if (config.improve) result.improve = config.improve;
+  if (config.archiveRetentionDays !== undefined) result.archiveRetentionDays = config.archiveRetentionDays;
+  if (config.configVersion !== undefined) result.configVersion = config.configVersion;
   return result;
 }
 
-function mergeConfigValue(config: AkmConfig, partial: Partial<AkmConfig>): AkmConfig {
-  return {
-    ...config,
-    ...partial,
-    output: mergeOutputConfig(config.output, partial.output),
-    security: mergeSecurityConfig(config.security, partial.security),
-  };
-}
-
-function mergeOutputConfig(base?: OutputConfig, override?: OutputConfig): OutputConfig | undefined {
-  const merged = {
-    ...(base ?? {}),
-    ...(override ?? {}),
-  };
-  return merged.format || merged.detail ? merged : undefined;
-}
-
-function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
-  const mergedInstallAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
-  return mergedInstallAudit ? { installAudit: mergedInstallAudit } : undefined;
-}
-
-function mergeInstallAuditConfig(
-  base?: InstallAuditConfig,
-  override?: InstallAuditConfig,
-): InstallAuditConfig | undefined {
-  const merged = {
-    ...(base ?? {}),
-    ...(override ?? {}),
-  };
-  const hasValue = Object.values(merged).some((value) => value !== undefined);
-  return hasValue ? merged : undefined;
-}
-
-function parseOutputFormat(value: string): OutputConfig["format"] {
-  if (value === "json" || value === "yaml" || value === "text") return value;
-  throw new UsageError(`Invalid value for output.format: expected one of json|yaml|text`);
-}
-
-function parseOutputDetail(value: string): OutputConfig["detail"] {
-  if (value === "brief" || value === "normal" || value === "full") return value;
-  throw new UsageError(`Invalid value for output.detail: expected one of brief|normal|full`);
-}
-
-function parseBooleanValue(value: string, key: string): boolean {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  throw new UsageError(`Invalid value for ${key}: expected true or false`);
-}
-
-function parseStringArrayValue(value: string, key: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new UsageError(`Invalid value for ${key}: expected a JSON array of strings`);
-  }
-  if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) {
-    throw new UsageError(`Invalid value for ${key}: expected a JSON array of strings`);
-  }
-  return parsed;
-}
-
-function getInstallAuditAllowlist(config: AkmConfig): string[] | null {
-  return config.security?.installAudit?.registryAllowlist ?? config.security?.installAudit?.registryWhitelist ?? null;
-}
-
-function parseAllowedFindingsValue(value: string, key: string): InstallAuditConfig["allowedFindings"] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new UsageError(`Invalid value for ${key}: expected a JSON array of {id, ref?, path?, reason?} objects`);
-  }
-  if (!Array.isArray(parsed)) {
-    throw new UsageError(`Invalid value for ${key}: expected a JSON array`);
-  }
-  return parsed.map((entry, i) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new UsageError(`Invalid value for ${key}[${i}]: expected an object with an "id" field`);
-    }
-    const obj = entry as Record<string, unknown>;
-    if (typeof obj.id !== "string" || !obj.id) {
-      throw new UsageError(`Invalid value for ${key}[${i}]: "id" is required`);
-    }
-    const result: NonNullable<InstallAuditConfig["allowedFindings"]>[number] = { id: obj.id };
-    if (typeof obj.ref === "string" && obj.ref) result.ref = obj.ref;
-    if (typeof obj.path === "string" && obj.path) result.path = obj.path;
-    if (typeof obj.reason === "string" && obj.reason) result.reason = obj.reason;
-    return result;
-  });
-}
-
-function parseRegistriesValue(value: string): RegistryConfigEntry[] | undefined {
-  if (value === "null" || value === "") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new UsageError(
-      `Invalid value for registries: expected JSON array of {url, name?, enabled?, provider?, options?} objects` +
-        ` (e.g. '[{"url":"https://example.com/index.json","name":"my-registry"}]')`,
-    );
-  }
-  if (!Array.isArray(parsed)) {
-    throw new UsageError(`Invalid value for registries: expected a JSON array`);
-  }
-  return parsed.map((entry: unknown, i: number) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new UsageError(`Invalid value for registries[${i}]: expected an object with a "url" field`);
-    }
-    const obj = entry as Record<string, unknown>;
-    if (typeof obj.url !== "string" || !obj.url) {
-      throw new UsageError(`Invalid value for registries[${i}]: "url" is required`);
-    }
-    // Spread the full entry so unknown/future fields round-trip intact.
-    return { ...obj } as unknown as RegistryConfigEntry;
-  });
-}
-
-function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig | undefined {
-  if (value === "null" || value === "") return undefined;
-  const parsed = parseJsonObject(value, "embedding", {
-    endpoint: "http://localhost:11434/v1/embeddings",
-    model: "nomic-embed-text",
-  });
-  // Require either a non-empty endpoint (remote) or a localModel (local-only).
-  const hasEndpoint = typeof parsed.endpoint === "string" && parsed.endpoint !== "";
-  const hasLocalModel = typeof parsed.localModel === "string" && parsed.localModel !== "";
-  if (!hasEndpoint && !hasLocalModel) {
-    throw new UsageError(
-      `Invalid value for embedding: "endpoint" is required for remote embeddings, or provide "localModel" for local-only`,
-    );
-  }
-  // Validate the types of the required/structural fields that the runtime
-  // depends on, but do not reconstruct the object — pass everything through.
-  if (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string") {
-    throw new UsageError(`Invalid value for embedding: "endpoint" must be a string`);
-  }
-  if (parsed.model !== undefined && typeof parsed.model !== "string") {
-    throw new UsageError(`Invalid value for embedding: "model" must be a string`);
-  }
-  if (parsed.dimension !== undefined && !Number.isInteger(parsed.dimension)) {
-    throw new UsageError(
-      `embedding.dimension: expected a positive integer, got ${parsed.dimension}`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  // Spread the full parsed object so unknown/future fields round-trip intact.
-  return { endpoint: "", model: "", ...parsed } as EmbeddingConnectionConfig;
-}
-
-function parseLlmConnectionValue(value: string): LlmConnectionConfig | undefined {
-  if (value === "null" || value === "") return undefined;
-  const parsed = parseJsonObject(value, "llm", {
-    endpoint: "http://localhost:11434/v1/chat/completions",
-    model: "llama3.2",
-  });
-  if (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string") {
-    throw new UsageError(`Invalid value for llm: "endpoint" is a required string field`);
-  }
-  if (parsed.model !== undefined && typeof parsed.model !== "string") {
-    throw new UsageError(`Invalid value for llm: "model" is a required string field`);
-  }
-  if (typeof parsed.endpoint !== "string" || !parsed.endpoint) {
-    throw new UsageError(`Invalid value for llm: "endpoint" is a required string field`);
-  }
-  if (parsed.model === undefined) {
-    return { endpoint: parsed.endpoint, model: "", ...parsed } as unknown as LlmConnectionConfig;
-  }
-  if (!parsed.model) {
-    throw new UsageError(`Invalid value for llm: "model" must be a non-empty string when provided`);
-  }
-  // Spread the full parsed object so unknown/future fields round-trip intact.
-  // The config loader (config.ts) handles warn-and-ignore for unknown sub-keys
-  // at read time, so we do not need to whitelist here.
-  return { ...parsed } as unknown as LlmConnectionConfig;
-}
-
-function parseJsonObject(
-  value: string,
-  key: string,
-  example: { endpoint: string; model: string },
-): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new UsageError(
-      `Invalid value for ${key}: expected JSON object with endpoint and model` +
-        ` (e.g. '{"endpoint":"${example.endpoint}","model":"${example.model}"}')`,
-      "INVALID_JSON_CONFIG_VALUE",
-    );
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new UsageError(`Invalid value for ${key}: expected a JSON object`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function requireNonEmptyString(value: string, key: string): string {
-  if (!value) {
-    throw new UsageError(`Invalid value for ${key}: expected a non-empty string`);
-  }
-  return value;
-}
-
-function parsePositiveInteger(value: string, key: string): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-    throw new UsageError(`Invalid value for ${key}: expected a positive integer`);
-  }
-  return n;
-}
-
-function parseStashesValue(value: string): SourceConfigEntry[] | undefined {
-  if (value === "null" || value === "") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new UsageError(
-      `Invalid value for sources: expected JSON array of {type, path?, url?, name?, enabled?, options?} objects`,
-    );
-  }
-  if (!Array.isArray(parsed)) {
-    throw new UsageError(`Invalid value for sources: expected a JSON array`);
-  }
-  return parsed.map((entry: unknown, i: number) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new UsageError(`Invalid value for sources[${i}]: expected an object with a "type" field`);
-    }
-    const obj = entry as Record<string, unknown>;
-    if (typeof obj.type !== "string" || !obj.type) {
-      throw new UsageError(`Invalid value for sources[${i}]: "type" is required`);
-    }
-    // Spread the full entry so unknown/future fields round-trip intact.
-    return { ...obj } as unknown as SourceConfigEntry;
-  });
-}
+export { unknownKeyHint };

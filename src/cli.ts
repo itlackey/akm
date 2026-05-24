@@ -1349,6 +1349,33 @@ const configCommand = defineCommand({
         });
       },
     }),
+    validate: defineCommand({
+      meta: {
+        name: "validate",
+        description: "Validate the on-disk config file against the schema. Exits non-zero on errors.",
+      },
+      async run() {
+        return runWithJsonErrors(async () => {
+          const { runConfigValidate } = await import("./cli/config-validate.js");
+          await runConfigValidate();
+        });
+      },
+    }),
+    migrate: defineCommand({
+      meta: {
+        name: "migrate",
+        description: "Migrate the config file to the current schema version. Use --dry-run to preview.",
+      },
+      args: {
+        "dry-run": { type: "boolean", description: "Print the migration result without writing.", default: false },
+      },
+      async run({ args }) {
+        return runWithJsonErrors(async () => {
+          const { runConfigMigrate } = await import("./cli/config-migrate.js");
+          await runConfigMigrate({ dryRun: Boolean(args["dry-run"]) });
+        });
+      },
+    }),
   },
   run({ args }) {
     return runWithJsonErrors(() => {

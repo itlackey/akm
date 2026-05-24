@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Project-level `.akm/config.json` files are no longer merged**. The
+  multi-layer config discovery introduced in the 0.7 line was deprecated
+  in late-0.8.x with a warning; that warning is now backed by removal.
+  `loadConfig` walks cwd-ancestors only to emit a one-time deprecation
+  warning per discovered file. Move any needed settings to
+  `~/.config/akm/config.json`. `stashInheritance` (a multi-layer-only
+  field) is removed from the schema.
+
+- **`${VAR}` env-var expansion only resolves at the apiKey consumption
+  sites**. The recursive expansion walker that ran on the load path is
+  gone. Other config string values now round-trip verbatim: a literal
+  `${HOME}` in (say) `stashDir` is preserved as the literal `${HOME}`
+  on read. The new exported `resolveSecret(value)` helper is applied
+  only where authorization headers are built (`src/llm/client.ts`,
+  `src/llm/embedders/remote.ts`, `src/integrations/agent/sdk-runner.ts`).
+  Documented `${OPENAI_API_KEY}` recipes in `docs/configuration.md`
+  continue to work because expansion still happens at request time for
+  apiKey fields.
+
+- **`AKM_FORCE_DOWNGRADE_CONFIG` env var removed**. The newer-than-binary
+  read-only guard (`configReadOnlyReason`, `markConfigReadOnlyIfNewer`,
+  `getConfigReadOnlyReason`) is gone. Configs declaring a `configVersion`
+  newer than the running binary now save through silently — unknown
+  fields are stripped on save by `sanitizeConfigForWrite` plus the
+  strict-walled Zod schema. Users on 0.9.x configs should not open them
+  with a 0.8.x binary in writable workflows.
+
+### Changed
+
+- **Config layer rewrite** — single-source-of-truth Zod schema in
+  `src/core/config-schema.ts` replaces the per-field parse switch AND
+  the per-shape load-time parser. Adding a new config field is now one
+  line of schema + zero lines of CLI code. `loadConfig` now consists of
+  parse-text → migrate (pure JSON transforms) → Zod safeParse → overlay
+  defaults — a ~30-line pipeline that absorbs ~900 LOC of legacy
+  per-shape parsers (`parseLlmConfig`, `parseEmbeddingConfig`,
+  `parseIndexConfig`, `parseSourceConfigEntry`, and ~20 more).
+  - **#454**: `akm config set llm.apiKey` / `embedding.apiKey` /
+    `profiles.llm.<name>.apiKey` now throws `UsageError` pointing at the
+    corresponding env var (`AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
+    `AKM_PROFILE_<NAME>_API_KEY`). Was previously a silent strip.
+  - **#455**: every schema-leaf key is now reachable via `akm config set`.
+    Includes previously hand-listed gaps: `defaults.agent`, `search.minScore`,
+    `improve.eventRetentionDays`, `embedding.provider`, `llm.temperature`,
+    `profiles.llm.<name>.*`, `profiles.agent.<name>.*`, etc.
+  - **#456**: `akm config validate` and `akm config migrate` are now real
+    registered subcommands. The orphan implementations in `config-validate.ts`
+    have been removed; the new entry points live in `src/cli/`.
+  - **#457**: project-level `.akm/config.json` files are now flagged with a
+    deprecation warning ("will be ignored in 0.9.0+"). The merge still
+    happens in 0.8.x — one release of grace.
+  - **#458**: malformed JSON or non-object root in the config file now raises
+    `ConfigError("INVALID_CONFIG_FILE")` with the underlying parse error.
+    Was previously a silent fallback to `DEFAULT_CONFIG`, which masked
+    corruption. File-not-existing remains the legitimate cold-start case.
+  - **#459**: `~/.cache/akm/config-backups/` is now bounded to the 5 most
+    recent timestamped backups. Pruning runs on each `saveConfig`.
+    `config.latest.json` is preserved separately.
+  - **#460**: `UNKNOWN_CONFIG_KEY_HINT` is now auto-generated from the
+    schema via `listTopLevelConfigKeys()`. No more stale hand-maintained string.
+  - **#461**: if the auto-migration disk-write fails, `loadConfig` now throws
+    a hard error instead of returning the in-memory migrated shape. Eliminates
+    the silent infinite re-migrate loop on every `akm` command.
+  - **#462**: nested registries[], sources[], profiles.* objects are
+    `.strict()` — unknown keys are rejected with a path-pointing error at
+    both set time and saveConfig time.
+  - **#463**: `schemas/akm-config.json` is now auto-generated from the Zod
+    source via `bun scripts/gen-config-schema.ts`. A drift test fails CI if
+    the committed file disagrees with the regeneration output.
+  - **#464.a**: `defaultWriteTarget` is validated via Zod `.refine()` against
+    `sources[].name`. With no sources configured, save-time validation
+    rejects instead of silently accepting (no implicit "first writable" fallback).
+  - **#464.b**: generic unset works on `semanticSearchMode` and every other
+    key via the dotted-path walker.
+  - **#464.c**: all write paths route through `writeFileAtomic`.
+  - **#464.d**: duplicate `mergeSecurityConfig` / `mergeInstallAuditConfig`
+    in `config-cli.ts` are deleted; merging happens via re-parse through the
+    Zod schema.
+
+See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
+
 ## [0.7.5] - 2026-05-08
 
 ### Added

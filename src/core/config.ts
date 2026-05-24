@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { InstalledStashEntry, KitSource } from "../registry/types";
-import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
+import type { InstalledStashEntry } from "../registry/types";
+import { writeFileAtomic } from "./common";
 import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from "./config-migration";
+import { AkmConfigSchema, AkmConfigShape } from "./config-schema";
 import { ConfigError } from "./errors";
 import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
@@ -369,13 +370,6 @@ export interface AkmConfig {
    * - `[...]` (non-empty array): use exactly the listed registries, overriding defaults.
    */
   registries?: RegistryConfigEntry[];
-  /**
-   * When set on a later config layer (typically project config), controls how
-   * the layer's `stashes` interact with stashes inherited from earlier layers.
-   * - `"merge"` (default): append the layer's stashes to the inherited list.
-   * - `"replace"`: discard the inherited stashes before applying this layer's.
-   */
-  stashInheritance?: "merge" | "replace";
   /** Additional asset sources (filesystem paths and remote providers) */
   sources?: SourceConfigEntry[];
   /**
@@ -666,90 +660,11 @@ export const DEFAULT_CONFIG: AkmConfig = {
   },
 };
 
-// ── Paths ───────────────────────────────────────────────────────────────────
-
 // ── Private helpers ─────────────────────────────────────────────────────────
-
-/**
- * Returns `value` if it is a finite positive integer; otherwise `undefined`.
- * Used to validate numeric config fields like `dimension`, `contextLength`,
- * `timeoutMs`, `maxTokens`, and `ollamaOptions.num_ctx`.
- */
-function parsePositiveInteger(_fieldPath: string, value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
-    return undefined;
-  }
-  return value;
-}
-
-function parseNonNegativeNumber(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
-  return value;
-}
-
-/**
- * Returns `value` if it is a string present in `allowed`; otherwise `undefined`.
- */
-function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
-  return typeof value === "string" && (allowed as readonly string[]).includes(value);
-}
-
-/**
- * Validates that `url` starts with `http://` or `https://`. Returns `url` on
- * success and warns+returns `undefined` on failure. `fieldName` is used only
- * in the warning message.
- */
-function isValidHttpUrl(url: unknown, fieldName: string): string | undefined {
-  if (typeof url !== "string" || !url) return undefined;
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    warn(`[akm] Ignoring ${fieldName}: endpoint must start with http:// or https://, got "${url}"`);
-    return undefined;
-  }
-  return url;
-}
 
 function clearAllCaches(): void {
   cachedConfig = undefined;
   cachedUserConfig = undefined;
-  configReadOnlyReason = undefined;
-}
-
-// ── Newer-config-than-binary guard (Fix 2 / migration safety) ───────────────
-//
-// When ANY loaded config layer declares a `configVersion` higher than the
-// binary's `CURRENT_CONFIG_VERSION`, this module enters a read-only mode for
-// the current process. Reads still succeed (unknown fields are silently
-// dropped by `parseConfigLayer`, preserving existing behaviour), but writes
-// via `saveConfig` are refused so we don't strip the newer fields on the way
-// back to disk.
-//
-// `AKM_FORCE_DOWNGRADE_CONFIG=1` is the explicit escape hatch: writes proceed
-// after emitting a stderr warning that fields will be stripped.
-let configReadOnlyReason: { path: string; foundVersion: string | number; binaryVersion: string } | undefined;
-
-/**
- * Returns the read-only reason if a newer-than-binary config layer was loaded
- * in the current process, otherwise undefined. Exposed for diagnostics/tests.
- */
-export function getConfigReadOnlyReason():
-  | { path: string; foundVersion: string | number; binaryVersion: string }
-  | undefined {
-  return configReadOnlyReason;
-}
-
-function markConfigReadOnlyIfNewer(configPath: string, rawVersion: unknown): void {
-  if (typeof rawVersion !== "string" && typeof rawVersion !== "number") return;
-  const cmp = compareConfigVersion(rawVersion, CURRENT_CONFIG_VERSION);
-  if (cmp === 1) {
-    // First-seen newer layer wins (don't overwrite if an earlier layer was already newer).
-    if (!configReadOnlyReason) {
-      configReadOnlyReason = {
-        path: configPath,
-        foundVersion: rawVersion,
-        binaryVersion: CURRENT_CONFIG_VERSION,
-      };
-    }
-  }
 }
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
@@ -757,22 +672,10 @@ function markConfigReadOnlyIfNewer(configPath: string, rawVersion: unknown): voi
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
 
 let cachedConfig: { config: AkmConfig; signature: string } | undefined;
-let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number; contentHash: string } | undefined;
+let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number } | undefined;
 
 export function resetConfigCache(): void {
   clearAllCaches();
-}
-
-function hashString(text: string): string {
-  // Simple, fast non-cryptographic hash (FNV-1a 32-bit) — sufficient to detect
-  // content changes between config writes when filesystem mtime resolution is
-  // too coarse to reflect rapid back-to-back writes (common in tests).
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
 }
 
 export function loadUserConfig(): AkmConfig {
@@ -786,10 +689,18 @@ export function loadUserConfig(): AkmConfig {
     return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
   }
 
-  // Cache key combines mtimeMs + size + content hash. mtimeMs alone is unreliable
-  // when tests write multiple times within the filesystem mtime resolution
-  // window (often 1ms+). Reading + hashing on cache miss is cheap and ensures
-  // we never serve stale config.
+  // Cache key: mtimeMs + size. Tests that write rapidly back-to-back inside
+  // the mtime resolution window MUST call resetConfigCache() between writes —
+  // every public test helper already does.
+  if (
+    cachedUserConfig &&
+    cachedUserConfig.path === configPath &&
+    cachedUserConfig.mtime === stat.mtimeMs &&
+    cachedUserConfig.size === stat.size
+  ) {
+    return cachedUserConfig.config;
+  }
+
   let text: string;
   try {
     text = fs.readFileSync(configPath, "utf8");
@@ -804,19 +715,7 @@ export function loadUserConfig(): AkmConfig {
   // AKM_NO_AUTO_MIGRATE=1 skips the disk rewrite (still applies in-memory).
   text = maybeAutoMigrateConfigFile(configPath, text);
 
-  const contentHash = hashString(text);
-
-  if (
-    cachedUserConfig &&
-    cachedUserConfig.path === configPath &&
-    cachedUserConfig.mtime === stat.mtimeMs &&
-    cachedUserConfig.size === stat.size &&
-    cachedUserConfig.contentHash === contentHash
-  ) {
-    return cachedUserConfig.config;
-  }
-
-  const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(text));
+  const config = parseAndValidate(text, configPath);
   const finalConfig = applyRuntimeEnvApiKeys(config);
 
   // Re-stat after potential write-back so the cache key reflects the new mtime.
@@ -831,9 +730,99 @@ export function loadUserConfig(): AkmConfig {
     path: configPath,
     mtime: finalStat.mtimeMs,
     size: finalStat.size,
-    contentHash,
   };
   return finalConfig;
+}
+
+/**
+ * Parse raw config text, run pre-Zod lossless legacy migrations
+ * (`migrateConfigShape`), then validate-and-transform via Zod
+ * ({@link AkmConfigSchema}). Returns the merged-with-defaults AkmConfig.
+ *
+ * Three hard-throw rules survive Zod (they would silently drop user data
+ * otherwise):
+ *   - Malformed JSON / non-object root → `ConfigError("INVALID_CONFIG_FILE")`.
+ *   - `stashes[]` (legacy v0 key) → `ConfigError("INVALID_CONFIG_FILE")` with
+ *     a rename hint.
+ *   - openviking source type → `ConfigError("INVALID_CONFIG_FILE")` with a
+ *     migration hint.
+ *
+ * All other malformed sub-shapes are silently dropped (matches the legacy
+ * parser's warn-and-ignore semantics for field-level errors).
+ */
+function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
+  const raw = parseConfigObjectFromText(text, sourcePath);
+  rejectHardErrors(raw);
+  // Migration is idempotent on already-migrated configs.
+  const migrated = migrateConfigShape(raw).result;
+  // QA #36: legacy load-time tolerance — a partial llm profile written by
+  // `akm config set llm.endpoint <url>` may omit `model`. Inject "" so the
+  // strict LlmProfileConfigSchema accepts it. The CLI write path
+  // (config-walker.configSet) does NOT call this, so `akm config set llm
+  // '{"endpoint": ...}'` still rejects missing model.
+  normalizeLegacyPartialLlmProfiles(migrated);
+  const parsed = AkmConfigSchema.safeParse(migrated);
+  if (!parsed.success) {
+    const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+    const where = sourcePath ? ` at ${sourcePath}` : "";
+    throw new ConfigError(`Invalid config${where}:\n${lines}`, "INVALID_CONFIG_FILE");
+  }
+  // Strip the `passthrough` extras from the surface AkmConfig (the schema
+  // preserves them on the parsed object, but they're not part of the typed
+  // shape). Drop any with a key matching a known schema field — those are the
+  // ones Zod actually transformed.
+  const result = parsed.data as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(AkmConfigShape)) {
+    if (result[key] !== undefined) out[key] = result[key];
+  }
+  return mergeLoadedConfig(DEFAULT_CONFIG, out as Partial<AkmConfig>);
+}
+
+/**
+ * In-place: walk `profiles.llm.*` and inject `model: ""` on any entry that
+ * has an endpoint but no model. Matches the legacy parser's tolerance for
+ * partial profiles written by `akm config set llm.endpoint <url>`.
+ */
+function normalizeLegacyPartialLlmProfiles(raw: Record<string, unknown>): void {
+  const profiles = raw.profiles;
+  if (typeof profiles !== "object" || profiles === null) return;
+  const llm = (profiles as Record<string, unknown>).llm;
+  if (typeof llm !== "object" || llm === null) return;
+  for (const entry of Object.values(llm as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const obj = entry as Record<string, unknown>;
+    if (typeof obj.endpoint === "string" && typeof obj.model !== "string") {
+      obj.model = "";
+    }
+  }
+}
+
+/**
+ * Pre-Zod hard-reject checks. Two legacy keys carried explicit migration
+ * paths in v0.8.x — silently dropping them would mask user data loss.
+ */
+function rejectHardErrors(raw: Record<string, unknown>): void {
+  if (Array.isArray((raw as Record<string, unknown>).stashes)) {
+    throw new ConfigError(
+      "The legacy `stashes[]` config key is no longer supported. Rename it to `sources`.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  const sourcesRaw = (raw as Record<string, unknown>).sources;
+  if (Array.isArray(sourcesRaw)) {
+    for (const entry of sourcesRaw) {
+      if (typeof entry === "object" && entry !== null && (entry as Record<string, unknown>).type === "openviking") {
+        const name = (entry as Record<string, unknown>).name;
+        const nameStr = typeof name === "string" && name ? name : "unnamed";
+        throw new ConfigError(
+          `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${nameStr}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
+          "INVALID_CONFIG_FILE",
+          `Run \`akm remove ${nameStr}\` then re-run, or edit your config file directly at ${getConfigPath()} to remove the openviking entry.`,
+        );
+      }
+    }
+  }
 }
 
 export function getSources(config: AkmConfig): SourceConfigEntry[] {
@@ -900,9 +889,6 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
     return text; // Malformed JSON — let the normal loader surface the error
   }
 
-  // Track newer-than-binary layers so saveConfig can refuse to write later.
-  markConfigReadOnlyIfNewer(configPath, raw.configVersion);
-
   // If the on-disk config is newer than this binary, do NOT attempt to
   // "migrate" — `migrateConfigShape` only knows how to upgrade to
   // CURRENT_CONFIG_VERSION, and downgrading would silently strip fields. We
@@ -926,8 +912,18 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
       warn(
         `[akm] Config at ${configPath} migrated to ${result.configVersion ?? "0.8.0"} format. Backup written to cache dir.`,
       );
-    } catch {
-      warn(`[akm] Could not write migrated config to ${configPath}. Run 'akm config migrate' manually.`);
+    } catch (err) {
+      // #461: if we can't persist the migration, do NOT return the migrated
+      // in-memory shape — that triggers an infinite re-migrate loop on every
+      // load. Throw a hard error so the user notices and resolves the disk
+      // issue (or sets AKM_NO_AUTO_MIGRATE=1 + runs `akm config migrate`).
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new ConfigError(
+        `Failed to write migrated config to ${configPath}: ${detail}`,
+        "INVALID_CONFIG_FILE",
+        "Check filesystem permissions, free space, and disk health. To skip the auto-migration " +
+          "until the issue is resolved, set AKM_NO_AUTO_MIGRATE=1.",
+      );
     }
   }
 
@@ -935,48 +931,53 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
 }
 
 export function loadConfig(): AkmConfig {
-  const configPaths = getEffectiveConfigPaths();
-  const signature = getConfigSignature(configPaths);
+  // Single-layer load: only the user-level config file is read. Project-level
+  // .akm/config.json files discovered under cwd-ancestors emit a one-time
+  // deprecation warning (#457) but are NOT merged. Removed in this release;
+  // the warning stays for one cycle to help users notice they have a now-dead
+  // file on disk.
+  warnIfProjectConfigPresent(process.cwd());
+
+  const userConfigPath = getConfigPath();
+  const signature = `${userConfigPath}:${getFileSignatureToken(userConfigPath)}`;
   if (cachedConfig && cachedConfig.signature === signature) {
     return cachedConfig.config;
   }
 
-  let config = loadUserConfig();
-  const userConfigPath = getConfigPath();
-  for (const configPath of configPaths) {
-    if (configPath === userConfigPath) continue;
-    config = mergeLoadedConfig(config, readNormalizedConfig(configPath));
-  }
-
+  const config = loadUserConfig();
   const finalConfig = applyRuntimeEnvApiKeys(config);
   cachedConfig = { config: finalConfig, signature };
   return finalConfig;
 }
 
 export function saveConfig(config: AkmConfig): void {
-  // Refuse to write if any loaded config layer in this process declared a
-  // configVersion newer than the binary. Writing back would strip whatever
-  // fields parseConfigLayer didn't recognize, silently losing the user's
-  // newer-format settings. The escape hatch is AKM_FORCE_DOWNGRADE_CONFIG=1.
-  const readOnly = configReadOnlyReason;
-  if (readOnly) {
-    if (process.env.AKM_FORCE_DOWNGRADE_CONFIG !== "1") {
-      throw new ConfigError(
-        `config v${String(readOnly.foundVersion)} (at ${readOnly.path}) is newer than this binary (v${readOnly.binaryVersion}); refusing to write to avoid stripping fields. Upgrade akm or set AKM_FORCE_DOWNGRADE_CONFIG=1 to override.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-    warn("[akm] WARNING: config downgrade forced; non-recognised fields will be stripped");
-  }
-
   clearAllCaches();
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
-  backupExistingConfig(configPath);
+
   const sanitized = sanitizeConfigForWrite(config);
+
+  // Final validation gate before bytes hit disk. Catches schema violations
+  // (unknown keys in registries[] / sources[] / profiles.*; out-of-range
+  // numbers; etc. — closes #462) before we corrupt the user's config.
+  const parseResult = AkmConfigSchema.safeParse(sanitized);
+  if (!parseResult.success) {
+    const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+    throw new ConfigError(
+      `Refusing to save invalid config:\n${lines}`,
+      "INVALID_CONFIG_FILE",
+      "Fix the listed fields, or undo the offending `akm config set`. " +
+        "If this looks like an akm bug, re-run with --debug to attach the traceback.",
+    );
+  }
+
+  backupExistingConfig(configPath);
   writeConfigObject(configPath, sanitized);
 }
+
+/** Maximum number of timestamped config backups to retain (#459). */
+const MAX_CONFIG_BACKUPS = 5;
 
 function backupExistingConfig(configPath: string): void {
   if (!fs.existsSync(configPath)) return;
@@ -990,6 +991,43 @@ function backupExistingConfig(configPath: string): void {
 
   const latestPath = path.join(backupDir, "config.latest.json");
   fs.copyFileSync(configPath, latestPath);
+
+  pruneOldBackups(backupDir);
+}
+
+/**
+ * Keep only the {@link MAX_CONFIG_BACKUPS} most-recent timestamped backups
+ * (#459). `config.latest.json` is preserved separately as the always-newest
+ * pointer.
+ */
+function pruneOldBackups(backupDir: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(backupDir);
+  } catch {
+    return;
+  }
+  const timestamped = entries
+    .filter((name) => name.startsWith("config-") && name.endsWith(".json") && name !== "config.latest.json")
+    .map((name) => ({ name, path: path.join(backupDir, name) }))
+    .map((entry) => {
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(entry.path).mtimeMs;
+      } catch {
+        // Drop unreadable entries by giving them mtime 0 (they sort to the end).
+      }
+      return { ...entry, mtime };
+    })
+    .sort((a, b) => b.mtime - a.mtime); // newest first
+
+  for (const stale of timestamped.slice(MAX_CONFIG_BACKUPS)) {
+    try {
+      fs.unlinkSync(stale.path);
+    } catch {
+      // Ignore — best-effort prune. The next save will retry.
+    }
+  }
 }
 
 /**
@@ -1028,503 +1066,63 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Normalize a raw config object into a sparse config layer containing only
- * recognized keys that were valid in the source object. This function does not
- * merge with DEFAULT_CONFIG; callers are responsible for layering defaults and
- * combining multiple config sources so project config files only override what
- * they set.
+ * Resolve a single secret value by expanding `${VAR}` / `$VAR` /
+ * `${VAR:-default}` references against `process.env`. Use this at apiKey /
+ * authorization-header consumption sites (LLM client, embedder, agent SDK
+ * runner) — NOT on the load path. Non-string inputs pass through unchanged.
+ *
+ * Returns the input unchanged when no substitution markers are present, so
+ * literal API key strings (already-resolved secrets) are zero-cost.
+ *
+ * Other config string values (URLs, endpoints, model names, prompts) are
+ * preserved verbatim on read — only fields explicitly routed through this
+ * helper are expanded.
  */
-function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
-  const config: Partial<AkmConfig> = {};
+export function resolveSecret(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return value;
+  if (!value.includes("$")) return value;
+  return value.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
+    if (braced) {
+      const [name, ...rest] = (braced as string).split(":-");
+      const fallback = rest.join(":-");
+      return process.env[name] ?? fallback ?? "";
+    }
+    return process.env[bare as string] ?? "";
+  });
+}
 
-  if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
-    config.stashDir = raw.stashDir.trim();
-  }
-
-  // Backward compatibility: coerce legacy boolean values to string
-  if (typeof raw.semanticSearchMode === "boolean") {
-    config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
-  } else if (isOneOf(raw.semanticSearchMode, ["off", "auto"] as const)) {
-    config.semanticSearchMode = raw.semanticSearchMode;
-  }
-
-  const embedding = parseEmbeddingConfig(raw.embedding);
-  if (embedding) config.embedding = embedding;
-
-  const index = parseIndexConfig(raw.index);
-  if (index) config.index = index;
-
-  const installed = parseInstalledEntries(raw.installed);
-  if (installed) config.installed = installed;
-
-  const registries = parseRegistriesConfig(raw.registries);
-  if (registries) config.registries = registries;
-
-  if (isOneOf(raw.stashInheritance, ["replace", "merge"] as const)) {
-    config.stashInheritance = raw.stashInheritance;
-  }
-
-  if (Array.isArray((raw as Record<string, unknown>).stashes)) {
+function parseConfigObjectFromText(text: string, sourcePath?: string): Record<string, unknown> {
+  // #458: malformed JSON or non-object root raises ConfigError. Silent
+  // fallback to DEFAULT_CONFIG masked real corruption from users.
+  const where = sourcePath ? ` at ${sourcePath}` : "";
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stripJsonComments(text));
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     throw new ConfigError(
-      "The legacy `stashes[]` config key is no longer supported. Rename it to `sources`.",
+      `Failed to parse config JSON${where}: ${detail}`,
+      "INVALID_CONFIG_FILE",
+      "Edit the file to fix the JSON syntax error. Comments (// and /* */) are allowed; trailing commas are not.",
+    );
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      `Config file${where} must contain a JSON object at the root, got ${describeJsonRoot(raw)}.`,
       "INVALID_CONFIG_FILE",
     );
   }
-
-  const sources = parseSourcesConfig(raw.sources);
-  if (sources) {
-    config.sources = sources;
-  }
-
-  const security = parseSecurityConfig(raw.security);
-  if (security) config.security = security;
-
-  const output = parseOutputConfig(raw.output);
-  if (output) config.output = output;
-
-  if (typeof raw.writable === "boolean") {
-    config.writable = raw.writable;
-  }
-
-  if (typeof raw.defaultWriteTarget === "string" && raw.defaultWriteTarget.trim()) {
-    config.defaultWriteTarget = raw.defaultWriteTarget.trim();
-  }
-
-  if (typeof raw.search === "object" && raw.search !== null && !Array.isArray(raw.search)) {
-    const searchRaw = raw.search as Record<string, unknown>;
-    const searchConfig: AkmConfig["search"] = {};
-    for (const key of Object.keys(searchRaw)) {
-      if (key !== "minScore" && key !== "graphBoost" && key !== "curateRerank") {
-        warn(`[akm] Ignoring unknown search key "${key}".`);
-      }
-    }
-    if (typeof searchRaw.minScore === "number" && Number.isFinite(searchRaw.minScore) && searchRaw.minScore >= 0) {
-      searchConfig.minScore = searchRaw.minScore;
-    }
-    if (
-      typeof searchRaw.curateRerank === "object" &&
-      searchRaw.curateRerank !== null &&
-      !Array.isArray(searchRaw.curateRerank)
-    ) {
-      const cr = searchRaw.curateRerank as Record<string, unknown>;
-      const out: { enabled?: boolean } = {};
-      if (typeof cr.enabled === "boolean") out.enabled = cr.enabled;
-      if (Object.keys(out).length > 0) searchConfig.curateRerank = out;
-    }
-    if (
-      typeof searchRaw.graphBoost === "object" &&
-      searchRaw.graphBoost !== null &&
-      !Array.isArray(searchRaw.graphBoost)
-    ) {
-      const graphBoostRaw = searchRaw.graphBoost as Record<string, unknown>;
-      const graphBoostConfig: NonNullable<AkmConfig["search"]>["graphBoost"] = {};
-      for (const key of Object.keys(graphBoostRaw)) {
-        if (
-          key !== "directBoostPerEntity" &&
-          key !== "directBoostCap" &&
-          key !== "hopBoostPerEntity" &&
-          key !== "hopBoostCap" &&
-          key !== "maxHops" &&
-          key !== "confidenceMode" &&
-          key !== "confidenceWeight"
-        ) {
-          warn(`[akm] Ignoring unknown search.graphBoost key "${key}".`);
-        }
-      }
-
-      const directBoostPerEntity = parseNonNegativeNumber(graphBoostRaw.directBoostPerEntity);
-      if (directBoostPerEntity !== undefined) graphBoostConfig.directBoostPerEntity = directBoostPerEntity;
-
-      const directBoostCap = parseNonNegativeNumber(graphBoostRaw.directBoostCap);
-      if (directBoostCap !== undefined) graphBoostConfig.directBoostCap = directBoostCap;
-
-      const hopBoostPerEntity = parseNonNegativeNumber(graphBoostRaw.hopBoostPerEntity);
-      if (hopBoostPerEntity !== undefined) graphBoostConfig.hopBoostPerEntity = hopBoostPerEntity;
-
-      const hopBoostCap = parseNonNegativeNumber(graphBoostRaw.hopBoostCap);
-      if (hopBoostCap !== undefined) graphBoostConfig.hopBoostCap = hopBoostCap;
-
-      const maxHops = parsePositiveInteger("search.graphBoost.maxHops", graphBoostRaw.maxHops);
-      if (maxHops !== undefined) graphBoostConfig.maxHops = Math.min(maxHops, 3);
-
-      if (isOneOf(graphBoostRaw.confidenceMode, ["off", "blend", "multiply"] as const)) {
-        graphBoostConfig.confidenceMode = graphBoostRaw.confidenceMode;
-      }
-
-      const confidenceWeight = parseNonNegativeNumber(graphBoostRaw.confidenceWeight);
-      if (confidenceWeight !== undefined) graphBoostConfig.confidenceWeight = Math.min(confidenceWeight, 1);
-
-      if (Object.keys(graphBoostConfig).length > 0) searchConfig.graphBoost = graphBoostConfig;
-    }
-    if (Object.keys(searchConfig).length > 0) config.search = searchConfig;
-  }
-
-  if (typeof raw.feedback === "object" && raw.feedback !== null && !Array.isArray(raw.feedback)) {
-    const feedbackRaw = raw.feedback as Record<string, unknown>;
-    const feedbackConfig: AkmConfig["feedback"] = {};
-    if (typeof feedbackRaw.requireReason === "boolean") {
-      feedbackConfig.requireReason = feedbackRaw.requireReason;
-    }
-    // F-3 / #384: parse allowedFailureModes override list.
-    if (Array.isArray(feedbackRaw.allowedFailureModes)) {
-      feedbackConfig.allowedFailureModes = feedbackRaw.allowedFailureModes.filter(
-        (v): v is string => typeof v === "string" && v.trim().length > 0,
-      );
-    }
-    if (Object.keys(feedbackConfig).length > 0) config.feedback = feedbackConfig;
-  }
-
-  if (
-    typeof raw.archiveRetentionDays === "number" &&
-    Number.isFinite(raw.archiveRetentionDays) &&
-    raw.archiveRetentionDays >= 0
-  ) {
-    config.archiveRetentionDays = raw.archiveRetentionDays;
-  }
-
-  if (raw.improve !== null && typeof raw.improve === "object") {
-    const improveRaw = raw.improve as Record<string, unknown>;
-    const improveConfig: ImproveConfig = {};
-    // Phase 2A / Rec 5: configurable forgetting curve.
-    if (improveRaw.utilityDecay !== null && typeof improveRaw.utilityDecay === "object") {
-      const decayRaw = improveRaw.utilityDecay as Record<string, unknown>;
-      const decay: NonNullable<ImproveConfig["utilityDecay"]> = {};
-      if (
-        typeof decayRaw.halfLifeDays === "number" &&
-        Number.isFinite(decayRaw.halfLifeDays) &&
-        decayRaw.halfLifeDays >= 0.1
-      ) {
-        decay.halfLifeDays = decayRaw.halfLifeDays;
-      } else if (decayRaw.halfLifeDays !== undefined) {
-        warn(`[akm] Ignoring improve.utilityDecay.halfLifeDays: expected a number ≥ 0.1.`);
-      }
-      if (
-        typeof decayRaw.feedbackStabilityBoost === "number" &&
-        Number.isFinite(decayRaw.feedbackStabilityBoost) &&
-        decayRaw.feedbackStabilityBoost >= 1.0
-      ) {
-        decay.feedbackStabilityBoost = decayRaw.feedbackStabilityBoost;
-      } else if (decayRaw.feedbackStabilityBoost !== undefined) {
-        warn(`[akm] Ignoring improve.utilityDecay.feedbackStabilityBoost: expected a number ≥ 1.0.`);
-      }
-      if (Object.keys(decay).length > 0) improveConfig.utilityDecay = decay;
-    }
-    // Fix #2 (observability 0.8.0): events-table retention window. Drives
-    // `purgeOldEvents()` in the improve post-loop maintenance pass so state.db
-    // doesn't grow unbounded.
-    if (
-      typeof improveRaw.eventRetentionDays === "number" &&
-      Number.isFinite(improveRaw.eventRetentionDays) &&
-      improveRaw.eventRetentionDays >= 0
-    ) {
-      improveConfig.eventRetentionDays = improveRaw.eventRetentionDays;
-    } else if (improveRaw.eventRetentionDays !== undefined) {
-      warn(`[akm] Ignoring improve.eventRetentionDays: expected a number ≥ 0.`);
-    }
-    if (Object.keys(improveConfig).length > 0) config.improve = improveConfig;
-  }
-
-  // v2 fields
-  if (typeof raw.configVersion === "number" && Number.isFinite(raw.configVersion)) {
-    config.configVersion = raw.configVersion;
-  } else if (typeof raw.configVersion === "string" && raw.configVersion.trim()) {
-    config.configVersion = raw.configVersion.trim();
-  }
-
-  const profiles = parseProfilesConfig(raw.profiles);
-  if (profiles) config.profiles = profiles;
-
-  const defaults = parseDefaultsConfig(raw.defaults);
-  if (defaults) config.defaults = defaults;
-
-  return config;
+  return raw as Record<string, unknown>;
 }
 
-function parseLlmProfileConfig(obj: Record<string, unknown>): LlmProfileConfig | undefined {
-  const base = parseLlmConfig(obj);
-  if (!base) return undefined;
-  const profile: LlmProfileConfig = { ...base };
-  if (typeof obj.supportsJsonSchema === "boolean") {
-    profile.supportsJsonSchema = obj.supportsJsonSchema;
-  }
-  return profile;
-}
-
-function parseAgentProfileConfigV2(obj: Record<string, unknown>): AgentProfileConfigV2 | undefined {
-  const VALID_PLATFORMS = ["opencode", "claude", "opencode-sdk"] as const;
-  if (!isOneOf(obj.platform, VALID_PLATFORMS)) {
-    warn(
-      `[akm] Ignoring agent profile: missing or invalid "platform" (must be one of: ${VALID_PLATFORMS.join(", ")}).`,
-    );
-    return undefined;
-  }
-  const profile: AgentProfileConfigV2 = { platform: obj.platform };
-  if (typeof obj.bin === "string" && obj.bin.trim()) profile.bin = obj.bin.trim();
-  if (Array.isArray(obj.args) && obj.args.every((a) => typeof a === "string")) {
-    profile.args = obj.args as string[];
-  }
-  if (typeof obj.workspace === "string" && obj.workspace.trim()) profile.workspace = obj.workspace.trim();
-  if (typeof obj.model === "string" && obj.model.trim()) profile.model = obj.model.trim();
-  return profile;
-}
-
-function parseProfilesConfig(value: unknown): AkmConfig["profiles"] | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const result: NonNullable<AkmConfig["profiles"]> = {};
-
-  if (typeof obj.llm === "object" && obj.llm !== null && !Array.isArray(obj.llm)) {
-    const llmMap: Record<string, LlmProfileConfig> = {};
-    for (const [name, raw] of Object.entries(obj.llm as Record<string, unknown>)) {
-      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-        warn(`[akm] Ignoring profiles.llm["${name}"]: expected an object.`);
-        continue;
-      }
-      const parsed = parseLlmProfileConfig(raw as Record<string, unknown>);
-      if (parsed) llmMap[name] = parsed;
-      else warn(`[akm] Ignoring profiles.llm["${name}"]: invalid or incomplete LLM connection config.`);
-    }
-    if (Object.keys(llmMap).length > 0) result.llm = llmMap;
-  }
-
-  if (typeof obj.agent === "object" && obj.agent !== null && !Array.isArray(obj.agent)) {
-    const agentMap: Record<string, AgentProfileConfigV2> = {};
-    for (const [name, raw] of Object.entries(obj.agent as Record<string, unknown>)) {
-      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-        warn(`[akm] Ignoring profiles.agent["${name}"]: expected an object.`);
-        continue;
-      }
-      const parsed = parseAgentProfileConfigV2(raw as Record<string, unknown>);
-      if (parsed) agentMap[name] = parsed;
-    }
-    if (Object.keys(agentMap).length > 0) result.agent = agentMap;
-  }
-
-  if (typeof obj.improve === "object" && obj.improve !== null && !Array.isArray(obj.improve)) {
-    const improveMap: Record<string, ImproveProfileConfig> = {};
-    for (const [name, raw] of Object.entries(obj.improve as Record<string, unknown>)) {
-      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-        warn(`[akm] Ignoring profiles.improve["${name}"]: expected an object.`);
-        continue;
-      }
-      const parsed = parseImproveProfileConfig(raw as Record<string, unknown>);
-      if (parsed) improveMap[name] = parsed;
-    }
-    if (Object.keys(improveMap).length > 0) result.improve = improveMap;
-  }
-
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function parseDefaultsConfig(value: unknown): AkmConfig["defaults"] | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const result: NonNullable<AkmConfig["defaults"]> = {};
-
-  if (typeof obj.llm === "string" && obj.llm.trim()) result.llm = obj.llm.trim();
-  if (typeof obj.agent === "string" && obj.agent.trim()) result.agent = obj.agent.trim();
-
-  // defaults.improve is now a plain string (the default profile name).
-  // Legacy object shape ({ limit, preset }) is silently ignored.
-  if (typeof obj.improve === "string" && obj.improve.trim()) {
-    result.improve = obj.improve.trim();
-  }
-
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-/** Process names where `allowedTypes` has no effect (full-pass operations). */
-const ALLOWED_TYPES_IGNORED_PROCESSES = new Set(["consolidate", "memoryInference", "graphExtraction"]);
-
-function parseImproveProcessConfig(value: unknown, processName?: string): ImproveProcessConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const entry: ImproveProcessConfig = {};
-  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
-  if (isOneOf(obj.mode, ["llm", "agent", "sdk"] as const)) entry.mode = obj.mode;
-  if (typeof obj.profile === "string" && obj.profile.trim()) entry.profile = obj.profile.trim();
-  if (obj.timeoutMs === null) {
-    entry.timeoutMs = null;
-  } else if (typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0) {
-    entry.timeoutMs = obj.timeoutMs;
-  }
-  if (Array.isArray(obj.allowedTypes) && obj.allowedTypes.every((t) => typeof t === "string")) {
-    if (processName && ALLOWED_TYPES_IGNORED_PROCESSES.has(processName)) {
-      warn(
-        `[akm] profiles.improve.*.processes.${processName}.allowedTypes is ignored — ` +
-          `${processName} is a full-pass operation and does not iterate per ref. ` +
-          `Set allowedTypes on reflect or distill instead.`,
-      );
-    } else {
-      entry.allowedTypes = obj.allowedTypes as string[];
-    }
-  }
-  if (typeof obj.cooldownByType === "object" && obj.cooldownByType !== null && !Array.isArray(obj.cooldownByType)) {
-    const byType: Record<string, number> = {};
-    for (const [k, v] of Object.entries(obj.cooldownByType as Record<string, unknown>)) {
-      if (typeof v === "number" && Number.isFinite(v) && v >= 0) byType[k] = v;
-    }
-    if (Object.keys(byType).length > 0) entry.cooldownByType = byType;
-  }
-  if (typeof obj.cooldownDays === "number" && Number.isFinite(obj.cooldownDays) && obj.cooldownDays >= 0) {
-    entry.cooldownDays = obj.cooldownDays;
-  }
-  if (typeof obj.qualityGate === "object" && obj.qualityGate !== null && !Array.isArray(obj.qualityGate)) {
-    const qg = obj.qualityGate as Record<string, unknown>;
-    const out: { enabled?: boolean } = {};
-    if (typeof qg.enabled === "boolean") out.enabled = qg.enabled;
-    if (Object.keys(out).length > 0) entry.qualityGate = out;
-  }
-  if (
-    typeof obj.contradictionDetection === "object" &&
-    obj.contradictionDetection !== null &&
-    !Array.isArray(obj.contradictionDetection)
-  ) {
-    const cd = obj.contradictionDetection as Record<string, unknown>;
-    const out: { enabled?: boolean } = {};
-    if (typeof cd.enabled === "boolean") out.enabled = cd.enabled;
-    if (Object.keys(out).length > 0) entry.contradictionDetection = out;
-  }
-  return Object.keys(entry).length > 0 ? entry : undefined;
-}
-
-function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfileConfig | undefined {
-  const profile: ImproveProfileConfig = {};
-  if (typeof obj.description === "string" && obj.description.trim()) {
-    profile.description = obj.description.trim();
-  }
-  if (typeof obj.processes === "object" && obj.processes !== null && !Array.isArray(obj.processes)) {
-    const processesRaw = obj.processes as Record<string, unknown>;
-    const processes: NonNullable<ImproveProfileConfig["processes"]> = {};
-    const knownProcesses = [
-      "reflect",
-      "distill",
-      "consolidate",
-      "memoryInference",
-      "graphExtraction",
-      "feedbackDistillation",
-      "validation",
-    ] as const;
-    for (const key of knownProcesses) {
-      if (key in processesRaw) {
-        const parsed = parseImproveProcessConfig(processesRaw[key], key);
-        if (parsed) processes[key] = parsed;
-        else if (typeof processesRaw[key] === "object" && processesRaw[key] !== null) {
-          // Empty object is a valid no-op config; don't warn
-          processes[key] = {};
-        }
-      }
-    }
-    if (Object.keys(processes).length > 0) profile.processes = processes;
-  }
-  if (typeof obj.autoAccept === "number" && Number.isFinite(obj.autoAccept) && obj.autoAccept >= 0) {
-    profile.autoAccept = obj.autoAccept;
-  }
-  const limit = parsePositiveInteger("profiles.improve.limit", obj.limit);
-  if (limit !== undefined) profile.limit = limit;
-  return Object.keys(profile).length > 0 ? profile : undefined;
-}
-
-function parseConfigText(text: string): Partial<AkmConfig> | undefined {
-  const raw = parseConfigObjectFromText(text);
-  if (!raw) return undefined;
-  const expanded = expandEnvVars(raw);
-  return parseConfigLayer(expanded);
-}
-
-function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
-  let text: string;
-  try {
-    text = fs.readFileSync(configPath, "utf8");
-  } catch {
-    return undefined;
-  }
-  // Detect a newer-than-binary layer (project config) so saveConfig can refuse
-  // to write later. Failures are silently ignored — malformed JSON is the
-  // normal parser's problem to report.
-  const raw = parseConfigObjectFromText(text);
-  if (raw) {
-    markConfigReadOnlyIfNewer(configPath, raw.configVersion);
-  }
-  return parseConfigText(text);
-}
-
-function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
-  return parseConfigText(text);
-}
-
-function parseOutputConfig(value: unknown): OutputConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const output: OutputConfig = {};
-
-  if (isOneOf(obj.format, ["json", "yaml", "text"] as const)) {
-    output.format = obj.format;
-  }
-
-  if (isOneOf(obj.detail, ["brief", "normal", "full"] as const)) {
-    output.detail = obj.detail;
-  }
-
-  return Object.keys(output).length > 0 ? output : undefined;
-}
-
-/**
- * Field names that hold URLs and must NOT have env var substitution applied.
- * Expanding ${VAR} inside a URL could leak secrets by redirecting requests to
- * an attacker-controlled server if the config file is world-readable.
- */
-const URL_FIELD_NAMES = new Set(["url", "endpoint", "artifactUrl"]);
-
-/**
- * Recursively expand `${VAR}` references in all string values.
- * Supports `${VAR}`, `${VAR:-default}`, and bare `$VAR` at the start of a value.
- * Non-string values pass through unchanged.
- *
- * URL-type fields (named `url`, `endpoint`, `artifactUrl`, or whose value starts
- * with `http://` / `https://`) are skipped to prevent secret injection into URLs.
- */
-function expandEnvVars<T>(value: T, fieldName?: string): T {
-  if (typeof value === "string") {
-    // Skip URL-type fields by name or by value prefix, unless they contain ${VAR} syntax
-    if (
-      !value.includes("${") &&
-      ((fieldName !== undefined && URL_FIELD_NAMES.has(fieldName)) ||
-        value.startsWith("http://") ||
-        value.startsWith("https://"))
-    ) {
-      return value;
-    }
-    return value.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
-      if (braced) {
-        const [name, ...rest] = braced.split(":-");
-        const fallback = rest.join(":-");
-        return process.env[name] ?? fallback ?? "";
-      }
-      return process.env[bare] ?? "";
-    }) as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => expandEnvVars(item)) as T;
-  }
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = expandEnvVars(v, k);
-    }
-    return out as T;
-  }
-  return value;
-}
-
-function parseConfigObjectFromText(text: string): Record<string, unknown> | undefined {
-  try {
-    const raw = JSON.parse(stripJsonComments(text));
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-    return raw as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
+function describeJsonRoot(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  if (typeof value === "string") return "a string";
+  if (typeof value === "number") return "a number";
+  if (typeof value === "boolean") return "a boolean";
+  return typeof value;
 }
 
 function writeConfigObject(configPath: string, config: Record<string, unknown>): void {
@@ -1577,477 +1175,20 @@ export function stripJsonComments(text: string): string {
   return result;
 }
 
-function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-
-  // Extract localModel early — it's valid even without a remote endpoint
-  const localModel = typeof obj.localModel === "string" && obj.localModel ? obj.localModel : undefined;
-
-  // If no endpoint is provided, the config is only valid when localModel is set
-  // (local-only embedding configuration).
-  // Sentinel: { endpoint: "", model: "" } means "local-only" — use hasRemoteEndpoint()
-  // (in embedder.ts) to distinguish from a real remote config. Do NOT check
-  // endpoint/model directly in consuming code.
-  if (typeof obj.endpoint !== "string" || !obj.endpoint) {
-    if (localModel) {
-      return { endpoint: "", model: "", localModel };
-    }
-    return undefined;
-  }
-  if (!isValidHttpUrl(obj.endpoint, "embedding config")) {
-    // Still return localModel-only config if localModel was set
-    if (localModel) {
-      return { endpoint: "", model: "", localModel };
-    }
-    return undefined;
-  }
-  if (typeof obj.model !== "string" || !obj.model) {
-    // No remote model, but localModel may still be valid
-    if (localModel) {
-      warn(
-        `[akm] Embedding endpoint "${obj.endpoint as string}" ignored: model is required for remote embeddings. Using local model only.`,
-      );
-      return { endpoint: "", model: "", localModel };
-    }
-    return undefined;
-  }
-  const result: EmbeddingConnectionConfig = {
-    endpoint: obj.endpoint,
-    model: obj.model,
-  };
-  if (typeof obj.provider === "string" && obj.provider) {
-    result.provider = obj.provider;
-  }
-  if ("dimension" in obj) {
-    const dim = parsePositiveInteger("embedding.dimension", obj.dimension);
-    if (dim === undefined) return undefined;
-    result.dimension = dim;
-  }
-  if (typeof obj.apiKey === "string" && obj.apiKey) {
-    result.apiKey = obj.apiKey;
-  }
-  if (localModel) {
-    result.localModel = localModel;
-  }
-  if ("contextLength" in obj) {
-    const ctx = parsePositiveInteger("embedding.contextLength", obj.contextLength);
-    if (ctx === undefined) return undefined;
-    result.contextLength = ctx;
-  }
-  if (typeof obj.ollamaOptions === "object" && obj.ollamaOptions !== null && !Array.isArray(obj.ollamaOptions)) {
-    const opts = obj.ollamaOptions as Record<string, unknown>;
-    const parsed: EmbeddingConnectionConfig["ollamaOptions"] = {};
-    const numCtx = parsePositiveInteger("embedding.ollamaOptions.num_ctx", opts.num_ctx);
-    if (numCtx !== undefined) {
-      parsed.num_ctx = numCtx;
-    }
-    if (Object.keys(parsed).length > 0) {
-      result.ollamaOptions = parsed;
-    }
-  }
-  return result;
-}
-
-function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
-  if (!isValidHttpUrl(obj.endpoint, "llm config")) {
-    return undefined;
-  }
-  if (!obj.endpoint.endsWith("/chat/completions")) {
-    warn(
-      `[akm] llm.endpoint "${obj.endpoint}" does not end in /chat/completions. ` +
-        `Did you mean "${obj.endpoint.replace(/\/+$/, "")}/chat/completions"?`,
-    );
-  }
-  const model = typeof obj.model === "string" ? obj.model : "";
-  const result: LlmConnectionConfig = {
-    endpoint: obj.endpoint,
-    model,
-  };
-  if (typeof obj.provider === "string" && obj.provider) {
-    result.provider = obj.provider;
-  }
-  if (typeof obj.temperature === "number" && Number.isFinite(obj.temperature)) {
-    result.temperature = obj.temperature;
-  }
-  if ("timeoutMs" in obj) {
-    const t = parsePositiveInteger("llm.timeoutMs", obj.timeoutMs);
-    if (t === undefined) return undefined;
-    result.timeoutMs = t;
-  }
-  if ("concurrency" in obj) {
-    const c = parsePositiveInteger("llm.concurrency", obj.concurrency);
-    if (c === undefined) return undefined;
-    result.concurrency = c;
-  }
-  if ("maxTokens" in obj) {
-    const m = parsePositiveInteger("llm.maxTokens", obj.maxTokens);
-    if (m === undefined) return undefined;
-    result.maxTokens = m;
-  }
-  if ("contextLength" in obj) {
-    const ctx = parsePositiveInteger("llm.contextLength", obj.contextLength);
-    if (ctx !== undefined) result.contextLength = ctx;
-  }
-  if (typeof obj.apiKey === "string" && obj.apiKey) {
-    result.apiKey = obj.apiKey;
-  }
-  if (typeof obj.capabilities === "object" && obj.capabilities !== null && !Array.isArray(obj.capabilities)) {
-    const capsRaw = obj.capabilities as Record<string, unknown>;
-    const caps: LlmConnectionConfig["capabilities"] = {};
-    if (typeof capsRaw.structuredOutput === "boolean") caps.structuredOutput = capsRaw.structuredOutput;
-    if (Object.keys(caps).length > 0) result.capabilities = caps;
-  }
-  if (typeof obj.judgeModel === "string" && obj.judgeModel.trim()) {
-    result.judgeModel = obj.judgeModel.trim();
-  }
-  if (typeof obj.extraParams === "object" && obj.extraParams !== null && !Array.isArray(obj.extraParams)) {
-    result.extraParams = obj.extraParams as Record<string, unknown>;
-  }
-  return result;
-}
-
-/**
- * Keys that, if present anywhere under `index.<pass>`, indicate the user is
- * trying to supply a parallel LLM provider configuration. Per #208 this is
- * deliberately rejected at load time so there is exactly one place to
- * configure the LLM (`akm.llm`).
- */
-const PROVIDER_CONFIG_KEYS = new Set([
-  "endpoint",
-  "model",
-  "provider",
-  "apiKey",
-  "baseUrl",
-  "temperature",
-  "maxTokens",
-  "capabilities",
-]);
-
-const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = new Set([
-  "memory",
-  "knowledge",
-  "skill",
-  "command",
-  "agent",
-  "workflow",
-  "lesson",
-  "task",
-  "wiki",
-]);
-
-/**
- * Parse the `index` config block. Each entry is a pass name → small object
- * `{ llm?: boolean }`. Anything richer (a parallel provider config, unknown
- * keys, non-boolean `llm`) throws `ConfigError("INVALID_CONFIG_FILE")` at
- * load time so the failure is visible at startup, not on the next index run.
- */
-/** Reserved top-level keys that are feature-config sections, NOT pass names. */
-const INDEX_RESERVED_KEYS = new Set(["metadataEnhance", "stalenessDetection"]);
-
-function parseIndexConfig(value: unknown): IndexConfig | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new ConfigError(
-      'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "enrichment": { "llm": false } }`).',
-      "INVALID_CONFIG_FILE",
-    );
-  }
-
-  const out: IndexConfig = {};
-  for (const [passName, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      throw new ConfigError(
-        `Invalid \`index.${passName}\` config: expected an object like \`{ "llm": false }\`.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-    const passRaw = raw as Record<string, unknown>;
-
-    // Handle reserved feature-section keys ────────────────────────────────
-    if (passName === "metadataEnhance") {
-      const cfg: { enabled?: boolean } = {};
-      if (typeof passRaw.enabled === "boolean") cfg.enabled = passRaw.enabled;
-      if (Object.keys(cfg).length > 0) out.metadataEnhance = cfg;
-      continue;
-    }
-    if (passName === "stalenessDetection") {
-      const cfg: { enabled?: boolean; thresholdDays?: number } = {};
-      if (typeof passRaw.enabled === "boolean") cfg.enabled = passRaw.enabled;
-      const td = parsePositiveInteger("index.stalenessDetection.thresholdDays", passRaw.thresholdDays);
-      if (td !== undefined) cfg.thresholdDays = td;
-      if (Object.keys(cfg).length > 0) out.stalenessDetection = cfg;
-      continue;
-    }
-
-    // Reject any provider-shaped key — there must be exactly one place to
-    // configure the LLM (#208). This is the duplicate-provider guard.
-    for (const key of Object.keys(passRaw)) {
-      if (PROVIDER_CONFIG_KEYS.has(key)) {
-        throw new ConfigError(
-          `Duplicate LLM provider configuration: \`index.${passName}.${key}\` is not allowed. ` +
-            "Configure provider/model/endpoint under `profiles.llm` only; per-pass entries support `{ llm: false }` opt-out.",
-          "INVALID_CONFIG_FILE",
-          "Move provider settings to a profile under `profiles.llm`, then set `index.<pass>.llm = false` to opt a single pass out.",
-        );
-      }
-      if (
-        key !== "llm" &&
-        key !== "graphExtractionBatchSize" &&
-        key !== "graphExtractionIncludeTypes" &&
-        key !== "memoryInferenceBatchSize"
-      ) {
-        throw new ConfigError(
-          `Unknown key \`index.${passName}.${key}\`. Per-pass entries support \`llm\` (boolean opt-out), \`graphExtractionBatchSize\`, \`graphExtractionIncludeTypes\`, and \`memoryInferenceBatchSize\`.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-    }
-
-    const passConfig: IndexPassConfig = {};
-    if ("llm" in passRaw) {
-      const llmFlag = passRaw.llm;
-      if (typeof llmFlag !== "boolean") {
-        throw new ConfigError(
-          `Invalid \`index.${passName}.llm\`: expected a boolean (true to use the default LLM profile, false to opt out). Got ${typeof llmFlag}.`,
-          "INVALID_CONFIG_FILE",
-          "Per-pass alternative provider config is intentionally unsupported in v1 (#208). Use `false` to disable LLM for this pass.",
-        );
-      }
-      passConfig.llm = llmFlag;
-    }
-    if ("graphExtractionBatchSize" in passRaw) {
-      const n = parsePositiveInteger(`index.${passName}.graphExtractionBatchSize`, passRaw.graphExtractionBatchSize);
-      if (n !== undefined) passConfig.graphExtractionBatchSize = n;
-    }
-    if ("graphExtractionIncludeTypes" in passRaw) {
-      const rawTypes = passRaw.graphExtractionIncludeTypes;
-      if (!Array.isArray(rawTypes) || !rawTypes.every((t) => typeof t === "string" && t.trim().length > 0)) {
-        throw new ConfigError(
-          `Invalid \`index.${passName}.graphExtractionIncludeTypes\`: expected a non-empty string array of asset types.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      const normalized = rawTypes.map((t) => t.trim().toLowerCase());
-      const invalid = normalized.filter((t) => !GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED.has(t));
-      if (invalid.length > 0) {
-        throw new ConfigError(
-          `Invalid \`index.${passName}.graphExtractionIncludeTypes\`: unsupported type(s): ${invalid.join(", ")}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      passConfig.graphExtractionIncludeTypes = normalized;
-    }
-    if ("memoryInferenceBatchSize" in passRaw) {
-      const n = parsePositiveInteger(`index.${passName}.memoryInferenceBatchSize`, passRaw.memoryInferenceBatchSize);
-      if (n !== undefined) passConfig.memoryInferenceBatchSize = n;
-    }
-    out[passName] = passConfig;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 /**
  * Read a per-pass {@link IndexPassConfig} entry from {@link IndexConfig},
  * filtering out the reserved feature-section keys so callers don't mistake
  * `metadataEnhance` / `stalenessDetection` for a pass.
  */
+/** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */
+const INDEX_RESERVED_KEYS = new Set(["metadataEnhance", "stalenessDetection"]);
+
 export function getIndexPassConfig(config: IndexConfig | undefined, passName: string): IndexPassConfig | undefined {
   if (!config) return undefined;
   if (INDEX_RESERVED_KEYS.has(passName)) return undefined;
   const entry = config[passName];
   if (!entry || typeof entry !== "object") return undefined;
   return entry as IndexPassConfig;
-}
-
-/**
- * Parse an array of values with a per-item parser, filtering out undefined
- * results. Returns undefined when the input is not an array, or (unless
- * `allowEmpty` is true) when all items parse to undefined.
- */
-function parseArray<T>(value: unknown, parseOne: (v: unknown) => T | undefined, allowEmpty = false): T[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const items = value.map(parseOne).filter((x): x is T => x !== undefined);
-  return items.length > 0 || allowEmpty ? items : undefined;
-}
-
-function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
-  return parseArray(value, parseInstalledStashEntry);
-}
-
-function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-
-  const id = asNonEmptyString(obj.id);
-  const source = asKitSource(obj.source);
-  const ref = asNonEmptyString(obj.ref);
-  const artifactUrl = asNonEmptyString(obj.artifactUrl);
-  const stashRoot = asNonEmptyString(obj.stashRoot);
-  const cacheDir = asNonEmptyString(obj.cacheDir);
-  const installedAt = asNonEmptyString(obj.installedAt);
-  if (!id || !source || !ref || !artifactUrl || !stashRoot || !cacheDir || !installedAt) return undefined;
-
-  const entry: InstalledStashEntry = {
-    id,
-    source,
-    ref,
-    artifactUrl,
-    stashRoot,
-    cacheDir,
-    installedAt,
-  };
-  if (typeof obj.writable === "boolean") entry.writable = obj.writable;
-  if (entry.writable === true && entry.source !== "git") {
-    throw new ConfigError(
-      `writable: true is only supported on filesystem and git sources (got "${entry.source}" on installed entry "${entry.id}").`,
-      "INVALID_CONFIG_FILE",
-      "Remove `writable: true` from the installed entry or re-add it as a git source instead.",
-    );
-  }
-  const resolvedVersion = asNonEmptyString(obj.resolvedVersion);
-  if (resolvedVersion) entry.resolvedVersion = resolvedVersion;
-  const resolvedRevision = asNonEmptyString(obj.resolvedRevision);
-  if (resolvedRevision) entry.resolvedRevision = resolvedRevision;
-  const wikiName = asNonEmptyString(obj.wikiName);
-  if (wikiName) entry.wikiName = wikiName;
-  return entry;
-}
-
-/**
- * Validate a legacy lockfile/installed-entry source string.
- *
- * Restricted to the four kinds that the install pipeline produces
- * (`"npm" | "github" | "git" | "local"`). The full {@link KitSource} union is
- * wider, but persisted `installed[]` entries should never carry the runtime
- * provider kinds (`"filesystem" | "website"`).
- */
-function asKitSource(value: unknown): KitSource | undefined {
-  if (value === "npm" || value === "github" || value === "git" || value === "local") return value as KitSource;
-  return undefined;
-}
-
-function parseRegistriesConfig(value: unknown): RegistryConfigEntry[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-
-  const entries = value
-    .map((entry) => parseRegistryConfigEntry(entry))
-    .filter((entry): entry is RegistryConfigEntry => entry !== undefined);
-
-  // Return the array even if empty — an explicit empty array means "no registries"
-  // which overrides the default. Only return undefined if the field was not an array.
-  return entries;
-}
-
-function parseSourcesConfig(value: unknown): SourceConfigEntry[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-
-  const entries = value
-    .map((entry) => parseSourceConfigEntry(entry))
-    .filter((entry): entry is SourceConfigEntry => entry !== undefined);
-
-  return entries;
-}
-
-function parseSecurityConfig(value: unknown): SecurityConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const installAudit = parseInstallAuditConfig(obj.installAudit);
-  if (!installAudit) return undefined;
-  return { installAudit };
-}
-
-function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const config: InstallAuditConfig = {};
-  if (typeof obj.enabled === "boolean") config.enabled = obj.enabled;
-  if (typeof obj.blockOnCritical === "boolean") config.blockOnCritical = obj.blockOnCritical;
-  if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
-  const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
-  if (!obj.registryAllowlist && obj.registryWhitelist) {
-    warn("[akm] config: `registryWhitelist` is deprecated; rename it to `registryAllowlist`");
-  }
-  if (rawAllowlist) {
-    config.registryAllowlist = rawAllowlist;
-  }
-  const allowedFindings = parseInstallAuditAllowedFindings(obj.allowedFindings);
-  if (allowedFindings) {
-    config.allowedFindings = allowedFindings;
-  }
-  return Object.keys(config).length > 0 ? config : undefined;
-}
-
-function parseInstallAuditAllowedFindings(value: unknown): InstallAuditAllowedFinding[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const findings = value
-    .map((entry) => parseInstallAuditAllowedFinding(entry))
-    .filter((entry): entry is InstallAuditAllowedFinding => entry !== undefined);
-  return findings.length > 0 ? findings : undefined;
-}
-
-function parseInstallAuditAllowedFinding(value: unknown): InstallAuditAllowedFinding | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const id = asNonEmptyString(obj.id);
-  if (!id) return undefined;
-  const finding: InstallAuditAllowedFinding = { id };
-  const ref = asNonEmptyString(obj.ref);
-  if (ref) finding.ref = ref;
-  const entryPath = asNonEmptyString(obj.path);
-  if (entryPath) finding.path = entryPath;
-  const reason = asNonEmptyString(obj.reason);
-  if (reason) finding.reason = reason;
-  return finding;
-}
-
-function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-
-  const type = asNonEmptyString(obj.type);
-  if (!type) return undefined;
-
-  if (type === "openviking") {
-    const name = asNonEmptyString(obj.name) ?? "unnamed";
-    throw new ConfigError(
-      `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${name}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
-      "INVALID_CONFIG_FILE",
-      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${getConfigPath()} to remove the openviking entry.`,
-    );
-  }
-
-  const entry: SourceConfigEntry = { type };
-  const entryPath = asNonEmptyString(obj.path);
-  if (entryPath) entry.path = entryPath;
-  const url = asNonEmptyString(obj.url);
-  if (url) entry.url = url;
-  const name = asNonEmptyString(obj.name);
-  if (name) entry.name = name;
-  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
-  if (typeof obj.writable === "boolean") entry.writable = obj.writable;
-  if (typeof obj.primary === "boolean") entry.primary = obj.primary;
-  // Locked decision 4 (§6 v1 implementation plan): reject writable: true on
-  // website / npm sources at config load. The next sync() would clobber
-  // writes — allowing this is a footgun, not a feature. Throw early so the
-  // user sees the problem at `akm` startup, not when they try to write.
-  if (entry.writable === true && (type === "website" || type === "npm")) {
-    const label = entry.name ? ` "${entry.name}"` : "";
-    throw new ConfigError(
-      `writable: true is only supported on filesystem and git sources (got "${type}" on source${label}).`,
-      "INVALID_CONFIG_FILE",
-      "To author into a checked-out package, add the same path as a separate filesystem source.",
-    );
-  }
-  if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-    entry.options = obj.options as SourceConfigEntryOptions;
-  }
-  const wikiName = asNonEmptyString(obj.wikiName);
-  if (wikiName) entry.wikiName = wikiName;
-  return entry;
 }
 
 // ── ConfiguredSource runtime construction ─────────────────────────────────────────
@@ -2166,50 +1307,16 @@ function toConfiguredSource(persisted: SourceConfigEntry, isPrimary: boolean): C
   };
 }
 
-function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-
-  const url = asNonEmptyString(obj.url);
-  if (!url?.startsWith("http")) return undefined;
-
-  const entry: RegistryConfigEntry = { url };
-  const name = asNonEmptyString(obj.name);
-  if (name) entry.name = name;
-  if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
-  const provider = asNonEmptyString(obj.provider);
-  if (provider) entry.provider = provider;
-  if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-    entry.options = obj.options as Record<string, unknown>;
-  }
-  return entry;
-}
-
-function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
-  if (!base && !override) return undefined;
-  const installAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
-  return installAudit ? { installAudit } : undefined;
-}
-
-function mergeInstallAuditConfig(
-  base?: InstallAuditConfig,
-  override?: InstallAuditConfig,
-): InstallAuditConfig | undefined {
-  if (!base && !override) return undefined;
-  const merged: InstallAuditConfig = {
-    ...(base ?? {}),
-    ...(override ?? {}),
-  };
-  return Object.values(merged).some((value) => value !== undefined) ? merged : undefined;
-}
-
 /**
- * Merge a normalized config layer into an accumulated config.
+ * Merge a partial user-config override onto a base config. Used for two
+ * single-layer cases:
+ *   1) {@link loadUserConfig} layering normalized disk config on top of
+ *      {@link DEFAULT_CONFIG}.
+ *   2) {@link updateConfig} layering a partial patch on top of the currently
+ *      loaded user config.
  *
- * Scalar fields follow normal override semantics. Known nested objects are
- * deep-merged so project config files can override individual fields without
- * clobbering sibling settings. `sources` are additive by default, but a later
- * layer can set `stashInheritance: "replace"` to drop inherited sources first.
+ * Multi-layer (project + user) merging is no longer supported — see
+ * {@link loadConfig} and {@link warnIfProjectConfigPresent}.
  */
 function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
   if (!override) return { ...base };
@@ -2225,50 +1332,31 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.embedding && override.embedding) {
     merged.embedding = { ...base.embedding, ...override.embedding };
   }
-  if (base.index || override.index) {
-    // Deep-merge per-pass entries so a project layer can opt one pass out
-    // without dropping siblings configured in user config.
-    const mergedIndex: IndexConfig = { ...(base.index ?? {}) };
-    for (const [passName, passOverride] of Object.entries(override.index ?? {})) {
-      const baseEntry = (mergedIndex as Record<string, unknown>)[passName];
-      const baseObj = baseEntry && typeof baseEntry === "object" ? (baseEntry as Record<string, unknown>) : {};
-      (mergedIndex as Record<string, unknown>)[passName] = {
-        ...baseObj,
-        ...(passOverride as Record<string, unknown> | undefined),
-      };
-    }
-    if (Object.keys(mergedIndex).length > 0) merged.index = mergedIndex;
+  if (base.index && override.index) {
+    merged.index = { ...base.index, ...override.index };
   }
-  // Deep merge for the profiles tree so a later layer can override one profile
-  // entry without dropping siblings.
-  if (base.profiles || override.profiles) {
-    const mergedProfiles: NonNullable<AkmConfig["profiles"]> = { ...(base.profiles ?? {}) };
-    if (override.profiles?.llm) {
+  if (base.profiles && override.profiles) {
+    const mergedProfiles: NonNullable<AkmConfig["profiles"]> = { ...base.profiles };
+    if (override.profiles.llm) {
       mergedProfiles.llm = { ...(mergedProfiles.llm ?? {}), ...override.profiles.llm };
     }
-    if (override.profiles?.agent) {
+    if (override.profiles.agent) {
       mergedProfiles.agent = { ...(mergedProfiles.agent ?? {}), ...override.profiles.agent };
     }
-    if (override.profiles?.improve) {
+    if (override.profiles.improve) {
       mergedProfiles.improve = { ...(mergedProfiles.improve ?? {}), ...override.profiles.improve };
     }
-    if (Object.keys(mergedProfiles).length > 0) merged.profiles = mergedProfiles;
+    merged.profiles = mergedProfiles;
   }
-  if (base.defaults || override.defaults) {
-    merged.defaults = { ...(base.defaults ?? {}), ...(override.defaults ?? {}) };
+  if (base.defaults && override.defaults) {
+    merged.defaults = { ...base.defaults, ...override.defaults };
   }
   if (base.security && override.security) {
-    merged.security = mergeSecurityConfig(base.security, override.security);
+    merged.security = { ...base.security, ...override.security };
   }
-  const replaceSources = override.stashInheritance === "replace";
-  const overrideSources = override.sources ?? [];
-  const baseSources = base.sources ?? [];
-  if (replaceSources) {
-    merged.sources = [...overrideSources];
-  } else if (overrideSources.length > 0) {
-    merged.sources = [...baseSources, ...overrideSources];
-  } else if (baseSources.length > 0) {
-    merged.sources = [...baseSources];
+  // sources: override wins entirely when provided (single-layer semantics).
+  if (override.sources !== undefined) {
+    merged.sources = override.sources;
   }
 
   return merged;
@@ -2323,47 +1411,29 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
 }
 
 /**
- * Return config file paths in merge order: user config first, then project
- * config files from the outermost parent directory down to the current working
- * directory. Later entries have higher precedence when merged.
+ * Walk cwd-ancestors looking for `.akm/config.json`. If one is found, emit a
+ * one-time deprecation warning per path. The file's contents are NOT read —
+ * multi-layer project config was removed in this release; the warning stays
+ * for one cycle so users notice they have a now-dead file on disk and can
+ * migrate its settings to the user-level config.
  */
-function getEffectiveConfigPaths(): string[] {
-  const configPath = getConfigPath();
-  const paths: string[] = [];
-  if (isFile(configPath)) {
-    paths.push(configPath);
-  }
-  return [...paths, ...discoverProjectConfigPaths(process.cwd())];
-}
-
-/**
- * Walk from `startDir` up to the filesystem root and collect `.akm/config.json`
- * files. Paths are returned from outermost parent to innermost directory so
- * nearer project directories override broader project settings.
- */
-function discoverProjectConfigPaths(startDir: string): string[] {
-  const paths: string[] = [];
+const PROJECT_CONFIG_DEPRECATION_WARNED = new Set<string>();
+function warnIfProjectConfigPresent(startDir: string): void {
   let currentDir = path.resolve(startDir);
-
   while (true) {
     const configPath = path.join(currentDir, PROJECT_CONFIG_RELATIVE_PATH);
-    if (isFile(configPath)) {
-      paths.unshift(configPath);
+    if (isFile(configPath) && !PROJECT_CONFIG_DEPRECATION_WARNED.has(configPath)) {
+      PROJECT_CONFIG_DEPRECATION_WARNED.add(configPath);
+      warn(
+        `[akm] DEPRECATED: project-level config file found at ${configPath}. ` +
+          "Project-level config files are no longer merged (removed after 0.8.x deprecation). " +
+          "Move any needed settings to ~/.config/akm/config.json; this file is ignored.",
+      );
     }
-
     const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) {
-      break;
-    }
+    if (parentDir === currentDir) break;
     currentDir = parentDir;
   }
-
-  return paths;
-}
-
-function getConfigSignature(configPaths: string[]): string {
-  if (configPaths.length === 0) return "defaults";
-  return configPaths.map((configPath) => `${configPath}:${getFileSignatureToken(configPath)}`).join("|");
 }
 
 function isFile(filePath: string): boolean {
@@ -2377,17 +1447,7 @@ function isFile(filePath: string): boolean {
 function getFileSignatureToken(filePath: string): string {
   try {
     const stat = fs.statSync(filePath);
-    // mtimeMs alone is unreliable on filesystems with low-resolution mtime
-    // (HFS+, some network FS, or very fast back-to-back writes in tests).
-    // Combine mtime + size + content hash so the signature actually changes
-    // when content does.
-    let contentHash = "";
-    try {
-      contentHash = hashString(fs.readFileSync(filePath, "utf8"));
-    } catch {
-      // ignore — fall back to stat-only signature
-    }
-    return `${stat.mtimeMs}:${stat.size}:${contentHash}`;
+    return `${stat.mtimeMs}:${stat.size}`;
   } catch {
     return "missing";
   }

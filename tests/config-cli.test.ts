@@ -91,18 +91,12 @@ describe("config CLI helpers", () => {
     });
   });
 
-  test("parseConfigValue accepts llm JSON with endpoint and omitted model", () => {
-    expect(parseConfigValue("llm", '{"endpoint":"http://localhost:11434/v1/chat/completions"}')).toEqual({
-      profiles: {
-        llm: {
-          default: {
-            endpoint: "http://localhost:11434/v1/chat/completions",
-            model: "",
-          },
-        },
-      },
-      defaults: { llm: "default" },
-    });
+  test("parseConfigValue rejects llm JSON with endpoint and omitted model", () => {
+    // Post-rewrite: profile shape is enforced. Setting the whole llm block
+    // requires the full required shape; partial setup must use subkey paths.
+    expect(() => parseConfigValue("llm", '{"endpoint":"http://localhost:11434/v1/chat/completions"}')).toThrow(
+      /model.*Required/,
+    );
   });
 
   test("parseConfigValue rejects writable website sources through config CLI", () => {
@@ -241,10 +235,17 @@ describe("config CLI helpers", () => {
     expect(unsetConfigValue(base, "output.detail").output).toEqual({ format: "yaml" });
   });
 
-  test("setConfigValue rejects unknown keys", () => {
+  test("setConfigValue accepts previously hand-listed sub-keys now that the schema is the source of truth (#455)", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "embedding.provider", "ollama")).toThrow("Unknown config key");
-    expect(() => setConfigValue(base, "llm.temperature", "0.5")).toThrow("Unknown config key");
+    const withProvider = setConfigValue(base, "embedding.provider", "ollama");
+    expect(withProvider.embedding?.provider).toBe("ollama");
+    const withTemp = setConfigValue(base, "llm.temperature", "0.5");
+    expect(withTemp.profiles?.llm?.default?.temperature).toBe(0.5);
+  });
+
+  test("setConfigValue rejects keys not in the schema", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    expect(() => setConfigValue(base, "totally.unknown.path", "x")).toThrow("Unknown config key");
   });
 
   test("parseConfigValue rejects non-integer embedding dimension in JSON", () => {
@@ -253,22 +254,18 @@ describe("config CLI helpers", () => {
         "embedding",
         '{"endpoint":"https://api.openai.com/v1/embeddings","model":"text-embedding-3-small","dimension":384.5}',
       ),
-    ).toThrow("expected a positive integer");
+    ).toThrow(/Expected integer/);
   });
 
   test("parseConfigValue rejects invalid output values", () => {
-    expect(() => parseConfigValue("output.format", "xml")).toThrow("expected one of json|yaml|text");
-    expect(() => parseConfigValue("output.detail", "max")).toThrow("expected one of brief|normal|full");
+    expect(() => parseConfigValue("output.format", "xml")).toThrow(/Expected 'json' \| 'yaml' \| 'text'/);
+    expect(() => parseConfigValue("output.detail", "max")).toThrow(/Expected 'brief' \| 'normal' \| 'full'/);
   });
 
   test("parseConfigValue rejects invalid install audit values", () => {
-    expect(() => parseConfigValue("security.installAudit.enabled", "yes")).toThrow("expected true or false");
-    expect(() => parseConfigValue("security.installAudit.registryAllowlist", '{"npm":true}')).toThrow(
-      "expected a JSON array of strings",
-    );
-    expect(() => parseConfigValue("security.installAudit.allowedFindings", '{"id":"x"}')).toThrow(
-      "expected a JSON array",
-    );
+    expect(() => parseConfigValue("security.installAudit.enabled", "yes")).toThrow(/expected true or false/);
+    expect(() => parseConfigValue("security.installAudit.registryAllowlist", '{"npm":true}')).toThrow(/Expected array/);
+    expect(() => parseConfigValue("security.installAudit.allowedFindings", '{"id":"x"}')).toThrow(/Expected array/);
   });
 
   test("parseConfigValue coerces 'true' to 'auto' for semanticSearchMode", () => {
