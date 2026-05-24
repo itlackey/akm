@@ -15,7 +15,6 @@
  */
 import { type AkmConfig, DEFAULT_CONFIG, getSources } from "../core/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config-walker";
-import { UsageError } from "../core/errors";
 
 // ── Legacy `llm.*` → `profiles.llm.<default>.*` aliasing ────────────────────
 
