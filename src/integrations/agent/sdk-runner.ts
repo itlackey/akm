@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * OpenCode SDK agent runner — uses embedded @opencode-ai/sdk instead of
  * Bun.spawn. Requires no agent CLI binary to be installed. The user provides

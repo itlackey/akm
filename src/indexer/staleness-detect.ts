@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Staleness-detection pass for `akm improve` (Phase 4A,
  * `.plans/0.8.0/self-improvement-enhancements-plan.md` lines 132-145).
