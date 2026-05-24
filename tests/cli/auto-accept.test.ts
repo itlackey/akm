@@ -1,16 +1,18 @@
 /**
  * Parser tests for `akm improve --auto-accept`.
  *
- * Semantics:
- * - flag absent → 90 (default-on)
- * - bare flag (`--auto-accept`) → 90
- * - `--auto-accept=false` (case-insensitive) → undefined (disables)
+ * Semantics (post pre-prod default flip):
+ * - flag absent → undefined (default-OFF)
+ * - bare flag (`--auto-accept`) → undefined (treated as flag absent)
+ * - `--auto-accept=false` (case-insensitive) → undefined (explicit disable)
  * - `--auto-accept=safe` (case-insensitive) → 90 (back-compat alias)
  * - `--auto-accept=<N>` with integer N ∈ [0, 100] → N
  * - otherwise → throws UsageError("INVALID_FLAG_VALUE")
  *
  * citty maps a bare `--auto-accept` (no value) to the empty string `""` and
- * an absent flag to `undefined`, which is how we distinguish those two cases.
+ * an absent flag to `undefined`. Both now disable auto-accept; users must
+ * pass an explicit threshold (`--auto-accept=N` or `--auto-accept=safe`) to
+ * opt in.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -18,16 +20,16 @@ import { parseAutoAcceptFlag } from "../../src/cli/parse-args";
 import { UsageError } from "../../src/core/errors";
 
 describe("parseAutoAcceptFlag", () => {
-  test("flag absent (undefined) → 90 (default-on)", () => {
-    expect(parseAutoAcceptFlag(undefined)).toBe(90);
+  test("flag absent (undefined) → undefined (default-OFF)", () => {
+    expect(parseAutoAcceptFlag(undefined)).toBeUndefined();
   });
 
-  test("bare flag (empty string from citty) → 90", () => {
-    expect(parseAutoAcceptFlag("")).toBe(90);
+  test("bare flag (empty string from citty) → undefined", () => {
+    expect(parseAutoAcceptFlag("")).toBeUndefined();
   });
 
-  test("whitespace-only value → 90 (treated as bare)", () => {
-    expect(parseAutoAcceptFlag("   ")).toBe(90);
+  test("whitespace-only value → undefined (treated as bare)", () => {
+    expect(parseAutoAcceptFlag("   ")).toBeUndefined();
   });
 
   test("--auto-accept=false → undefined", () => {

@@ -2179,7 +2179,7 @@ describe("new 0.8.0 improve metrics", () => {
       scope: "memory:target-asset",
       stashDir,
       ensureIndexFn: async () => false,
-      autoAccept: 90, // default; conversion = 0.9
+      autoAccept: 90, // explicit threshold (default is now OFF / undefined); conversion = 0.9
       minRetrievalCount: 0,
       reindexFn: async () => ({
         schemaVersion: 1,

@@ -4072,7 +4072,7 @@ const improveCommand = defineCommand({
     "auto-accept": {
       type: "string",
       description:
-        "Auto-accept proposals at or above this confidence threshold (0-100). Default: 90. Pass 'false' to disable. Legacy alias 'safe' = 90.",
+        "Auto-accept proposals at or above this confidence threshold (0-100). Default: disabled. Pass a value 0-100 to enable. 'safe' is an alias for 90. Pass 'false' to be explicit.",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
     "timeout-ms": {

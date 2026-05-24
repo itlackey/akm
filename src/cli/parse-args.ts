@@ -74,15 +74,19 @@ export function parseNonNegativeIntFlag(raw: string | undefined, flagName: strin
  * Parse the value of `akm improve --auto-accept` into a confidence threshold.
  *
  * Semantics (see docs/migration/v0.7-to-v0.8.md):
- * - `undefined` (flag absent) → `90` (default-on)
- * - `""` (bare `--auto-accept`, no value) → `90`
- * - `"false"` (case-insensitive) → `undefined` (disables auto-accept)
+ * - `undefined` (flag absent) → `undefined` (default-OFF; pre-prod flip)
+ * - `""` (bare `--auto-accept`, no value) → `undefined` (treated as flag absent)
+ * - `"false"` (case-insensitive) → `undefined` (explicit disable)
  * - `"safe"` (case-insensitive) → `90` (permanent back-compat alias)
  * - integer string `"0".."100"` → that integer
  * - anything else → throws `UsageError("INVALID_FLAG_VALUE")`
  *
  * Citty's `type: "string"` resolves bare flags to `""` and an absent flag to
- * `undefined`, which is how we distinguish those two cases.
+ * `undefined`. Both forms now disable auto-accept; users must pass an explicit
+ * threshold (`--auto-accept=N` or `--auto-accept=safe`) to opt in. This is a
+ * deliberate flip from the earlier 0.8.0-RC behaviour, which defaulted to ON
+ * at threshold 90 and surprised users who didn't expect Phase B operations to
+ * apply without confirmation.
  *
  * Until proposals expose per-operation confidence scores, any non-`undefined`
  * threshold causes the consolidate path to auto-accept the whole batch
@@ -90,9 +94,9 @@ export function parseNonNegativeIntFlag(raw: string | undefined, flagName: strin
  * per-operation comparison; see the TODO in `consolidate.ts`.
  */
 export function parseAutoAcceptFlag(raw: string | undefined): number | undefined {
-  if (raw === undefined) return 90;
+  if (raw === undefined) return undefined;
   const trimmed = raw.trim();
-  if (trimmed === "") return 90;
+  if (trimmed === "") return undefined;
   const lower = trimmed.toLowerCase();
   if (lower === "false") return undefined;
   if (lower === "safe") return 90;
