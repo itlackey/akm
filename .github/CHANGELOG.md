@@ -6,11 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Project-level `.akm/config.json` files are no longer merged**. The
+  multi-layer config discovery introduced in the 0.7 line was deprecated
+  in late-0.8.x with a warning; that warning is now backed by removal.
+  `loadConfig` walks cwd-ancestors only to emit a one-time deprecation
+  warning per discovered file. Move any needed settings to
+  `~/.config/akm/config.json`. `stashInheritance` (a multi-layer-only
+  field) is removed from the schema.
+
+- **`${VAR}` env-var expansion only resolves at the apiKey consumption
+  sites**. The recursive expansion walker that ran on the load path is
+  gone. Other config string values now round-trip verbatim: a literal
+  `${HOME}` in (say) `stashDir` is preserved as the literal `${HOME}`
+  on read. The new exported `resolveSecret(value)` helper is applied
+  only where authorization headers are built (`src/llm/client.ts`,
+  `src/llm/embedders/remote.ts`, `src/integrations/agent/sdk-runner.ts`).
+  Documented `${OPENAI_API_KEY}` recipes in `docs/configuration.md`
+  continue to work because expansion still happens at request time for
+  apiKey fields.
+
+- **`AKM_FORCE_DOWNGRADE_CONFIG` env var removed**. The newer-than-binary
+  read-only guard (`configReadOnlyReason`, `markConfigReadOnlyIfNewer`,
+  `getConfigReadOnlyReason`) is gone. Configs declaring a `configVersion`
+  newer than the running binary now save through silently — unknown
+  fields are stripped on save by `sanitizeConfigForWrite` plus the
+  strict-walled Zod schema. Users on 0.9.x configs should not open them
+  with a 0.8.x binary in writable workflows.
+
 ### Changed
 
 - **Config layer rewrite** — single-source-of-truth Zod schema in
-  `src/core/config-schema.ts` replaces the per-field parse switch. Adding a
-  new config field is now one line of schema + zero lines of CLI code.
+  `src/core/config-schema.ts` replaces the per-field parse switch AND
+  the per-shape load-time parser. Adding a new config field is now one
+  line of schema + zero lines of CLI code. `loadConfig` now consists of
+  parse-text → migrate (pure JSON transforms) → Zod safeParse → overlay
+  defaults — a ~30-line pipeline that absorbs ~900 LOC of legacy
+  per-shape parsers (`parseLlmConfig`, `parseEmbeddingConfig`,
+  `parseIndexConfig`, `parseSourceConfigEntry`, and ~20 more).
   - **#454**: `akm config set llm.apiKey` / `embedding.apiKey` /
     `profiles.llm.<name>.apiKey` now throws `UsageError` pointing at the
     corresponding env var (`AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
