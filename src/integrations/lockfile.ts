@@ -4,8 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isProcessAlive, writeFileAtomic } from "../core/common";
+import { writeFileAtomic } from "../core/common";
 import { rethrowIfTestIsolationError } from "../core/errors";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { getDataDir } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
@@ -55,61 +56,28 @@ function getLockSentinelPath(): string {
 }
 
 async function acquireLockSentinel(): Promise<boolean> {
-  // TODO(refactor): see improve.ts acquireLock and vault.ts withVaultLock — three implementations of the same O_EXCL+PID-staleness pattern.
   const sentinelPath = getLockSentinelPath();
-  // Ensure the directory exists before attempting to create the sentinel
+  // Ensure the directory exists before attempting to create the sentinel.
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
-    try {
-      fs.writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
-      return true; // Sentinel created — we own the lock
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Check for stale lock — if the owning PID is no longer running, reclaim it
-      if (tryReclaimStaleSentinel(sentinelPath)) {
-        continue; // Sentinel removed — retry immediately
-      }
-      // Another process holds the lock — wait briefly before retrying
-      if (attempt < LOCK_MAX_RETRIES - 1) {
-        await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
-      }
+    if (tryAcquireLockSync(sentinelPath, String(process.pid))) {
+      return true; // Sentinel created — we own the lock.
+    }
+    if (probeLock(sentinelPath).state === "stale") {
+      releaseLock(sentinelPath);
+      continue; // Reclaimed — retry immediately.
+    }
+    // Another process holds the lock — wait briefly before retrying.
+    if (attempt < LOCK_MAX_RETRIES - 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
     }
   }
-  // Best-effort: proceed without the lock rather than failing the install
+  // Best-effort: proceed without the lock rather than failing the install.
   return false;
 }
 
-/**
- * Check if the sentinel was left by a dead process and remove it if so.
- * Returns true if the sentinel was reclaimed (removed).
- */
-function tryReclaimStaleSentinel(sentinelPath: string): boolean {
-  try {
-    const content = fs.readFileSync(sentinelPath, "utf8").trim();
-    const pid = parseInt(content, 10);
-    if (Number.isNaN(pid) || pid <= 0) {
-      // Invalid PID in sentinel — reclaim it
-      fs.unlinkSync(sentinelPath);
-      return true;
-    }
-    // Check if the process is still alive (signal 0 doesn't kill, just checks)
-    if (isProcessAlive(pid)) {
-      return false; // Process is alive — lock is valid
-    }
-    // Process is dead — reclaim the stale lock
-    fs.unlinkSync(sentinelPath);
-    return true;
-  } catch {
-    return false; // Can't read or remove — leave it alone
-  }
-}
-
 function releaseLockSentinel(): void {
-  try {
-    fs.unlinkSync(getLockSentinelPath());
-  } catch {
-    /* ignore — sentinel may already be gone */
-  }
+  releaseLock(getLockSentinelPath());
 }
 
 // ── Read / Write ────────────────────────────────────────────────────────────

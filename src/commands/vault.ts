@@ -20,7 +20,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { isProcessAlive, writeFileAtomic } from "../core/common";
+import { writeFileAtomic } from "../core/common";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
 
@@ -35,75 +36,38 @@ import { isProcessAlive, writeFileAtomic } from "../core/common";
  * silently proceeding — a timeout here is always a programming error or a
  * stale lock left by a crashed process.
  *
- * Stale lock detection: the current PID is written into the lock file on
- * acquisition.  When a lock-acquire attempt fails, the PID stored in the
- * existing lock file is read and tested with `process.kill(pid, 0)`.  If the
- * signal call throws (ESRCH — no such process), the lock is stale and is
- * deleted immediately so the next loop iteration can acquire it.  If the
- * process is still alive the retry loop continues normally.
+ * Stale lock detection: PID is written into the lock file on acquisition
+ * and inspected via `probeLock` when a lock-acquire attempt fails.
  */
 function withVaultLock<T>(vaultPath: string, fn: () => T): T {
-  // TODO(refactor): see improve.ts acquireLock and lockfile.ts acquireLockSentinel — three implementations of the same O_EXCL+PID-staleness pattern.
   const lockPath = `${vaultPath}.lock`;
   const deadline = Date.now() + 5000;
-  let fd = -1;
 
-  while (true) {
-    try {
-      fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
-      // Write our PID so staleness can be detected by other waiters
-      fs.writeSync(fd, String(process.pid));
-      break;
-    } catch {
-      if (Date.now() > deadline) {
-        const holderHint = (() => {
-          try {
-            const rawPid = fs.readFileSync(lockPath, "utf8").trim();
-            const pid = Number.parseInt(rawPid, 10);
-            if (!Number.isNaN(pid) && pid > 0) {
-              return isProcessAlive(pid)
-                ? ` Lock file ${lockPath} is held by live PID ${pid}.`
-                : ` Lock file ${lockPath} references PID ${pid} which is no longer running — remove ${lockPath} manually if this persists.`;
-            }
-          } catch {
-            /* ignore */
-          }
-          return ` Lock file ${lockPath} could not be inspected.`;
-        })();
-        throw new Error(
-          `Could not acquire vault lock for ${vaultPath} after 5s.${holderHint} Retry once any other akm vault operation finishes, or remove the stale lock file.`,
-        );
-      }
-      // Check for stale lock: read PID and test if that process is alive
-      try {
-        const rawPid = fs.readFileSync(lockPath, "utf8").trim();
-        const pid = Number.parseInt(rawPid, 10);
-        if (!Number.isNaN(pid) && pid > 0) {
-          if (!isProcessAlive(pid)) {
-            // Process is dead — stale lock, remove and retry immediately
-            try {
-              fs.unlinkSync(lockPath);
-            } catch {
-              /* ignore */
-            }
-            continue;
-          }
-          // PID is alive — legitimate holder, wait
-        }
-      } catch {
-        /* lock file unreadable, keep waiting */
-      }
-      // Yield before next attempt
-      if (
-        typeof (globalThis as Record<string, unknown> & { Bun?: { sleepSync?: (ms: number) => void } }).Bun
-          ?.sleepSync === "function"
-      ) {
-        (globalThis as Record<string, unknown> & { Bun: { sleepSync: (ms: number) => void } }).Bun.sleepSync(10);
-      } else {
-        let spin = 0;
-        while (spin++ < 100_000) {
-          /* yield */
-        }
+  while (!tryAcquireLockSync(lockPath, String(process.pid))) {
+    const probe = probeLock(lockPath);
+    if (probe.state === "stale") {
+      releaseLock(lockPath);
+      continue;
+    }
+    if (Date.now() > deadline) {
+      const holderHint =
+        probe.state === "held"
+          ? ` Lock file ${lockPath} is held by live PID ${probe.holderPid}.`
+          : ` Lock file ${lockPath} could not be inspected.`;
+      throw new Error(
+        `Could not acquire vault lock for ${vaultPath} after 5s.${holderHint} Retry once any other akm vault operation finishes, or remove the stale lock file.`,
+      );
+    }
+    // Yield before next attempt
+    if (
+      typeof (globalThis as Record<string, unknown> & { Bun?: { sleepSync?: (ms: number) => void } }).Bun?.sleepSync ===
+      "function"
+    ) {
+      (globalThis as Record<string, unknown> & { Bun: { sleepSync: (ms: number) => void } }).Bun.sleepSync(10);
+    } else {
+      let spin = 0;
+      while (spin++ < 100_000) {
+        /* yield */
       }
     }
   }
@@ -111,18 +75,7 @@ function withVaultLock<T>(vaultPath: string, fn: () => T): T {
   try {
     return fn();
   } finally {
-    if (fd !== -1) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        /* ignore */
-      }
-    }
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {
-      /* ignore */
-    }
+    releaseLock(lockPath);
   }
 }
 

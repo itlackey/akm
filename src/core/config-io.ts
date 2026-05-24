@@ -15,8 +15,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { isProcessAlive, writeFileAtomic } from "./common";
+import { writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
+import { probeLock, releaseLock, tryAcquireLockSync } from "./file-lock";
 import { getCacheDir, getConfigDir } from "./paths";
 
 /**
@@ -160,48 +161,34 @@ const CONFIG_LOCK_RETRY_DELAY_MS = 50;
  */
 export function acquireConfigLock(): () => void {
   const lockPath = getConfigLockPath();
-  const dir = path.dirname(lockPath);
   try {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   } catch {
     // Directory already exists or unwritable — let the write fail naturally.
   }
 
   for (let attempt = 0; attempt < CONFIG_LOCK_MAX_RETRIES; attempt++) {
     try {
-      fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
-      return () => {
-        try {
-          fs.unlinkSync(lockPath);
-        } catch {
-          /* sentinel already gone — fine */
-        }
-      };
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-        // Non-lock error (permissions, etc.) — bail out and proceed unlocked.
-        break;
+      if (tryAcquireLockSync(lockPath, String(process.pid))) {
+        return () => releaseLock(lockPath);
       }
-      // Stale lock check
-      try {
-        const pid = parseInt(fs.readFileSync(lockPath, "utf8").trim(), 10);
-        if (!Number.isNaN(pid) && pid > 0 && !isProcessAlive(pid)) {
-          fs.unlinkSync(lockPath);
-          continue; // Reclaimed — retry immediately
-        }
-      } catch {
-        /* ignore */
-      }
-      if (attempt < CONFIG_LOCK_MAX_RETRIES - 1) {
-        // Busy spin (synchronous) — config writes are fast
-        const deadline = Date.now() + CONFIG_LOCK_RETRY_DELAY_MS;
-        while (Date.now() < deadline) {
-          // spin
-        }
+    } catch {
+      // Non-EEXIST error (permissions, etc.) — bail out and proceed unlocked.
+      break;
+    }
+    if (probeLock(lockPath).state === "stale") {
+      releaseLock(lockPath);
+      continue; // Reclaimed — retry immediately.
+    }
+    if (attempt < CONFIG_LOCK_MAX_RETRIES - 1) {
+      // Busy spin (synchronous) — config writes are fast.
+      const deadline = Date.now() + CONFIG_LOCK_RETRY_DELAY_MS;
+      while (Date.now() < deadline) {
+        // spin
       }
     }
   }
-  // Best-effort: proceed without lock
+  // Best-effort: proceed without lock.
   return () => {};
 }
 

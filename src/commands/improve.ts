@@ -6,11 +6,12 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { daysToMs, isAssetType, isProcessAlive } from "../core/common";
+import { daysToMs, isAssetType } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { parseFrontmatter } from "../core/frontmatter";
 import { detectAndWriteContradictions } from "../core/memory-contradiction-detect";
 import {
@@ -691,91 +692,53 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
   fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
 
+  const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
   const acquireLock = (): void => {
-    // TODO(refactor): extract shared withExclusiveFileLock helper. Currently duplicated in vault.ts and lockfile.ts with subtly different retry/timeout/mtime semantics; deferred until the three lock contracts can be unified.
-    let lockFd = -1;
-    try {
-      lockFd = fs.openSync(resolvedLockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
-      fs.writeSync(lockFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-      fs.closeSync(lockFd);
-    } catch {
-      // Lock file already exists — read it and check staleness
-      if (lockFd !== -1) {
-        try {
-          fs.closeSync(lockFd);
-        } catch {
-          /* ignore */
-        }
-      }
-      let lock: { pid: number; startedAt: string } | null = null;
-      try {
-        lock = JSON.parse(fs.readFileSync(resolvedLockPath, "utf8")) as { pid: number; startedAt: string };
-      } catch {
-        // Unreadable lock file — treat as stale
-      }
+    if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return;
 
-      let lockAgeMs = MAX_LOCK_AGE_MS + 1; // default: treat as stale if stat fails
-      try {
-        const lockStat = fs.statSync(resolvedLockPath);
-        lockAgeMs = Date.now() - lockStat.mtimeMs;
-      } catch {
-        // ignore
-      }
-
-      const pidIsAlive = lock !== null ? isProcessAlive(lock.pid) : false;
-
-      if (!pidIsAlive || lockAgeMs > MAX_LOCK_AGE_MS) {
-        // Stale lock — remove and retry once with O_EXCL
-        // O-7 / #394: Emit improve_lock_recovered event before recovery so the
-        // audit trail records the abnormal prior-run exit (Temporal/Airflow pattern).
-        try {
-          appendEvent({
-            eventType: "improve_lock_recovered",
-            metadata: {
-              stalePid: lock?.pid ?? null,
-              lockedAt: lock?.startedAt ?? null,
-              recoveredAt: new Date().toISOString(),
-              lockAgeMs,
-              reason: !pidIsAlive ? "pid_not_alive" : "lock_age_exceeded",
-            },
-          });
-        } catch {
-          /* event emission is best-effort; never block lock recovery */
-        }
-        try {
-          fs.unlinkSync(resolvedLockPath);
-        } catch {
-          /* ignore */
-        }
-        let retryFd = -1;
-        try {
-          retryFd = fs.openSync(
-            resolvedLockPath,
-            fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-            0o600,
-          );
-          fs.writeSync(retryFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-          fs.closeSync(retryFd);
-        } catch {
-          if (retryFd !== -1) {
-            try {
-              fs.closeSync(retryFd);
-            } catch {
-              /* ignore */
-            }
+    // Lock file already exists — probe to determine whether it's still held
+    // or whether the prior run died without cleaning up.
+    const probe = probeLock(resolvedLockPath, { staleAfterMs: MAX_LOCK_AGE_MS });
+    const rawContent = probe.state === "absent" ? undefined : probe.rawContent;
+    const lock = rawContent
+      ? (() => {
+          try {
+            return JSON.parse(rawContent) as { pid: number; startedAt: string };
+          } catch {
+            return null;
           }
-          throw new ConfigError(
-            `akm improve is already running. Delete ${resolvedLockPath} to force.`,
-            "INVALID_CONFIG_FILE",
-          );
-        }
-      } else {
-        throw new ConfigError(
-          `akm improve is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${resolvedLockPath} to force.`,
-          "INVALID_CONFIG_FILE",
-        );
+        })()
+      : null;
+
+    if (probe.state === "stale") {
+      // O-7 / #394: Emit improve_lock_recovered event before recovery so the
+      // audit trail records the abnormal prior-run exit (Temporal/Airflow pattern).
+      try {
+        appendEvent({
+          eventType: "improve_lock_recovered",
+          metadata: {
+            stalePid: lock?.pid ?? null,
+            lockedAt: lock?.startedAt ?? null,
+            recoveredAt: new Date().toISOString(),
+            lockAgeMs: probe.ageMs ?? null,
+            reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
+          },
+        });
+      } catch {
+        /* event emission is best-effort; never block lock recovery */
       }
+      releaseLock(resolvedLockPath);
+      if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return;
+      throw new ConfigError(
+        `akm improve is already running. Delete ${resolvedLockPath} to force.`,
+        "INVALID_CONFIG_FILE",
+      );
     }
+
+    throw new ConfigError(
+      `akm improve is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${resolvedLockPath} to force.`,
+      "INVALID_CONFIG_FILE",
+    );
   };
   acquireLock();
 
