@@ -471,6 +471,33 @@ describe("loadConfig", () => {
       cleanup(secondProject);
     }
   });
+
+  test("emits a one-time deprecation warning when discovering a project-level config (#457)", () => {
+    const projectDir = makeTmpDir();
+    try {
+      writeRawConfig(
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({ sources: [{ type: "filesystem", path: "/project-stash" }] }),
+      );
+
+      const messages: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        messages.push(args.map(String).join(" "));
+      };
+      try {
+        process.chdir(projectDir);
+        loadConfig();
+      } finally {
+        console.warn = originalWarn;
+      }
+      // The warning fires at least once and mentions the config path + 0.9.0
+      expect(messages.some((m) => m.includes("DEPRECATED") && m.includes("project-level"))).toBe(true);
+      expect(messages.some((m) => m.includes("0.9.0"))).toBe(true);
+    } finally {
+      cleanup(projectDir);
+    }
+  });
 });
 
 // ── saveConfig ──────────────────────────────────────────────────────────────

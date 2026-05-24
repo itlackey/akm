@@ -2417,7 +2417,12 @@ function getEffectiveConfigPaths(): string[] {
  * Walk from `startDir` up to the filesystem root and collect `.akm/config.json`
  * files. Paths are returned from outermost parent to innermost directory so
  * nearer project directories override broader project settings.
+ *
+ * #457 deprecation: project-level config files (.akm/config.json anywhere
+ * under cwd-ancestors) will be ignored in 0.9.0+. For 0.8.x they continue to
+ * merge but the first discovery in a process triggers a one-time warning.
  */
+const PROJECT_CONFIG_DEPRECATION_WARNED = new Set<string>();
 function discoverProjectConfigPaths(startDir: string): string[] {
   const paths: string[] = [];
   let currentDir = path.resolve(startDir);
@@ -2426,6 +2431,14 @@ function discoverProjectConfigPaths(startDir: string): string[] {
     const configPath = path.join(currentDir, PROJECT_CONFIG_RELATIVE_PATH);
     if (isFile(configPath)) {
       paths.unshift(configPath);
+      if (!PROJECT_CONFIG_DEPRECATION_WARNED.has(configPath)) {
+        PROJECT_CONFIG_DEPRECATION_WARNED.add(configPath);
+        warn(
+          `[akm] DEPRECATED: project-level config file found at ${configPath}. ` +
+            "Project-level config files will be ignored in 0.9.0+. " +
+            "Move your settings to ~/.config/akm/config.json.",
+        );
+      }
     }
 
     const parentDir = path.dirname(currentDir);
