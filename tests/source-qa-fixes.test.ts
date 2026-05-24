@@ -121,7 +121,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
 
     // Config should persist the name
     const config = loadConfig();
-    const sources = config.sources ?? config.stashes ?? [];
+    const sources = config.sources ?? [];
     const added = sources.find((s) => s.type === "filesystem" && s.path === path.resolve(extraStash));
     expect(added).toBeDefined();
     expect(added?.name).toBe("extra");
@@ -136,7 +136,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
 
     // Verify the name is in the config
     const configBefore = loadConfig();
-    const sources = configBefore.sources ?? configBefore.stashes ?? [];
+    const sources = configBefore.sources ?? [];
     expect(sources.some((s) => s.name === "extra")).toBe(true);
   });
 
@@ -148,7 +148,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
     await akmAdd({ ref: someStash });
 
     const config = loadConfig();
-    const sources = config.sources ?? config.stashes ?? [];
+    const sources = config.sources ?? [];
     const added = sources.find((s) => s.type === "filesystem" && s.path === path.resolve(someStash));
     expect(added).toBeDefined();
     // Name should NOT be the raw path (it's the readable form), but should not be empty

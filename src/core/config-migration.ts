@@ -84,6 +84,15 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+function hasOpenvikingSource(raw: Record<string, unknown>): boolean {
+  const sources = raw.sources;
+  if (!Array.isArray(sources)) return false;
+  for (const entry of sources) {
+    if (isObj(entry) && entry.type === "openviking") return true;
+  }
+  return false;
+}
+
 /**
  * Convert a snake_case or kebab-case identifier into camelCase. Leaves an
  * already-camelCased value untouched. Used by the catch-all branches to
@@ -174,7 +183,10 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
   const hasLegacyKeys =
     Object.hasOwn(raw, "features") ||
     (isObj(raw.llm) && (Object.hasOwn(raw.llm, "endpoint") || Object.hasOwn(raw.llm, "features"))) ||
-    isObj(raw.agent);
+    isObj(raw.agent) ||
+    Object.hasOwn(raw, "stashes") ||
+    typeof raw.semanticSearchMode === "boolean" ||
+    hasOpenvikingSource(raw);
 
   // Already migrated — string sentinel "0.8.0" with no legacy keys present.
   if (raw.configVersion === CURRENT_CONFIG_VERSION && !hasLegacyKeys) {
@@ -187,6 +199,60 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
 
   const result: Record<string, unknown> = { ...raw };
   let changed = false;
+
+  // ── 0) Pre-migrations: legacy keys and shape coercions ─────────────────
+  //
+  // These run before the deeper feature-block migrations because they
+  // affect keys the later passes assume are already canonical.
+
+  // 0a) Coerce semanticSearchMode boolean → string ("auto" | "off").
+  if (typeof result.semanticSearchMode === "boolean") {
+    result.semanticSearchMode = result.semanticSearchMode ? "auto" : "off";
+    changed = true;
+  }
+
+  // 0b) Rename legacy stashes[] → sources[].
+  if (Array.isArray(result.stashes)) {
+    if (!Array.isArray(result.sources)) {
+      result.sources = result.stashes;
+      console.warn(
+        "[akm config-migrate] Legacy `stashes[]` config key renamed to `sources[]`. " +
+          "Re-save your config to remove the deprecation notice.",
+      );
+    } else {
+      console.warn(
+        "[akm config-migrate] Both `stashes[]` and `sources[]` present; `stashes[]` dropped (sources takes precedence).",
+      );
+    }
+    delete result.stashes;
+    changed = true;
+  }
+
+  // 0c) Rename openviking source type. The old type is gone in 0.8.0; the
+  // canonical replacement is a website source. Users with non-trivial
+  // openviking config likely need manual intervention — we warn loudly.
+  if (Array.isArray(result.sources)) {
+    const sources = result.sources as unknown[];
+    const mapped: unknown[] = [];
+    let renamed = false;
+    for (const entry of sources) {
+      if (isObj(entry) && entry.type === "openviking") {
+        const name = typeof entry.name === "string" && entry.name ? entry.name : "unnamed";
+        console.warn(
+          `[akm config-migrate] Source "${name}" (type: openviking) is no longer supported. ` +
+            "Remove it from your config, or replace with a `website`/`git` source. " +
+            "Entry dropped from sources[].",
+        );
+        renamed = true;
+        continue;
+      }
+      mapped.push(entry);
+    }
+    if (renamed) {
+      result.sources = mapped;
+      changed = true;
+    }
+  }
 
   // ── 1) Migrate `llm.features.*` → new homes ────────────────────────────
   if (isObj(result.llm)) {

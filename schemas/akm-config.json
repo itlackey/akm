@@ -707,10 +707,6 @@
           "additionalProperties": false
         }
       },
-      "required": [
-        "endpoint",
-        "model"
-      ],
       "additionalProperties": false
     },
     "index": {
@@ -787,9 +783,11 @@
           "source": {
             "type": "string",
             "enum": [
+              "filesystem",
+              "git",
               "npm",
               "github",
-              "git",
+              "website",
               "local"
             ]
           },
@@ -1069,10 +1067,10 @@
               "default": 0.2
             }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "feedback": {
       "type": "object",
@@ -1119,7 +1117,7 @@
       "additionalProperties": false
     }
   },
-  "additionalProperties": true,
+  "additionalProperties": false,
   "$defs": {
     "AkmConfig": {
       "type": "object",
@@ -1826,10 +1824,6 @@
               "additionalProperties": false
             }
           },
-          "required": [
-            "endpoint",
-            "model"
-          ],
           "additionalProperties": false
         },
         "index": {
@@ -1906,9 +1900,11 @@
               "source": {
                 "type": "string",
                 "enum": [
+                  "filesystem",
+                  "git",
                   "npm",
                   "github",
-                  "git",
+                  "website",
                   "local"
                 ]
               },
@@ -2188,10 +2184,10 @@
                   "default": 0.2
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         },
         "feedback": {
           "type": "object",
@@ -2238,7 +2234,7 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "LlmProfileConfig": {
       "type": "object",
@@ -2351,10 +2347,6 @@
           "additionalProperties": false
         }
       },
-      "required": [
-        "endpoint",
-        "model"
-      ],
       "additionalProperties": false
     },
     "ImproveProcessConfig": {

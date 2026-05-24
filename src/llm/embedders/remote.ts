@@ -17,13 +17,22 @@ export function estimateTokenCount(text: string): number {
 }
 
 export class RemoteEmbedder implements Embedder {
-  constructor(private readonly config: EmbeddingConnectionConfig) {}
+  private readonly endpoint: string;
+  private readonly model: string;
+
+  constructor(private readonly config: EmbeddingConnectionConfig) {
+    if (!config.endpoint || !config.model) {
+      throw new Error("RemoteEmbedder requires both endpoint and model on the embedding config.");
+    }
+    this.endpoint = config.endpoint;
+    this.model = config.model;
+  }
 
   async embed(text: string, signal?: AbortSignal): Promise<EmbeddingVector> {
     const headers = this.buildHeaders();
     const body: { input: string; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
       input: text,
-      model: this.config.model,
+      model: this.model,
     };
     if (this.config.dimension) {
       body.dimensions = this.config.dimension;
@@ -33,7 +42,7 @@ export class RemoteEmbedder implements Embedder {
       body.options = ollamaOpts;
     }
 
-    const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.config.endpoint), {
+    const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.endpoint), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -49,7 +58,7 @@ export class RemoteEmbedder implements Embedder {
 
     if (!json.data?.[0]?.embedding) {
       throw new Error(
-        `Unexpected embedding response format: missing data[0].embedding.${embeddingEndpointPathHint(this.config.endpoint)}`,
+        `Unexpected embedding response format: missing data[0].embedding.${embeddingEndpointPathHint(this.endpoint)}`,
       );
     }
 
@@ -67,7 +76,7 @@ export class RemoteEmbedder implements Embedder {
       const batch = texts.slice(i, i + batchSize);
       const body: { input: string[]; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
         input: batch,
-        model: this.config.model,
+        model: this.model,
       };
       if (this.config.dimension) {
         body.dimensions = this.config.dimension;
@@ -76,7 +85,7 @@ export class RemoteEmbedder implements Embedder {
         body.options = ollamaOpts;
       }
 
-      const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.config.endpoint), {
+      const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.endpoint), {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -94,7 +103,7 @@ export class RemoteEmbedder implements Embedder {
 
       if (!json.data || json.data.length !== batch.length) {
         throw new Error(
-          `Unexpected embedding batch response: expected ${batch.length} embeddings, got ${json.data?.length ?? 0}.${embeddingEndpointPathHint(this.config.endpoint)}`,
+          `Unexpected embedding batch response: expected ${batch.length} embeddings, got ${json.data?.length ?? 0}.${embeddingEndpointPathHint(this.endpoint)}`,
         );
       }
 

@@ -206,34 +206,6 @@ describe("loadConfig", () => {
     expect(loadConfig()).toEqual(DEFAULT_CONFIG);
   });
 
-  test("drops unknown keys", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", futureKey: "hello", anotherKey: 42 }));
-    const config = loadConfig();
-    expect(config.semanticSearchMode).toBe("off");
-    expect(config.sources).toBeUndefined();
-    expect(config.output).toEqual({ format: "json", detail: "brief" });
-    expect(config.registries).toEqual(DEFAULT_CONFIG.registries);
-    expect((config as unknown as Record<string, unknown>).futureKey).toBeUndefined();
-    expect((config as unknown as Record<string, unknown>).anotherKey).toBeUndefined();
-  });
-
-  test("ignores wrong types for known keys", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "yes", sources: "not-an-array" }));
-    const config = loadConfig();
-    expect(config.semanticSearchMode).toBe("auto");
-    expect(config.sources).toBeUndefined();
-  });
-
-  test("coerces boolean true to 'auto' for semanticSearchMode", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: true }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
-  });
-
-  test("coerces boolean false to 'off' for semanticSearchMode", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: false }));
-    expect(loadConfig().semanticSearchMode).toBe("off");
-  });
-
   test("passes through string 'auto' for semanticSearchMode", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
     expect(loadConfig().semanticSearchMode).toBe("auto");
@@ -242,16 +214,6 @@ describe("loadConfig", () => {
   test("passes through string 'off' for semanticSearchMode", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
     expect(loadConfig().semanticSearchMode).toBe("off");
-  });
-
-  test("falls back to 'auto' for invalid semanticSearchMode values", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: 42 }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
-  });
-
-  test("ignores legacy semanticSearch boolean (compat shim retired)", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
   });
 
   test("ignores stash-root config.json files", () => {
@@ -290,64 +252,53 @@ describe("loadConfig", () => {
     }
   });
 
-  test("throws ConfigError when config contains an openviking-typed source", () => {
+  test("migrates legacy `stashes[]` to `sources[]` with a deprecation warning", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        stashes: [{ type: "filesystem", path: "/legacy-stash", name: "legacy" }],
       }),
     );
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("openviking is not supported in akm v1");
-    expect(() => loadConfig()).toThrow("docs/migration/v1.md");
-  });
 
-  test("throws ConfigError with INVALID_CONFIG_FILE code for openviking source", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
-      }),
-    );
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     try {
-      loadConfig();
-      throw new Error("Expected loadConfig to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigError);
-      expect((err as ConfigError).code).toBe("INVALID_CONFIG_FILE");
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const config = loadConfig();
+      expect(config.sources?.[0]?.path).toBe("/legacy-stash");
+      expect((config as unknown as Record<string, unknown>).stashes).toBeUndefined();
+    } finally {
+      console.warn = originalWarn;
     }
+    expect(warnings.some((w) => w.includes("stashes[]") && w.includes("sources[]"))).toBe(true);
   });
 
-  test("ConfigError for openviking source carries actionable hint with source name", () => {
+  test("drops openviking sources during migration with a warning", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        sources: [
+          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
+          { type: "filesystem", path: "/keep", name: "keep" },
+        ],
       }),
     );
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     try {
-      loadConfig();
-      throw new Error("Expected loadConfig to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigError);
-      const hint = (err as ConfigError).hint();
-      expect(hint).toBeDefined();
-      // QA #38: hint now uses real commands (akm remove, not akm config sources remove)
-      expect(hint).toContain("my-ov");
-      expect(hint).toContain("akm remove");
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const config = loadConfig();
+      expect(config.sources?.length).toBe(1);
+      expect(config.sources?.[0]?.name).toBe("keep");
+    } finally {
+      console.warn = originalWarn;
     }
-  });
-
-  test("throws ConfigError when config contains legacy stashes[]", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        stashes: [{ type: "filesystem", path: "/legacy-stash" }],
-      }),
-    );
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("legacy `stashes[]` config key");
+    expect(warnings.some((w) => w.includes("openviking") && w.includes("my-ov"))).toBe(true);
   });
 
   test("throws ConfigError when installed npm entry is marked writable", () => {
@@ -526,11 +477,6 @@ describe("output config", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "text", detail: "full" } }));
     expect(loadConfig().output).toEqual({ format: "text", detail: "full" });
   });
-
-  test("ignores invalid output config values", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "xml", detail: "max" } }));
-    expect(loadConfig().output).toEqual({ format: "json", detail: "brief" });
-  });
 });
 
 // ── embedding config ────────────────────────────────────────────────────────
@@ -584,30 +530,6 @@ describe("embedding config", () => {
       model: "text-embedding-3-small",
       dimension: 384,
     });
-  });
-
-  test("ignores invalid embedding config (missing model)", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ embedding: { endpoint: "http://localhost:11434" } }));
-    expect(loadConfig().embedding).toBeUndefined();
-  });
-
-  test("ignores invalid embedding config with non-integer dimension", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        embedding: {
-          endpoint: "https://api.openai.com/v1/embeddings",
-          model: "text-embedding-3-small",
-          dimension: 384.5,
-        },
-      }),
-    );
-    expect(loadConfig().embedding).toBeUndefined();
-  });
-
-  test("ignores non-object embedding config", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ embedding: "not-an-object" }));
-    expect(loadConfig().embedding).toBeUndefined();
   });
 
   test("defaults to no embedding config", () => {
@@ -691,28 +613,6 @@ describe("llm config", () => {
     });
   });
 
-  test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
-    // After QA #36, `akm config set llm.endpoint <url>` persists a partial
-    // llm config with `model: ""`. The loader must accept this so the value
-    // round-trips; downstream callers decide if it's usable.
-    writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost" } }));
-    expect(loadConfig().profiles?.llm?.default).toMatchObject({ endpoint: "http://localhost", model: "" });
-  });
-
-  test("ignores llm config with non-integer maxTokens", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        llm: {
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          maxTokens: 256.5,
-        },
-      }),
-    );
-    expect(loadConfig().profiles?.llm?.default).toBeUndefined();
-  });
-
   test("roundtrips llm config via updateConfig profiles.llm", () => {
     const llmConfig = {
       endpoint: "http://localhost:11434/v1/chat/completions",
@@ -750,16 +650,6 @@ describe("stashDir config", () => {
     const parsed = JSON.parse(raw);
     expect(parsed.stashDir).toBe("/my/stash");
     expect(loadConfig().stashDir).toBe("/my/stash");
-  });
-
-  test("ignores non-string stashDir", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: 42 }));
-    expect(loadConfig().stashDir).toBeUndefined();
-  });
-
-  test("ignores empty stashDir", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: "   " }));
-    expect(loadConfig().stashDir).toBeUndefined();
   });
 });
 
@@ -799,7 +689,7 @@ describe("search config", () => {
     });
   });
 
-  test("loads search.graphBoost confidence mode and caps confidenceWeight at 1", () => {
+  test("rejects search.graphBoost.confidenceWeight > 1 (no silent clamp)", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
@@ -812,27 +702,21 @@ describe("search config", () => {
       }),
     );
 
-    expect(loadConfig().search?.graphBoost).toEqual({
-      confidenceMode: "blend",
-      confidenceWeight: 1,
-    });
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/confidenceWeight/);
   });
 
-  test("caps search.graphBoost.maxHops at conservative hard limit", () => {
+  test("rejects search.graphBoost.maxHops > 3 (no silent clamp)", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ search: { graphBoost: { maxHops: 99 } } }));
-    expect(loadConfig().search?.graphBoost?.maxHops).toBe(3);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/maxHops/);
   });
 
-  test("silently passes through unknown search and search.graphBoost keys", () => {
-    // Behaviour change: the legacy parser warned on unknown nested keys; the
-    // Zod schema now uses .passthrough() at this level so unknown keys
-    // round-trip without noise. Recognised keys still parse as before.
+  test("rejects unknown search.graphBoost keys (typos surface at load time)", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
         search: {
-          minScore: 0.2,
-          unsupportedTopLevel: true,
           graphBoost: {
             maxHops: 2,
             unsupportedNested: "x",
@@ -841,9 +725,8 @@ describe("search config", () => {
       }),
     );
 
-    const loaded = loadConfig();
-    expect(loaded.search?.minScore).toBe(0.2);
-    expect(loaded.search?.graphBoost?.maxHops).toBe(2);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/unsupportedNested/);
   });
 });
 
@@ -895,19 +778,15 @@ describe("v2 config shape parsing", () => {
     expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
   });
 
-  test("silently skips agent profile with invalid platform", () => {
-    // Behaviour change: the legacy parser warned + dropped; Zod-driven load
-    // silently drops the individual malformed profile (via looseRecord) and
-    // keeps siblings. Aligned with the lossy semantics applied to other
-    // sub-objects across the new schema.
+  test("rejects agent profile with invalid platform (no silent drop)", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
         profiles: { agent: { bad: { platform: "invalid-platform" } } },
       }),
     );
-    const loaded = loadConfig();
-    expect(loaded.profiles?.agent?.bad).toBeUndefined();
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/platform/);
   });
 
   test("parses defaults.llm, defaults.agent, defaults.improve", () => {

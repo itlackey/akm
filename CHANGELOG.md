@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Breaking Changes
+
+- **Config validation is now strict and loud**: The config layer no longer silently drops, clamps, or coerces invalid values at load time. Configs that previously parsed with quiet repairs may now hard-error on the next `akm` invocation. Run `akm config migrate` (or simply load — auto-migration covers the legacy-input transforms) to bring a config back into spec, then fix any remaining loud failures.
+  - `search.graphBoost.maxHops > 3` now throws (was silently clamped to 3).
+  - `search.graphBoost.confidenceWeight > 1` now throws (was silently clamped to 1).
+  - Unknown keys at the top level, in `search`, in `search.graphBoost`, and in nested strict sub-objects now throw (were silently dropped).
+  - Invalid embedding entries (missing required sub-fields, wrong types, non-objects) throw instead of silently dropping the entire `embedding` block.
+  - Partial LLM profiles persisted by stale `akm config set llm.endpoint <url>` no longer get auto-completed with `model: ""` at load. Provide a complete profile (endpoint + model) or remove the entry.
+  - `profiles.agent.<name>` entries with invalid platforms hard-error instead of silently disappearing.
+  - Invalid registry entries (empty/missing URL, wrong type) hard-error instead of being filtered out.
+  - `output.format` / `output.detail` enum violations hard-error instead of falling back to defaults.
+
+- **Embedding config: `endpoint` and `model` are now optional fields, not sentinels**: Local-only embedding configs (set only `localModel`) leave `endpoint` and `model` undefined; `hasRemoteEndpoint()` returns false naturally. Code that compared `config.embedding.endpoint === ""` or `config.embedding.model === ""` to detect the local-only path must switch to a presence check.
+
+### Internal
+
+- **Config layer rewrite (cleanup pass)**: `src/core/config.ts` reduced from 1454 LOC to 501. Type declarations split into `config-types.ts`; source-runtime construction into `config-sources.ts`; backup/prune I/O routines consolidated in `config-io.ts`. The previously-duplicated JSON-IO machinery was deduped. Load-time preprocessing closures (silent clamps, sentinel synthesis, warn-and-drop tolerances, legacy partial-profile fixups) are gone; the schema is now plain `.strict()` validation. Legacy-input transforms (semanticSearchMode boolean → string, `stashes[]` → `sources[]`, openviking source removal) live in the migration module where one-time fixups belong.
+
 ## [0.8.0] — Storage Reorganization & CLI Hardening
 
 ### Breaking Changes
