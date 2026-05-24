@@ -143,7 +143,9 @@ describe("setup pre-sets AKM_STASH_DIR when --dir is given (so layer 2 fires)", 
     const hostConfigDir = path.join(fakeHome, ".config", "akm");
     fs.mkdirSync(hostConfigDir, { recursive: true });
     const hostConfigPath = path.join(hostConfigDir, "config.json");
-    const hostConfigContent = '{"cliCanary":true}\n';
+    // Canary uses a real schema key — the host config must round-trip cleanly
+    // through strict validation as part of the protected pre-condition.
+    const hostConfigContent = '{"semanticSearchMode":"off"}\n';
     fs.writeFileSync(hostConfigPath, hostConfigContent);
     const hostMtimeBefore = fs.statSync(hostConfigPath).mtimeMs;
 

@@ -93,49 +93,29 @@ const EmbeddingOllamaOptionsSchema = z
   .strict();
 
 /**
- * Embedding connection config. Two modes:
- *   - Remote: `endpoint` (http/https) + `model` are both required.
- *   - Local-only: `localModel` set; endpoint/model degrade to "" sentinels
- *     so downstream `hasRemoteEndpoint()` callers can detect the local path.
+ * Embedding connection config. Both `endpoint` and `model` are optional:
+ *   - Remote: provide `endpoint` (http/https URL) + `model`.
+ *   - Local-only: omit `endpoint`/`model`; set `localModel` (or fall back to
+ *     {@link DEFAULT_LOCAL_MODEL}).
  *
- * Pre-Zod preprocess synthesizes the local-only sentinel shape when the user
- * supplied only `localModel`, or when the remote endpoint is unusable but a
- * localModel fallback is available — matches the legacy parser's behaviour
- * (tested at tests/embedding-model-config.test.ts).
+ * Consumers route via `hasRemoteEndpoint()` which checks for an http(s)
+ * endpoint — absent fields take the local path naturally, no sentinels needed.
  */
-export const EmbeddingConnectionConfigSchema = z.preprocess(
-  (raw) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
-    const obj = { ...(raw as Record<string, unknown>) };
-    const localModel = typeof obj.localModel === "string" && obj.localModel ? obj.localModel : undefined;
-    const endpoint = typeof obj.endpoint === "string" ? obj.endpoint : undefined;
-    const model = typeof obj.model === "string" ? obj.model : undefined;
-    const isValidHttpUrl = endpoint && (endpoint.startsWith("http://") || endpoint.startsWith("https://"));
-    // Pure local-only: only localModel is meaningful. Force sentinel empty
-    // endpoint+model so the strict object below validates.
-    if (!endpoint || !isValidHttpUrl || !model) {
-      if (localModel) {
-        return { ...obj, endpoint: "", model: "", localModel };
-      }
-    }
-    return obj;
-  },
-  z
-    .object({
-      provider: z.string().optional(),
-      endpoint: z.string(),
-      model: z.string(),
-      apiKey: z.string().optional(),
-      dimension: positiveInt.optional(),
-      localModel: z.string().min(1).optional(),
-      maxTokens: positiveInt.optional(),
-      batchSize: positiveInt.optional(),
-      chunkSize: positiveInt.optional(),
-      contextLength: positiveInt.optional(),
-      ollamaOptions: EmbeddingOllamaOptionsSchema.optional(),
-    })
-    .strict(),
-);
+export const EmbeddingConnectionConfigSchema = z
+  .object({
+    provider: z.string().optional(),
+    endpoint: z.string().optional(),
+    model: z.string().optional(),
+    apiKey: z.string().optional(),
+    dimension: positiveInt.optional(),
+    localModel: z.string().min(1).optional(),
+    maxTokens: positiveInt.optional(),
+    batchSize: positiveInt.optional(),
+    chunkSize: positiveInt.optional(),
+    contextLength: positiveInt.optional(),
+    ollamaOptions: EmbeddingOllamaOptionsSchema.optional(),
+  })
+  .strict();
 
 // ── Agent profiles ──────────────────────────────────────────────────────────
 
@@ -190,28 +170,11 @@ export const ImproveProfileConfigSchema = z
 
 // ── Profiles / defaults ────────────────────────────────────────────────────
 
-/**
- * Wrap a record schema so individual entries that fail validation are dropped
- * instead of rejecting the whole record. Used for profiles.{llm,agent,improve}
- * — a single typoed profile should not nullify all profiles.
- */
-function looseRecord<T extends z.ZodTypeAny>(valueSchema: T) {
-  return z.preprocess((raw) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      const parsed = valueSchema.safeParse(v);
-      if (parsed.success) out[k] = parsed.data;
-    }
-    return Object.keys(out).length > 0 ? out : undefined;
-  }, z.record(z.string(), valueSchema).optional());
-}
-
 export const ProfilesSchema = z
   .object({
-    llm: looseRecord(LlmProfileConfigSchema),
-    agent: looseRecord(AgentProfileConfigSchema),
-    improve: looseRecord(ImproveProfileConfigSchema),
+    llm: z.record(z.string(), LlmProfileConfigSchema).optional(),
+    agent: z.record(z.string(), AgentProfileConfigSchema).optional(),
+    improve: z.record(z.string(), ImproveProfileConfigSchema).optional(),
   })
   .strict();
 
@@ -266,7 +229,7 @@ export const RegistryConfigEntrySchema = z
   })
   .strict();
 
-const KitSourceSchema = z.enum(["npm", "github", "git", "local"]);
+const KitSourceSchema = z.enum(["filesystem", "git", "npm", "github", "website", "local"]);
 
 export const InstalledStashEntrySchema = z
   .object({
@@ -284,7 +247,7 @@ export const InstalledStashEntrySchema = z
   })
   .strict()
   .superRefine((entry, ctx) => {
-    if (entry.writable === true && entry.source !== "git") {
+    if (entry.writable === true && entry.source !== "git" && entry.source !== "filesystem") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `writable: true is only supported on filesystem and git sources (got "${entry.source}" on installed entry "${entry.id}").`,
@@ -322,58 +285,28 @@ export const SecurityConfigSchema = z
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
-/**
- * Output config is forgiving — invalid `format` or `detail` values are
- * silently stripped before validation (legacy parser ignored them; tests at
- * config.test.ts:530 lock this in).
- */
-export const OutputConfigSchema = z.preprocess(
-  (raw) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-    const obj = raw as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    if (obj.format === "json" || obj.format === "yaml" || obj.format === "text") out.format = obj.format;
-    if (obj.detail === "brief" || obj.detail === "normal" || obj.detail === "full") out.detail = obj.detail;
-    return Object.keys(out).length > 0 ? out : undefined;
-  },
-  z
-    .object({
-      format: z.enum(["json", "yaml", "text"]).optional(),
-      detail: z.enum(["brief", "normal", "full"]).optional(),
-    })
-    .strict()
-    .optional(),
-);
+export const OutputConfigSchema = z
+  .object({
+    format: z.enum(["json", "yaml", "text"]).optional(),
+    detail: z.enum(["brief", "normal", "full"]).optional(),
+  })
+  .strict();
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
-const SearchGraphBoostSchema = z.preprocess(
-  (raw) => {
-    // Pre-Zod: silently clamp maxHops to 3 and confidenceWeight to [0, 1] to
-    // preserve the legacy parser's hard-cap semantics without rejecting the
-    // whole graphBoost block on out-of-range user values.
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
-    const obj = { ...(raw as Record<string, unknown>) };
-    if (typeof obj.maxHops === "number" && Number.isFinite(obj.maxHops) && obj.maxHops > 3) {
-      obj.maxHops = 3;
-    }
-    if (typeof obj.confidenceWeight === "number" && Number.isFinite(obj.confidenceWeight) && obj.confidenceWeight > 1) {
-      obj.confidenceWeight = 1;
-    }
-    return obj;
-  },
-  z
-    .object({
-      directBoostPerEntity: nonNegativeNumber.optional(),
-      directBoostCap: nonNegativeNumber.optional(),
-      hopBoostPerEntity: nonNegativeNumber.optional(),
-      hopBoostCap: nonNegativeNumber.optional(),
-      maxHops: positiveInt.max(3).optional(),
-      confidenceMode: z.enum(["off", "blend", "multiply"]).default("blend").optional(),
-      confidenceWeight: z.number().finite().min(0).max(1).default(0.2).optional(),
-    })
-    .passthrough(), // legacy parser warns-and-ignores unknown nested keys
-);
+const SearchGraphBoostSchema = z
+  .object({
+    directBoostPerEntity: nonNegativeNumber.optional(),
+    directBoostCap: nonNegativeNumber.optional(),
+    hopBoostPerEntity: nonNegativeNumber.optional(),
+    hopBoostCap: nonNegativeNumber.optional(),
+    /** Hard-capped at 3; values > 3 hard-error so users see the typo. */
+    maxHops: positiveInt.max(3).optional(),
+    confidenceMode: z.enum(["off", "blend", "multiply"]).default("blend").optional(),
+    /** Range [0, 1]; values > 1 hard-error (no silent clamp). */
+    confidenceWeight: z.number().finite().min(0).max(1).default(0.2).optional(),
+  })
+  .strict();
 
 export const SearchConfigSchema = z
   .object({
@@ -381,7 +314,7 @@ export const SearchConfigSchema = z
     curateRerank: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     graphBoost: SearchGraphBoostSchema.optional(),
   })
-  .passthrough(); // legacy parser warns-and-ignores unknown top-level keys
+  .strict();
 
 // ── Feedback ────────────────────────────────────────────────────────────────
 
@@ -573,118 +506,37 @@ export const IndexConfigSchema = z.preprocess(
 // ── Top-level AkmConfig ────────────────────────────────────────────────────
 
 /**
- * Coerce `semanticSearchMode` to the runtime enum. Accepts the legacy boolean
- * form (true → "auto", false → "off") and falls back to "auto" for any other
- * value type. Matches the legacy parser's tolerant behaviour.
- */
-const semanticSearchModeSchema = z
-  .preprocess(
-    (v) => {
-      if (typeof v === "boolean") return v ? "auto" : "off";
-      if (v === "auto" || v === "off") return v;
-      return "auto";
-    },
-    z.enum(["off", "auto"]),
-  )
-  .default("auto");
-
-/**
- * Optional sub-object that drops to undefined on validation failure. Wrap any
- * schema where the legacy parser silently ignored a malformed value.
- */
-function lossy<T extends z.ZodTypeAny>(schema: T) {
-  return schema.optional().catch(() => undefined);
-}
-
-/**
- * Optional array that drops individual items that fail validation instead of
- * rejecting the whole array. Use for arrays where the legacy parser used a
- * "filter undefined results" pattern (e.g. registries[]).
- */
-function tolerantArray<T extends z.ZodTypeAny>(itemSchema: T) {
-  return z.preprocess((raw) => {
-    if (!Array.isArray(raw)) return undefined;
-    const out: unknown[] = [];
-    for (const item of raw) {
-      const parsed = itemSchema.safeParse(item);
-      if (parsed.success) out.push(parsed.data);
-    }
-    return out;
-  }, z.array(itemSchema).optional());
-}
-
-/**
- * Like {@link tolerantArray} but issues from `superRefine` (custom messages
- * like "writable: true is only supported on filesystem and git sources") are
- * propagated as hard errors instead of dropping the item. Use for arrays where
- * the legacy parser had `throw new ConfigError(...)` policy gates.
- */
-function installedArrayWithRefineEscalation<T extends z.ZodTypeAny>(itemSchema: T) {
-  return z.preprocess((raw, ctx) => {
-    if (!Array.isArray(raw)) return undefined;
-    const out: unknown[] = [];
-    for (const item of raw) {
-      const parsed = itemSchema.safeParse(item);
-      if (parsed.success) {
-        out.push(parsed.data);
-        continue;
-      }
-      // Escalate `superRefine` issues (z.ZodIssueCode.custom) to the parent
-      // context — these are policy violations that should fail-fast. Other
-      // issues (missing fields, wrong types) drop silently.
-      const customIssues = parsed.error.issues.filter((i) => i.code === z.ZodIssueCode.custom);
-      for (const issue of customIssues) {
-        ctx.addIssue(issue);
-      }
-    }
-    return out;
-  }, z.array(itemSchema).optional());
-}
-
-/**
  * Base object schema used both as the top-level shape and as the source of
  * truth for {@link listTopLevelConfigKeys}. {@link AkmConfigSchema} wraps this
  * with cross-field refinements (`.superRefine()`).
+ *
+ * All fields validate loudly — typos and shape errors throw at load time. The
+ * legacy parser's warn-and-drop tolerance was a frequent source of silent
+ * configuration loss; the migration module ({@link migrateConfigShape}) handles
+ * one-time 0.7→0.8 input transforms before the schema sees the value.
  */
 export const AkmConfigShape = {
   configVersion: z.union([z.string().min(1), z.number()]).optional(),
-  profiles: lossy(ProfilesSchema),
-  defaults: lossy(DefaultsSchema),
-  stashDir: z
-    .preprocess((v) => (typeof v === "string" && v.trim() ? v.trim() : undefined), nonEmptyString.optional())
-    .optional(),
-  semanticSearchMode: semanticSearchModeSchema,
-  embedding: lossy(EmbeddingConnectionConfigSchema),
-  // `index` is intentionally strict — unknown keys, non-boolean `llm`, etc.
-  // hard-error at load time so users see typos at startup, not at index time.
-  // Legacy parser also threw ConfigError here.
+  profiles: ProfilesSchema.optional(),
+  defaults: DefaultsSchema.optional(),
+  stashDir: nonEmptyString.optional(),
+  semanticSearchMode: z.enum(["off", "auto"]).default("auto"),
+  embedding: EmbeddingConnectionConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
-  // installed[]: per-item tolerant — entries with unrecognised `source` types
-  // (e.g. "filesystem" — only the four KitSource kinds are accepted) drop
-  // silently. The writable+non-git superRefine violation still propagates as
-  // a hard ConfigError because Zod's preprocess wrapper surfaces refinement
-  // failures distinctly from shape failures.
-  installed: installedArrayWithRefineEscalation(InstalledStashEntrySchema),
-  // registries: per-item tolerant — bad entries (missing/empty URL, non-object)
-  // are dropped silently, keeping valid neighbors. Empty array means "no
-  // registries" (overrides defaults).
-  registries: tolerantArray(RegistryConfigEntrySchema),
-  // sources[]: per-item shape errors drop silently, but explicit policy
-  // violations (writable+npm/website) escalate to a hard ConfigError. The
-  // pre-Zod rejectHardErrors hook in config.ts also catches openviking up
-  // front for a more actionable message.
-  sources: installedArrayWithRefineEscalation(SourceConfigEntrySchema),
-  security: lossy(SecurityConfigSchema),
-  output: lossy(OutputConfigSchema),
+  installed: z.array(InstalledStashEntrySchema).optional(),
+  registries: z.array(RegistryConfigEntrySchema).optional(),
+  sources: z.array(SourceConfigEntrySchema).optional(),
+  security: SecurityConfigSchema.optional(),
+  output: OutputConfigSchema.optional(),
   writable: z.boolean().optional(),
   defaultWriteTarget: nonEmptyString.optional(),
-  search: lossy(SearchConfigSchema),
-  feedback: lossy(FeedbackConfigSchema),
+  search: SearchConfigSchema.optional(),
+  feedback: FeedbackConfigSchema.optional(),
   archiveRetentionDays: nonNegativeNumber.optional(),
-  improve: lossy(ImproveConfigSchema),
+  improve: ImproveConfigSchema.optional(),
 } as const;
 
-export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
+export const AkmConfigBaseSchema = z.object(AkmConfigShape).strict();
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   // #464.a: defaultWriteTarget must name a configured source when sources

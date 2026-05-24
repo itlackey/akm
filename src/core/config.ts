@@ -54,8 +54,25 @@ export interface BaseConnectionConfig {
   apiKey?: string;
 }
 
-export interface EmbeddingConnectionConfig extends BaseConnectionConfig {
-  /** Optional output dimension for providers that support it */
+/**
+ * Embedding connection config. Discriminated by `endpoint` presence:
+ *   - Remote: both `endpoint` (http/https URL) and `model` set.
+ *   - Local-only: `endpoint`/`model` absent; `localModel` selects the local
+ *     transformer (or falls back to {@link DEFAULT_LOCAL_MODEL}).
+ *
+ * Consumers route via {@link hasRemoteEndpoint}, which checks for an http(s)
+ * `endpoint` value — undefined falls through to the local path naturally.
+ */
+export interface EmbeddingConnectionConfig {
+  /** Provider name for display (e.g. "openai", "anthropic", "ollama"). */
+  provider?: string;
+  /** OpenAI-compatible HTTP endpoint. Optional — absent means local-only. */
+  endpoint?: string;
+  /** Model name to use. Optional — absent means local-only. */
+  model?: string;
+  /** Optional API key for authenticated endpoints. */
+  apiKey?: string;
+  /** Optional output dimension for providers that support it. */
   dimension?: number;
   /** Optional local transformer model name (e.g. "Xenova/bge-small-en-v1.5"). Overrides the default when using local embeddings. */
   localModel?: string;
@@ -755,12 +772,6 @@ function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
   rejectHardErrors(raw);
   // Migration is idempotent on already-migrated configs.
   const migrated = migrateConfigShape(raw).result;
-  // QA #36: legacy load-time tolerance — a partial llm profile written by
-  // `akm config set llm.endpoint <url>` may omit `model`. Inject "" so the
-  // strict LlmProfileConfigSchema accepts it. The CLI write path
-  // (config-walker.configSet) does NOT call this, so `akm config set llm
-  // '{"endpoint": ...}'` still rejects missing model.
-  normalizeLegacyPartialLlmProfiles(migrated);
   const parsed = AkmConfigSchema.safeParse(migrated);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
@@ -777,25 +788,6 @@ function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
     if (result[key] !== undefined) out[key] = result[key];
   }
   return mergeLoadedConfig(DEFAULT_CONFIG, out as Partial<AkmConfig>);
-}
-
-/**
- * In-place: walk `profiles.llm.*` and inject `model: ""` on any entry that
- * has an endpoint but no model. Matches the legacy parser's tolerance for
- * partial profiles written by `akm config set llm.endpoint <url>`.
- */
-function normalizeLegacyPartialLlmProfiles(raw: Record<string, unknown>): void {
-  const profiles = raw.profiles;
-  if (typeof profiles !== "object" || profiles === null) return;
-  const llm = (profiles as Record<string, unknown>).llm;
-  if (typeof llm !== "object" || llm === null) return;
-  for (const entry of Object.values(llm as Record<string, unknown>)) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const obj = entry as Record<string, unknown>;
-    if (typeof obj.endpoint === "string" && typeof obj.model !== "string") {
-      obj.model = "";
-    }
-  }
 }
 
 /**

@@ -329,7 +329,7 @@ describe("config roundtrip", () => {
     expect(loaded.registries?.[1]).toEqual({ url: "https://b.com/index.json", name: "beta", enabled: false });
   });
 
-  test("invalid registry entries are filtered during load", () => {
+  test("invalid registry entries reject at load time (no silent filtering)", () => {
     const configPath = getConfigPath();
     writeConfig(configPath, {
       semanticSearchMode: "auto",
@@ -342,8 +342,6 @@ describe("config roundtrip", () => {
       ],
     });
 
-    const loaded = loadConfig();
-    expect(loaded.registries?.length).toBe(1);
-    expect(loaded.registries?.[0].url).toBe("https://valid.com/index.json");
+    expect(() => loadConfig()).toThrow();
   });
 });
