@@ -156,7 +156,10 @@ describe("akm accept / reject / diff proposal (CLI)", () => {
   test("reject archives proposal with reason", () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["reject", created.id, "--reason", "duplicate", "--format=json"], { stashDir: stash });
+    // --yes is required in non-interactive (subprocess) mode since WS-6 added confirmation prompts.
+    const result = runCli(["reject", created.id, "--reason", "duplicate", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.reason).toBe("duplicate");

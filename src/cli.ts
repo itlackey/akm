@@ -1377,15 +1377,20 @@ const configCommand = defineCommand({
     migrate: defineCommand({
       meta: {
         name: "migrate",
-        description: "Migrate the config file to the current schema version. Use --dry-run to preview.",
+        description: "Migrate the config file to the current schema version. Use --dry-run to preview without writing.",
       },
       args: {
-        "dry-run": { type: "boolean", description: "Print the migration result without writing.", default: false },
+        "dry-run": { type: "boolean", description: "Preview the migration result without writing.", default: false },
+        "print-diff": {
+          type: "boolean",
+          description: "Print a unified diff of old vs new config alongside the migration output.",
+          default: false,
+        },
       },
       async run({ args }) {
         return runWithJsonErrors(async () => {
           const { runConfigMigrate } = await import("./cli/config-migrate.js");
-          await runConfigMigrate({ dryRun: Boolean(args["dry-run"]) });
+          await runConfigMigrate({ dryRun: Boolean(args["dry-run"]), printDiff: Boolean(args["print-diff"]) });
         });
       },
     }),
@@ -3073,6 +3078,8 @@ const vaultUnsetCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      // Validate path first so traversal errors surface before the confirmation prompt.
+      const { name, absPath, source } = resolveVaultPath(args.ref);
       const { confirmDestructive } = await import("./cli/confirm.js");
       const confirmed = await confirmDestructive(
         `Remove key "${args.key}" from vault "${args.ref}"? This cannot be undone.`,
@@ -3083,7 +3090,6 @@ const vaultUnsetCommand = defineCommand({
         return;
       }
       const { unsetKey } = await import("./commands/vault.js");
-      const { name, absPath, source } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
         throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
       }

@@ -1147,7 +1147,8 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     });
 
     try {
-      const result = runCli("remove", "npm:@scope/stash@latest");
+      // --yes is required in non-interactive (subprocess) mode since WS-6 added confirmation prompts.
+      const result = runCli("remove", "npm:@scope/stash@latest", "--yes");
       expect(result.exitCode).toBe(0);
 
       const json = parseJson(result.stdout);

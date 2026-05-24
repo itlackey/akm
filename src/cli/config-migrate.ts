@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stripJsonComments } from "../core/config";
+import { unifiedDiff, withConfigLock, writeConfigAtomic } from "../core/config-io";
 import { migrateConfigShape } from "../core/config-migration";
 import { getCacheDir, getConfigPath } from "../core/paths";
 import { warn } from "../core/warn";
@@ -57,8 +58,8 @@ function acquireMigrateLock(lockPath: string, noWait: boolean): (() => void) | n
 
 export async function migrateConfigFile(
   filePath: string,
-  opts: { dryRun?: boolean },
-): Promise<{ changed: boolean; result: Record<string, unknown> }> {
+  opts: { dryRun?: boolean; printDiff?: boolean },
+): Promise<{ changed: boolean; result: Record<string, unknown>; diff?: string }> {
   if (!fs.existsSync(filePath)) {
     return { changed: false, result: {} };
   }
@@ -84,14 +85,23 @@ export async function migrateConfigFile(
     return { changed: false, result };
   }
 
+  const migratedText = `${JSON.stringify(result, null, 2)}\n`;
+
+  // WS-2: compute a diff when requested (always computed for --print-diff;
+  // never requires a write so safe in --dry-run).
+  const diff = opts.printDiff ? unifiedDiff(text, migratedText, filePath) : undefined;
+
   if (opts.dryRun) {
-    return { changed: true, result };
+    return { changed: true, result, diff };
   }
 
-  backupConfigFile(filePath);
-  fs.writeFileSync(filePath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  // WS-3: acquire config write lock + use atomic write (tmp → rename).
+  withConfigLock(() => {
+    backupConfigFile(filePath);
+    writeConfigAtomic(filePath, result);
+  });
 
-  return { changed: true, result };
+  return { changed: true, result, diff };
 }
 
 function discoverProjectConfigPaths(startDir: string): string[] {
@@ -111,7 +121,11 @@ function discoverProjectConfigPaths(startDir: string): string[] {
   return paths;
 }
 
-export async function runConfigMigrate(opts: { dryRun?: boolean; noWait?: boolean }): Promise<void> {
+export async function runConfigMigrate(opts: {
+  dryRun?: boolean;
+  noWait?: boolean;
+  printDiff?: boolean;
+}): Promise<void> {
   const userConfigPath = getConfigPath();
   const projectPaths = discoverProjectConfigPaths(process.cwd());
 
@@ -132,10 +146,14 @@ export async function runConfigMigrate(opts: { dryRun?: boolean; noWait?: boolea
   try {
     let anyChanged = false;
     for (const filePath of allPaths) {
-      const { changed } = await migrateConfigFile(filePath, { dryRun: opts.dryRun });
+      const { changed, diff } = await migrateConfigFile(filePath, { dryRun: opts.dryRun, printDiff: opts.printDiff });
       if (changed) {
         const action = opts.dryRun ? "would migrate" : "migrated";
         console.log(`[akm] ${action}: ${filePath}`);
+        // WS-2: print the unified diff to stdout when --print-diff is set.
+        if (diff) {
+          console.log(diff);
+        }
         anyChanged = true;
       } else {
         console.log(`[akm] already up to date: ${filePath}`);
