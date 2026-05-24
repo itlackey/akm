@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { withMockedFetch } from "./_helpers/sandbox";
 
 const DETECT_SOURCE_PATH = path.join(import.meta.dir, "../src/setup/detect.ts");
 
@@ -14,9 +15,13 @@ async function loadDetectModule(fromDir: string) {
 
 // ── detect.ts tests ─────────────────────────────────────────────────────────
 
+// HOME / globalThis.fetch isolation is provided by tests/_preload.ts —
+// the per-test snapshot/restore of those is now automatic. We still
+// `fs.rmSync` the per-test tmp dirs because the harness doesn't track
+// arbitrary disk allocations.
+
 describe("detectAgentPlatforms", () => {
   let testHome: string;
-  const originalHome = process.env.HOME;
 
   beforeEach(() => {
     testHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-detect-"));
@@ -24,7 +29,6 @@ describe("detectAgentPlatforms", () => {
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
     fs.rmSync(testHome, { recursive: true, force: true });
   });
 
@@ -91,18 +95,11 @@ describe("detectAgentPlatforms", () => {
 });
 
 describe("detectOllama", () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
+  // globalThis.fetch is sandboxed by `withMockedFetch` — the helper restores
+  // the original fetch before returning, so the harness tripwire stays quiet.
 
   test("returns available=true with models from API", async () => {
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    const mockFetch = (async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("/api/tags")) {
         return new Response(
@@ -115,8 +112,10 @@ describe("detectOllama", () => {
       return new Response("", { status: 404 });
     }) as unknown as typeof fetch;
 
-    const { detectOllama } = await loadDetectModule(os.tmpdir());
-    const result = await detectOllama();
+    const result = await withMockedFetch(async () => {
+      const { detectOllama } = await loadDetectModule(os.tmpdir());
+      return detectOllama();
+    }, mockFetch);
     expect(result.available).toBe(true);
     expect(result.models).toContain("llama3.2");
     expect(result.models).toContain("nomic-embed-text");
@@ -124,29 +123,32 @@ describe("detectOllama", () => {
   });
 
   test("strips :latest suffix from model names", async () => {
-    globalThis.fetch = (async () => {
-      return new Response(
+    const mockFetch = (async () =>
+      new Response(
         JSON.stringify({
           models: [{ name: "llama3.2:latest" }, { name: "phi3:v2" }],
         }),
         { status: 200 },
-      );
-    }) as unknown as typeof fetch;
+      )) as unknown as typeof fetch;
 
-    const { detectOllama } = await loadDetectModule(os.tmpdir());
-    const result = await detectOllama();
+    const result = await withMockedFetch(async () => {
+      const { detectOllama } = await loadDetectModule(os.tmpdir());
+      return detectOllama();
+    }, mockFetch);
     expect(result.models).toContain("llama3.2");
     expect(result.models).toContain("phi3:v2");
     expect(result.models).not.toContain("llama3.2:latest");
   });
 
   test("returns available=false when fetch fails", async () => {
-    globalThis.fetch = (async () => {
+    const mockFetch = (async () => {
       throw new Error("Connection refused");
     }) as unknown as typeof fetch;
 
-    const { detectOllama } = await loadDetectModule(os.tmpdir());
-    const result = await detectOllama();
+    const result = await withMockedFetch(async () => {
+      const { detectOllama } = await loadDetectModule(os.tmpdir());
+      return detectOllama();
+    }, mockFetch);
     // May still be available=true if `ollama list` CLI works, or false if both fail
     // Just verify it doesn't throw
     expect(typeof result.available).toBe("boolean");
@@ -154,17 +156,18 @@ describe("detectOllama", () => {
   });
 
   test("returns sorted model names", async () => {
-    globalThis.fetch = (async () => {
-      return new Response(
+    const mockFetch = (async () =>
+      new Response(
         JSON.stringify({
           models: [{ name: "zephyr:latest" }, { name: "alpaca:latest" }, { name: "mistral:latest" }],
         }),
         { status: 200 },
-      );
-    }) as unknown as typeof fetch;
+      )) as unknown as typeof fetch;
 
-    const { detectOllama } = await loadDetectModule(os.tmpdir());
-    const result = await detectOllama();
+    const result = await withMockedFetch(async () => {
+      const { detectOllama } = await loadDetectModule(os.tmpdir());
+      return detectOllama();
+    }, mockFetch);
     expect(result.models).toEqual(["alpaca", "mistral", "zephyr"]);
   });
 });

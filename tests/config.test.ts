@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
+  getDefaultLlmConfig,
   loadConfig,
   loadUserConfig,
+  requireLlmConfig,
   resetConfigCache,
   saveConfig,
   updateConfig,
@@ -26,13 +28,9 @@ function writeRawConfig(configPath: string, content: string): void {
   fs.writeFileSync(configPath, content);
 }
 
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalHome = process.env.HOME;
-const originalStashDir = process.env.AKM_STASH_DIR;
-const originalCwd = process.cwd();
+// XDG_* / HOME / AKM_STASH_DIR / cwd snapshot+restore is provided by
+// tests/_preload.ts. This block only owns the per-test tmp-dir lifecycle
+// and the production-singleton reset.
 let testConfigHome = "";
 let testCacheHome = "";
 let testDataHome = "";
@@ -47,47 +45,10 @@ beforeEach(() => {
   process.env.XDG_CACHE_HOME = testCacheHome;
   process.env.XDG_DATA_HOME = testDataHome;
   process.env.XDG_STATE_HOME = testStateHome;
-  process.chdir(originalCwd);
   resetConfigCache();
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
-
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
-
-  if (originalStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalStashDir;
-  }
-
   if (testConfigHome) {
     cleanup(testConfigHome);
     testConfigHome = "";
@@ -108,7 +69,6 @@ afterEach(() => {
     testStateHome = "";
   }
 
-  process.chdir(originalCwd);
   resetConfigCache();
 });
 
@@ -233,6 +193,7 @@ describe("loadConfig", () => {
     // read. A project-level file under cwd-ancestors emits a deprecation
     // warning but does NOT contribute settings.
     const projectDir = makeTmpDir();
+    const restoreCwd = process.cwd();
     try {
       writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
       writeRawConfig(
@@ -248,6 +209,7 @@ describe("loadConfig", () => {
       // sources from project config are ignored
       expect(loaded.sources).toBeUndefined();
     } finally {
+      process.chdir(restoreCwd);
       cleanup(projectDir);
     }
   });
@@ -326,6 +288,7 @@ describe("loadConfig", () => {
 
   test("emits a one-time deprecation warning when a project-level config is discovered (#457)", () => {
     const projectDir = makeTmpDir();
+    const restoreCwd = process.cwd();
     try {
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
@@ -347,6 +310,7 @@ describe("loadConfig", () => {
       expect(messages.some((m) => m.includes("DEPRECATED") && m.includes("project-level"))).toBe(true);
       expect(messages.some((m) => m.includes("ignored"))).toBe(true);
     } finally {
+      process.chdir(restoreCwd);
       cleanup(projectDir);
     }
   });
@@ -452,6 +416,7 @@ describe("updateConfig", () => {
     // updateConfig writes to the user-level file; project-level files are
     // left untouched and their settings have no effect on loadConfig().
     const projectDir = makeTmpDir();
+    const restoreCwd = process.cwd();
     try {
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
@@ -467,6 +432,7 @@ describe("updateConfig", () => {
       expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
       expect(loadUserConfig().semanticSearchMode).toBe("off");
     } finally {
+      process.chdir(restoreCwd);
       cleanup(projectDir);
     }
   });
@@ -623,6 +589,74 @@ describe("llm config", () => {
       defaults: { llm: "default" },
     });
     expect(loadConfig().profiles?.llm?.default).toMatchObject(llmConfig);
+  });
+
+  // Regression: on 2026-05-23 a config-rewrite dropped `defaults.llm` while
+  // leaving `profiles.llm.default` intact. `getDefaultLlmConfig` returned
+  // undefined, every pass that goes through it (memory-inference, distill's
+  // chat path) silently no-op'd for ~18h. Implicit fallback closes that hole.
+  describe("default LLM resolution (implicit profiles.llm.default fallback)", () => {
+    const llmConfig = {
+      endpoint: "http://localhost:11434/v1/chat/completions",
+      model: "llama3.2",
+    };
+
+    test("getDefaultLlmConfig honors explicit defaults.llm", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { llm: "primary" },
+        profiles: { llm: { primary: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toEqual(llmConfig);
+    });
+
+    test("getDefaultLlmConfig falls back to profiles.llm.default when defaults.llm is unset", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { default: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toEqual(llmConfig);
+    });
+
+    test("getDefaultLlmConfig returns undefined when neither defaults.llm nor profiles.llm.default is set", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { gemma: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toBeUndefined();
+    });
+
+    test("requireLlmConfig falls back to profiles.llm.default when defaults.llm is unset", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { default: llmConfig } },
+      };
+      expect(requireLlmConfig(cfg)).toEqual(llmConfig);
+    });
+
+    test("requireLlmConfig throws when neither defaults.llm nor profiles.llm.default is set", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { gemma: llmConfig } },
+      };
+      expect(() => requireLlmConfig(cfg)).toThrow(ConfigError);
+      expect(() => requireLlmConfig(cfg)).toThrow(/LLM is not configured/);
+    });
+
+    test("explicit defaults.llm takes precedence over an unrelated profiles.llm.default", () => {
+      const explicit = { endpoint: "http://explicit/v1", model: "explicit-model" };
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { llm: "primary" },
+        profiles: { llm: { primary: explicit, default: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toEqual(explicit);
+      expect(requireLlmConfig(cfg)).toEqual(explicit);
+    });
   });
 });
 
