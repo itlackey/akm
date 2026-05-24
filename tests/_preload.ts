@@ -208,7 +208,6 @@ afterEach(() => {
   snapshot = undefined;
 
   if (leakReasons.length > 0) {
-    // Phase 1: warn only. Phase 2 will switch this to `throw`.
-    console.warn(`[sandbox tripwire] ${leakReasons.join("; ")}`);
+    throw new Error(`[sandbox tripwire] ${leakReasons.join("; ")}`);
   }
 });
