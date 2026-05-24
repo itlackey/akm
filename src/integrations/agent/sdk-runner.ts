@@ -4,7 +4,7 @@
  * an OpenAI-compatible endpoint (or inherits from config.llm) for the SDK.
  */
 
-import type { LlmConnectionConfig } from "../../core/config";
+import { type LlmConnectionConfig, resolveSecret } from "../../core/config";
 import type { AgentProfile } from "./profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "./spawn";
 
@@ -51,7 +51,7 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
 
   // Resolve endpoint and model: profile fields take precedence over config.llm
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
-  const apiKey = profile.apiKey ?? llmConfig?.apiKey;
+  const apiKey = resolveSecret(profile.apiKey ?? llmConfig?.apiKey);
   const model = profile.model;
 
   const sdkConfig: Record<string, unknown> = {};

@@ -1437,8 +1437,7 @@ function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfile
 
 function parseConfigText(text: string, sourcePath?: string): Partial<AkmConfig> {
   const raw = parseConfigObjectFromText(text, sourcePath);
-  const expanded = expandEnvVars(raw);
-  return parseConfigLayer(expanded);
+  return parseConfigLayer(raw);
 }
 
 function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
@@ -1451,8 +1450,7 @@ function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefine
   // #458: parse-failure now propagates as a ConfigError instead of being
   // silently dropped.
   const raw = parseConfigObjectFromText(text, configPath);
-  const expanded = expandEnvVars(raw);
-  return parseConfigLayer(expanded);
+  return parseConfigLayer(raw);
 }
 
 function readNormalizedConfigFromText(text: string, sourcePath?: string): Partial<AkmConfig> {
@@ -1476,51 +1474,30 @@ function parseOutputConfig(value: unknown): OutputConfig | undefined {
 }
 
 /**
- * Field names that hold URLs and must NOT have env var substitution applied.
- * Expanding ${VAR} inside a URL could leak secrets by redirecting requests to
- * an attacker-controlled server if the config file is world-readable.
- */
-const URL_FIELD_NAMES = new Set(["url", "endpoint", "artifactUrl"]);
-
-/**
- * Recursively expand `${VAR}` references in all string values.
- * Supports `${VAR}`, `${VAR:-default}`, and bare `$VAR` at the start of a value.
- * Non-string values pass through unchanged.
+ * Resolve a single secret value by expanding `${VAR}` / `$VAR` /
+ * `${VAR:-default}` references against `process.env`. Use this at apiKey /
+ * authorization-header consumption sites (LLM client, embedder, agent SDK
+ * runner) — NOT on the load path. Non-string inputs pass through unchanged.
  *
- * URL-type fields (named `url`, `endpoint`, `artifactUrl`, or whose value starts
- * with `http://` / `https://`) are skipped to prevent secret injection into URLs.
+ * Returns the input unchanged when no substitution markers are present, so
+ * literal API key strings (already-resolved secrets) are zero-cost.
+ *
+ * Other config string values (URLs, endpoints, model names, prompts) are
+ * preserved verbatim on read — only fields explicitly routed through this
+ * helper are expanded.
  */
-function expandEnvVars<T>(value: T, fieldName?: string): T {
-  if (typeof value === "string") {
-    // Skip URL-type fields by name or by value prefix, unless they contain ${VAR} syntax
-    if (
-      !value.includes("${") &&
-      ((fieldName !== undefined && URL_FIELD_NAMES.has(fieldName)) ||
-        value.startsWith("http://") ||
-        value.startsWith("https://"))
-    ) {
-      return value;
+export function resolveSecret(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return value;
+  if (!value.includes("$")) return value;
+  return value.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
+    if (braced) {
+      const [name, ...rest] = (braced as string).split(":-");
+      const fallback = rest.join(":-");
+      return process.env[name] ?? fallback ?? "";
     }
-    return value.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
-      if (braced) {
-        const [name, ...rest] = braced.split(":-");
-        const fallback = rest.join(":-");
-        return process.env[name] ?? fallback ?? "";
-      }
-      return process.env[bare] ?? "";
-    }) as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => expandEnvVars(item)) as T;
-  }
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = expandEnvVars(v, k);
-    }
-    return out as T;
-  }
-  return value;
+    return process.env[bare as string] ?? "";
+  });
 }
 
 function parseConfigObjectFromText(text: string, sourcePath?: string): Record<string, unknown> {

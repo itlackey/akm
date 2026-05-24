@@ -6,7 +6,7 @@
  */
 
 import { fetchWithTimeout, isHttpUrl } from "../../core/common";
-import type { EmbeddingConnectionConfig } from "../../core/config";
+import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config";
 import type { Embedder, EmbeddingVector } from "./types";
 
 const DEFAULT_REMOTE_BATCH_SIZE = 100;
@@ -114,8 +114,9 @@ export class RemoteEmbedder implements Embedder {
 
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.config.apiKey) {
-      headers.Authorization = `Bearer ${this.config.apiKey}`;
+    const resolvedKey = resolveSecret(this.config.apiKey);
+    if (resolvedKey) {
+      headers.Authorization = `Bearer ${resolvedKey}`;
     }
     return headers;
   }
