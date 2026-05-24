@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### New Features
+
+- **`akm config migrate --print-diff`**: New flag that prints a unified diff of old vs new config alongside (or instead of, with `--dry-run`) writing the migrated output. Useful for auditing what auto-migration will change before committing. Usage: `akm config migrate --dry-run --print-diff`.
+
+- **Loud auto-migration banner (WS-2)**: When `akm` detects a pre-0.8 config shape on load and auto-migrates it, it now prints a loud multi-line banner to **both stderr and stdout** (so pipelines that capture only one stream still see it). The banner includes: the resolved config file path, the resolved backup directory path, the `AKM_NO_AUTO_MIGRATE=1` opt-out instruction, and the `akm config migrate --dry-run --print-diff` preview hint.
+
+- **Atomic + locked config writes (WS-3)**: All config writes (`saveConfig`, auto-migration, `akm config migrate`) now acquire a PID-sentinel file lock (`$CONFIG/config.json.lck`) before touching the file, and route through the atomic write path (write to `.tmp` → rename). Stale locks (process no longer alive) are reclaimed automatically.
+
+- **Validate-before-write on `akm config set` (WS-3)**: `saveConfig()` now validates the config object against `AkmConfigSchema` before any bytes touch disk. If the resulting config would be invalid (unknown keys, wrong enum values, out-of-range numbers), the write is rejected with a typed `ConfigError` and the file is left unchanged.
+
+- **Migration write failure is now a hard error (WS-2)**: If auto-migration cannot write the migrated config to disk (permissions, disk full, etc.), `akm` throws a `ConfigError` with the `AKM_NO_AUTO_MIGRATE=1` suggestion and the config path in the error message. The old behaviour — returning the migrated bytes in memory without persisting — caused an infinite re-migrate loop on every subsequent load.
+
 ### Breaking Changes
 
 - **Config validation is now strict and loud**: The config layer no longer silently drops, clamps, or coerces invalid values at load time. Configs that previously parsed with quiet repairs may now hard-error on the next `akm` invocation. Run `akm config migrate` (or simply load — auto-migration covers the legacy-input transforms) to bring a config back into spec, then fix any remaining loud failures.
