@@ -15,9 +15,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "./common";
+import { isProcessAlive, writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
-import { getCacheDir } from "./paths";
+import { getCacheDir, getConfigDir } from "./paths";
 
 /**
  * Read the raw text of a config file. Returns `undefined` when the file does
@@ -134,6 +134,198 @@ function pruneOldBackups(backupDir: string): void {
       // Best-effort prune; next save will retry.
     }
   }
+}
+
+// ── Config write lock ────────────────────────────────────────────────────────
+
+/**
+ * Path to the config write sentinel (`config.json.lck` in $CONFIG).
+ *
+ * Placed next to config.json so the lock scope is obvious and the path is
+ * predictable for debugging. Uses $CONFIG (not $DATA) because config.json
+ * itself lives in $CONFIG — they should fail together if the dir is read-only.
+ */
+function getConfigLockPath(): string {
+  return path.join(getConfigDir(), "config.json.lck");
+}
+
+const CONFIG_LOCK_MAX_RETRIES = 10;
+const CONFIG_LOCK_RETRY_DELAY_MS = 50;
+
+/**
+ * Acquire an exclusive sentinel around config writes.
+ *
+ * Returns a release function. Best-effort: when all retries are exhausted the
+ * write proceeds unlocked rather than erroring (same posture as lockfile.ts).
+ */
+export function acquireConfigLock(): () => void {
+  const lockPath = getConfigLockPath();
+  const dir = path.dirname(lockPath);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // Directory already exists or unwritable — let the write fail naturally.
+  }
+
+  for (let attempt = 0; attempt < CONFIG_LOCK_MAX_RETRIES; attempt++) {
+    try {
+      fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
+      return () => {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          /* sentinel already gone — fine */
+        }
+      };
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+        // Non-lock error (permissions, etc.) — bail out and proceed unlocked.
+        break;
+      }
+      // Stale lock check
+      try {
+        const pid = parseInt(fs.readFileSync(lockPath, "utf8").trim(), 10);
+        if (!Number.isNaN(pid) && pid > 0 && !isProcessAlive(pid)) {
+          fs.unlinkSync(lockPath);
+          continue; // Reclaimed — retry immediately
+        }
+      } catch {
+        /* ignore */
+      }
+      if (attempt < CONFIG_LOCK_MAX_RETRIES - 1) {
+        // Busy spin (synchronous) — config writes are fast
+        const deadline = Date.now() + CONFIG_LOCK_RETRY_DELAY_MS;
+        while (Date.now() < deadline) {
+          // spin
+        }
+      }
+    }
+  }
+  // Best-effort: proceed without lock
+  return () => {};
+}
+
+/**
+ * Run `fn` inside the config write lock. Always releases the lock.
+ */
+export function withConfigLock<T>(fn: () => T): T {
+  const release = acquireConfigLock();
+  try {
+    return fn();
+  } finally {
+    release();
+  }
+}
+
+// ── Unified diff helper ──────────────────────────────────────────────────────
+
+/**
+ * Produce a minimal unified diff between `before` and `after` text.
+ * Uses LCS-based diff with 2-line context. Returns an empty string when the
+ * inputs are identical. `label` is used as the path in the diff header.
+ *
+ * Designed for config files (typically < 200 lines). O(m*n) in line count.
+ */
+export function unifiedDiff(before: string, after: string, label: string): string {
+  if (before === after) return "";
+  const a = before.split("\n");
+  const b = after.split("\n");
+  const eqPairs = lcsLinePairs(a, b);
+  const CONTEXT = 2;
+
+  // Build flat change list from LCS pairs
+  type Op = { type: "eq" | "del" | "add"; line: string; ai: number; bi: number };
+  const ops: Op[] = [];
+  let ai = 0;
+  let bi = 0;
+  let pi = 0;
+  while (ai < a.length || bi < b.length) {
+    const eq = eqPairs[pi];
+    if (eq && eq.ai === ai && eq.bi === bi) {
+      ops.push({ type: "eq", line: a[ai], ai, bi });
+      ai++;
+      bi++;
+      pi++;
+    } else if (ai < a.length && (!eq || ai < eq.ai)) {
+      ops.push({ type: "del", line: a[ai], ai, bi });
+      ai++;
+    } else {
+      ops.push({ type: "add", line: b[bi], ai, bi });
+      bi++;
+    }
+  }
+
+  // Find changed op indices
+  const changed = new Set(ops.map((o, i) => (o.type !== "eq" ? i : -1)).filter((i) => i >= 0));
+  if (changed.size === 0) return "";
+
+  // Determine which equal lines to include as context
+  const include = new Set<number>();
+  for (const ci of changed) {
+    for (let k = Math.max(0, ci - CONTEXT); k <= Math.min(ops.length - 1, ci + CONTEXT); k++) {
+      include.add(k);
+    }
+  }
+
+  // Collect hunks
+  const header = [`--- ${label} (before)`, `+++ ${label} (after)`];
+  const out: string[] = [];
+  let hunkOps: Op[] = [];
+  let prevIncluded = false;
+
+  function flushHunk(): void {
+    if (hunkOps.length === 0) return;
+    const delStart = hunkOps.find((o) => o.type !== "add")?.ai ?? 0;
+    const addStart = hunkOps.find((o) => o.type !== "del")?.bi ?? 0;
+    const countA = hunkOps.filter((o) => o.type !== "add").length;
+    const countB = hunkOps.filter((o) => o.type !== "del").length;
+    out.push(`@@ -${delStart + 1},${countA} +${addStart + 1},${countB} @@`);
+    for (const op of hunkOps) {
+      const ch = op.type === "eq" ? " " : op.type === "del" ? "-" : "+";
+      out.push(`${ch}${op.line}`);
+    }
+    hunkOps = [];
+  }
+
+  for (let k = 0; k < ops.length; k++) {
+    if (include.has(k)) {
+      hunkOps.push(ops[k]);
+      prevIncluded = true;
+    } else if (prevIncluded) {
+      flushHunk();
+      prevIncluded = false;
+    }
+  }
+  flushHunk();
+
+  return out.length > 0 ? [...header, ...out].join("\n") : "";
+}
+
+function lcsLinePairs(a: string[], b: string[]): Array<{ ai: number; bi: number }> {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0 || n === 0) return [];
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const result: Array<{ ai: number; bi: number }> = [];
+  let i = m;
+  let j = n;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.unshift({ ai: i - 1, bi: j - 1 });
+      i--;
+      j--;
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  return result;
 }
 
 /**

@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { backupExistingConfig, parseConfigText, writeConfigAtomic } from "./config-io";
+import { backupExistingConfig, parseConfigText, withConfigLock, writeConfigAtomic } from "./config-io";
 import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from "./config-migration";
 import { AkmConfigSchema } from "./config-schema";
 import type {
@@ -19,7 +19,7 @@ import { ConfigError } from "./errors";
 
 export { stripJsonComments } from "./config-io";
 
-import { getConfigPath } from "./paths";
+import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
 
 // Re-export the AgentConfig alias (now `= AkmConfig`) for source-compat with
@@ -300,11 +300,26 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
   if (process.env.AKM_NO_AUTO_MIGRATE === "1") return migratedText;
 
   try {
-    backupExistingConfig(configPath);
-    writeConfigAtomic(configPath, result);
-    warn(
-      `[akm] Config at ${configPath} migrated to ${result.configVersion ?? "0.8.0"} format. Backup written to cache dir.`,
-    );
+    withConfigLock(() => {
+      backupExistingConfig(configPath);
+      writeConfigAtomic(configPath, result);
+    });
+    const newVersion = typeof result.configVersion === "string" ? result.configVersion : "0.8.0";
+    const backupDir = `${getCacheDir()}/config-backups`;
+    // WS-2: emit a loud banner to BOTH stderr and stdout so pipelines and
+    // interactive terminals both see it. Include the backup path (resolved,
+    // not ~/...), opt-out env var, and preview diff command.
+    const banner = [
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      `  akm: auto-migrated config → ${newVersion} format`,
+      `  file:   ${configPath}`,
+      `  backup: ${backupDir}/config-<timestamp>.json`,
+      "  to opt out of future auto-migration: AKM_NO_AUTO_MIGRATE=1",
+      "  to preview a dry-run diff:            akm config migrate --dry-run --print-diff",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ].join("\n");
+    process.stderr.write(`${banner}\n`);
+    process.stdout.write(`${banner}\n`);
   } catch (err) {
     // #461: never return migrated bytes when disk write fails — that triggers
     // an infinite re-migrate loop on every load. Hard-error so the user
@@ -348,8 +363,12 @@ export function saveConfig(config: AkmConfig): void {
     );
   }
 
-  backupExistingConfig(configPath);
-  writeConfigAtomic(configPath, sanitized);
+  // WS-3: acquire the config write lock so concurrent `akm config set`
+  // invocations do not interleave their backup+atomic-write cycles.
+  withConfigLock(() => {
+    backupExistingConfig(configPath);
+    writeConfigAtomic(configPath, sanitized);
+  });
 }
 
 /**
