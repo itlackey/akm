@@ -79,6 +79,8 @@
     "@opencode-ai/sdk": "1.2.20",
     "citty": "^0.2.2",
     "dotenv": "^17.4.2",
-    "yaml": "^2.8.4"
+    "yaml": "^2.8.4",
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0"
   }
 }
