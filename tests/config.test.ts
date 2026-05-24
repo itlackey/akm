@@ -184,18 +184,26 @@ describe("loadConfig", () => {
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
-  test("handles corrupted JSON gracefully", () => {
+  test("throws ConfigError on corrupted JSON (#458)", () => {
     writeRawConfig(getConfigPath(), "not valid json {{{");
-    expect(loadConfig()).toEqual(DEFAULT_CONFIG);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Failed to parse config JSON/);
   });
 
-  test("handles non-object JSON gracefully", () => {
+  test("throws ConfigError on non-object root (#458)", () => {
     writeRawConfig(getConfigPath(), '"just a string"');
-    expect(loadConfig()).toEqual(DEFAULT_CONFIG);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/must contain a JSON object/);
   });
 
-  test("handles JSON array gracefully", () => {
+  test("throws ConfigError on JSON array root (#458)", () => {
     writeRawConfig(getConfigPath(), "[1, 2, 3]");
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/must contain a JSON object/);
+  });
+
+  test("returns DEFAULT_CONFIG when file does not exist (legitimate cold start)", () => {
+    // Sanity: cold-start case is preserved. Only malformed CONTENT throws.
     expect(loadConfig()).toEqual(DEFAULT_CONFIG);
   });
 

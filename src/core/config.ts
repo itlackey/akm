@@ -1442,9 +1442,8 @@ function parseImproveProfileConfig(obj: Record<string, unknown>): ImproveProfile
   return Object.keys(profile).length > 0 ? profile : undefined;
 }
 
-function parseConfigText(text: string): Partial<AkmConfig> | undefined {
-  const raw = parseConfigObjectFromText(text);
-  if (!raw) return undefined;
+function parseConfigText(text: string, sourcePath?: string): Partial<AkmConfig> {
+  const raw = parseConfigObjectFromText(text, sourcePath);
   const expanded = expandEnvVars(raw);
   return parseConfigLayer(expanded);
 }
@@ -1456,18 +1455,16 @@ function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefine
   } catch {
     return undefined;
   }
-  // Detect a newer-than-binary layer (project config) so saveConfig can refuse
-  // to write later. Failures are silently ignored — malformed JSON is the
-  // normal parser's problem to report.
-  const raw = parseConfigObjectFromText(text);
-  if (raw) {
-    markConfigReadOnlyIfNewer(configPath, raw.configVersion);
-  }
-  return parseConfigText(text);
+  // #458: parse-failure now propagates as a ConfigError instead of being
+  // silently dropped.
+  const raw = parseConfigObjectFromText(text, configPath);
+  markConfigReadOnlyIfNewer(configPath, raw.configVersion);
+  const expanded = expandEnvVars(raw);
+  return parseConfigLayer(expanded);
 }
 
-function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
-  return parseConfigText(text);
+function readNormalizedConfigFromText(text: string, sourcePath?: string): Partial<AkmConfig> {
+  return parseConfigText(text, sourcePath);
 }
 
 function parseOutputConfig(value: unknown): OutputConfig | undefined {
@@ -1534,14 +1531,37 @@ function expandEnvVars<T>(value: T, fieldName?: string): T {
   return value;
 }
 
-function parseConfigObjectFromText(text: string): Record<string, unknown> | undefined {
+function parseConfigObjectFromText(text: string, sourcePath?: string): Record<string, unknown> {
+  // #458: malformed JSON or non-object root raises ConfigError. Silent
+  // fallback to DEFAULT_CONFIG masked real corruption from users.
+  const where = sourcePath ? ` at ${sourcePath}` : "";
+  let raw: unknown;
   try {
-    const raw = JSON.parse(stripJsonComments(text));
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-    return raw as Record<string, unknown>;
-  } catch {
-    return undefined;
+    raw = JSON.parse(stripJsonComments(text));
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new ConfigError(
+      `Failed to parse config JSON${where}: ${detail}`,
+      "INVALID_CONFIG_FILE",
+      "Edit the file to fix the JSON syntax error. Comments (// and /* */) are allowed; trailing commas are not.",
+    );
   }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      `Config file${where} must contain a JSON object at the root, got ${describeJsonRoot(raw)}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return raw as Record<string, unknown>;
+}
+
+function describeJsonRoot(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  if (typeof value === "string") return "a string";
+  if (typeof value === "number") return "a number";
+  if (typeof value === "boolean") return "a boolean";
+  return typeof value;
 }
 
 function writeConfigObject(configPath: string, config: Record<string, unknown>): void {
