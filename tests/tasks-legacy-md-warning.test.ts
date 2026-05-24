@@ -13,7 +13,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { _resetLegacyMdTaskWarningStateForTests, akmTasksList } from "../src/commands/tasks";
+import {
+  _resetLegacyMdTaskWarningStateForTests,
+  akmTasksDoctor,
+  akmTasksHistory,
+  akmTasksList,
+  akmTasksRemove,
+  akmTasksRun,
+  akmTasksSetEnabled,
+  akmTasksShow,
+} from "../src/commands/tasks";
 
 let stashDir: string;
 let xdgConfig: string;
@@ -110,5 +119,77 @@ describe("akm tasks list: legacy .md task file warning", () => {
     // three times — operators should not see the same wall of text repeated.
     const occurrences = stderr.split("WARNING:").length - 1;
     expect(occurrences).toBe(1);
+  });
+});
+
+describe("legacy .md task file warning fires from all task subcommands", () => {
+  test("akm tasks show warns about legacy .md files before resolving the task", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
+
+    const stderr = await captureStderr(async () => {
+      await expect(akmTasksShow("legacy")).rejects.toBeDefined();
+    });
+
+    expect(stderr).toContain("legacy .md format");
+    expect(stderr).toContain("tasks/legacy.md");
+  });
+
+  test("akm tasks run warns about legacy .md files before runTask", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
+
+    const stderr = await captureStderr(async () => {
+      // The task does not exist as .yml so runTask will fail; we only assert the
+      // warning emerges before that error.
+      await expect(akmTasksRun("legacy")).rejects.toBeDefined();
+    });
+
+    expect(stderr).toContain("legacy .md format");
+    expect(stderr).toContain("tasks/legacy.md");
+  });
+
+  test("akm tasks remove warns about legacy .md files before resolving", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
+
+    const stderr = await captureStderr(async () => {
+      await expect(akmTasksRemove("legacy")).rejects.toBeDefined();
+    });
+
+    expect(stderr).toContain("legacy .md format");
+  });
+
+  test("akm tasks set-enabled warns about legacy .md files before resolving", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
+
+    const stderr = await captureStderr(async () => {
+      await expect(akmTasksSetEnabled("legacy", false)).rejects.toBeDefined();
+    });
+
+    expect(stderr).toContain("legacy .md format");
+  });
+
+  test("akm tasks history warns about legacy .md files", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
+
+    const stderr = await captureStderr(async () => {
+      await akmTasksHistory({ limit: 1 });
+    });
+
+    expect(stderr).toContain("legacy .md format");
+  });
+
+  test("akm tasks doctor warns about legacy .md files", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
+
+    const stderr = await captureStderr(async () => {
+      await akmTasksDoctor();
+    });
+
+    expect(stderr).toContain("legacy .md format");
   });
 });

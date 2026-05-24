@@ -240,6 +240,8 @@ export async function akmTasksShow(id: string): Promise<{
 }> {
   const normalised = normaliseTaskId(id);
   const stashDir = resolveStashDir();
+  const typeRoot = path.join(stashDir, "tasks");
+  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const task = parseTaskDocument({
     yaml: fs.readFileSync(filePath, "utf8"),
@@ -265,6 +267,8 @@ export async function akmTasksShow(id: string): Promise<{
 export async function akmTasksRemove(id: string): Promise<{ id: string; removed: true; backend: string }> {
   const normalised = normaliseTaskId(id);
   const stashDir = resolveStashDir();
+  const typeRoot = path.join(stashDir, "tasks");
+  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const sched = selectBackend();
   try {
@@ -281,6 +285,8 @@ export async function akmTasksSetEnabled(
 ): Promise<{ id: string; enabled: boolean; backend: string }> {
   const normalised = normaliseTaskId(id);
   const stashDir = resolveStashDir();
+  const typeRoot = path.join(stashDir, "tasks");
+  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const yaml = fs.readFileSync(filePath, "utf8");
   const updated = setEnabledInYaml(yaml, enabled);
@@ -305,6 +311,9 @@ export interface TasksRunResultEnvelope {
 
 export async function akmTasksRun(id: string): Promise<TasksRunResultEnvelope> {
   const normalised = normaliseTaskId(id);
+  const stashDir = resolveStashDir();
+  const typeRoot = path.join(stashDir, "tasks");
+  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const result = await runTask(normalised);
   return {
     ok: result.status === "completed" || result.status === "disabled",
@@ -320,6 +329,9 @@ export interface TasksHistoryResult {
 export async function akmTasksHistory(input: { id?: string; limit?: number }): Promise<TasksHistoryResult> {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const id = input.id ? normaliseTaskId(input.id) : undefined;
+  const stashDir = resolveStashDir();
+  const typeRoot = path.join(stashDir, "tasks");
+  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   return { rows: readTaskHistory({ id, limit }) };
 }
 
@@ -405,6 +417,13 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
     invocation = { argv: r.argv, via: r.via };
   } catch (err) {
     warnings.push(err instanceof Error ? err.message : String(err));
+  }
+  try {
+    const stashDir = resolveStashDir();
+    const typeRoot = path.join(stashDir, "tasks");
+    if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
+  } catch {
+    // doctor must never fail on stash-resolution; the warning is best-effort
   }
   const backend = backendNameForPlatform();
   const config = loadConfig();
