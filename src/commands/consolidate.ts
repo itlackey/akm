@@ -1505,6 +1505,7 @@ export function normalizeUpdatedField(fm: Record<string, unknown>): void {
       trimmed === "today" ||
       trimmed === "now" ||
       trimmed === "{today}" ||
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: matches the literal user-typed placeholder text "${today}" so we can normalize it to today's ISO date
       trimmed === "${today}" ||
       trimmed === "{{today}}" ||
       /^\{?\s*today\s*\}?$/.test(trimmed)

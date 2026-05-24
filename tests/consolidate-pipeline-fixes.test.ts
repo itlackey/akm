@@ -235,6 +235,7 @@ describe("normalizeUpdatedField — drains placeholder leaks from `updated:`", (
   });
 
   it("rewrites case-insensitive variants (TODAY, Now, etc.)", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: array contains literal placeholder strings under test, not template interpolations
     for (const variant of ["TODAY", "Today", "now", "Now", "{today}", "${today}", "{{today}}", "  today  "]) {
       const fm: Record<string, unknown> = { updated: variant };
       normalizeUpdatedField(fm);
