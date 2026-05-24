@@ -96,9 +96,9 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
     expect(result.profiles?.llm?.default?.model).toBe("llama3.2");
   });
 
-  test("parseConfigValue handles llm.apiKey", () => {
-    const result = parseConfigValue("llm.apiKey", "sk-test");
-    expect(result.profiles?.llm?.default?.apiKey).toBe("sk-test");
+  test("parseConfigValue rejects llm.apiKey persistence (#454)", () => {
+    expect(() => parseConfigValue("llm.apiKey", "sk-test")).toThrow(/apiKey cannot be persisted/);
+    expect(() => parseConfigValue("llm.apiKey", "sk-test")).toThrow(/AKM_LLM_API_KEY/);
   });
 
   test("parseConfigValue handles embedding.endpoint", () => {
@@ -111,13 +111,17 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
     expect(result.embedding?.model).toBe("nomic-embed-text");
   });
 
-  test("parseConfigValue handles embedding.apiKey", () => {
-    const result = parseConfigValue("embedding.apiKey", "sk-embed");
-    expect(result.embedding?.apiKey).toBe("sk-embed");
+  test("parseConfigValue rejects embedding.apiKey persistence (#454)", () => {
+    expect(() => parseConfigValue("embedding.apiKey", "sk-embed")).toThrow(/apiKey cannot be persisted/);
+    expect(() => parseConfigValue("embedding.apiKey", "sk-embed")).toThrow(/AKM_EMBED_API_KEY/);
   });
 
-  test("parseConfigValue rejects empty llm.endpoint", () => {
-    expect(() => parseConfigValue("llm.endpoint", "")).toThrow();
+  test("parseConfigValue accepts empty llm.endpoint as a partial setup step", () => {
+    // Post-rewrite: subkey-set allows partial profiles to land. The schema
+    // enforces the full shape at saveConfig time; until then, an empty
+    // endpoint is just an incomplete in-progress profile.
+    const result = parseConfigValue("llm.endpoint", "");
+    expect(result.profiles?.llm?.default?.endpoint).toBe("");
   });
 
   // ── getConfigValue ────────────────────────────────────────────────────────
@@ -171,33 +175,34 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
     expect(result.profiles?.llm?.default?.endpoint).toBe("http://localhost/v1");
   });
 
-  test("setConfigValue: llm.apiKey merges into existing llm config", () => {
+  test("setConfigValue: llm.apiKey is rejected with an env-var hint (#454)", () => {
     const config: AkmConfig = {
       ...base,
       profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "llama3.2" } } },
       defaults: { llm: "default" },
     };
-    const result = setConfigValue(config, "llm.apiKey", "sk-secret");
-    expect(result.profiles?.llm?.default?.apiKey).toBe("sk-secret");
-    expect(result.profiles?.llm?.default?.endpoint).toBe("http://localhost/v1");
+    expect(() => setConfigValue(config, "llm.apiKey", "sk-secret")).toThrow(/apiKey cannot be persisted/);
   });
 
   test("setConfigValue: embedding.endpoint works when embedding was undefined", () => {
     const result = setConfigValue(base, "embedding.endpoint", "http://localhost/emb");
     expect(result.embedding?.endpoint).toBe("http://localhost/emb");
-    expect(result.embedding?.model).toBe("");
+    // Post-rewrite: subkey-set no longer scaffolds an empty `model`. The
+    // user runs `embedding.model <name>` as a follow-up.
+    expect(result.embedding?.model).toBeUndefined();
   });
 
   // ── unsetConfigValue ──────────────────────────────────────────────────────
 
-  test("unsetConfigValue: llm.endpoint sets endpoint to empty string", () => {
+  test("unsetConfigValue: llm.endpoint removes the key (was: set to empty string)", () => {
     const config: AkmConfig = {
       ...base,
       profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "llama3.2" } } },
       defaults: { llm: "default" },
     };
     const result = unsetConfigValue(config, "llm.endpoint");
-    expect(result.profiles?.llm?.default?.endpoint).toBe("");
+    // Post-rewrite: unset deletes the key entirely rather than nulling it.
+    expect(result.profiles?.llm?.default?.endpoint).toBeUndefined();
     expect(result.profiles?.llm?.default?.model).toBe("llama3.2");
   });
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
 import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from "./config-migration";
+import { AkmConfigSchema } from "./config-schema";
 import { ConfigError } from "./errors";
 import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
@@ -973,8 +974,24 @@ export function saveConfig(config: AkmConfig): void {
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
-  backupExistingConfig(configPath);
+
   const sanitized = sanitizeConfigForWrite(config);
+
+  // Final validation gate before bytes hit disk. Catches schema violations
+  // (unknown keys in registries[] / sources[] / profiles.*; out-of-range
+  // numbers; etc. — closes #462) before we corrupt the user's config.
+  const parseResult = AkmConfigSchema.safeParse(sanitized);
+  if (!parseResult.success) {
+    const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+    throw new ConfigError(
+      `Refusing to save invalid config:\n${lines}`,
+      "INVALID_CONFIG_FILE",
+      "Fix the listed fields, or undo the offending `akm config set`. " +
+        "If this looks like an akm bug, re-run with --debug to attach the traceback.",
+    );
+  }
+
+  backupExistingConfig(configPath);
   writeConfigObject(configPath, sanitized);
 }
 
