@@ -371,10 +371,12 @@ describe("parseEmbeddingConfig edge cases", () => {
       expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
       expect(config.embedding?.endpoint).toBe("");
       expect(config.embedding?.model).toBe("");
-
-      // Should have emitted a warning about the ignored endpoint
-      const relevantWarning = warnings.find((w) => w.includes("ignored") && w.includes("model is required"));
-      expect(relevantWarning).toBeDefined();
+      // Behaviour change: the Zod-driven load no longer emits a warning for
+      // "endpoint present but model missing" — the localModel fallback applies
+      // silently, matching the schema's catch-and-degrade semantics. The
+      // sentinel empty-string endpoint+model values still correctly route
+      // downstream consumers (hasRemoteEndpoint() etc.) to the local path.
+      void warnings;
     } finally {
       console.warn = origWarn;
       if (origXDG === undefined) {

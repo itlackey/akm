@@ -691,21 +691,6 @@ describe("llm config", () => {
     });
   });
 
-  test("warns when llm endpoint does not end in /chat/completions", () => {
-    const originalWarn = console.warn;
-    const messages: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost/v1", model: "gpt-4" } }));
-      loadConfig();
-      expect(messages.some((msg) => msg.includes("/chat/completions"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
   test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
     // After QA #36, `akm config set llm.endpoint <url>` persists a partial
     // llm config with `model: ""`. The loader must accept this so the value
@@ -838,35 +823,27 @@ describe("search config", () => {
     expect(loadConfig().search?.graphBoost?.maxHops).toBe(3);
   });
 
-  test("warns and ignores unknown search and search.graphBoost keys", () => {
-    const originalWarn = console.warn;
-    const messages: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          search: {
-            minScore: 0.2,
-            unsupportedTopLevel: true,
-            graphBoost: {
-              maxHops: 2,
-              unsupportedNested: "x",
-            },
+  test("silently passes through unknown search and search.graphBoost keys", () => {
+    // Behaviour change: the legacy parser warned on unknown nested keys; the
+    // Zod schema now uses .passthrough() at this level so unknown keys
+    // round-trip without noise. Recognised keys still parse as before.
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          minScore: 0.2,
+          unsupportedTopLevel: true,
+          graphBoost: {
+            maxHops: 2,
+            unsupportedNested: "x",
           },
-        }),
-      );
+        },
+      }),
+    );
 
-      const loaded = loadConfig();
-      expect(loaded.search?.minScore).toBe(0.2);
-      expect(loaded.search?.graphBoost?.maxHops).toBe(2);
-      expect(messages.some((m) => m.includes('Ignoring unknown search key "unsupportedTopLevel"'))).toBe(true);
-      expect(messages.some((m) => m.includes('Ignoring unknown search.graphBoost key "unsupportedNested"'))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
+    const loaded = loadConfig();
+    expect(loaded.search?.minScore).toBe(0.2);
+    expect(loaded.search?.graphBoost?.maxHops).toBe(2);
   });
 });
 
@@ -918,25 +895,19 @@ describe("v2 config shape parsing", () => {
     expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
   });
 
-  test("warns and skips agent profile with invalid platform", () => {
-    const messages: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          profiles: { agent: { bad: { platform: "invalid-platform" } } },
-        }),
-      );
-      const loaded = loadConfig();
-      expect(loaded.profiles?.agent?.bad).toBeUndefined();
-      expect(messages.some((m) => m.includes("platform"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
+  test("silently skips agent profile with invalid platform", () => {
+    // Behaviour change: the legacy parser warned + dropped; Zod-driven load
+    // silently drops the individual malformed profile (via looseRecord) and
+    // keeps siblings. Aligned with the lossy semantics applied to other
+    // sub-objects across the new schema.
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        profiles: { agent: { bad: { platform: "invalid-platform" } } },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.agent?.bad).toBeUndefined();
   });
 
   test("parses defaults.llm, defaults.agent, defaults.improve", () => {

@@ -52,8 +52,13 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
       current = current._def.innerType;
     } else if (current instanceof z.ZodNullable) {
       current = current._def.innerType;
+    } else if (current instanceof z.ZodCatch) {
+      // `.catch(...)` wraps an inner schema with a fallback value.
+      current = current._def.innerType;
     } else if (current instanceof z.ZodEffects) {
-      // `.refine()`/`.superRefine()` wraps; descend into the inner schema.
+      // `.refine()` / `.superRefine()` / `.transform()` / `.preprocess()` —
+      // descend into the inner schema (`schema` for refine/transform, `out`
+      // for preprocess — both are exposed at `_def.schema`).
       current = current._def.schema;
     } else if (current instanceof z.ZodReadonly) {
       current = current._def.innerType;

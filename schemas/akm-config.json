@@ -772,7 +772,7 @@
             "exclusiveMinimum": 0
           }
         },
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "installed": {
@@ -1069,10 +1069,10 @@
               "default": 0.2
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "feedback": {
       "type": "object",
@@ -1891,7 +1891,7 @@
                 "exclusiveMinimum": 0
               }
             },
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "installed": {
@@ -2188,10 +2188,10 @@
                   "default": 0.2
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "feedback": {
           "type": "object",
