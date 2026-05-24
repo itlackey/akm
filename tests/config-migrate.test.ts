@@ -194,4 +194,47 @@ describe("migrateConfigShape", () => {
     expect(result.stashDir).toBe("/my/stash");
     expect(result.semanticSearchMode).toBe("auto");
   });
+
+  test("coerces semanticSearchMode boolean true → 'auto'", () => {
+    const { changed, result } = migrateConfigShape({ semanticSearchMode: true });
+    expect(changed).toBe(true);
+    expect(result.semanticSearchMode).toBe("auto");
+  });
+
+  test("coerces semanticSearchMode boolean false → 'off'", () => {
+    const { changed, result } = migrateConfigShape({ semanticSearchMode: false });
+    expect(changed).toBe(true);
+    expect(result.semanticSearchMode).toBe("off");
+  });
+
+  test("renames legacy stashes[] → sources[]", () => {
+    const input = { stashes: [{ type: "filesystem", path: "/stash" }] };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    expect(result.sources).toEqual([{ type: "filesystem", path: "/stash" }]);
+    expect(result.stashes).toBeUndefined();
+  });
+
+  test("stashes[] is dropped when sources[] already present", () => {
+    const input = {
+      stashes: [{ type: "filesystem", path: "/legacy" }],
+      sources: [{ type: "filesystem", path: "/canonical" }],
+    };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    expect(result.sources).toEqual([{ type: "filesystem", path: "/canonical" }]);
+    expect(result.stashes).toBeUndefined();
+  });
+
+  test("drops openviking sources during migration", () => {
+    const input = {
+      sources: [
+        { type: "openviking", url: "https://ov.example.com", name: "ov" },
+        { type: "filesystem", path: "/keep", name: "keep" },
+      ],
+    };
+    const { changed, result } = migrateConfigShape(input);
+    expect(changed).toBe(true);
+    expect(result.sources).toEqual([{ type: "filesystem", path: "/keep", name: "keep" }]);
+  });
 });

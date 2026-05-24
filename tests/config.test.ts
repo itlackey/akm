@@ -252,64 +252,53 @@ describe("loadConfig", () => {
     }
   });
 
-  test("throws ConfigError when config contains an openviking-typed source", () => {
+  test("migrates legacy `stashes[]` to `sources[]` with a deprecation warning", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        stashes: [{ type: "filesystem", path: "/legacy-stash", name: "legacy" }],
       }),
     );
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("openviking is not supported in akm v1");
-    expect(() => loadConfig()).toThrow("docs/migration/v1.md");
-  });
 
-  test("throws ConfigError with INVALID_CONFIG_FILE code for openviking source", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
-      }),
-    );
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     try {
-      loadConfig();
-      throw new Error("Expected loadConfig to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigError);
-      expect((err as ConfigError).code).toBe("INVALID_CONFIG_FILE");
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const config = loadConfig();
+      expect(config.sources?.[0]?.path).toBe("/legacy-stash");
+      expect((config as unknown as Record<string, unknown>).stashes).toBeUndefined();
+    } finally {
+      console.warn = originalWarn;
     }
+    expect(warnings.some((w) => w.includes("stashes[]") && w.includes("sources[]"))).toBe(true);
   });
 
-  test("ConfigError for openviking source carries actionable hint with source name", () => {
+  test("drops openviking sources during migration with a warning", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        sources: [
+          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
+          { type: "filesystem", path: "/keep", name: "keep" },
+        ],
       }),
     );
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     try {
-      loadConfig();
-      throw new Error("Expected loadConfig to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigError);
-      const hint = (err as ConfigError).hint();
-      expect(hint).toBeDefined();
-      // QA #38: hint now uses real commands (akm remove, not akm config sources remove)
-      expect(hint).toContain("my-ov");
-      expect(hint).toContain("akm remove");
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const config = loadConfig();
+      expect(config.sources?.length).toBe(1);
+      expect(config.sources?.[0]?.name).toBe("keep");
+    } finally {
+      console.warn = originalWarn;
     }
-  });
-
-  test("throws ConfigError when config contains legacy stashes[]", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        stashes: [{ type: "filesystem", path: "/legacy-stash" }],
-      }),
-    );
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("legacy `stashes[]` config key");
+    expect(warnings.some((w) => w.includes("openviking") && w.includes("my-ov"))).toBe(true);
   });
 
   test("throws ConfigError when installed npm entry is marked writable", () => {

@@ -752,25 +752,20 @@ export function loadUserConfig(): AkmConfig {
 }
 
 /**
- * Parse raw config text, run pre-Zod lossless legacy migrations
- * (`migrateConfigShape`), then validate-and-transform via Zod
+ * Parse raw config text, run the legacy-shape migration
+ * ({@link migrateConfigShape}), then validate via Zod
  * ({@link AkmConfigSchema}). Returns the merged-with-defaults AkmConfig.
  *
- * Three hard-throw rules survive Zod (they would silently drop user data
- * otherwise):
- *   - Malformed JSON / non-object root → `ConfigError("INVALID_CONFIG_FILE")`.
- *   - `stashes[]` (legacy v0 key) → `ConfigError("INVALID_CONFIG_FILE")` with
- *     a rename hint.
- *   - openviking source type → `ConfigError("INVALID_CONFIG_FILE")` with a
- *     migration hint.
- *
- * All other malformed sub-shapes are silently dropped (matches the legacy
- * parser's warn-and-ignore semantics for field-level errors).
+ * The migration handles all one-time 0.7→0.8 transforms (legacy keys,
+ * boolean→string coercions, openviking rename); the schema then validates
+ * the canonical shape and throws on anything it doesn't recognise.
  */
 function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
   const raw = parseConfigObjectFromText(text, sourcePath);
-  rejectHardErrors(raw);
-  // Migration is idempotent on already-migrated configs.
+  // Migration is idempotent on already-migrated configs and absorbs the
+  // 0.7→0.8 input transforms (semanticSearchMode bool→string, stashes[] →
+  // sources[], openviking source removal) so the schema only sees canonical
+  // shapes.
   const migrated = migrateConfigShape(raw).result;
   const parsed = AkmConfigSchema.safeParse(migrated);
   if (!parsed.success) {
@@ -788,33 +783,6 @@ function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
     if (result[key] !== undefined) out[key] = result[key];
   }
   return mergeLoadedConfig(DEFAULT_CONFIG, out as Partial<AkmConfig>);
-}
-
-/**
- * Pre-Zod hard-reject checks. Two legacy keys carried explicit migration
- * paths in v0.8.x — silently dropping them would mask user data loss.
- */
-function rejectHardErrors(raw: Record<string, unknown>): void {
-  if (Array.isArray((raw as Record<string, unknown>).stashes)) {
-    throw new ConfigError(
-      "The legacy `stashes[]` config key is no longer supported. Rename it to `sources`.",
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  const sourcesRaw = (raw as Record<string, unknown>).sources;
-  if (Array.isArray(sourcesRaw)) {
-    for (const entry of sourcesRaw) {
-      if (typeof entry === "object" && entry !== null && (entry as Record<string, unknown>).type === "openviking") {
-        const name = (entry as Record<string, unknown>).name;
-        const nameStr = typeof name === "string" && name ? name : "unnamed";
-        throw new ConfigError(
-          `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${nameStr}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
-          "INVALID_CONFIG_FILE",
-          `Run \`akm remove ${nameStr}\` then re-run, or edit your config file directly at ${getConfigPath()} to remove the openviking entry.`,
-        );
-      }
-    }
-  }
 }
 
 export function getSources(config: AkmConfig): SourceConfigEntry[] {
