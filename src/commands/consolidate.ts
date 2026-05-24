@@ -909,9 +909,15 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     // confidence score, compare it against `opts.autoAccept` instead of
     // treating any defined threshold as a whole-batch accept. Until then,
     // any non-undefined threshold behaves like the legacy `"safe"` mode.
-    if (opts.autoAccept === undefined) {
+    if (opts.autoAccept === undefined && allOps.length > 0) {
       const n = allOps.length;
-      const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
+      // Non-interactive contexts (CI / test runners / piped stdin) must not
+      // block on an unanswerable prompt. Default to a non-destructive "no"
+      // so callers in those contexts get the same "aborted, preview only"
+      // shape they'd get from explicit user dismissal. AKM_NON_INTERACTIVE
+      // lets callers force this path even when stdin happens to be a TTY.
+      const nonInteractive = process.stdin.isTTY === false || process.env.AKM_NON_INTERACTIVE === "1";
+      const answer = nonInteractive ? false : await promptConfirm(`Apply ${n} operations? [y/N] `);
       if (!answer) {
         return {
           schemaVersion: 1 as const,
@@ -926,7 +932,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           promoted: [],
           contradicted: 0,
           planned: allOps,
-          warnings: [...warnings, "Aborted by user."],
+          warnings: [...warnings, nonInteractive ? "Non-interactive context: skipped apply." : "Aborted by user."],
           durationMs: Date.now() - startMs,
         };
       }
