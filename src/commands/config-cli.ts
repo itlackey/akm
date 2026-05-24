@@ -15,6 +15,7 @@
  */
 import { type AkmConfig, DEFAULT_CONFIG, getSources } from "../core/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config-walker";
+import { UsageError } from "../core/errors";
 
 // ── Legacy `llm.*` → `profiles.llm.<default>.*` aliasing ────────────────────
 
@@ -74,6 +75,27 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
+  // #454: reject the legacy aliases up front so the error message names the
+  // env var the user typed (AKM_LLM_API_KEY) rather than the rewritten profile
+  // env var (AKM_PROFILE_DEFAULT_API_KEY) — both work at runtime, but the
+  // shorter name matches the user's mental model.
+  if (key === "llm.apiKey") {
+    throw new UsageError(
+      "apiKey cannot be persisted in config; export AKM_LLM_API_KEY instead. (key: llm.apiKey)",
+      "INVALID_FLAG_VALUE",
+      "Storing API keys in config.json leaks them through backups, logs, and version control. " +
+        "Use the corresponding environment variable. AKM reads it at request time.",
+    );
+  }
+  if (key === "embedding.apiKey") {
+    throw new UsageError(
+      "apiKey cannot be persisted in config; export AKM_EMBED_API_KEY instead. (key: embedding.apiKey)",
+      "INVALID_FLAG_VALUE",
+      "Storing API keys in config.json leaks them through backups, logs, and version control. " +
+        "Use the corresponding environment variable. AKM reads it at request time.",
+    );
+  }
+
   const k = rewriteKey(config, key);
   // Legacy ergonomic: `akm config set semanticSearchMode true|false`
   let coerced = rawValue;
