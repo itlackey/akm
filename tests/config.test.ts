@@ -526,6 +526,27 @@ describe("saveConfig", () => {
     const backups = fs.readdirSync(backupDir).filter((name) => name.startsWith("config-") && name.endsWith(".json"));
     expect(backups.length).toBeGreaterThan(0);
   });
+
+  test("prunes config backups to the 5 most-recent (#459)", () => {
+    // 10 saves → 10 distinct backup timestamps (but at most 5 should remain).
+    for (let i = 0; i < 10; i++) {
+      saveConfig({ semanticSearchMode: i % 2 === 0 ? "off" : "auto" });
+      // The timestamp is ISO-second-resolution; introduce a small delay so
+      // each backup gets a unique filename. mtimeMs is what we sort on.
+      const target = Date.now() + 10;
+      while (Date.now() < target) {
+        /* spin briefly */
+      }
+    }
+
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const timestamped = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("config-") && name.endsWith(".json") && name !== "config.latest.json");
+    expect(timestamped.length).toBeLessThanOrEqual(5);
+    // config.latest.json is always preserved
+    expect(fs.existsSync(path.join(backupDir, "config.latest.json"))).toBe(true);
+  });
 });
 
 // ── updateConfig ────────────────────────────────────────────────────────────

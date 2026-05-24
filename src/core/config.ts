@@ -995,6 +995,9 @@ export function saveConfig(config: AkmConfig): void {
   writeConfigObject(configPath, sanitized);
 }
 
+/** Maximum number of timestamped config backups to retain (#459). */
+const MAX_CONFIG_BACKUPS = 5;
+
 function backupExistingConfig(configPath: string): void {
   if (!fs.existsSync(configPath)) return;
 
@@ -1007,6 +1010,43 @@ function backupExistingConfig(configPath: string): void {
 
   const latestPath = path.join(backupDir, "config.latest.json");
   fs.copyFileSync(configPath, latestPath);
+
+  pruneOldBackups(backupDir);
+}
+
+/**
+ * Keep only the {@link MAX_CONFIG_BACKUPS} most-recent timestamped backups
+ * (#459). `config.latest.json` is preserved separately as the always-newest
+ * pointer.
+ */
+function pruneOldBackups(backupDir: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(backupDir);
+  } catch {
+    return;
+  }
+  const timestamped = entries
+    .filter((name) => name.startsWith("config-") && name.endsWith(".json") && name !== "config.latest.json")
+    .map((name) => ({ name, path: path.join(backupDir, name) }))
+    .map((entry) => {
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(entry.path).mtimeMs;
+      } catch {
+        // Drop unreadable entries by giving them mtime 0 (they sort to the end).
+      }
+      return { ...entry, mtime };
+    })
+    .sort((a, b) => b.mtime - a.mtime); // newest first
+
+  for (const stale of timestamped.slice(MAX_CONFIG_BACKUPS)) {
+    try {
+      fs.unlinkSync(stale.path);
+    } catch {
+      // Ignore — best-effort prune. The next save will retry.
+    }
+  }
 }
 
 /**
