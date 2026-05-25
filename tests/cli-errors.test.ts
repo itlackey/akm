@@ -287,3 +287,53 @@ describe("registry remove", () => {
     });
   });
 });
+
+// ── Output-shape registry regression guard ──────────────────────────────────
+//
+// On 2026-05-25 four CLI verbs (`akm lint`, `akm tasks`, `akm graph`,
+// `akm db`) were each broken by the same root cause: their command name
+// was never registered in `src/output/shapes/passthrough.ts`. Every
+// invocation returned `{"ok":false,"error":"output shape not registered
+// for command: <name>"}` with exit 0. The verbs ran their command logic
+// correctly, then died at the output-rendering step.
+//
+// The bug class: adding a `defineCommand` in `src/cli.ts` whose handler
+// calls `output("X", result)` without also adding `"X"` to
+// PASSTHROUGH_COMMANDS (or registering a custom shape elsewhere) leaves
+// the command non-functional in a way that no other test catches.
+//
+// This regression guard invokes each read-only verb against an isolated
+// temp stash and asserts the output doesn't carry the specific error
+// string. It's intentionally a curated list rather than discover-from-
+// --help — the list IS the contract we maintain, and adding a new verb
+// means adding it here so the guard covers it.
+describe("output shape registry — every CLI verb returns a registered shape", () => {
+  // Verbs that take no required args and are read-only against the
+  // empty/isolated temp stash. Anything that requires a ref, takes
+  // interactive input, mutates external state, or needs network access
+  // belongs elsewhere.
+  const READ_ONLY_VERBS: string[] = [
+    "health",
+    "lint",
+    "info",
+    "tasks",
+    "graph",
+    "db",
+    "list",
+    "config",
+    "events",
+    "history",
+    "registry",
+    "wiki",
+    "vault",
+  ];
+
+  for (const verb of READ_ONLY_VERBS) {
+    test(`akm ${verb} --format json does not return an "output shape not registered" envelope`, () => {
+      const { stdout } = runCli(verb, "--format", "json");
+      // The bug class produces this exact substring. Any future verb
+      // that calls output() without a registered shape will trip this.
+      expect(stdout).not.toContain("output shape not registered");
+    });
+  }
+});
