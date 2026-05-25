@@ -3230,11 +3230,16 @@ const lintCommand = defineCommand({
   meta: {
     name: "lint",
     description:
-      "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths). Use --fix to auto-fix Tier 1 issues.",
+      "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths). Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
     fix: { type: "boolean", description: "Apply auto-fixes in place", default: false },
     dir: { type: "string", description: "Override stash root directory (default: from config)" },
+    "fail-on-flagged": {
+      type: "boolean",
+      description: "Exit non-zero when summary.flagged > 0 (CI-friendly). Default: exit 0 regardless of findings.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -3243,7 +3248,7 @@ const lintCommand = defineCommand({
         dir: getStringArg(args, "dir"),
       });
       output("lint", result);
-      if (!result.ok) process.exit(EXIT_GENERAL);
+      if (args["fail-on-flagged"] && result.summary.flagged > 0) process.exit(EXIT_GENERAL);
     });
   },
 });

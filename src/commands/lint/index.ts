@@ -200,8 +200,17 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
     }
   }
 
+  // `ok` reflects whether the lint run completed successfully — NOT whether
+  // it found anything. Findings are surfaced via `summary.flagged`; the CLI
+  // gates its exit code on `--fail-on-flagged`. Conflating "issues exist"
+  // with "command failed" caused two downstream problems:
+  //   1. `akm lint --json | jq …` saw stdout-flush races on Bun's non-zero
+  //      exit, intermittently truncating the JSON the consumer read.
+  //   2. `ok` is the shared `{ok, error, code}` failure indicator across the
+  //      whole CLI; reusing it for "found stuff" forced callers to disambiguate
+  //      a successful-but-flagged run from a hard error by inspecting fields.
   return {
-    ok: flagged.length === 0,
+    ok: true,
     fixed,
     flagged,
     summary: { fixed: fixed.length, flagged: flagged.length },

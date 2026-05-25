@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -585,12 +586,15 @@ describe("missing-ref check", () => {
 // ── Exit code simulation tests ────────────────────────────────────────────────
 
 describe("akmLint result.ok semantics", () => {
-  test("ok is false when issues remain unfixed", () => {
+  // `ok: true` always — `ok` reflects "the lint run completed", NOT "no
+  // issues found". Callers check summary.flagged for findings; the CLI
+  // gates exit code on --fail-on-flagged.
+  test("ok stays true even when issues remain unfixed; findings surface via summary.flagged", () => {
     const stashDir = makeTempStash();
     writeFile(stashDir, "agents", "broken.md", `---\ndescription: Has colon: here\n---\n\nBody.\n`);
 
     const result = akmLint({ dir: stashDir });
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.summary.flagged).toBeGreaterThan(0);
   });
 
@@ -627,5 +631,73 @@ describe("akmLint result.ok semantics", () => {
     const result = akmLint({ dir: stashDir });
     expect(result.summary.flagged).toBe(result.flagged.length);
     expect(result.summary.fixed).toBe(result.fixed.length);
+  });
+});
+
+// ── CLI exit-code semantics ─────────────────────────────────────────────────
+//
+// Real CLI shell-out so we cover the args-to-process.exit wiring in
+// src/cli.ts, not just the akmLint() return value. Each spawnSync runs
+// `bun ./src/cli.ts lint …` against a temp stash so the test is isolated.
+
+describe("akm lint CLI exit code", () => {
+  const repoRoot = path.resolve(import.meta.dir, "..");
+
+  function runLintCli(stashDir: string, extraArgs: string[] = []): { status: number | null; stdout: string } {
+    const result = spawnSync("bun", ["./src/cli.ts", "lint", "--dir", stashDir, "--format", "json", ...extraArgs], {
+      encoding: "utf8",
+      timeout: 30_000,
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: stashDir,
+        XDG_CONFIG_HOME: stashDir,
+        XDG_DATA_HOME: stashDir,
+        XDG_STATE_HOME: stashDir,
+        XDG_CACHE_HOME: stashDir,
+        AKM_STASH_DIR: undefined,
+      },
+    });
+    return { status: result.status, stdout: result.stdout };
+  }
+
+  test("exits 0 when findings exist and --fail-on-flagged is not set", () => {
+    const stashDir = makeTempStash();
+    writeFile(stashDir, "agents", "broken.md", `---\ndescription: Has colon: here\n---\n\nBody.\n`);
+
+    const { status, stdout } = runLintCli(stashDir);
+    expect(status).toBe(0);
+    const payload = JSON.parse(stdout) as { ok: boolean; summary: { flagged: number } };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.flagged).toBeGreaterThan(0);
+  });
+
+  test("exits 0 with --fail-on-flagged when there are no findings", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "skills",
+      "clean.md",
+      `---\nname: clean\ntype: skill\ndescription: "Does X cleanly"\nupdated: 2025-01-01\n---\n\nClean body content without placeholders.\n`,
+    );
+
+    const { status, stdout } = runLintCli(stashDir, ["--fail-on-flagged"]);
+    expect(status).toBe(0);
+    const payload = JSON.parse(stdout) as { ok: boolean; summary: { flagged: number } };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.flagged).toBe(0);
+  });
+
+  test("exits non-zero with --fail-on-flagged when findings exist", () => {
+    const stashDir = makeTempStash();
+    writeFile(stashDir, "agents", "broken.md", `---\ndescription: Has colon: here\n---\n\nBody.\n`);
+
+    const { status, stdout } = runLintCli(stashDir, ["--fail-on-flagged"]);
+    expect(status).not.toBe(0);
+    // The result envelope is still written before exit; `ok` stays true
+    // because the lint run itself completed without error.
+    const payload = JSON.parse(stdout) as { ok: boolean; summary: { flagged: number } };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.flagged).toBeGreaterThan(0);
   });
 });

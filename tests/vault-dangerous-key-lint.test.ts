@@ -268,7 +268,11 @@ describe("akmLint dangerous-vault-key integration", () => {
     expect(dangerous).toHaveLength(1);
     expect(dangerous[0].detail).toContain("LD_PRELOAD");
     expect(dangerous[0].file).toContain(".env");
-    expect(result.ok).toBe(false);
+    // `result.ok` reflects "lint ran successfully", not "no findings".
+    // Dangerous-vault-key findings now surface via summary.flagged; CLI
+    // exit code is gated on --fail-on-flagged separately.
+    expect(result.ok).toBe(true);
+    expect(result.summary.flagged).toBeGreaterThan(0);
   });
 
   test("flags each dangerous key in a vault file separately", () => {

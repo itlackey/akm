@@ -66,10 +66,20 @@ fi
 # akm lint reads the stash from $AKM_STASH_DIR, not the working dir.
 export AKM_STASH_DIR="$STASH_DIR"
 
+# Note on the `| cat |` workaround below:
+#
+# `akm lint --json` emits ~80KB for a real stash. Piping the output
+# directly to `jq` causes jq 1.6 to see a truncated read (~64-69KB)
+# because Bun's stdout pipe-close races with jq's libc fread.
+# Buffering through `cat` between the two processes resolves it;
+# `cat | jq` works, `direct | jq` doesn't. Same data, same byte count,
+# different jq read behavior. Affects any Bun process producing >64KB
+# of stdout piped to a libc-fread consumer.
+
 echo "# lint flags grouped by issue (stash: $STASH_DIR)"
 echo
 
-akm lint --json 2>/dev/null | jq '
+akm lint --json 2>/dev/null | cat | jq '
   {
     total: (.flagged | length),
     by_issue: (
@@ -84,7 +94,7 @@ akm lint --json 2>/dev/null | jq '
 if [[ "$SAMPLE" -gt 0 ]]; then
   echo
   echo "## samples per issue (limit $SAMPLE)"
-  akm lint --json 2>/dev/null | jq --argjson n "$SAMPLE" '
+  akm lint --json 2>/dev/null | cat | jq --argjson n "$SAMPLE" '
     .flagged
     | group_by(.issue)
     | map({issue: .[0].issue, samples: (. | .[0:$n])})
