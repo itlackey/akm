@@ -86,6 +86,17 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
 
 const COMMAND_PLACEHOLDER_RE = /\$ARGUMENTS|\$[123]\b/;
 
+// Files that should never be treated as the typed asset for the surrounding
+// directory (e.g. `workflows/README.md` is documentation, not a workflow).
+// Lower-cased and matched case-insensitively against `ctx.fileName`. They are
+// still indexable — falling through to `classifyBySmartMd` typically routes
+// them to the generic `knowledge` type.
+const TYPED_DIR_DOC_FILES = new Set(["readme.md"]);
+
+function isTypedDirDocFile(fileName: string): boolean {
+  return TYPED_DIR_DOC_FILES.has(fileName.toLowerCase());
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -97,6 +108,11 @@ function matchDirectoryHint(dirName: string, ctx: FileContext, specificity: numb
 
   for (const rule of DIR_TYPE_MAP) {
     if (rule.dir === dirName && rule.test(ctx.ext, ctx.fileName)) {
+      // Skip `README.md` (case-insensitive) so `workflows/README.md`,
+      // `agents/README.md`, etc. are not parsed as the typed asset and don't
+      // trip the workflow/agent metadata validators. They still get indexed
+      // as `knowledge` via the smart-md matcher.
+      if (isTypedDirDocFile(ctx.fileName)) return null;
       return { type: rule.type, specificity };
     }
   }
@@ -136,6 +152,13 @@ function classifyByParentDirHint(ctx: FileContext): MatchFact | null {
 
 function classifyBySmartMd(ctx: FileContext): MatchFact | null {
   if (ctx.ext !== ".md") return null;
+
+  // README.md is documentation, never a workflow/agent/command even when the
+  // body shape would otherwise classify (e.g. step-list inside a project
+  // README under workflows/). Fall straight through to `knowledge`.
+  if (isTypedDirDocFile(ctx.fileName)) {
+    return { type: "knowledge", specificity: 5 };
+  }
 
   const body = ctx.content();
   if (looksLikeWorkflow(body)) {
