@@ -155,9 +155,23 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+          path: source
+
       - uses: actions/download-artifact@v6
         with:
           path: artifacts
+
+      - name: Stage install scripts as release assets
+        run: |
+          # install.sh / install.ps1 ship as release assets so users can pin to a
+          # specific release version (the README points at releases/latest/download/
+          # rather than raw.githubusercontent.com/.../main/, which made any bad
+          # commit on main instantly break every new install worldwide).
+          cp source/install.sh artifacts/install.sh
+          cp source/install.ps1 artifacts/install.ps1
 
       - name: Generate checksums
         run: |
@@ -167,7 +181,9 @@ jobs:
             artifacts/akm-linux-arm64/akm-linux-arm64 \
             artifacts/akm-darwin-x64/akm-darwin-x64 \
             artifacts/akm-darwin-arm64/akm-darwin-arm64 \
-            artifacts/akm-windows-x64.exe/akm-windows-x64.exe
+            artifacts/akm-windows-x64.exe/akm-windows-x64.exe \
+            artifacts/install.sh \
+            artifacts/install.ps1
           do
             printf '%s  %s\n' "$(sha256sum "$file" | awk '{ print $1 }')" "$(basename "$file")" >> artifacts/checksums.txt
           done
@@ -190,7 +206,9 @@ jobs:
               artifacts/akm-linux-arm64/akm-linux-arm64 \
               artifacts/akm-darwin-x64/akm-darwin-x64 \
               artifacts/akm-darwin-arm64/akm-darwin-arm64 \
-              artifacts/akm-windows-x64.exe/akm-windows-x64.exe
+              artifacts/akm-windows-x64.exe/akm-windows-x64.exe \
+              artifacts/install.sh \
+              artifacts/install.ps1
           }
 
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
@@ -209,7 +227,9 @@ jobs:
               artifacts/akm-linux-arm64/akm-linux-arm64 \
               artifacts/akm-darwin-x64/akm-darwin-x64 \
               artifacts/akm-darwin-arm64/akm-darwin-arm64 \
-              artifacts/akm-windows-x64.exe/akm-windows-x64.exe; then
+              artifacts/akm-windows-x64.exe/akm-windows-x64.exe \
+              artifacts/install.sh \
+              artifacts/install.ps1; then
               exit 0
             fi
 

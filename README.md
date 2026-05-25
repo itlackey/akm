@@ -4,7 +4,7 @@
 [![CI](https://github.com/itlackey/akm/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/akm/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
-**A package manager for AI agent capabilities** — scripts, skills, commands, agents, knowledge, workflows, vaults, wikis, and memories — that works with any AI coding assistant that can run shell commands.
+**A package manager for AI agent capabilities** — scripts, skills, commands, agents, knowledge, memories, workflows, wikis, vaults, lessons, and scheduled tasks — that works with any AI coding assistant that can run shell commands.
 
 akm gives agents a curated, searchable library built from local directories, GitHub repos, npm packages, and websites. Instead of front-loading a giant prompt, agents pull exactly what they need, when they need it, and feed results back so the library improves over time.
 
@@ -14,10 +14,10 @@ akm gives agents a curated, searchable library built from local directories, Git
 
 ```sh
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/itlackey/akm/main/install.ps1 | iex
+irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
 **Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
@@ -201,6 +201,9 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 | [Registry](docs/registry.md) | Registries, the index format, and private registry setup |
 | [Wikis](docs/wikis.md) | Multi-wiki knowledge bases |
 | [Release Notes — 0.8.0](docs/migration/release-notes/0.8.0.md) | Latest release notes and migration guide |
+| [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
+| [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
+| [Changelog](CHANGELOG.md) | Per-release behavior changes |
 
 ## Privacy & data
 

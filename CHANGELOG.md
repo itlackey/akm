@@ -2,229 +2,519 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
 ## [Unreleased]
 
-### New Features
-
-- **`akm config migrate --print-diff`**: New flag that prints a unified diff of old vs new config alongside (or instead of, with `--dry-run`) writing the migrated output. Useful for auditing what auto-migration will change before committing. Usage: `akm config migrate --dry-run --print-diff`.
-
-- **Loud auto-migration banner (WS-2)**: When `akm` detects a pre-0.8 config shape on load and auto-migrates it, it now prints a loud multi-line banner to **both stderr and stdout** (so pipelines that capture only one stream still see it). The banner includes: the resolved config file path, the resolved backup directory path, the `AKM_NO_AUTO_MIGRATE=1` opt-out instruction, and the `akm config migrate --dry-run --print-diff` preview hint.
-
-- **Atomic + locked config writes (WS-3)**: All config writes (`saveConfig`, auto-migration, `akm config migrate`) now acquire a PID-sentinel file lock (`$CONFIG/config.json.lck`) before touching the file, and route through the atomic write path (write to `.tmp` → rename). Stale locks (process no longer alive) are reclaimed automatically.
-
-- **Validate-before-write on `akm config set` (WS-3)**: `saveConfig()` now validates the config object against `AkmConfigSchema` before any bytes touch disk. If the resulting config would be invalid (unknown keys, wrong enum values, out-of-range numbers), the write is rejected with a typed `ConfigError` and the file is left unchanged.
-
-- **Migration write failure is now a hard error (WS-2)**: If auto-migration cannot write the migrated config to disk (permissions, disk full, etc.), `akm` throws a `ConfigError` with the `AKM_NO_AUTO_MIGRATE=1` suggestion and the config path in the error message. The old behaviour — returning the migrated bytes in memory without persisting — caused an infinite re-migrate loop on every subsequent load.
+> **CI / Docker users:** the 0.8.0 storage split moved `akm.lock`, the event
+> database, and the registry cache out of `$XDG_CONFIG_HOME/akm/` into
+> `$XDG_DATA_HOME`, `$XDG_STATE_HOME`, and `$XDG_CACHE_HOME` respectively. If
+> you override any of `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`,
+> `AKM_CACHE_DIR` in CI to isolate per-job state, set **all four** (or none,
+> and rely on XDG defaults). Overriding only `AKM_CONFIG_DIR` will leave the
+> lock file / event DB pointing at the host's default `$XDG_DATA_HOME`,
+> causing lock contention and bleed between jobs.
 
 ### Breaking Changes
 
-- **Config validation is now strict and loud**: The config layer no longer silently drops, clamps, or coerces invalid values at load time. Configs that previously parsed with quiet repairs may now hard-error on the next `akm` invocation. Run `akm config migrate` (or simply load — auto-migration covers the legacy-input transforms) to bring a config back into spec, then fix any remaining loud failures.
-  - `search.graphBoost.maxHops > 3` now throws (was silently clamped to 3).
-  - `search.graphBoost.confidenceWeight > 1` now throws (was silently clamped to 1).
-  - Unknown keys at the top level, in `search`, in `search.graphBoost`, and in nested strict sub-objects now throw (were silently dropped).
-  - Invalid embedding entries (missing required sub-fields, wrong types, non-objects) throw instead of silently dropping the entire `embedding` block.
-  - Partial LLM profiles persisted by stale `akm config set llm.endpoint <url>` no longer get auto-completed with `model: ""` at load. Provide a complete profile (endpoint + model) or remove the entry.
-  - `profiles.agent.<name>` entries with invalid platforms hard-error instead of silently disappearing.
-  - Invalid registry entries (empty/missing URL, wrong type) hard-error instead of being filtered out.
-  - `output.format` / `output.detail` enum violations hard-error instead of falling back to defaults.
+- **Project-level `.akm/config.json` files are no longer merged**. The
+  multi-layer config discovery introduced in the 0.7 line was deprecated
+  in late-0.8.x with a warning; that warning is now backed by removal.
+  `loadConfig` walks cwd-ancestors only to emit a one-time deprecation
+  warning per discovered file. Move any needed settings to
+  `~/.config/akm/config.json`. `stashInheritance` (a multi-layer-only
+  field) is removed from the schema.
 
-- **Embedding config: `endpoint` and `model` are now optional fields, not sentinels**: Local-only embedding configs (set only `localModel`) leave `endpoint` and `model` undefined; `hasRemoteEndpoint()` returns false naturally. Code that compared `config.embedding.endpoint === ""` or `config.embedding.model === ""` to detect the local-only path must switch to a presence check.
+- **`${VAR}` env-var expansion only resolves at the apiKey consumption
+  sites**. The recursive expansion walker that ran on the load path is
+  gone. Other config string values now round-trip verbatim: a literal
+  `${HOME}` in (say) `stashDir` is preserved as the literal `${HOME}`
+  on read. The new exported `resolveSecret(value)` helper is applied
+  only where authorization headers are built (`src/llm/client.ts`,
+  `src/llm/embedders/remote.ts`, `src/integrations/agent/sdk-runner.ts`).
+  Documented `${OPENAI_API_KEY}` recipes in `docs/configuration.md`
+  continue to work because expansion still happens at request time for
+  apiKey fields.
+
+- **`AKM_FORCE_DOWNGRADE_CONFIG` env var removed**. The newer-than-binary
+  read-only guard (`configReadOnlyReason`, `markConfigReadOnlyIfNewer`,
+  `getConfigReadOnlyReason`) is gone. Configs declaring a `configVersion`
+  newer than the running binary now save through silently — unknown
+  fields are stripped on save by `sanitizeConfigForWrite` plus the
+  strict-walled Zod schema. Users on 0.9.x configs should not open them
+  with a 0.8.x binary in writable workflows.
+
+### Changed
+
+- **Config layer rewrite** — single-source-of-truth Zod schema in
+  `src/core/config-schema.ts` replaces the per-field parse switch AND
+  the per-shape load-time parser. Adding a new config field is now one
+  line of schema + zero lines of CLI code. `loadConfig` now consists of
+  parse-text → migrate (pure JSON transforms) → Zod safeParse → overlay
+  defaults — a ~30-line pipeline that absorbs ~900 LOC of legacy
+  per-shape parsers (`parseLlmConfig`, `parseEmbeddingConfig`,
+  `parseIndexConfig`, `parseSourceConfigEntry`, and ~20 more).
+  - **#454**: `akm config set llm.apiKey` / `embedding.apiKey` /
+    `profiles.llm.<name>.apiKey` now throws `UsageError` pointing at the
+    corresponding env var (`AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
+    `AKM_PROFILE_<NAME>_API_KEY`). Was previously a silent strip.
+  - **#455**: every schema-leaf key is now reachable via `akm config set`.
+    Includes previously hand-listed gaps: `defaults.agent`, `search.minScore`,
+    `improve.eventRetentionDays`, `embedding.provider`, `llm.temperature`,
+    `profiles.llm.<name>.*`, `profiles.agent.<name>.*`, etc.
+  - **#456**: `akm config validate` and `akm config migrate` are now real
+    registered subcommands. The orphan implementations in `config-validate.ts`
+    have been removed; the new entry points live in `src/cli/`.
+  - **#457**: project-level `.akm/config.json` files are now flagged with a
+    deprecation warning ("will be ignored in 0.9.0+"). The merge still
+    happens in 0.8.x — one release of grace.
+  - **#458**: malformed JSON or non-object root in the config file now raises
+    `ConfigError("INVALID_CONFIG_FILE")` with the underlying parse error.
+    Was previously a silent fallback to `DEFAULT_CONFIG`, which masked
+    corruption. File-not-existing remains the legitimate cold-start case.
+  - **#459**: `~/.cache/akm/config-backups/` is now bounded to the 5 most
+    recent timestamped backups. Pruning runs on each `saveConfig`.
+    `config.latest.json` is preserved separately.
+  - **#460**: `UNKNOWN_CONFIG_KEY_HINT` is now auto-generated from the
+    schema via `listTopLevelConfigKeys()`. No more stale hand-maintained string.
+  - **#461**: if the auto-migration disk-write fails, `loadConfig` now throws
+    a hard error instead of returning the in-memory migrated shape. Eliminates
+    the silent infinite re-migrate loop on every `akm` command.
+  - **#462**: nested registries[], sources[], profiles.* objects are
+    `.strict()` — unknown keys are rejected with a path-pointing error at
+    both set time and saveConfig time.
+  - **#463**: `schemas/akm-config.json` is now auto-generated from the Zod
+    source via `bun scripts/gen-config-schema.ts`. A drift test fails CI if
+    the committed file disagrees with the regeneration output.
+  - **#464.a**: `defaultWriteTarget` is validated via Zod `.refine()` against
+    `sources[].name`. With no sources configured, save-time validation
+    rejects instead of silently accepting (no implicit "first writable" fallback).
+  - **#464.b**: generic unset works on `semanticSearchMode` and every other
+    key via the dotted-path walker.
+  - **#464.c**: all write paths route through `writeFileAtomic`.
+  - **#464.d**: duplicate `mergeSecurityConfig` / `mergeInstallAuditConfig`
+    in `config-cli.ts` are deleted; merging happens via re-parse through the
+    Zod schema.
+
+See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
+
+## [0.7.5] - 2026-05-08
+
+### Added
+
+- **Feedback tag/filter filtering** — `akm feedback` and related event-reading paths now support richer filtering by tags and other event metadata, making it easier to inspect and reuse accumulated feedback signals.
+- **Vault path/run UX improvements** — vault flows now better support path discovery and command-scoped secret injection without surfacing values, with expanded regression coverage for the path/run contract.
+- **Reflect fallback improvements for external agents** — reflection/proposal flows now support a more robust fallback path for proposal content, including the file-write path used by the `opencode` agent integration.
+
+### Changed
+
+- **Workflow runs are now scoped to the current workspace** — ref-based workflow commands (`workflow next/status/list`) now resolve runs within the current project, worktree, or non-repo directory instead of sharing active-run state globally across the whole cache. Direct run-id commands still target the exact run.
+- **Help, hints, and workflow docs now explain run scoping** — CLI descriptions, embedded hints, operator docs, and workflow guides now describe the current-scope semantics so users understand how ref-based run resolution behaves across repos and local sandboxes.
+- **`akm show` auto-indexes stale state instead of falling back to raw filesystem reads** — show/search parity is tighter because stale index state now triggers refresh rather than silently drifting to a separate fallback path.
+- **Release metadata lookup follows the published `CHANGELOG.md` layout** — migration-help, package publish metadata, and related docs now consistently reference the shipped changelog location at the package root.
+- **Documentation refresh across README and posts** — README positioning, command-tour docs, workflow examples, and dev.to post organization were refreshed to better match the current CLI surface.
+
+### Fixed
+
+- **Cross-repo and cross-directory workflow leakage** — an active workflow run in one repo or sandbox no longer blocks or leaks into another when the same workflow ref is used from a different working directory.
+- **`show` workflow hints now respect the current scope** — `show workflow:...` only surfaces the active workflow run for the current workspace instead of attaching the latest run from anywhere on the machine.
+- **Agent-output and local-model JSON hardening** — reflect/propose and LLM-backed parsing paths are significantly more defensive against malformed JSON and partial local-model output.
+- **Reflect draft-file isolation** — reflect no longer writes intermediate draft files into the stash itself; temporary draft output now lives in OS temp space instead of polluting user content.
+- **Memory-inference token budgeting** — memory inference now respects the configured LLM token budget instead of overrunning long inputs.
+- **Named git stash selectors in `akm save`** — save now resolves named git-backed stash selectors correctly.
+- **Indexed script refs in search results** — script entries now surface the correct refs in indexed search results.
+- **Feedback ref resolution and LLM indexing regressions** — feedback targeting and related LLM indexing paths were corrected.
+- **Release workflow reruns and optional native dependency handling** — release automation is now rerunnable and avoids tripping over optional native dependency edges in CI/publish contexts.
+- **Published static-file checks** — migration-help packaging/tests now verify the shipped changelog and bundled release-note files are present and loadable from the published layout.
+
+### Documentation
+
+- **Bundled migration notes now cover 0.7.5** — `akm help migrate 0.7.5` and `akm help migrate latest` now surface the full 0.7.5 operator summary alongside the changelog section.
+
+## [0.7.4] - 2026-05-06
+
+## [0.7.3] - 2026-05-05
+
+### Added
+
+- **`akm index --enrich` opt-in for LLM passes** — index-time enrichment work such as metadata enhancement, memory inference, and graph extraction now runs only when explicitly requested with `--enrich`. Default indexing is faster and no longer surprises operators with LLM-backed work during normal maintenance runs.
+- **Config backup snapshots before writes** — config writes now create AKM cache backups so setup/config flows have a recovery path if a config is overwritten or corrupted during development or testing.
+
+### Changed
+
+- **Setup wizard UX refresh** — `akm setup` now better reflects the real configured state: source prompts are ordered more sensibly, configured and preserved stash information is surfaced, agent defaults can be selected explicitly (including disabled), and post-setup indexing does not implicitly enable enrichment.
+- **CI workflows updated for current GitHub Actions runtimes** — CI, release, and publishing workflows now use current action majors (`checkout@v5`, `cache@v5`, `setup-node@v5`, `upload-artifact@v5`, `download-artifact@v6`) to stay off deprecated Node 20 action runtimes.
+- **Technical investigation notes updated** — the index investigation note now reflects the latest `.stash.json` migration status, current green CI runs, and the narrowed remaining compatibility surface ahead of `v0.8.0`.
+
+### Fixed
+
+- **Embedding-dimension drift on read-only DB opens** — read/telemetry paths no longer mutate the live index schema with the default embedding dimension. `akm info`, search/show parity paths, and related readers now preserve the configured embedding shape instead of downgrading vector tables.
+- **Incremental index churn across multiple source layouts** — incremental indexing is now significantly more stable for filename-less legacy metadata, wiki-root sources, repo-root git stash layouts, non-indexed companion files, and cross-source dedupe cases.
+- **Git source indexing for repo-root stashes** — git-backed sources no longer assume a `<repo>/content` subtree; repo-root stash layouts are indexed correctly and cached mirrors are treated as fresh instead of being needlessly refreshed.
+- **`show` metadata no longer depends on `.stash.json`** — command and skill summary/show metadata now comes from file-local frontmatter and renderer parsing rather than the deprecated disk fallback sidecar.
+- **`.stash.json` no longer drives incremental stale detection** — editing `.stash.json` alone no longer forces directories to rescan during incremental indexing.
 
 ### Internal
 
-- **Config layer rewrite (cleanup pass)**: `src/core/config.ts` reduced from 1454 LOC to 501. Type declarations split into `config-types.ts`; source-runtime construction into `config-sources.ts`; backup/prune I/O routines consolidated in `config-io.ts`. The previously-duplicated JSON-IO machinery was deduped. Load-time preprocessing closures (silent clamps, sentinel synthesis, warn-and-drop tolerances, legacy partial-profile fixups) are gone; the schema is now plain `.strict()` validation. Legacy-input transforms (semanticSearchMode boolean → string, `stashes[]` → `sources[]`, openviking source removal) live in the migration module where one-time fixups belong.
+- **Ranking and scoring fixtures migrated toward file-local metadata** — routine benchmark and regression fixtures now prefer markdown frontmatter or inline script metadata, with `.stash.json` retained only for intentional legacy-compatibility coverage that still exercises explicit-file override behavior.
+- **Production-path ranking regression coverage** — ranking regression tests now build their fixture index through the production indexer rather than a custom `.stash.json` crawler, reducing fixture drift and improving confidence in the real indexing/search path.
 
-## [0.8.0] — Storage Reorganization & CLI Hardening
+### Added
 
-### Breaking Changes
+- **One-shot URL ingest for `akm import` and `akm wiki stash`** — both commands now accept a single HTTP/HTTPS URL in addition to file paths and stdin. `akm import <url>` fetches the exact page, converts it to markdown, and writes it into `knowledge/` using a URL-path-derived default name. `akm wiki stash <wiki> <url>` fetches the exact page, converts it to markdown, and writes it into `wikis/<wiki>/raw/`. Neither command registers a persistent website source or crawls linked pages.
 
-- **Unified 0.8.0 config shape**: The legacy top-level `llm`, `agent`, and `features` blocks are **removed**. LLM and agent connections now live exclusively under `profiles.llm.<name>` and `profiles.agent.<name>` (with `defaults.llm` / `defaults.agent` selecting the active entry). Per-process LLM/agent gates moved into `profiles.improve.<name>.processes.*`, and feature sections that are not improve-process-bound moved to first-class `index.metadataEnhance`, `index.stalenessDetection`, and `search.curateRerank` blocks. Configs without `configVersion: "0.8.0"` are auto-migrated at first run with a one-time notice; a timestamped backup is written before any in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress.
+### Changed
 
-- **`akm wiki ingest <name>` now dispatches an agent instead of just printing the workflow**: The print-only mode and the `--execute` flag are gone — calling ingest resolves an agent profile (from `--profile` or `config.defaults.agent`) and dispatches that agent with the workflow as its prompt. Without an accessible agent profile the command fails with a clear error pointing at `profiles.agent`. New flags: `--profile <name>`, `--model <model>`, `--timeout-ms <ms>`.
+- **Shared website ingest boundary** — website URL validation, single-page fetch/convert, and website mirror generation now live in a dedicated shared ingest module. The website source provider is a thin adapter, and `akm add`, `akm import`, and `akm wiki stash` all reuse the same core website-ingest path.
+- **`.stash.json` docs deprecation timeline** — the docs now explicitly state that `.stash.json` is deprecated, remains only as a 0.7.x compatibility bridge, and will be removed in v0.8.0 to match the current aggressive pre-release phase-out posture.
 
-- **`config.improve.reflectCooldownByType` removed**: Moved to `profiles.improve.default.processes.reflect.cooldownByType`. Migrated automatically.
+## [0.7.0]
 
-- **`config.agent.processes["task"]` removed**: Tasks now declare `mode` and `profile` in their stash YAML file directly.
+### Added
 
-- **`improve.schedule` removed from config**: Scheduling is owned by stash task YAMLs that wrap `akm improve` calls. This key is stripped during auto-migration.
-
-- **`vault set` no longer accepts values via argv**: The positional `<VALUE>` argument and the `KEY=VALUE` combined form have been removed. Values must be supplied via stdin (default) or `--from-env <VAR>`. This eliminates `/proc/cmdline` secret exposure. Migrate existing scripts:
-  ```sh
-  # Before
-  akm vault set vault:prod DB_URL postgres://...
-  akm vault set vault:prod DB_URL=postgres://...
-
-  # After
-  printf '%s' "postgres://..." | akm vault set vault:prod DB_URL
-  AKM_VALUE="postgres://..." akm vault set vault:prod DB_URL --from-env AKM_VALUE
-  ```
-
-- **Storage directories**: akm now uses four XDG directories instead of two. Existing data must be migrated using `bun scripts/migrate-storage.ts`. See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for the full guide.
-  - `$DATA` (`~/.local/share/akm`): `index.db`, `workflow.db`, `state.db`, `akm.lock`, `config-backups/`
-  - `$STATE` (`~/.local/state/akm`): task run logs
-  - `$CACHE` (`~/.cache/akm`): regenerable data only (registry downloads, binary cache)
-  - `$CONFIG` (`~/.config/akm`): `config.json` — unchanged location, but `akm.lock` moves out
-
-- **Event log removed**: `events.jsonl` is no longer written or read. The JSONL event stream is replaced by the `events` table in `state.db`. Run the migration script to import existing events. Any external tooling that reads `$CACHE/events.jsonl` must switch to `akm events` or the `state.db` `events` table directly.
-
-- **Registry file cache removed**: Per-URL JSON files in `$CACHE/registry-index/` are replaced by the `registry_index_cache` table in `index.db`. These files can be safely deleted after migration. No manual action needed for the registry cache itself — it rebuilds automatically on next use.
-
-- **Task history moved**: Per-task JSONL files under `$STATE/tasks/history/` are replaced by the `task_history` table in `state.db`. Existing files can be imported via the migration script.
-
-- **`akm.lock` location changed**: Moved from `$CONFIG/akm.lock` (`~/.config/akm/akm.lock`) to `$DATA/akm.lock` (`~/.local/share/akm/akm.lock`). The migration script copies the file; the old location is no longer read after migration.
-
-- **JSONL fallbacks removed**: `remember`, `import`, and `wiki stash` no longer have JSONL-based fallback write paths. The deprecated `filePath` alias on task entries is removed. All event and task writes go exclusively through `state.db`.
-
-- **`--target` flag standardised**: `akm remember`, `akm import`, and `akm wiki stash` now uniformly use `--target` to specify the destination stash. Previous inconsistent flag names are removed with no compatibility aliases.
-
-- **Deprecated config-dir fallback removed**: The `AKM_CONFIG_DIR`-as-data-directory fallback is removed. Set `AKM_DATA_DIR` explicitly if you override data paths in scripts or CI environments.
-
-- **`akm index --enrich` and `--re-enrich` removed**: Plain `akm index` now owns fast metadata enhancement when LLM metadata enrichment is enabled. Slow LLM maintenance work no longer runs from `index`.
-
-- **Memory inference and graph extraction moved out of `index`**: The slow memory-maintenance passes now run from `akm improve` after consolidation, not from `akm index`. Automation that previously treated `index` as the owner of all LLM enrichment work must switch to the improve-owned maintenance flow.
-
-- **Task files migrated from `.md`+YAML frontmatter to pure `.yml` format**: Tasks are now stored as plain YAML at `<stash>/tasks/<id>.yml`. Multi-line inline prompts use YAML block scalars (`prompt: |`), replacing the prior `prompt: inline` + markdown-body convention. Existing `.md` task files are no longer discovered by `akm tasks list` — they must be renamed and rewritten as YAML. The lint pass for `tasks/` now parses YAML directly (it was silently a no-op for pure YAML files when routed through the frontmatter parser). The lint issue code `invalid-task-frontmatter` has been renamed to `invalid-task-yaml`. See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for migration steps.
-
-### New Features
-
-- **Unified profiles tree**: Named LLM and agent profiles under `profiles.llm.<name>` and `profiles.agent.<name>`. Per-process LLM/agent bindings live on `profiles.improve.<name>.processes.{reflect,distill,consolidate,memoryInference,graphExtraction,feedbackDistillation,validation}` with a `{mode, profile, timeoutMs}` shape plus optional `qualityGate` / `contradictionDetection` sub-objects. Non-improve feature gates moved to first-class top-level sections (`index.metadataEnhance`, `index.stalenessDetection`, `search.curateRerank`). See [docs/configuration.md](docs/configuration.md) for the full 0.8.0 reference.
-
-- **reflect LLM mode**: The reflect pass inside `akm improve` can now run as a direct LLM call — significantly faster than the agent subprocess path. Configure via `profiles.improve.<name>.processes.reflect.mode: "llm"`. Supports multi-turn self-refine (sends the prior draft back as an assistant turn) and structured JSON output for providers that set `supportsJsonSchema: true`.
-
-- **`akm config migrate`**: New command to explicitly migrate pre-0.8.0 config shapes into the 0.8.0 unified shape. Includes `--dry-run` and `--no-wait` flags. Acquires a file lock before write for safety. All config layers (user + project) are visited and rewritten in place; read-only layers print the migrated content for manual apply.
-
-- **`--profile` flag on improve/propose**: `akm improve` and `akm propose` now accept `--profile <name>` to override the configured dispatch profile for a single run.
-
-- **`vault set` reads from stdin by default**: Values are never passed via argv. `printf '%s' "$SECRET" | akm vault set vault:prod KEY` is the default pattern. Use `--from-env <VAR>` to read from a named environment variable instead.
-
-- **`vault set --from-env <VAR>`**: New flag reads the value from the named environment variable, avoiding both argv and stdin. Errors with exit 2 if the variable is not set.
-
-- **`state.db`**: New migration-safe SQLite database using Flyway-pattern schema migrations (never drops durable rows). Tables: `events`, `proposals`, `task_history`. Located at `$DATA/state.db`.
-
-- **`select` event**: Emitted when `akm show` follows an `akm search` within 60 seconds. Closes the MemRL selection signal loop so the improve pipeline can observe which search results actually get used.
-
-- **`improve_skipped` event**: Emitted at every cooldown-guard skip in `akm improve`, making skip distribution and budget exhaustion observable in the event stream.
-
-- **`reflect_completed` event**: Emitted after the reflect pass in `akm improve` creates a proposal, linking the reflect invocation to its proposal ID for closed-loop outcome tracking.
-
-- **Search mode metadata**: `search` events now include `mode: "semantic" | "keyword"` for long-term quality analysis of retrieval strategies.
-
-- **Per-task `timeoutMs` override**: Individual task definitions can set `timeoutMs` to override the global task timeout. Set to `null` to disable the timeout for a specific task.
-
-- **`akm health`**: New runtime health command that validates `state.db`, checks task-history/log integrity, probes the default agent profile, and summarizes recent improve-loop telemetry from `improve_*` events.
-
-- **`--target` on `remember`, `import`, and `wiki stash`**: All three write commands now accept a uniform `--target <stash-name>` flag to route the write to a specific named writable source, bypassing `defaultWriteTarget` and working-stash resolution.
-
-- **Proposal resolution by ref or UUID prefix**: `akm accept`, `akm reject`, and `akm diff` now accept a short UUID prefix (e.g. `akm accept abc123`) or an asset ref (e.g. `akm accept memory:my-note`) in addition to full UUIDs.
-
-- **`bun scripts/migrate-storage.ts`**: One-shot migration script to move existing data to the new XDG layout. Supports `--dry-run` to preview changes without applying them and `--yes` to apply.
-
-- **Task YAML adds `name` and `when_to_use` fields**: Task definitions can now set an optional `name` (display name shown by `akm tasks list`) and `when_to_use` (manual-trigger guidance describing when an operator should invoke the task). Both fields are optional and surface in `akm tasks show`/`list` output.
-
-- **`command:` is now a recognised task target**: `akm lint` recognises `command:` alongside `workflow:` and `prompt:` as valid task targets, so command-driven tasks no longer trip a `missing-target` finding.
-
-- **Proposal creation validates at write time**: `createProposal()` now rejects four classes of malformed input deterministically before writing, with a typed `INVALID_PROPOSAL` usage error and a typed `ProposalRejectionReason`:
-  - `invalid_ref` — `parseAssetRef` threw
-  - `unknown_type` — type is not in `TYPE_DIRS`
-  - `empty_content` — payload body is empty after trim
-  - `missing_description` — consolidate-style frontmatter present but `description` is absent or empty
-
-  Each rejection emits a `proposal_creation_rejected` event with the typed reason so upstream pipelines (especially `consolidate`) can be tuned based on which check fires most.
-
-- **`akm improve` orphan-purge maintenance pass**: After graph extraction (and after any reindex following consolidation or memory inference), `akm improve` now rejects pending `reflect` proposals whose target asset no longer exists on disk. This prevents stale proposals from polluting the queue when assets are removed or consolidated mid-run. Lesson proposals (which target new assets by definition) and non-reflect proposals (which legitimately target not-yet-created assets) are always kept. Emits a `proposal_orphan_purge` event with `checked`, `rejected`, `durationMs`, `byType`, and `orphans` for observability.
-
-- **`improve_runs` table in `state.db`** (migration 003): Every `akm improve` invocation is now recorded as a single row with first-class indexed `dry_run`, `started_at`, `stash_dir`, and `scope_mode` columns. `improve-result.json` files under `<stash>/.akm/runs/<id>/` are no longer written — existing files from older runs become historical artifacts and can be safely deleted by users (zero current code paths read them). The dedicated `dry_run` index closes the productivity-audit artifact-trap where dry-run probes shared the same on-disk path as real runs. Query recent runs with:
-  ```sh
-  sqlite3 "$AKM_DATA_DIR/state.db" \
-    "SELECT id, started_at, ok, dry_run FROM improve_runs ORDER BY started_at DESC LIMIT 10"
-  ```
-  Retention defaults to 90 days, governed by the same `improve.eventRetentionDays` config knob used for the `events` table. `purgeOldImproveRuns()` runs in the post-loop maintenance pass alongside `purgeOldEvents()`.
-
-- **Per-reflect outcome event `improve_reflect_outcome`**: Emitted once per reflect call during `akm improve` with `{ok, durationMs, agentProfile, reason}`, enabling per-asset latency tracking and per-run failure-shape analysis.
-
-- **Enriched `improve_completed` event**: Now includes `durationMs` (total wall-clock), `warningCount`, `orphansPurged`, `reflectCooldownActions`, `graphCoverage`, `graphDensity`, and `graphEntities` for richer self-tuning telemetry without requiring a separate stats query.
-
-### Performance
-
-- **reflect LLM mode**: The direct-LLM reflect path is order-of-magnitude faster per call than the agent subprocess path, with corresponding improvements on full improve runs. Enable with `profiles.improve.<name>.processes.reflect.mode: "llm"` in your config. (Specific numbers are preliminary; in-tree benchmarks live under `tests/bench/` once landed.)
-
-- **`akm improve` cooldown pre-filter**: Assets under cooldown are now filtered out before the main improvement loop rather than inside it. Reduces LLM API calls and speeds up runs on large stashes with many recently-processed assets.
-
-- **Improve-owned maintenance refreshes the final corpus state**: `akm improve` now runs memory inference after distill/consolidation, reindexes when inference writes new derived memories, and refreshes graph extraction against the settled post-improve state.
+- **Proposal queue (`akm proposal *`)** (#225, #226, #233) — durable queue for proposal-producing commands. New verbs `akm proposal {list, show, diff, accept, reject}`. Promotion runs full validation before routing through `writeAssetToSource()`. Multiple proposals for the same `ref` coexist without filesystem collisions. Auto-accept is gated per-source via `autoAcceptProposals: true` (default off; requires a writable source). See v1 spec §11.
+- **`akm reflect`, `akm propose`, `akm distill`** (#225, #226, #227) — three new commands that write **only** to the proposal queue. `reflect` and `propose` shell out via the agent CLI (`agent.*` config); `distill` is the canonical bounded in-tree LLM call gated behind `llm.features.feedback_distillation`. Usage events `reflect_invoked`, `propose_invoked`, `distill_invoked`.
+- **`lesson` asset type** (#227) — first-class well-known type with required frontmatter `description` and `when_to_use`, stored under `lessons/<name>.md`. Normally produced by `akm distill <ref>` as a `proposed`-quality proposal and promoted via `akm proposal accept`.
+- **`llm.features.*` map with mixed defaults** (#227, #284) — every bounded in-tree LLM call site is gated behind exactly one feature flag. Four keys ship: `curate_rerank`, `feedback_distillation`, `memory_inference`, `graph_extraction`. `memory_inference` and `graph_extraction` default to `true`; the others default to `false`. Wrapper `tryLlmFeature(feature, config, fn, fallback)` in `src/llm/feature-gate.ts` guarantees disabled/throw/timeout fall back without crashing the call site. See v1 spec §14.
+- **`quality: "proposed"` and `--include-proposed`** — `SearchHit.quality` open string set; `proposed` is excluded from default search and surfaces only via `akm search ... --include-proposed` or `akm proposal *`. Unknown values parse-warn-include. `SearchHit` gains optional `quality?` and `warnings?` fields.
+- **`akm-bench` v1** (#234, PRs #266, #268, #269) — paired-utility benchmark framework. Track A runs each task with and without akm available and emits a comparable score pair; `akm-bench compare` aggregates paired runs into a delta report; `akm-bench attribute` maps utility deltas back to specific `[origin//]type:name` refs (Track B); `akm-bench evolve` is a stub for the closed-loop workflow that lands in 0.8.
+- **Operator env-var documentation** (#284 Wave B, PR #285) — `docs/configuration.md` now documents `AKM_NPM_REGISTRY`, `AKM_REGISTRY_URL`, `AKM_CACHE_DIR`, `HF_HOME`, and `GH_TOKEN`.
+- **Empty-state hints** (#284 Wave C, PR #286) — `akm proposal list`, `akm workflow list`, and `akm vault list` empty-state messages now include "how to create the first one" guidance.
+- **Canned error hints** (#284 Wave C, PR #286) — four new typed error hints added: `INVALID_FLAG_VALUE`, `ASSET_NOT_FOUND`, `WORKFLOW_NOT_FOUND`, `FILE_NOT_FOUND`.
+- **`--verbose` global flag in `--help`** (#284 Wave C, PR #286) — the flag was honoured at runtime but invisible in help output; now declared.
+- **~90 new tests** (#284 Wave D, PR #285) — direct coverage for the proposal/reflect/propose/distill CLI integration paths, output-shape contracts, workflow-runs state machine, and lesson-init scaffolding.
 
 ### Security
 
-- **Directory traversal prevention**: `vault set`, `vault create`, `vault path`, and `vault run` now validate that the resolved vault path stays within the stash's `vaults/` directory. Names like `../../evil` are rejected with a `UsageError` (exit 2).
-- **Atomic temp file hardening**: `writeFileAtomic` now opens the temp file with mode `0o600` from the start (no world-readable window before chmod), and uses `crypto.randomBytes` instead of `Math.random` for the temp filename.
-- **Stdin cap on `vault set`**: stdin reads are capped at 1 MB; values larger than that are rejected with a `UsageError`.
-- **Vault path stripped from JSON output**: `vault list --format json` and `show vault:<name> --format json` no longer include the absolute `path` field. Use `akm vault path vault:<name>` when you need the path.
-- **Write lock on `vault set` / `vault unset`**: both commands now acquire an exclusive lock file (`<vault>.lock`) around the read-modify-write cycle. Concurrent writers in CI no longer silently drop each other's keys. Lock times out after 5 s.
-- **Orphaned comment cleanup in `vault unset`**: `vault unset KEY` now also removes the `# comment` line immediately above the removed key.
-- **Lint ref extension fix**: `akm lint` now correctly resolves `vault:<name>` refs to `vaults/<name>.env` (was incorrectly using `.md`).
-- **Dangerous vault key detection**: `akm lint` and `akm add` now scan vault files against the dangerous vault key list — environment variable names that can be used for process-execution hijacking (`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, etc.). `akm lint` reports these as `dangerous-vault-key` findings (non-blocking). `akm add` pauses and prompts for confirmation (default: No) when dangerous keys are found; in non-interactive mode the install fails unless `--allow-insecure` is passed. `--allow-insecure` on `akm add` now covers both plain-HTTP sources and dangerous vault key bypass.
+- **Git message sanitization** (#270) — commit messages and remote URLs written by akm are sanitized to prevent shell-substitution and control-character injection through user-supplied content.
+- **Bench env isolation** (#271) — `akm-bench` runs each agent invocation in a scrubbed environment so host secrets do not leak into bench transcripts or paired-run logs.
+- **LLM body redact + npm tarball host validation** (#272) — outbound LLM request/response bodies are redacted in error reporting before surfacing to stderr or warnings; `akm add npm:…` validates the tarball download host against the configured npm registry rather than following arbitrary `dist.tarball` URLs.
 
-### Graph Extraction Improvements
+### Changed
 
-- **`candidatePaths` filter**: Graph extraction now refreshes only touched assets per improve cycle. Massive perf win on cold cache and large stashes — extraction sweeps no longer revisit every asset on every run.
-- **Default `graphExtractionBatchSize` raised from 1 to 4**: Auto-tuned against `llm.contextLength`, so larger context windows produce wider batches without manual tuning.
-- **Incremental `replaceStoredGraph`**: Unchanged entries skip; only changed entries delete child rows and re-insert; removed entries get cleaned up. Order-of-magnitude reduction in row writes on small re-extractions vs. the previous wipe-and-rewrite path.
-- **SQL-backed `listRelatedPathsForFile`**: Rewritten as a SQL self-join on `graph_file_entities` plus a relation-count subquery, scoped by `stash_root`. Significantly faster cold-call latency on typical stashes.
-- **Graph schema redesign (DB_VERSION 10 → 17)**: `graph_files` now keys on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE`. Child tables (`graph_file_entities`, `graph_file_relations`) re-keyed on `entry_id` and cascade through. `body_hash` is now `NOT NULL`. New columns `extraction_run_id` (graph_files + graph_meta) and `extractor_id` (graph_meta) record extraction provenance. New indexes `idx_graph_file_entities_entity_norm` and `idx_entries_file_path`; two redundant indexes dropped. Migration uses the existing DROP+rebuild path — graph data re-extracts on the first `akm improve` after upgrade; a warning is logged during the upgrade.
-- **Stash removal cleans up graph rows**: Removing a stash now correctly cascades through the graph tables. Earlier versions left orphaned graph rows behind.
-- **New: `akm graph entity <name>`**: Inverts the entities view — list every asset that mentions a given entity, ordered by per-asset extraction confidence.
-- **New: `akm graph orphans`**: List assets that produced zero entities during the extraction pass — useful for quality triage and re-extraction targeting.
-- **Confidence in graph output**: `akm graph relations` and `akm graph entities` now surface per-row confidence values.
-- **Graph-boost magnitude in `whyMatched`**: Search results now annotate the graph-boost contribution so agents can see why a hit ranked where it did.
-- **`Next: akm show '<ref>'` hint**: Related-results output appends a Next hint pointing at the top hit so agents know which ref to load next.
+- **Workflow noise gate, sources deprecation warn, setup `--help`** (#273) — `akm workflow next/complete/status` no longer print spurious progress noise on quiet runs; the legacy `stashes[]` key emits a single deprecation warning per process (was: per call site); `akm setup --help` renders the same help block as `akm setup` with no args plus the agent-detection summary.
+- **tsconfig + HF pin + shapes throw** (#274) — `tsconfig.json` now includes `tests/` so `bunx tsc --noEmit` covers test files; the HF embeddings model is pinned to a specific revision to avoid silent upstream changes; the output-shape registry throws on a missing shape rather than silently `JSON.stringify`-ing.
+- **Bench tmp redirect** (#276) — `akm-bench` no longer writes scratch state under `/tmp`; everything lands under the AKM cache dir (`~/.cache/akm/bench/`) so cleanup is bounded and CI sandboxes that ban `/tmp` writes work out of the box.
+- **Registry-build tmp redirect** (#284 Wave E, PR #285) — `inspectArchive` now mkdtemps under `${getCacheDir()}/registry-build/` instead of `os.tmpdir()`. Mirrors the bench-only redirect from #276 for non-bench code. `vault load` retains its `/tmp` mode-0600 sentinel by design.
 
-### Bug Fixes
+### Fixed
 
-- **EISDIR on `akm improve`**: Fixed a crash when the improve pipeline encountered a directory entry where it expected a file. Directory paths are now validated and skipped with a warning rather than throwing an uncaught EISDIR error.
+- **Agent spawn timeout** (#284 Wave A, PR #285, BUG-H1) — stdin write could hang past `agent.timeoutMs`; the write now races against `proc.exited` so the timeout is always honoured.
+- **Captured-stdio leak on spawn failure** (#284 Wave A, PR #285, BUG-H2) — stream readers no longer leak as floating promises on the spawn-failed path.
+- **`defaultWriteTarget` writability check** (#284 Wave A, PR #285, BUG-H3) — resolving `defaultWriteTarget` was missing the writability gate that the `--target` path enforces; now mirrored.
+- **Schema-upgrade row loss** (#284 Wave A, PR #285, BUG-H4) — `restoreUsageEventsBackup` silently dropped rows when the new schema added a NOT-NULL column without DEFAULT; now projects rows onto the column intersection and warns loudly.
+- **Bench cleanup registry running flag** (#284 Wave A, PR #285, BUG-H5) — `runAllAndExit` now resets `registry.running` in a `try/finally` so a synchronous throw cannot deadlock subsequent SIGINT handlers.
+- **`akm search` with no query** (#284 Wave C, PR #286) — error hint now references `--type`/`--limit` instead of show-style ref grammar.
+- **`akm workflow next <bogus-id>`** (#284 Wave C, PR #286) — surfaces `WORKFLOW_NOT_FOUND` with `Run \`akm workflow list --active\`` instead of a cryptic ref-parse error.
+- **`akm add /missing/path`** (#284 Wave C, PR #286) — throws typed `NotFoundError("FILE_NOT_FOUND")` with hint instead of a bare `Error`.
+- **`akm update <bogus>`** (#284 Wave C, PR #286) — now uses `SOURCE_NOT_FOUND` (with the existing hint pointing at `akm list`) instead of the default `ASSET_NOT_FOUND`.
+- **Setup wizard source count + embedding-dim prompt** (#284 Wave C, PR #286) — the wizard now reads `newConfig.sources ?? newConfig.stashes` to count configured sources (was reading the dropped legacy key); the embedding-dimension prompt now explains what the value is for.
+- **`formatPlain` null fallback** (#284 Wave C, PR #286) — text renderers now exist for every command that calls `output()`; no more silent JSON when an operator passes `--format text`.
+- **Arity guards** (#284 Wave C, PR #286) — `propose`, `feedback`, `curate`, and `help migrate` no longer exit 0 with citty's help screen when required positionals are missing; they now exit 2 with `MISSING_REQUIRED_ARGUMENT`.
 
-- **Lint `missing-ref` false positives**: The lint pass no longer flags refs that resolve through stash aliases or secondary sources. Cross-stash refs that are genuinely reachable no longer produce spurious `missing-ref` warnings.
+### Removed
 
-- **`task_history` upsert overwrite bug**: Fixed migration 002 where a `task_history` upsert could silently overwrite an existing row for the same `(task_id, started_at)` pair instead of inserting a new row. Per-run rows are now correctly keyed on the auto-increment `id`.
+- **Legacy registry `curated` boolean** — legacy v2 index JSON parses and silently ignores it; renderers no longer surface a `curated` column. The per-asset `quality` field replaces it. Publishers do not need to migrate existing JSON.
+- **Phantom config keys** (#284 Wave B, PR #285): `llm.features.{tag_dedup, memory_consolidation, embedding_fallback_score}`, `llm.capabilities.{longContext, toolUse}`, and `llm.contextWindow`. These were parsed and persisted by the loader but never read at any call site, and the docs that described their behaviour were misleading. Operators with these keys in `config.json` will see them silently ignored — `akm config get llm.features.tag_dedup` (etc.) will return undefined.
+- **`disableGlobalStashes`** (#284 Wave B, PR #285) — legacy config key removed; the one-cycle deprecation window from the v1 spec has expired.
+- **`stashes[]` config-key migration shim** (#284 Wave B, PR #285) — the `stashes[]` → `sources[]` migration was advertised for one release cycle in 0.6.x; that cycle has now expired. 0.5.x configs that have not been touched since will produce a `ConfigError` on parse instead of auto-migrating. Run `akm setup` (or rename the key by hand) to migrate.
+- **`searchPaths` legacy migration** (#284 Wave B, PR #285) — pre-0.5.x config key; deprecation window long expired.
+- **`context-hub` source-kind migration paths** (#284 Wave B, PR #285) — `STASH_TYPE_ALIASES`, the `parseSourceSpec` `case "context-hub"` arm, the `context-hub-${key}` git rename migration, and the `normalizeToggleTarget("context-hub")` arm are all gone. Per CLAUDE.md, `context-hub` is just a git repo and was never a first-class kind.
+- **Legacy lockfile migration** (#284 Wave B, PR #285) — `migrateLegacyLockfileIfNeeded` (the `stash.lock` → `akm.lock` rename) is removed; the rename ran for at least two release cycles.
 
-- **Index isolation in XDG test harness**: Expanded XDG env isolation in tests so that `index.db`, `workflow.db`, and `state.db` always resolve inside the test's temporary directory tree, preventing cross-test state leakage.
+### Internal
 
-- **Empty-query `search` regression**: `akm search` now rejects a missing query with a structured `MISSING_REQUIRED_ARGUMENT` usage error instead of returning filler results.
-
-- **`remember --enrich` fail-soft write path**: When no LLM is configured or enrichment yields nothing, `akm remember --enrich` now still writes the memory instead of failing a later tag-required validation check.
-
-- **`wiki stash <wiki> <url>` URL ingestion**: URL-based wiki stashing now uses the website snapshot fetch path directly, restoring deterministic markdown capture for raw wiki sources.
-
-- **`help migrate --format json` positional parsing**: Global output flags no longer get consumed as the migration version positional, so missing-version invocations fail with the correct structured usage envelope.
-
-- **Docker Bun install matrix**: Fixed the Bun-based Docker build path by declaring `@opencode-ai/sdk` as a package dependency and copying `scripts/` into the Bun image build context, bringing the release-check Docker matrix back to green.
-
-- **`FOREIGN KEY constraint failed` crash in embedding batch**: When an entry was deleted between when its id was queued for embedding and when the INSERT ran (e.g. a concurrent improve cycle consolidating away the entry), the INSERT would throw inside the batch transaction, rolling back every embedding for that run — not just the stale one. `upsertEmbedding` now does a cheap pre-flight `SELECT 1 FROM entries WHERE id = ?` and returns `false` (skipped) instead of throwing. The indexer tracks `storedCount`/`skippedCount` separately and surfaces a single concise warning when entries were skipped.
-
-- **`vault set` stdin prompt no longer hangs**: When `stdin` is attached to a TTY, `akm vault set` now prints `Enter value for "<KEY>" (Ctrl-D when done):` to stderr before reading. Previously an interactive invocation hung silently with no indication that input was awaited. Piped-stdin invocations are unchanged.
-
-- **Reflect cooldown signals classified correctly**: When a reflect call returns `{ok: false, reason: "cooldown"}`, the improve loop now classifies the action as `reflect-cooldown` rather than `reflect-failed`, and skips the `pushRecentError` call. This prevents cooldown skips from contaminating the `recentErrors`/`avoidPatterns` context injected into the next reflect call, and they are now counted separately in `improve_completed.reflectCooldownActions`.
-
-- **`propose` static import**: `node:fs` in `src/commands/propose.ts` is now a static top-level import instead of a dynamic `await import` inside the function body. Consistent with the rest of the file and removes an unnecessary microtask boundary on every propose invocation.
-
-- **`akm agent <profile> [<agent-ref>]`**: Agent command now accepts an optional agent asset ref as a second positional. The agent asset's content becomes the system prompt, its `model:` frontmatter sets the model, and its `tools:` frontmatter sets the tool policy — all translated to platform-specific CLI flags automatically. Use `--model <alias-or-id>` to override the asset's model for this invocation.
-
-- **Platform-specific command builders for `akm agent`**: A new builder strategy translates platform-agnostic dispatch parameters to the exact argv each agent CLI expects. OpenCode receives `opencode run [--system-prompt "..."] [--model opencode/<model>] "<prompt>"`; Claude Code receives `claude [--system-prompt "..."] [--model <model>] [--allowedTools ...] --print "<prompt>"`. Built-in model aliases (`opus`, `sonnet`, `haiku`) resolve to the correct platform model ID automatically. Custom aliases configurable per profile in `agent.profiles.<name>.modelAliases`.
+- 9 `console.warn` sites migrated to `warn()` from `src/core/warn.ts` for uniform `--quiet` honoring (#284 Waves A/B, PR #285).
+- 6 unused exports removed: `StashLockEntry`, `listProviderTypes`, `resetBuiltinsCache`, and two `GraphRelation` re-exports (#284 Wave A, PR #285).
+- ~472 LoC net deletion from `src/core/config.ts` from removing the legacy migration paths above (#284 Wave B, PR #285).
+- `--for-agent` deprecation note retained in `docs/technical/akm-core-principles.md` and `docs/technical/search-updated.md` for at least one more cycle.
+- Workflow-runs state machine, lesson-init scaffolding, and the proposal/reflect/propose/distill CLI now have direct test coverage (#284 Wave D, PR #285).
 
 ### Migration
 
-See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for the complete step-by-step guide.
+- See [`docs/migration/release-notes/0.7.0.md`](docs/migration/release-notes/0.7.0.md) for the operator summary and [`docs/migration/v1.md`](docs/migration/v1.md) for the canonical per-surface delta from any 0.6.x baseline.
 
-Quick reference:
+## [0.6.0] - 2026-04-23
 
-```sh
-# Preview what the storage migration will do
-bun scripts/migrate-storage.ts --dry-run
+### Added
 
-# Apply the storage migration
-bun scripts/migrate-storage.ts --yes
+- **`akm workflow validate <ref|path>`** — new subcommand that validates a workflow markdown file or ref, surfacing every error in one pass (without running a full reindex).
+- **`akm feedback` now accepts any indexed ref** — previously type-restricted. `memory:`, `vault:`, `workflow:`, `wiki:` refs all work. Vault feedback never echoes vault values.
+- **`akm upgrade` runs post-upgrade tasks automatically.** After a successful upgrade, the new binary is invoked as a child process running `akm index`, which auto-migrates any legacy `stashes` → `sources` config keys via `loadConfig` and rebuilds the index against the new schema (`DB_VERSION` 8 → 9 forces a rebuild). Pass `--skip-post-upgrade` to opt out (config migration still runs on the next `akm` invocation; you'd just need to run `akm index` yourself). Result is reported in the `postUpgrade` field of the upgrade response.
+- **`writable` flag on sources.** New optional `SourceConfigEntry.writable` controls whether write commands (`akm remember`, `akm import`, `akm save`, `akm clone`) may target the source. Defaults: `true` for `filesystem`, `false` for `git` / `website` / `npm`. `writable: true` on `website` or `npm` is rejected at config load with `ConfigError("writable: true is only supported on filesystem and git sources")`.
+- **`defaultWriteTarget` root config key.** Names the source that receives writes when no `--target` flag is given. Resolution order: `--target` → `defaultWriteTarget` → `stashDir` (working stash) → `ConfigError("no writable source configured; run \`akm init\`")`. There is no implicit "first writable in `sources[]` order" fallback.
 
-# Preview the config v2 migration
-akm config migrate --dry-run
+### Changed
 
-# Apply the config v2 migration
-akm config migrate
-```
+- **Workflows are now stored as validated `WorkflowDocument` JSON** — workflows are compiled into a validated `WorkflowDocument` JSON shape with line-anchored `SourceRef`s back into the source markdown, cached in a new `workflow_documents` table in `index.db`. The run engine reads from the cache on `akm workflow next` instead of re-parsing markdown each step.
+- **Feedback events flow into utility recomputation** — positive/negative feedback signals now feed utility scoring alongside search/show events. Telemetry records both `entry_ref` and `entry_id` so feedback signals survive a reindex.
+
+### Changed (breaking)
+
+- **v1 architecture refactor.** The internal architecture was rebuilt around a single minimal `SourceProvider` interface (`{ name, kind, init, path, sync? }`), a unified FTS5 index that owns search and show, and a single `writeAssetToSource` helper that owns all writes. The CLI command surface and all user-visible config keys are unchanged. See `docs/migration/v1.md` for the full guide.
+- **Config key `stashes[]` renamed to `sources[]`.** Configs with the legacy key load with one deprecation warning and are auto-migrated in memory; the new key is persisted on the next `akm config` write. New configs should use `sources[]`. Configs that contain both keys are rejected with `ConfigError`.
+- **Error hints surface without `--verbose`.** Error classes own their `hint()` text; the regex-on-message hint chain in `cli.ts` is removed. Hints print to stderr inline alongside the error message.
+- **Registry providers loop through a uniform interface.** Context Hub is no longer a special-cased provider type. Add it as a regular git source (`akm add github:andrewyng/context-hub`) or include it as a kit in your registry index. Legacy `type: "context-hub"` entries normalize to `type: "git"` at load time.
+- **Terminology cleanup — clean break from "kit" → "stash"** (#148). Pre-v1, no fallback period.
+  - **Wire format**: `RegistryIndex.kits[]` renamed to `RegistryIndex.stashes[]`. Schema version bumped to **v3** — `akm-cli >= 0.6.0` only parses indexes with `version: 3`. v1/v2 indexes are no longer accepted. Every static-index registry must regenerate its `index.json` with `version: 3` to be readable. The official `akm-registry` ships a regenerated index alongside this release.
+  - **Discovery**: npm packages and GitHub repos are now discovered via the `akm-stash` keyword/topic only. Legacy `akm-kit` and `agentikit` keywords/topics are no longer honored. Publishers must retag.
+  - **Schemas**: `schemas/registry-index.json` and `docs/technical/registry-index.schema.json` updated (`RegistryKit` → `RegistryStash`, `kits` → `stashes`).
+  - **Internal types**: `RegistryKitEntry` → `RegistryStashEntry`, `InstalledKitEntry` → `InstalledStashEntry`, `KitInstallStatus` → `StashInstallStatus`, `KitSource` → `StashSource`. Files `src/kit-include.ts` → `src/stash-include.ts` and `src/installed-kits.ts` → `src/installed-stashes.ts`.
+  - **Asset hit field**: `RegistryAssetSearchHit.kit` → `RegistryAssetSearchHit.stash`.
+  - **Docs**: `docs/kit-makers.md` → `docs/stash-makers.md`. All user-facing "kit" references in docs and the README replaced with "stash".
+  - **Preserved**: the *Agent Kit Manager* tagline, the `akm-cli` npm package name, and the `akm.include` package.json field.
+  - **Migration**: a curated registry author should regenerate their `index.json` (rename `kits` → `stashes`, drop legacy keyword filtering). Publishers should add the `akm-stash` keyword/topic and remove `akm-kit`/`agentikit`.
+- **`akm registry` description**: changed from "Manage kit registries" to "Manage stash registries".
+
+### Migration / Breaking
+
+- **`DB_VERSION` bumped 8 → 9.** On first run after upgrade, the version-mismatch path in `ensureSchema()` drops + recreates all `index.db` tables (preserving `usage_events` via a typed backup); the next `akm index` rebuilds the index. `workflow.db` (run state) is unaffected.
+
+### Removed (breaking)
+
+- **OpenViking source provider.** The `openviking` source kind is no longer supported. Configs that contain one fail to load with `ConfigError("openviking is not supported in akm v1. …")` and a hint pointing to `akm config sources remove <name>`. API-backed sources will return as a separate `QuerySource` tier post-v1. To downgrade in the meantime, pin to `akm-cli@0.5`.
+- **`akm enable context-hub` / `akm disable context-hub` toggles.** Add Context Hub as a regular git source (`akm add github:andrewyng/context-hub`) or list it as a kit entry in your registry; remove or disable it via `akm config sources remove context-hub` or by editing the entry's `enabled` flag.
+- **Legacy re-export shims** `src/llm.ts`, `src/registry-provider.ts`, and `src/ripgrep.ts`. akm has no public API (CLI-only package, no barrel exports), so external consumers should be unaffected.
+
+### Internal
+
+- **`src/` reorganized into purpose-named subdirectories** (`commands/`, `core/`, `indexer/`, `output/`, `registry/`, `setup/`, `sources/`, `wiki/`, `workflows/`). No public API surface change.
+- **Single `writeAssetToSource` helper** under `src/core/write-source.ts` is the only place that branches on `source.kind` to add behaviour. All write call sites (`remember`, `import`, `clone`, `save`) route through it.
+- **`SourceProvider` interface simplified** to `{ name, kind, init, path, sync? }`. The previous `LiveStashProvider` / `SyncableStashProvider` split is gone.
+
+## [0.5.0] - 2026-04-22
+
+### Added
+
+- **Multi-wiki support** (#119, #121, #136, #139, #144): new `wiki` asset type with ten CLI verbs under `akm wiki …` (`create`, `register`, `list`, `show`, `remove`, `pages`, `search`, `stash`, `lint`, `ingest`). Each wiki lives at `<stashDir>/wikis/<name>/` with `schema.md`, `index.md`, `log.md`, `raw/`, and agent-authored pages. Wiki pages are first-class in stash-wide `akm search`. `akm index` regenerates each wiki's `index.md` as a side effect and is resilient to malformed workflow assets. Raw sources under `raw/` and the `schema.md` / `index.md` / `log.md` infrastructure files are intentionally excluded from the search index. See `docs/wikis.md` for the full guide. Design principle: **akm surfaces, the agent writes** — no LLM calls, no network access; akm owns only operations with invariants an agent can't reliably enforce (lifecycle, raw-slug uniqueness, structural lint, index regeneration, workflow discovery).
+- **External wiki registration** (#139, #144): `akm wiki register <name> <path-or-repo>` and `akm add --type wiki --name <name> <source>` register an existing directory or git/website repo as a first-class wiki without copying or mutating it; source and wiki search state are refreshed immediately and refs/state are normalized on subsequent indexing.
+- **Workflow asset type** (#118): new `workflow` type with `akm workflow` subcommands `template`, `create`, `start`, `next`, `complete`, `status`, `list`, and `resume` for authoring and stepping through multi-step workflows stored in the stash. Runs snapshot their step list at start so edits to the source workflow do not affect an in-flight run.
+- **Vault asset type** (#117): new `vault` type backed by `.env` files; `akm vault` subcommand with `list`, `show`, `create`, `set`, `unset`, and `load` (emits a `source` snippet for the current shell via a mode-0600 temp file); values never appear in structured output.
+- **`--trust` flag for installs**: `akm add <source> --trust` performs a one-off trusted install, bypassing the install audit for that source. Blocked install errors now include a `hint` pointing to `--trust` as a remediation option.
+- **Writable git stash + `akm save`** (#114): `akm add … --writable` opts a remote git-backed stash into push-on-save; `akm save [name] [-m message]` commits (and pushes when writable + remote is set); default stash is auto-initialized as a git repo; git stash provider now uses `git clone` instead of HTTP tarball download.
+- **`akm help migrate <version>`** (#132): prints the release notes and migration guidance for a given version (accepts `0.5.0`, `v0.5.0`, or `latest`). Pulls the matching section from `CHANGELOG.md` when available and supplements it with embedded migration notes for major releases.
+- **Broader `akm upgrade` coverage** (#132, #134): self-update now detects and upgrades npm, bun, pnpm, and standalone-binary installs (previously binary-only). Runtime assets covered by the upgrade flow were also expanded so newly shipped asset types stay current.
+
+### Fixed
+
+- **0.5.0 QA follow-ups** (#130): fixes across the new wiki, workflow, vault, and save/trust surfaces surfaced during release-candidate QA.
+
+### Removed (breaking)
+
+- The unreleased single-wiki LLM POC: removes `akm lint` command, `akm import --llm` / `--dry-run` flags, `knowledge.pageKinds` config, and the `ingestKnowledgeSource` / `lintKnowledge` LLM prompts. Users of the POC should migrate to the new `akm wiki …` surface; raw content can be manually moved to `wikis/<name>/raw/`.
+
+### Documentation
+
+- **Technical docs refresh** (#138): stash and search architecture docs updated to match the current implementation.
+- **Wiki configuration guide** (#115): new docs page covering wiki configuration and ingest flow.
+
+## [0.4.1] - 2026-04-21
+
+### Added
+
+- **`akm enable` / `akm disable`** (#108): toggle optional components (`skills.sh`, `context-hub`) on/off without manually editing config
+- **`akm remember` and `akm import` commands** (#110): capture in-session knowledge directly from the CLI; `akm remember` records a memory to the default stash (supports stdin); `akm import` ingests a file or stdin as a knowledge asset
+- **Karpathy-style wiki workflow in knowledge assets** (#113): `akm show knowledge:<doc>` now surfaces an `ingest` workflow for knowledge documents; `--dry-run` flag added; `pageKind` taxonomy made extensible
+- Documentation: expanded `agent-install.md`, added `info` and `feedback` command docs, global flags reference (#106)
+
+### Fixed
+
+- Remote embedding endpoint URL normalization — trailing slashes and path segments now handled correctly (#112)
+- Reduced fallback capture-name collisions in `akm remember`
+
+## [0.4.0] - 2026-04-19
+
+### Added
+
+- **Install security audit**: new pre-install scanner inspects kit contents for dangerous patterns and executable scripts before install; configurable via `config` CLI
+- **Project-level config stash merging**: `.akm.json` in a project directory merges its stash/registry entries with user config during CLI runs
+- **Disable inherited project stashes**: project config can disable stashes inherited from parent/user scopes
+- **`akm curate` command**: new subcommand for curating assets from the stash (initial skeleton)
+
+### Fixed
+
+- Index nested agent markdown files as agents so `akm search agent:...` finds them
+- `install-audit` now reads at most `MAX_SCANNED_FILE_BYTES` per file using `Buffer.alloc`, with the file descriptor always closed via `try/finally`, and corrects the `scannedBytes` counter
+
+## [0.3.1] - 2026-04-01
+
+### Added
+
+- **Website stash provider**: add a URL directly as a stash source with `akm stash add <url>`; crawls the site and indexes pages as knowledge assets
+- Website provider options: `--max-pages` and `--depth` flags to bound crawling
+
+### Fixed
+
+- Relaxed HTTP warnings for localhost website sources
+- Addressed review feedback around website provider routing and security heuristics
+
+## [0.3.0] - 2026-03-30
+
+### Added
+
+- Regression tests for vector/semantic search readiness, install, and setup flows
+- `CONTRIBUTING.md` and "Why akm" section in documentation
+- Three draft SEO blog posts
+
+### Changed
+
+- **Unified source model**: replaced the `kit` vs `stash` split with a single source concept; `akm add` works for all source types
+- Removed `stash` and `kit` subcommand groups; their behaviors fold into the top-level CLI (`akm list`, `akm add`, etc.)
+- Refactored semantic search readiness tracking for clearer state transitions
+- Aligned documentation voice and updated older posts for the current CLI surface
+
+### Fixed
+
+- Embedding fingerprint is purged on model change and `usage_events` are re-linked correctly
+- Local embedder dtype selection
+- Release validation workflow
+- Prereleases (versions with suffixes) are marked as such on GitHub releases and published to npm with `--tag next`
+
+## [0.2.2] - 2026-03-28
+
+### Fixed
+
+- Binary install detection in `akm upgrade` self-update; centralized `AKM_VERSION` declaration with binary detection tests
+
+## [0.2.1] - 2026-03-25
+
+### Added
+
+- Docker-based install tests covering multiple OS configurations (skipped in CI)
+- Detailed error reporting in embedding availability checks
+- Actionable guidance when `sqlite-vec` fails to open the DB
+
+### Changed
+
+- **Rename**: project renamed from `Agent-i-Kit` to `akm` across docs and links
+- Local embeddings switched to `@huggingface/transformers`
+- `@huggingface/transformers` moved to `optionalDependencies`, then promoted to a runtime dependency
+- Improved semantic search setup and index UX
+
+## [0.2.0] - 2026-03-18
+
+### Added
+
+- **Extensible asset type system**: `AkmAssetType` (formerly `AgentIKitAssetType`) is now `string` instead of a fixed union; new types can be registered at runtime via `registerAssetType()`
+- **Memory asset type**: built-in `memory` type stored in `memories/`, with `memory-md` renderer and directory/parent-dir-hint matchers
+- **OpenViking stash provider**: `openviking` provider type for searching OpenViking servers via REST; add with `akm stash add <url> --provider openviking`
+- **Remote show for `viking://` URIs**: `akm show viking://resources/my-doc` fetches content directly from an OpenViking server (returns `editable: false`)
+- **`--options` flag** for `akm registry add` and `akm stash add`: pass provider-specific JSON config (e.g., `--options '{"apiKey":"key"}'`)
+- **`akm registry build-index` command**: generates a v2 registry index JSON from npm/GitHub discovery with `--out`, `--manual`, `--npmRegistry`, `--githubApi`, and `--format` flags
+- Exact-name match, type-relevance, and alias boosts in the search scoring pipeline
+- Ranking regression tests with a synthetic fixture stash and a 41-case benchmark suite (MRR / Recall@5)
+- `estimatedTokens` on context-hub provider search results and in `--for-agent` output
+- Architecture docs and test fixture for OpenViking manual testing (`tests/fixtures/openviking/`)
+
+### Changed
+
+- Unified context-hub indexing and fair provider scoring: local FTS scores are preserved everywhere and remote provider scores compete on equal footing
+- Replaced RRF with normalized BM25 scoring across all merge paths
+- EMA utility decay is now time-proportional instead of tied to index frequency
+- Replaced the `(Bun as any).YAML` hack with a proper `yaml` package dependency
+- YAML output format fixed; local registry refs now use a `file:` prefix
+
+### Removed
+
+- `manifest` subcommand (adds no value over `search`)
+- URI schemes (`viking://`, `context-hub://`) from user-facing refs — assets are addressed as `type:name`; sources use URLs
+- Stale audit/ergonomics markdown from the repo
+
+### Fixed
+
+- `skills.sh` install refs now produce valid `akm add` commands (#82)
+- Prevented `akm remove` and `akm update --force` from deleting user-owned local source directories installed via path refs
+- `usage_events` reverted to `DELETE` on full reindex
+
+## [0.1.0] - 2026-03-10
+
+Major internal overhaul and rebrand. This release simplifies the asset model,
+cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cli`.
+
+### Added
+
+- `--verbose` flag on `search` for detailed scoring output
+- ExecHints system (`run`, `cwd`, `setup`) for script assets, replacing the old tool-runner
+- New environment variable overrides: `AKM_CONFIG_DIR`, `AKM_CACHE_DIR`, `AKM_STASH_DIR`
+- CI workflow running lint, type-check, and tests on every push/PR
+- Biome linter and formatter configuration
+- README badges (npm version, CI status, license)
+
+### Changed
+
+- **Rebrand**: npm package `agent-i-kit` renamed to `akm-cli`; binary remains `akm`
+- **Rebrand**: config field `"agent-i-kit"` renamed to `"akm"` in `package.json`
+- **Rebrand**: plugin `agent-i-kit-opencode` renamed to `akm-opencode`
+- **Rebrand**: registry `agent-i-kit-registry` renamed to `akm-registry`
+- **Rebrand**: default paths changed (`~/agent-i-kit` to `~/akm`, `~/.config/agent-i-kit` to `~/.config/akm`)
+- **Rebrand**: environment variables `AGENT_I_KIT_*` renamed to `AKM_*`
+- Removed `tool` asset type entirely; `script` is the only script-like type
+- `.stash.json` field renames: `intents` to `searchHints`, `entry` to `filename`; removed `generated` boolean
+- `show` command: `--view` flag replaced with positional syntax (`akm show <ref> toc`)
+- Collapsed `AssetTypeHandler` handlers into a unified renderer pipeline
+- Dropped provider presets (raw JSON config only)
+- Pinned `sqlite-vec` to exact version `0.1.7-alpha.2` (removed caret range)
+- Replaced `(Bun as any).YAML` cast with proper type guard in CLI
+- Version now injected at compile time via `--define AKM_VERSION` with safe runtime fallback
+
+### Removed
+
+- `submit` command
+- Provider presets (configure providers with raw JSON)
+- `generated` boolean from `.stash.json`
+
+### Fixed
+
+- CLI crash on macOS when running as compiled binary (`package.json` not embedded)
+- Cleaned up search output formatting
+
+## [0.0.17] - 2026-03-12
+
+Registry refactor and documentation overhaul. This release introduces a
+first-class registry management CLI, modernizes the config schema, and
+rewrites all documentation against the final asset model.
+
+### Added
+
+- `akm registry` subcommand group with `list`, `add`, `remove`, and `search` subcommands
+- `akm registry search --assets` flag for asset-level search against v2 registry indexes
+- `registries` config field (`RegistryConfigEntry[]`) with `url`, `name`, and `enabled` properties
+- Registry Index v2 schema with optional `assets` array on kit entries for asset-level discovery
+- Official registry pre-configured by default in new installations
+- Type names: `KitSource`, `InstalledKitEntry`, `KitInstallResult`, `KitInstallStatus`, `InstalledKitListEntry`
+
+### Changed
+
+- Config: `installed` is now a top-level field (`config.installed`) instead of nested under `config.registry.installed`
+- Config: registry URLs configured via `registries` array instead of `registryUrls`
+- Documentation: complete rewrite of concepts, registry, CLI reference, README, and all technical docs
+- Documentation: added "Mental Model" (registries --> kits --> stash --> assets) to concepts
+- Documentation: added asset classification taxonomy description
+- Documentation: merged ref format documentation into concepts (removed "opaque handle" framing)
+- Documentation: revised apt analogy in core principles to map registries, kits, stash, and assets
+- Documentation: added `akm registry` subcommand group to CLI reference
+- Documentation: added registry hosting and v2 index format guides
+
+### Removed
+
+- `tool` asset type (fully removed across all documentation and code)
+- `registryUrls` config field (replaced by `registries`)
+- `config.registry.installed` nesting (replaced by `config.installed`)
+- All `tools/` directory references from documentation
+
+## [0.0.13] - 2026-03-09
+
+Initial public release of Agent-i-Kit (`akm` CLI).
+
+### Added
+
+- CLI tool (`akm`) for searching, showing, and running Agent-i-Kit stash assets
+- Hybrid search with FTS5 full-text and optional vector similarity scoring
+- Registry support for discovering, installing, and updating community kits
+- Multiple install sources: npm, GitHub, git URLs, and local directories
+- Self-update via `akm upgrade`
+- Multiple output formats: plain text, YAML, and JSON (`--json`)
+- Knowledge asset navigation with TOC, section, and line-range views
+- `akm clone` to fork installed assets into your working stash
+- Configuration system with embedding and LLM provider management
+- Standalone binary distribution (no runtime dependencies)

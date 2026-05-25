@@ -7,8 +7,9 @@
 [![license](https://img.shields.io/github/license/itlackey/akm)](https://github.com/itlackey/akm/blob/main/LICENSE)
 
 `akm` is a package manager for AI agent capabilities -- scripts, skills, commands,
-agents, knowledge, and memories. It works with any AI coding assistant that can
-run shell commands, including [Claude Code](https://claude.ai/code),
+agents, knowledge, memories, workflows, wikis, vaults, lessons, and scheduled
+tasks. It works with any AI coding assistant that can run shell commands,
+including [Claude Code](https://claude.ai/code),
 [OpenCode](https://opencode.ai), [Cursor](https://cursor.com), and more.
 
 ## Install
@@ -17,10 +18,10 @@ run shell commands, including [Claude Code](https://claude.ai/code),
 
 ```sh
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/itlackey/akm/main/install.ps1 | iex
+irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
 **Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
@@ -58,7 +59,8 @@ Add this to your `AGENTS.md`, `CLAUDE.md`, or system prompt:
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
+knowledge, memories, workflows, wikis, vaults, lessons, and scheduled tasks
+via the `akm` CLI. Use `akm -h` for details.
 ```
 
 ## Install Stashes from Anywhere

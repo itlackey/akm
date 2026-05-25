@@ -18,3 +18,5 @@ tests/bench/baselines/
 .claude
 CLAUDE.md
 _debug_agent.ts
+/docs/example-stash/.akm/
+/docs/example-stash/.akm-run/

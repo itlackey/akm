@@ -14,6 +14,7 @@ The only network requests AKM makes are:
 1. Fetching registry metadata and stash packages from sources you explicitly configure (GitHub, npm, websites)
 2. Calls to your configured LLM/embedding endpoint (if you enabled those features)
 3. `akm upgrade` — fetches the latest release from GitHub releases
+4. `akm setup` — a single DNS lookup for `github.com` to decide whether to skip network-dependent steps (Ollama detection, remote embedding probes) when offline. No HTTP request is made by this probe; if it succeeds, akm proceeds with the network-dependent steps you already configured.
 
 ---
 

@@ -11,11 +11,19 @@ case "$OS" in
   Darwin) OS="darwin" ;;
   MINGW*|MSYS*|CYGWIN*)
     echo "On Windows, use install.ps1 instead:" >&2
-    echo "  irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex" >&2
+    echo "  irm https://github.com/${REPO}/releases/latest/download/install.ps1 | iex" >&2
     exit 1
     ;;
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
+
+# Print sudo notice up-front so users know what's coming before the prompt
+if [ ! -w "$INSTALL_DIR" ] && [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+  echo "Note: installing to $INSTALL_DIR will require sudo."
+  echo "      To install user-local (no sudo), re-run with:"
+  echo "        AKM_INSTALL_DIR=\$HOME/.local/bin $0"
+  echo ""
+fi
 
 # Detect architecture
 ARCH="$(uname -m)"
@@ -88,4 +96,4 @@ echo "akm installed to ${INSTALL_DIR}/akm"
 
 echo ""
 echo "To get started, run:"
-echo "  akm init"
+echo "  akm setup"

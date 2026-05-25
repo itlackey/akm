@@ -31,14 +31,15 @@ describe("migration help", () => {
     };
 
     const staticFiles = (packageJson.files ?? []).filter((entry) => entry !== "dist");
-    expect(staticFiles).toContain(".github/CHANGELOG.md");
+    // CHANGELOG.md and LICENSE are auto-published by npm from the package root
+    // and intentionally NOT listed in files[] to avoid duplicate shipment.
     expect(staticFiles).toContain("docs/migration/release-notes");
+    expect(staticFiles).toContain("docs/migration/v0.7-to-v0.8.md");
     for (const entry of staticFiles) {
       expect(fs.existsSync(path.join(PROJECT_ROOT, entry))).toBe(true);
     }
-    expect(fs.readFileSync(path.join(PROJECT_ROOT, "LICENSE"), "utf8")).toBe(
-      fs.readFileSync(path.join(PROJECT_ROOT, ".github", "LICENSE"), "utf8"),
-    );
+    expect(fs.existsSync(path.join(PROJECT_ROOT, "CHANGELOG.md"))).toBe(true);
+    expect(fs.existsSync(path.join(PROJECT_ROOT, "LICENSE"))).toBe(true);
   });
 
   test("every bundled release-notes file is surfaced by the loader", () => {

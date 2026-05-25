@@ -10,6 +10,7 @@
  * Collects all choices and writes config once at the end.
  */
 
+import { promises as dnsPromises } from "node:dns";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -409,15 +410,27 @@ async function stepAdditionalSources(currentSources: SourceConfigEntry[]): Promi
 }
 
 /**
- * Quick connectivity check. Returns true if we can reach a public
- * endpoint within 3 seconds, false otherwise. Used to skip network-
- * dependent setup steps gracefully when offline.
+ * Quick connectivity check. Returns true if we can resolve a hostname
+ * the user has already implicitly trusted within 3 seconds, false
+ * otherwise. Used to skip network-dependent setup steps gracefully
+ * when offline.
+ *
+ * We use a DNS lookup against `github.com` rather than an HTTP request
+ * because (1) it doesn't actually send a request to anyone we aren't
+ * already talking to (the user got akm from GitHub and `akm upgrade`
+ * polls api.github.com), and (2) DNS is the right layer for "do we have
+ * working network" without making the user opt into yet another remote.
+ * The previous implementation pinged https://dns.google which
+ * contradicted the spirit of "no remote endpoints akm doesn't own."
  *
  * @internal Exported for testing only.
  */
 export async function isOnline(): Promise<boolean> {
   try {
-    await fetch("https://dns.google", { signal: AbortSignal.timeout(3000) });
+    await Promise.race([
+      dnsPromises.lookup("github.com"),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("dns lookup timed out")), 3000).unref()),
+    ]);
     return true;
   } catch {
     return false;

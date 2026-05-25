@@ -13,7 +13,7 @@
 ```bash
 # Confirm starting state
 akm config get stashDir
-# → "/home/founder3/akm"
+# → "~/akm"
 
 # Run a setup smoke test in an isolated temp stash
 cd /tmp && rm -rf repro-stash && mkdir -p repro-stash && cd repro-stash && \
@@ -39,12 +39,12 @@ A parallel Claude Code session (sessionId `e702fb7d-1095-42a7-98eb-e71974457c77`
 # 06:28:35Z
 cd /tmp && rm -rf tw-stash && mkdir -p tw-stash && cd tw-stash && \
   AKM_DATA_DIR=$(pwd)/data AKM_STASH_DIR=$(pwd) \
-  /home/founder3/code/github/itlackey/akm/dist/cli.js setup --yes --dir .
+  <repo>/dist/cli.js setup --yes --dir .
 
 # 06:28:48Z
 cd /tmp/tw-stash && rm -rf data .akm; \
   AKM_DATA_DIR=$(pwd)/data AKM_STASH_DIR=$(pwd) \
-  bun /home/founder3/code/github/itlackey/akm/dist/cli.js setup --yes --dir .
+  bun <repo>/dist/cli.js setup --yes --dir .
 
 # 06:34:29Z
 rm -rf /tmp/tw-stash && echo "cleaned"
@@ -52,14 +52,14 @@ rm -rf /tmp/tw-stash && echo "cleaned"
 
 Result: the user's `~/.config/akm/config.json` was rewritten with `stashDir: "/tmp/tw-stash"`, the entire `llm` block was dropped, all 4 `profiles.llm.*` entries (qwen-9b/ministral-3b/gemma-e4b/default) were lost, `profiles.improve.default.processes` lost `consolidate` and `feedbackDistillation`, the `defaults` block was lost, and `configVersion` was dropped. Setup *also* added `index.stalenessDetection` defaults and `profiles.agent.opencode` (= `github-copilot/gpt-5-mini`).
 
-The breakage was silent for ~5.5 hours until a memory write returned `"stashRoot": "/home/founder3/akm"` despite the configured `stashDir` being `/tmp/tw-stash`, prompting investigation.
+The breakage was silent for ~5.5 hours until a memory write returned `"stashRoot": "~/akm"` despite the configured `stashDir` being `/tmp/tw-stash`, prompting investigation.
 
 ## Forensic trail
 
 Two consecutive `saveConfig()` backups exist 6ms apart, confirming a single-process write:
 
 ```text
-~/.cache/akm/config-backups/config-2026-05-23T06-28-48-123Z.json  ← 12,279 bytes, stashDir: /home/founder3/akm  (healthy)
+~/.cache/akm/config-backups/config-2026-05-23T06-28-48-123Z.json  ← 12,279 bytes, stashDir: ~/akm  (healthy)
 ~/.cache/akm/config-backups/config-2026-05-23T06-28-48-129Z.json  ← 12,274 bytes, stashDir: /tmp/tw-stash         (broken)
 ```
 

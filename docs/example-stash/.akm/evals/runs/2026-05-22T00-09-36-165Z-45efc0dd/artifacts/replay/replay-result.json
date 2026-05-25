@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "originalRunId": "2026-05-22T00-09-36-165Z-45efc0dd",
-  "replayRunId": "replay-2026-05-22T00-09-39-457Z-5804e51e",
-  "deterministic": true,
-  "divergentCases": [],
-  "missingCases": [],
-  "extraCases": []
-}
