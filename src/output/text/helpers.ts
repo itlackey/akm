@@ -912,7 +912,6 @@ export function formatAddPlain(r: Record<string, unknown>): string {
     lines.push(`Warnings (${warnings.length}):`);
     for (const message of warnings) lines.push(`  - ${String(message)}`);
   }
-  const installed = r.installed as Record<string, unknown> | undefined;
   return lines.join("\n");
 }
 

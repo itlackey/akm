@@ -13,7 +13,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
-import { parseAssetRef } from "../core/asset-ref";
 import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isWithin, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
