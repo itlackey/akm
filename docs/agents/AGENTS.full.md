@@ -240,6 +240,9 @@ akm setup --yes                               # Non-interactive, accepts all def
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm list                                      # List all sources
+akm lint                                      # Structural lint over the stash; exits 0 on findings (use --fail-on-flagged for CI)
+akm lint --fix                                # Auto-fix Tier 1 issues
+akm lint --fail-on-flagged                    # Exit non-zero when summary.flagged > 0 (CI-friendly)
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference
@@ -273,6 +276,15 @@ All commands accept `--format` and `--detail` flags:
 - `--detail summary` — metadata only (no content/template/prompt), under 200 tokens
 
 Run `akm -h` or `akm <command> -h` for per-command help.
+
+### Piping JSON to jq
+
+For any akm command emitting more than ~64KB of JSON, prefer
+`akm <cmd> --json | cat | jq …` over the direct pipe. A known Bun
+stdout chunking interaction with `jq 1.6` can truncate the stream
+mid-document on direct pipes; `cat` re-buffers and presents a clean
+pipe to jq. `jq 1.7+` tolerates the chunked writes without the
+workaround.
 
 ## Error Shapes and Exit Codes
 

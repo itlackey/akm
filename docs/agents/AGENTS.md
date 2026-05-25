@@ -67,6 +67,29 @@ Exit codes:
 Check `ok === false` or a non-zero exit code to detect failure. The `hint`
 field, when present, describes a corrective action.
 
+### `akm lint` exit code (0.8.0+)
+
+`akm lint` exits **0 on every successful run regardless of findings**.
+Read `summary.flagged` to detect issues, or pass `--fail-on-flagged` to
+opt into the CI-friendly "exit 1 when findings exist" behavior:
+
+```sh
+akm lint --json | jq '.summary.flagged'    # always exit 0; read the count
+akm lint --fail-on-flagged && deploy       # exit 1 if any flagged issues
+```
+
+This means `akm lint` runs cleanly in pipelines and reports findings
+in-band; `ok: true` does NOT imply zero findings. Treat
+`summary.flagged > 0` as the "needs attention" signal.
+
+Large `--json` output (>64KB) piped directly to `jq 1.6` can truncate
+mid-stream due to a Bun stdout chunking interaction. Insert `| cat |`
+between akm and jq, or use `jq 1.7+`, to avoid the symptom:
+
+```sh
+akm lint --json | cat | jq '.'   # safe for any output size
+```
+
 ## Proposals & improvement (0.8.0+)
 
 `akm` ships a proposal queue so reflective edits, improvements, and feedback-distilled lessons
