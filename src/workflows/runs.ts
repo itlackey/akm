@@ -102,7 +102,11 @@ export interface CompleteWorkflowStepInput {
   evidence?: Record<string, unknown>;
 }
 
-export async function startWorkflowRun(ref: string, params: Record<string, unknown> = {}): Promise<WorkflowRunDetail> {
+export async function startWorkflowRun(
+  ref: string,
+  params: Record<string, unknown> = {},
+  options?: { force?: boolean },
+): Promise<WorkflowRunDetail> {
   const asset = await loadWorkflowAsset(ref);
   return withWorkflowDb(async (db) => {
     const now = new Date().toISOString();
@@ -110,6 +114,26 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
     const scopeKey = getCurrentWorkflowScopeKey();
     const currentStepId = asset.steps[0]?.id ?? null;
     const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
+
+    // Concurrency guard (#485): if an active run already exists in this
+    // (workflow_ref, scope_key) pair, refuse to create a parallel run unless
+    // `force: true` is set. Previously every call inserted unconditionally,
+    // so two terminals running `akm workflow start <ref>` left two runs
+    // racing; `akm workflow next` then non-deterministically picked one.
+    if (!options?.force) {
+      const existing = db
+        .prepare(
+          "SELECT id, current_step_id FROM workflow_runs WHERE workflow_ref = ? AND scope_key = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
+        )
+        .get(asset.ref, scopeKey) as { id: string; current_step_id: string | null } | undefined;
+      if (existing) {
+        throw new UsageError(
+          `Workflow ${asset.ref} already has an active run in this scope (id=${existing.id}, step=${existing.current_step_id ?? "—"}). ` +
+            `Use 'akm workflow next ${asset.ref}' to resume it, 'akm workflow abandon ${existing.id}' to give up on it, or pass --force to start a parallel run.`,
+          "RESOURCE_ALREADY_EXISTS",
+        );
+      }
+    }
 
     db.transaction(() => {
       db.prepare(

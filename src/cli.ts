@@ -168,6 +168,7 @@ import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { parseFrontmatter, parseFrontmatterBlock } from "./core/frontmatter";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
+import { plainize } from "./core/tty";
 import { clearLogFile, info, isQuiet, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
@@ -341,8 +342,10 @@ function printSetupTtyHint(result: { stashDir?: string; configPath?: string }): 
   if (isQuiet()) return;
   if (!result?.stashDir) return;
   console.error(
-    `\n✓ Stash created at ${result.stashDir}\n` +
-      `  Next: \`akm add github:itlackey/akm-stash\` then \`akm index\` to populate the stash.`,
+    plainize(
+      `\n✓ Stash created at ${result.stashDir}\n` +
+        `  Next: \`akm add github:itlackey/akm-stash\` then \`akm index\` to populate the stash.`,
+    ),
   );
 }
 /**
@@ -2203,10 +2206,17 @@ const workflowStartCommand = defineCommand({
   args: {
     ref: { type: "positional", description: "Workflow ref (workflow:<name>)", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object" },
+    force: {
+      type: "boolean",
+      description: "Allow a parallel run when an active run already exists in this scope (#485)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await startWorkflowRun(args.ref, parseWorkflowJsonObject(args.params, "--params"));
+      const result = await startWorkflowRun(args.ref, parseWorkflowJsonObject(args.params, "--params"), {
+        force: args.force === true,
+      });
       output("workflow-start", result);
     });
   },
@@ -4908,7 +4918,9 @@ try {
     return;
   }
   console.error(
-    "👋 First time with akm? Run `akm setup` to get started.\n" + "   Docs: https://github.com/itlackey/akm#readme\n",
+    plainize(
+      "👋 First time with akm? Run `akm setup` to get started.\n   Docs: https://github.com/itlackey/akm#readme\n",
+    ),
   );
 })();
 

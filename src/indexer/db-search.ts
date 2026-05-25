@@ -151,9 +151,20 @@ export async function searchLocal(input: {
       warnings.push(
         "Embedding config changed. Run 'akm index --full' to rebuild the semantic index with the new provider.",
       );
+    } else if (!config.embedding?.endpoint || !config.embedding?.model) {
+      // #480: when semantic mode is `auto` but no embedding provider is
+      // configured (e.g. `akm setup --yes` ran without picking one), telling
+      // the user to "run akm setup" is misleading — they just did. Surface
+      // the actual remediation: configure an embedding endpoint OR switch
+      // semanticSearchMode to `off` to silence the warning.
+      warnings.push(
+        "Semantic search is enabled (semanticSearchMode='auto') but no embedding provider is configured. " +
+          'Either: (a) `akm config set embedding \'{"endpoint":"...","model":"..."}\'`, or ' +
+          "(b) `akm config set semanticSearchMode off` to use keyword-only search.",
+      );
     } else {
       warnings.push(
-        "Semantic search is pending verification. Run 'akm setup' or 'akm index --full' to enable semantic search.",
+        "Semantic search is pending verification. Run 'akm index --full' to build the semantic index now, or wait for the next background index pass.",
       );
     }
   }
