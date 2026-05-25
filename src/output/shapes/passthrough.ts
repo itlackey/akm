@@ -18,6 +18,7 @@ const PASSTHROUGH_COMMANDS = [
   "disable",
   "enable",
   "feedback",
+  "health",
   "import",
   "index",
   "info",

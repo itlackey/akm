@@ -89,7 +89,7 @@ import {
   akmGraphSummary,
   akmGraphUpdate,
 } from "./commands/graph";
-import { akmHealth } from "./commands/health";
+import { akmHealth, renderRunsDetailMd } from "./commands/health";
 import { akmHistory } from "./commands/history";
 import { improveCommand } from "./commands/improve-cli";
 import { assembleInfo } from "./commands/info";
@@ -477,18 +477,29 @@ const healthCommand = defineCommand({
       type: "string",
       description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
     },
+    detail: {
+      type: "string",
+      description: "Detail level: brief (default) or per-run for one row per improve_runs entry",
+    },
   },
   async run({ args }) {
-    // Capture the health result so we can propagate its overall status into the
-    // process exit code AFTER the JSON envelope is flushed to stdout. The
-    // CHANGELOG advertises `akm health` as a CI/runtime monitoring command —
-    // callers rely on `akm health && deploy` style chaining, which requires
-    // non-zero exit on failure (and parseable JSON on stdout for diagnostics).
     let resultStatus: "pass" | "warn" | "fail" | undefined;
     await runWithJsonErrors(() => {
-      const result = akmHealth({ since: args.since });
+      const detailRaw = (args as Record<string, unknown>).detail as string | undefined;
+      const result = akmHealth({
+        since: args.since,
+        detail: detailRaw as "brief" | "per-run" | undefined,
+      });
       resultStatus = result.status;
-      output("health", result);
+      // `--format md` is health-specific: render a TSV-shaped per-run table to
+      // stdout instead of going through the JSON envelope. Other modes fall
+      // through to the standard output() path.
+      const mode = getOutputMode();
+      if (mode.format === "md" && result.runs) {
+        console.log(renderRunsDetailMd(result.runs));
+      } else {
+        output("health", result);
+      }
     });
     if (resultStatus === "fail") {
       process.exit(EXIT_GENERAL);

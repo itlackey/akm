@@ -115,6 +115,14 @@ describe("CLI error handling", () => {
     expect(stderr).toContain("hint");
   });
 
+  test("health --detail invalid value yields UsageError with exit 2", () => {
+    const { stderr, status } = runCli("health", "--detail", "verbose");
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
+  });
+
   test("error output is valid JSON", () => {
     const { stderr } = runCli("show", "invalid-ref-no-colon");
     const trimmed = stderr.trim();

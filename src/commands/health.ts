@@ -135,6 +135,26 @@ export interface SessionLogAdvisory {
   isFailurePattern: boolean;
 }
 
+export interface ImproveRunSummary {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  wallTimeMs: number;
+  ok: boolean;
+  scope: { mode: string; value?: string };
+  actions: ImproveHealthMetrics["actions"];
+  memorySummary: ImproveHealthMetrics["memorySummary"];
+  memoryCleanup: ImproveHealthMetrics["memoryCleanup"];
+  consolidation: ImproveHealthMetrics["consolidation"];
+  memoryInference: ImproveHealthMetrics["memoryInference"];
+  graphExtraction: ImproveHealthMetrics["graphExtraction"];
+  reflectsWithErrorContext: number;
+  evalCasesWritten: number;
+  orphansPurged: number;
+  lintFixed: number;
+  lintFlagged: number;
+}
+
 export interface AkmHealthResult {
   schemaVersion: 2;
   ok: boolean;
@@ -145,10 +165,12 @@ export interface AkmHealthResult {
   metrics: HealthMetrics;
   improve: ImproveHealthMetrics;
   sessionLogAdvisories: SessionLogAdvisory[];
+  runs?: ImproveRunSummary[];
 }
 
 export interface AkmHealthOptions {
   since?: string;
+  detail?: "brief" | "per-run";
   getExecutionLogCandidatesFn?: (sinceDays?: number) => SessionLogEntry[];
 }
 
@@ -270,152 +292,149 @@ function summarizeImproveCompleted(events: ReturnType<typeof readEvents>["events
   return metrics;
 }
 
-function summarizeImproveRuns(db: Database, since: string): { metrics: ImproveHealthMetrics; runCount: number } {
+/**
+ * Project a single `improve_runs.result_json` envelope into an accumulator-shaped
+ * ImproveHealthMetrics. The aggregator merges these per-row metrics into one
+ * window-level metric.
+ */
+function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetrics {
   const metrics = createUnknownImproveMetrics();
-  const rows = db
-    .prepare("SELECT result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0")
-    .all(since) as Array<{ result_json: string }>;
 
-  for (const row of rows) {
-    let result: Record<string, unknown>;
-    try {
-      result = JSON.parse(row.result_json) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
+  // plannedRefs (array of {ref, reason})
+  const plannedRefs = result.plannedRefs;
+  if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
 
-    // plannedRefs (array of {ref, reason})
-    const plannedRefs = result.plannedRefs;
-    if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
-
-    // actions: split reflect / distill by outcome, count others.
-    const actions = result.actions;
-    if (Array.isArray(actions)) {
-      for (const action of actions as Array<Record<string, unknown>>) {
-        const mode = typeof action.mode === "string" ? action.mode : "";
-        switch (mode) {
-          case "reflect":
-            metrics.actions.reflect.ok += 1;
-            break;
-          case "reflect-failed":
-            metrics.actions.reflect.failed += 1;
-            break;
-          case "reflect-cooldown":
-            metrics.actions.reflect.cooldown += 1;
-            break;
-          case "reflect-skipped":
-            metrics.actions.reflect.skipped += 1;
-            break;
-          case "distill": {
-            const r = action.result as Record<string, unknown> | undefined;
-            const outcome = typeof r?.outcome === "string" ? r.outcome : "";
-            switch (outcome) {
-              case "queued":
-                metrics.actions.distill.queued += 1;
-                break;
-              case "llm_failed":
-                metrics.actions.distill.llmFailed += 1;
-                break;
-              case "quality_rejected":
-              case "review_needed":
-              case "validation_failed":
-                metrics.actions.distill.qualityRejected += 1;
-                break;
-              case "config_disabled":
-                metrics.actions.distill.configDisabled += 1;
-                break;
-              default:
-                // outcome==="skipped" or unknown — fall through; "skipped" here
-                // is distinct from the distill-skipped action mode (cooldown).
-                break;
-            }
-            break;
+  // actions: split reflect / distill by outcome, count others.
+  const actions = result.actions;
+  if (Array.isArray(actions)) {
+    for (const action of actions as Array<Record<string, unknown>>) {
+      const mode = typeof action.mode === "string" ? action.mode : "";
+      switch (mode) {
+        case "reflect":
+          metrics.actions.reflect.ok += 1;
+          break;
+        case "reflect-failed":
+          metrics.actions.reflect.failed += 1;
+          break;
+        case "reflect-cooldown":
+          metrics.actions.reflect.cooldown += 1;
+          break;
+        case "reflect-skipped":
+          metrics.actions.reflect.skipped += 1;
+          break;
+        case "distill": {
+          const r = action.result as Record<string, unknown> | undefined;
+          const outcome = typeof r?.outcome === "string" ? r.outcome : "";
+          switch (outcome) {
+            case "queued":
+              metrics.actions.distill.queued += 1;
+              break;
+            case "llm_failed":
+              metrics.actions.distill.llmFailed += 1;
+              break;
+            case "quality_rejected":
+            case "review_needed":
+            case "validation_failed":
+              metrics.actions.distill.qualityRejected += 1;
+              break;
+            case "config_disabled":
+              metrics.actions.distill.configDisabled += 1;
+              break;
+            default:
+              break;
           }
-          case "distill-skipped":
-            metrics.actions.distill.skipped += 1;
-            break;
-          case "memory-prune":
-            metrics.actions.memoryPrune += 1;
-            break;
-          case "memory-inference":
-            metrics.actions.memoryInference += 1;
-            break;
-          case "graph-extraction":
-            metrics.actions.graphExtraction += 1;
-            break;
-          case "error":
-            metrics.actions.error += 1;
-            break;
+          break;
         }
+        case "distill-skipped":
+          metrics.actions.distill.skipped += 1;
+          break;
+        case "memory-prune":
+          metrics.actions.memoryPrune += 1;
+          break;
+        case "memory-inference":
+          metrics.actions.memoryInference += 1;
+          break;
+        case "graph-extraction":
+          metrics.actions.graphExtraction += 1;
+          break;
+        case "error":
+          metrics.actions.error += 1;
+          break;
       }
     }
-
-    metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
-    if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
-    if (Array.isArray(result.executionLogCandidates))
-      metrics.executionLogCandidateCount += result.executionLogCandidates.length;
-    metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
-    if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
-
-    const memorySummary = result.memorySummary as Record<string, unknown> | undefined;
-    if (memorySummary) {
-      metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
-      metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
-    }
-
-    const memoryCleanup = result.memoryCleanup as Record<string, unknown> | undefined;
-    if (memoryCleanup) {
-      if (Array.isArray(memoryCleanup.pruneCandidates))
-        metrics.memoryCleanup.pruneCandidates += memoryCleanup.pruneCandidates.length;
-      if (Array.isArray(memoryCleanup.contradictionCandidates))
-        metrics.memoryCleanup.contradictionCandidates += memoryCleanup.contradictionCandidates.length;
-      if (Array.isArray(memoryCleanup.beliefStateTransitions))
-        metrics.memoryCleanup.beliefStateTransitions += memoryCleanup.beliefStateTransitions.length;
-      if (Array.isArray(memoryCleanup.consolidationCandidates))
-        metrics.memoryCleanup.consolidationCandidates += memoryCleanup.consolidationCandidates.length;
-      if (Array.isArray(memoryCleanup.archived)) metrics.memoryCleanup.archived += memoryCleanup.archived.length;
-      if (Array.isArray(memoryCleanup.warnings)) metrics.memoryCleanup.warnings += memoryCleanup.warnings.length;
-    }
-
-    const consolidation = result.consolidation as Record<string, unknown> | undefined;
-    if (consolidation) {
-      metrics.consolidation.processed += toFiniteNumber(consolidation.processed);
-      metrics.consolidation.merged += toFiniteNumber(consolidation.merged);
-      metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
-      metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
-      if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
-      metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
-    }
-
-    const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
-    if (memoryInference) {
-      metrics.memoryInference.considered += toFiniteNumber(memoryInference.considered);
-      metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
-      metrics.memoryInference.written += toFiniteNumber(memoryInference.writtenFacts);
-      metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
-      // memory-inference durationMs is not on MemoryInferenceResult directly;
-      // it's recorded on the post-loop envelope as memoryInferenceDurationMs.
-    }
-    metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
-
-    const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
-    if (graphExtraction) {
-      const quality = graphExtraction.quality as Record<string, unknown> | undefined;
-      if (quality) metrics.graphExtraction.extractedFiles += toFiniteNumber(quality.extractedFiles);
-      metrics.graphExtraction.entities += toFiniteNumber(graphExtraction.totalEntities);
-      metrics.graphExtraction.relations += toFiniteNumber(graphExtraction.totalRelations);
-      const telemetry = graphExtraction.telemetry as Record<string, unknown> | undefined;
-      if (telemetry) {
-        metrics.graphExtraction.cacheHits += toFiniteNumber(telemetry.cacheHits);
-        metrics.graphExtraction.cacheMisses += toFiniteNumber(telemetry.cacheMisses);
-        metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
-        metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
-      }
-    }
-    metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
   }
 
-  // Derived flags / rates.
+  metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
+  if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
+  if (Array.isArray(result.executionLogCandidates))
+    metrics.executionLogCandidateCount += result.executionLogCandidates.length;
+  metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
+  if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
+
+  const memorySummary = result.memorySummary as Record<string, unknown> | undefined;
+  if (memorySummary) {
+    metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
+    metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
+  }
+
+  const memoryCleanup = result.memoryCleanup as Record<string, unknown> | undefined;
+  if (memoryCleanup) {
+    if (Array.isArray(memoryCleanup.pruneCandidates))
+      metrics.memoryCleanup.pruneCandidates += memoryCleanup.pruneCandidates.length;
+    if (Array.isArray(memoryCleanup.contradictionCandidates))
+      metrics.memoryCleanup.contradictionCandidates += memoryCleanup.contradictionCandidates.length;
+    if (Array.isArray(memoryCleanup.beliefStateTransitions))
+      metrics.memoryCleanup.beliefStateTransitions += memoryCleanup.beliefStateTransitions.length;
+    if (Array.isArray(memoryCleanup.consolidationCandidates))
+      metrics.memoryCleanup.consolidationCandidates += memoryCleanup.consolidationCandidates.length;
+    if (Array.isArray(memoryCleanup.archived)) metrics.memoryCleanup.archived += memoryCleanup.archived.length;
+    if (Array.isArray(memoryCleanup.warnings)) metrics.memoryCleanup.warnings += memoryCleanup.warnings.length;
+  }
+
+  const consolidation = result.consolidation as Record<string, unknown> | undefined;
+  if (consolidation) {
+    metrics.consolidation.processed += toFiniteNumber(consolidation.processed);
+    metrics.consolidation.merged += toFiniteNumber(consolidation.merged);
+    metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
+    metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
+    if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
+    metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
+  }
+
+  const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
+  if (memoryInference) {
+    metrics.memoryInference.considered += toFiniteNumber(memoryInference.considered);
+    metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
+    metrics.memoryInference.written += toFiniteNumber(memoryInference.writtenFacts);
+    metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
+  }
+  metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
+
+  const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
+  if (graphExtraction) {
+    const quality = graphExtraction.quality as Record<string, unknown> | undefined;
+    if (quality) metrics.graphExtraction.extractedFiles += toFiniteNumber(quality.extractedFiles);
+    metrics.graphExtraction.entities += toFiniteNumber(graphExtraction.totalEntities);
+    metrics.graphExtraction.relations += toFiniteNumber(graphExtraction.totalRelations);
+    const telemetry = graphExtraction.telemetry as Record<string, unknown> | undefined;
+    if (telemetry) {
+      metrics.graphExtraction.cacheHits += toFiniteNumber(telemetry.cacheHits);
+      metrics.graphExtraction.cacheMisses += toFiniteNumber(telemetry.cacheMisses);
+      metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
+      metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
+    }
+  }
+  metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
+
+  return metrics;
+}
+
+/**
+ * Finalize derived flags and rates on an accumulator. Used both for the
+ * window-level aggregate and for each per-run row in --detail per-run mode
+ * so the single-row metrics still expose `ran` / `yieldRate` / `cacheHitRate`.
+ */
+function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
   metrics.consolidation.ran =
     metrics.consolidation.processed > 0 ||
     metrics.consolidation.durationMs > 0 ||
@@ -438,8 +457,181 @@ function summarizeImproveRuns(db: Database, since: string): { metrics: ImproveHe
     metrics.graphExtraction.durationMs > 0;
   const cacheTotal = metrics.graphExtraction.cacheHits + metrics.graphExtraction.cacheMisses;
   metrics.graphExtraction.cacheHitRate = cacheTotal > 0 ? roundRate(metrics.graphExtraction.cacheHits / cacheTotal) : 0;
+}
 
-  return { metrics, runCount: rows.length };
+/**
+ * Merge per-row metrics from `src` into accumulator `dst`. All numeric fields
+ * are additive; cumulative rates are recomputed by finalizeImproveMetrics.
+ */
+function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetrics): void {
+  dst.plannedRefs += src.plannedRefs;
+  dst.actions.reflect.ok += src.actions.reflect.ok;
+  dst.actions.reflect.failed += src.actions.reflect.failed;
+  dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
+  dst.actions.reflect.skipped += src.actions.reflect.skipped;
+  dst.actions.distill.queued += src.actions.distill.queued;
+  dst.actions.distill.llmFailed += src.actions.distill.llmFailed;
+  dst.actions.distill.qualityRejected += src.actions.distill.qualityRejected;
+  dst.actions.distill.configDisabled += src.actions.distill.configDisabled;
+  dst.actions.distill.skipped += src.actions.distill.skipped;
+  dst.actions.memoryPrune += src.actions.memoryPrune;
+  dst.actions.memoryInference += src.actions.memoryInference;
+  dst.actions.graphExtraction += src.actions.graphExtraction;
+  dst.actions.error += src.actions.error;
+  dst.reflectsWithErrorContext += src.reflectsWithErrorContext;
+  dst.coverageGapCount += src.coverageGapCount;
+  dst.executionLogCandidateCount += src.executionLogCandidateCount;
+  dst.evalCasesWritten += src.evalCasesWritten;
+  dst.deadUrlCount += src.deadUrlCount;
+  dst.memorySummary.eligible += src.memorySummary.eligible;
+  dst.memorySummary.derived += src.memorySummary.derived;
+  dst.memoryCleanup.pruneCandidates += src.memoryCleanup.pruneCandidates;
+  dst.memoryCleanup.contradictionCandidates += src.memoryCleanup.contradictionCandidates;
+  dst.memoryCleanup.beliefStateTransitions += src.memoryCleanup.beliefStateTransitions;
+  dst.memoryCleanup.consolidationCandidates += src.memoryCleanup.consolidationCandidates;
+  dst.memoryCleanup.archived += src.memoryCleanup.archived;
+  dst.memoryCleanup.warnings += src.memoryCleanup.warnings;
+  dst.consolidation.processed += src.consolidation.processed;
+  dst.consolidation.promoted += src.consolidation.promoted;
+  dst.consolidation.merged += src.consolidation.merged;
+  dst.consolidation.deleted += src.consolidation.deleted;
+  dst.consolidation.contradicted += src.consolidation.contradicted;
+  dst.consolidation.durationMs += src.consolidation.durationMs;
+  dst.memoryInference.considered += src.memoryInference.considered;
+  dst.memoryInference.splitParents += src.memoryInference.splitParents;
+  dst.memoryInference.written += src.memoryInference.written;
+  dst.memoryInference.skippedNoFacts += src.memoryInference.skippedNoFacts;
+  dst.memoryInference.durationMs += src.memoryInference.durationMs;
+  dst.graphExtraction.extractedFiles += src.graphExtraction.extractedFiles;
+  dst.graphExtraction.entities += src.graphExtraction.entities;
+  dst.graphExtraction.relations += src.graphExtraction.relations;
+  dst.graphExtraction.cacheHits += src.graphExtraction.cacheHits;
+  dst.graphExtraction.cacheMisses += src.graphExtraction.cacheMisses;
+  dst.graphExtraction.truncations += src.graphExtraction.truncations;
+  dst.graphExtraction.failures += src.graphExtraction.failures;
+  dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
+}
+
+interface ImproveRunRow {
+  id: string;
+  started_at: string;
+  completed_at: string;
+  ok: number;
+  scope_mode: string;
+  scope_value: string | null;
+  result_json: string;
+}
+
+function loadImproveRunRows(db: Database, since: string, until?: string): ImproveRunRow[] {
+  const sql = until
+    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
+    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
+  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunRow[];
+}
+
+function summarizeImproveRuns(
+  db: Database,
+  since: string,
+  until?: string,
+): { metrics: ImproveHealthMetrics; runCount: number } {
+  const accum = createUnknownImproveMetrics();
+  const rows = loadImproveRunRows(db, since, until);
+
+  for (const row of rows) {
+    let result: Record<string, unknown>;
+    try {
+      result = JSON.parse(row.result_json) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const perRow = projectRunMetrics(result);
+    mergeImproveMetrics(accum, perRow);
+  }
+
+  finalizeImproveMetrics(accum);
+  return { metrics: accum, runCount: rows.length };
+}
+
+/**
+ * Project an improve_runs row + wall-time lookup into a single ImproveRunSummary.
+ * Used by `akm health --detail per-run`.
+ */
+function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number): ImproveRunSummary {
+  let result: Record<string, unknown> = {};
+  try {
+    result = JSON.parse(row.result_json) as Record<string, unknown>;
+  } catch {
+    // fall through with empty result so per-stage rollups are zeros
+  }
+  const perRow = projectRunMetrics(result);
+  finalizeImproveMetrics(perRow);
+
+  const orphansPurged = toFiniteNumber(result.orphansPurged);
+  const lintSummary = result.lintSummary as Record<string, unknown> | undefined;
+  const lintFixed = lintSummary ? toFiniteNumber(lintSummary.fixed) : 0;
+  const lintFlagged = lintSummary ? toFiniteNumber(lintSummary.flagged) : 0;
+
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    wallTimeMs,
+    ok: row.ok === 1,
+    scope: {
+      mode: row.scope_mode,
+      ...(row.scope_value ? { value: row.scope_value } : {}),
+    },
+    actions: perRow.actions,
+    memorySummary: perRow.memorySummary,
+    memoryCleanup: perRow.memoryCleanup,
+    consolidation: perRow.consolidation,
+    memoryInference: perRow.memoryInference,
+    graphExtraction: perRow.graphExtraction,
+    reflectsWithErrorContext: perRow.reflectsWithErrorContext,
+    evalCasesWritten: perRow.evalCasesWritten,
+    orphansPurged,
+    lintFixed,
+    lintFlagged,
+  };
+}
+
+/**
+ * Build a wall-time lookup keyed by minute-truncated started_at. Joins
+ * improve_runs to task_history (`task_id='akm-improve'`) by approximate
+ * timestamp — within the same minute is treated as the same logical run.
+ */
+function buildWallTimeIndex(db: Database, since: string, until?: string): Map<string, number> {
+  const sql = until
+    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL"
+    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL";
+  const rows = (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as Array<{
+    started_at: string;
+    completed_at: string;
+  }>;
+  const index = new Map<string, number>();
+  for (const row of rows) {
+    const startMs = new Date(row.started_at).getTime();
+    const endMs = new Date(row.completed_at).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) continue;
+    const key = String(Math.floor(startMs / 60000));
+    index.set(key, endMs - startMs);
+  }
+  return index;
+}
+
+function buildPerRunSummaries(db: Database, since: string, until?: string): ImproveRunSummary[] {
+  const rows = loadImproveRunRows(db, since, until);
+  const wallTimeIndex = buildWallTimeIndex(db, since, until);
+  const summaries: ImproveRunSummary[] = [];
+  for (const row of rows) {
+    const startMs = new Date(row.started_at).getTime();
+    const endMs = new Date(row.completed_at).getTime();
+    const fallbackWallMs = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : 0;
+    const key = Number.isFinite(startMs) ? String(Math.floor(startMs / 60000)) : "";
+    const wallTimeMs = wallTimeIndex.get(key) ?? fallbackWallMs;
+    summaries.push(projectImproveRunSummary(row, wallTimeMs));
+  }
+  return summaries;
 }
 
 function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wallTime"] {
@@ -455,12 +647,14 @@ function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wall
   };
 }
 
-function collectImproveWallTimes(db: Database, since: string): number[] {
-  const rows = db
-    .prepare(
-      "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL",
-    )
-    .all(since) as Array<{ started_at: string; completed_at: string }>;
+function collectImproveWallTimes(db: Database, since: string, until?: string): number[] {
+  const sql = until
+    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL"
+    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL";
+  const rows = (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as Array<{
+    started_at: string;
+    completed_at: string;
+  }>;
   const out: number[] = [];
   for (const row of rows) {
     const startMs = new Date(row.started_at).getTime();
@@ -606,7 +800,17 @@ function runAgentProbe(): HealthCheckResult {
   };
 }
 
+function validateAkmHealthOptions(options: AkmHealthOptions): void {
+  if (options.detail !== undefined && options.detail !== "brief" && options.detail !== "per-run") {
+    throw new UsageError(
+      `Invalid value for --detail: ${options.detail}. Expected one of: brief|per-run`,
+      "INVALID_DETAIL_VALUE",
+    );
+  }
+}
+
 export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
+  validateAkmHealthOptions(options);
   const since = parseHealthSince(options.since);
   const stateDbPath = getStateDbPathInDataDir();
   const hardChecks: HealthCheckResult[] = [];
@@ -773,6 +977,12 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     );
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
+    // ── Per-run mode (Phase 2) ────────────────────────────────────────────
+    let runs: ImproveRunSummary[] | undefined;
+    if (options.detail === "per-run") {
+      runs = buildPerRunSummaries(db, since);
+    }
+
     return {
       schemaVersion: 2,
       ok: !hardFailure,
@@ -783,8 +993,77 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       metrics,
       improve: improveSummary,
       sessionLogAdvisories: sessionLogEntries,
+      ...(runs ? { runs } : {}),
     };
   } finally {
     db.close();
   }
+}
+
+// ── Markdown renderers ───────────────────────────────────────────────────────
+
+function padRight(s: string, width: number): string {
+  return s.length >= width ? s : s + " ".repeat(width - s.length);
+}
+
+function renderTable(headers: string[], rows: string[][]): string {
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
+  const lines: string[] = [];
+  lines.push(headers.map((h, i) => padRight(h, widths[i] ?? 0)).join("  "));
+  for (const row of rows) {
+    lines.push(row.map((cell, i) => padRight(cell ?? "", widths[i] ?? 0)).join("  "));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Render `--detail per-run` rows as a TSV-ish aligned table that mirrors the
+ * column shape of `scripts/improve-stats/runs-detail`.
+ *
+ * Columns: ts | ok | actions | refl_ok/fail/cd/skip |
+ *   distill_q/llm-fail/qrej/cfg/skip | cons_proc/promo/merge/del |
+ *   mem_cons/written/skip | graph_f/e/r | orphans | lint_f/fl
+ */
+export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
+  const headers = [
+    "ts",
+    "ok",
+    "actions",
+    "refl_ok/fail/cd/skip",
+    "distill_q/llm-fail/qrej/cfg/skip",
+    "cons_proc/promo/merge/del",
+    "mem_cons/written/skip",
+    "graph_f/e/r",
+    "orphans",
+    "lint_f/fl",
+  ];
+  const rows = runs.map((r) => {
+    const totalActions =
+      r.actions.reflect.ok +
+      r.actions.reflect.failed +
+      r.actions.reflect.cooldown +
+      r.actions.reflect.skipped +
+      r.actions.distill.queued +
+      r.actions.distill.llmFailed +
+      r.actions.distill.qualityRejected +
+      r.actions.distill.configDisabled +
+      r.actions.distill.skipped +
+      r.actions.memoryPrune +
+      r.actions.memoryInference +
+      r.actions.graphExtraction +
+      r.actions.error;
+    return [
+      r.startedAt,
+      String(r.ok),
+      String(totalActions),
+      `${r.actions.reflect.ok}/${r.actions.reflect.failed}/${r.actions.reflect.cooldown}/${r.actions.reflect.skipped}`,
+      `${r.actions.distill.queued}/${r.actions.distill.llmFailed}/${r.actions.distill.qualityRejected}/${r.actions.distill.configDisabled}/${r.actions.distill.skipped}`,
+      `${r.consolidation.processed}/${r.consolidation.promoted}/${r.consolidation.merged}/${r.consolidation.deleted}`,
+      `${r.memoryInference.considered}/${r.memoryInference.written}/${r.memoryInference.skippedNoFacts}`,
+      `${r.graphExtraction.extractedFiles}/${r.graphExtraction.entities}/${r.graphExtraction.relations}`,
+      String(r.orphansPurged),
+      `${r.lintFixed}/${r.lintFlagged}`,
+    ];
+  });
+  return renderTable(headers, rows);
 }

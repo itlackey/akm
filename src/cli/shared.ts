@@ -88,6 +88,13 @@ export function output(command: string, result: unknown): void {
       console.log(plain ?? JSON.stringify(shaped, null, 2));
       return;
     }
+    case "md":
+      // `--format md` is currently only consumed by `akm health` for the
+      // per-run / window-compare table renderings. Commands that don't
+      // implement an md renderer fall back to the JSON envelope so
+      // pipelines never get an empty stdout.
+      console.log(JSON.stringify(shaped, null, 2));
+      return;
   }
 }
 

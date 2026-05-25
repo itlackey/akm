@@ -464,3 +464,203 @@ describe("akm health CLI exit code", () => {
     expect(status).toBe(1);
   });
 });
+
+// ── Phase 2: --detail per-run ────────────────────────────────────────────────
+describe("akm health --detail per-run", () => {
+  function seedTwoRuns(): { startA: string; endA: string; startB: string; endB: string } {
+    const startA = new Date(Date.now() - 60_000).toISOString();
+    const endA = new Date(Date.now() - 30_000).toISOString();
+    const startB = new Date(Date.now() - 25_000).toISOString();
+    const endB = new Date(Date.now() - 10_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: startA,
+        completed_at: endA,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: startB,
+        completed_at: endB,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      recordImproveRun(db, {
+        id: "run-a",
+        startedAt: startA,
+        completedAt: endA,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [
+            { ref: "memory:a", mode: "reflect", result: { ok: true } },
+            { ref: "memory:b", mode: "distill", result: { outcome: "queued" } },
+          ],
+          memoryInference: { considered: 4, writtenFacts: 2, skippedNoFacts: 1 },
+          orphansPurged: 2,
+          lintSummary: { fixed: 1, flagged: 0 },
+        }),
+      });
+      recordImproveRun(db, {
+        id: "run-b",
+        startedAt: startB,
+        completedAt: endB,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [{ ref: "memory:z", mode: "distill", result: { outcome: "llm_failed" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+    return { startA, endA, startB, endB };
+  }
+
+  test("default mode omits runs[]", () => {
+    seedTwoRuns();
+    const result = akmHealth({ since: "7d" });
+    expect(result.runs).toBeUndefined();
+  });
+
+  test("--detail per-run returns runs[] with the right shape", () => {
+    seedTwoRuns();
+    const result = akmHealth({ since: "7d", detail: "per-run" });
+    expect(result.runs).toBeDefined();
+    expect(result.runs?.length).toBe(2);
+    const ids = result.runs?.map((r) => r.id) ?? [];
+    expect(ids).toContain("run-a");
+    expect(ids).toContain("run-b");
+  });
+
+  test("--detail per-run rows are ordered newest first", () => {
+    const { startA, startB } = seedTwoRuns();
+    expect(new Date(startB).getTime()).toBeGreaterThan(new Date(startA).getTime());
+    const result = akmHealth({ since: "7d", detail: "per-run" });
+    expect(result.runs?.[0].id).toBe("run-b");
+    expect(result.runs?.[1].id).toBe("run-a");
+  });
+
+  test("per-run summary fields parity with window aggregator (one row)", () => {
+    // Seed a single run, then compare aggregator output vs runs[0].
+    const startA = new Date(Date.now() - 60_000).toISOString();
+    const endA = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: startA,
+        completed_at: endA,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      recordImproveRun(db, {
+        id: "run-parity",
+        startedAt: startA,
+        completedAt: endA,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [
+            { ref: "memory:a", mode: "reflect", result: { ok: true } },
+            { ref: "memory:b", mode: "reflect-failed", result: { ok: false, error: "boom" } },
+            { ref: "memory:c", mode: "distill", result: { outcome: "queued" } },
+          ],
+          consolidation: {
+            schemaVersion: 1,
+            ok: true,
+            processed: 2,
+            merged: 1,
+            deleted: 0,
+            promoted: ["lesson:a"],
+            contradicted: 0,
+            warnings: [],
+            durationMs: 120,
+          },
+          memoryInference: { considered: 8, writtenFacts: 4, skippedNoFacts: 2 },
+          memoryInferenceDurationMs: 30,
+          graphExtraction: {
+            considered: 5,
+            extracted: 3,
+            totalEntities: 10,
+            totalRelations: 4,
+            written: true,
+            quality: {
+              consideredFiles: 5,
+              extractedFiles: 3,
+              entityCount: 10,
+              relationCount: 4,
+              extractionCoverage: 0.6,
+              density: 0.4,
+            },
+            telemetry: { cacheHits: 3, cacheMisses: 1, truncationCount: 0, failureCount: 0 },
+          },
+          graphExtractionDurationMs: 25,
+        }),
+      });
+    } finally {
+      db.close();
+    }
+    const aggregate = akmHealth({ since: "7d" });
+    const perRun = akmHealth({ since: "7d", detail: "per-run" });
+    const row = perRun.runs?.[0];
+    expect(row).toBeDefined();
+    if (!row) return;
+    expect(row.actions).toEqual(aggregate.improve.actions);
+    expect(row.consolidation.processed).toBe(aggregate.improve.consolidation.processed);
+    expect(row.consolidation.promoted).toBe(aggregate.improve.consolidation.promoted);
+    expect(row.memoryInference.considered).toBe(aggregate.improve.memoryInference.considered);
+    expect(row.memoryInference.written).toBe(aggregate.improve.memoryInference.written);
+    expect(row.memoryInference.yieldRate).toBe(aggregate.improve.memoryInference.yieldRate);
+    expect(row.graphExtraction.entities).toBe(aggregate.improve.graphExtraction.entities);
+    expect(row.graphExtraction.cacheHitRate).toBe(aggregate.improve.graphExtraction.cacheHitRate);
+  });
+
+  test("invalid --detail value raises UsageError", () => {
+    expect(() => akmHealth({ since: "7d", detail: "bogus" as unknown as "brief" })).toThrow(
+      /Invalid value for --detail/,
+    );
+  });
+});

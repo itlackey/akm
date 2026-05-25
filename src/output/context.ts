@@ -15,8 +15,8 @@
 
 import { UsageError } from "../core/errors";
 
-export type OutputFormat = "json" | "yaml" | "text" | "jsonl";
-export type DetailLevel = "brief" | "normal" | "full" | "summary" | "agent";
+export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
+export type DetailLevel = "brief" | "normal" | "full" | "summary" | "agent" | "per-run";
 
 export interface OutputMode {
   format: OutputFormat;
@@ -29,8 +29,8 @@ export interface OutputDefaults {
   detail?: DetailLevel | "brief" | "normal" | "full" | "agent";
 }
 
-export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
-export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary", "agent"];
+export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
+export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary", "agent", "per-run"];
 
 export function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
