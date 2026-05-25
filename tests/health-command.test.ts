@@ -768,6 +768,90 @@ describe("akm health --window-compare / --windows", () => {
     expect(delta?.pctChange).toBe(100);
   });
 
+  // Regression guard: deltas must read chronologically — `from` is the
+  // earliest window, `to` is the latest. The Phase-3 agent originally
+  // used windowResults array order (windows[0] → windows[N-1]), which
+  // meant `--window-compare 24h` produced from=current, to=prior — a
+  // backwards reading. Fix sorts by `since` before computing deltas
+  // independent of the user-specified array order.
+  test("delta direction is chronological: from = earliest window, to = latest, regardless of windows[] order", () => {
+    const now = Date.now();
+    const earliestSince = new Date(now - 6 * 60 * 60 * 1000).toISOString();
+    const earliestUntil = new Date(now - 4 * 60 * 60 * 1000).toISOString();
+    const latestSince = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const latestRunStart = new Date(now - 90 * 60 * 1000).toISOString();
+    const earliestRunStart = new Date(now - 5 * 60 * 60 * 1000).toISOString();
+
+    const db = openStateDatabase();
+    try {
+      // Earliest window: 5 llm_failed (the regression we'd want to see
+      // disappear over time).
+      recordImproveRun(db, {
+        id: "run-early-buggy",
+        startedAt: earliestRunStart,
+        completedAt: earliestRunStart,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: Array.from({ length: 5 }, () => ({
+            ref: "memory:x",
+            mode: "distill",
+            result: { outcome: "llm_failed" },
+          })),
+        }),
+      });
+      // Latest window: 0 failures (the fix landed).
+      recordImproveRun(db, {
+        id: "run-late-clean",
+        startedAt: latestRunStart,
+        completedAt: latestRunStart,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [{ ref: "memory:x", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    // Pass windows in REVERSE chronological order (latest first, mimicking
+    // what --window-compare 24h produces). Deltas should still read
+    // earliest→latest, not array-order.
+    const result = akmHealth({
+      windows: [
+        { name: "current", since: latestSince },
+        { name: "prior", since: earliestSince, until: earliestUntil },
+      ],
+    });
+
+    const delta = result.deltas?.["improve.actions.distill.llmFailed"];
+    expect(delta).toBeDefined();
+    // earliest window had 5 llm_failed; latest had 0. Chronological reading:
+    // from = 5 (earliest), to = 0 (latest), pctChange = -100% (improvement).
+    expect(delta?.from).toBe(5);
+    expect(delta?.to).toBe(0);
+    expect(delta?.pctChange).toBe(-100);
+  });
+
   test("delta uses '+inf' when from is 0 and to is positive", () => {
     const now = Date.now();
     const earlySince = new Date(now - 6 * 60 * 60 * 1000).toISOString();

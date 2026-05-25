@@ -1258,7 +1258,15 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
         topLevelSince = windowResults[0].since;
       }
       if (windowResults.length >= 2) {
-        deltas = computeDeltas(windowResults[0], windowResults[windowResults.length - 1]);
+        // Deltas always read chronologically: `from` = earliest window,
+        // `to` = latest. Positive pctChange on a failure metric (e.g.
+        // distill.llmFailed) means things got WORSE going forward in
+        // time; negative means improvement. Window 0 in the output
+        // array is whatever the user specified first (typically
+        // `current` for --window-compare), but the delta direction is
+        // independent of that array order.
+        const sorted = [...windowResults].sort((a, b) => new Date(a.since).getTime() - new Date(b.since).getTime());
+        deltas = computeDeltas(sorted[0], sorted[sorted.length - 1]);
       }
     }
 
