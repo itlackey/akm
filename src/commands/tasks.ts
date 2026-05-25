@@ -550,11 +550,11 @@ export { ConfigError, exitCodeForStatus, NotFoundError, parseTaskDocument, Usage
 // user passes a ref, we accept the bare name part too.
 export function parseTaskRef(input: string): { id: string } {
   if (input.includes(":")) {
-    const ref = parseAssetRef(input);
-    if (ref.type !== "task") {
+    const [typePart, ...rest] = input.split(":");
+    if (typePart !== "task" || rest.length === 0) {
       throw new UsageError(`Expected a task id or task:<id> ref, got "${input}".`, "INVALID_FLAG_VALUE");
     }
-    return { id: normaliseTaskId(ref.name) };
+    return { id: normaliseTaskId(rest.join(":")) };
   }
   return { id: normaliseTaskId(input) };
 }

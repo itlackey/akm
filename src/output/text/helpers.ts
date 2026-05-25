@@ -5,7 +5,6 @@
  * No registry imports — no circular dependencies.
  */
 
-import { formatInstallAuditSummary } from "../../commands/install-audit";
 import type { IndexResponse } from "../../indexer/indexer";
 import type { DetailLevel } from "../context";
 
@@ -914,10 +913,6 @@ export function formatAddPlain(r: Record<string, unknown>): string {
     for (const message of warnings) lines.push(`  - ${String(message)}`);
   }
   const installed = r.installed as Record<string, unknown> | undefined;
-  const audit = installed?.audit;
-  if (audit && typeof audit === "object") {
-    lines.push(formatInstallAuditSummary(audit as Parameters<typeof formatInstallAuditSummary>[0]));
-  }
   return lines.join("\n");
 }
 
