@@ -14,7 +14,7 @@ All paths below use these resolved base directories:
 | `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `AKM_STATE_DIR` |
 | `$STASH` | `~/akm` | `%USERPROFILE%\Documents\akm` | `AKM_STASH_DIR` |
 
-> **Storage reorganization (v0.8.0):** akm uses four XDG directories instead of two. Durable data (`index.db`, `workflow.db`, `state.db`, `akm.lock`) lives in `$DATA`. The event log is stored in `state.db` rather than `events.jsonl`. Run `bun scripts/migrate-storage.ts` to migrate existing installations.
+> **Storage reorganization (v0.8.0):** akm uses four XDG directories instead of two. Durable data (`index.db`, `workflow.db`, `state.db`, `akm.lock`) lives in `$DATA`. The event log is stored in `state.db` rather than `events.jsonl`. Run `akm-migrate-storage` to migrate existing installations.
 
 ---
 
@@ -352,7 +352,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 
 ### `$STATE/tasks/history/<task-id>.jsonl` — Task Run History (legacy)
 
-These JSONL files are no longer written or read by akm. Existing files at `$CACHE/tasks/history/` or `$STATE/tasks/history/` can be imported into the `task_history` table in `state.db` using the migration script. See Step 7 of `bun scripts/migrate-storage.ts`.
+These JSONL files are no longer written or read by akm. Existing files at `$CACHE/tasks/history/` or `$STATE/tasks/history/` can be imported into the `task_history` table in `state.db` using the migration script. See Step 7 of `akm-migrate-storage`.
 
 One line per execution: `{ id, status, startedAt, finishedAt, durationMs, log, target, detail? }`. No cleanup.
 

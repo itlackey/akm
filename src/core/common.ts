@@ -55,16 +55,46 @@ export function isAssetType(type: string): type is AkmAssetType {
  * Prevents partial-write corruption on crash.
  * The temp file is opened with the target `mode` (default 0o600) from the
  * start, so it is never world-readable even briefly.
+ *
+ * Durability: fsync'd against the May 2026 config-clobber incident (#472).
+ * On ext4 (data=ordered) and NVMe-with-TRIM, a power-loss inside the kernel
+ * writeback window could leave the renamed file truncated to zero — defeating
+ * the purpose of the atomic rename. We:
+ *   1. fdatasync the temp fd before close, so the data is on disk before the
+ *      rename observes it.
+ *   2. fsync the parent directory after rename, so the directory entry change
+ *      is durable too. Some filesystems (FAT, certain FUSE mounts) don't
+ *      support directory fsync; we ignore EINVAL/ENOTSUP so atomic writes
+ *      don't fail on exotic mounts.
  */
 export function writeFileAtomic(target: string, content: string, mode?: number): void {
   const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
   const fd = fs.openSync(tmp, "w", mode ?? 0o600);
   try {
     fs.writeSync(fd, content);
+    try {
+      fs.fdatasyncSync(fd);
+    } catch {
+      // Best-effort: some pseudo-filesystems lack fdatasync. Fall through
+      // to closeSync — the rename below still preserves atomicity even if
+      // the data isn't durable, and the calling code's retry will recover.
+    }
   } finally {
     fs.closeSync(fd);
   }
   fs.renameSync(tmp, target);
+  try {
+    const dirFd = fs.openSync(path.dirname(target), "r");
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch {
+    // Directory fsync is unsupported on FAT, some FUSE mounts, and Windows
+    // (where directories cannot be opened for read like POSIX). Silently
+    // ignore so writeFileAtomic remains portable.
+  }
 }
 
 /**

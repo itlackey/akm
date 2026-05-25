@@ -27,7 +27,7 @@ import type {
 } from "../core/config";
 import { DEFAULT_CONFIG, getDefaultLlmConfig, loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
-import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
+import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
 import { akmIndex } from "../indexer/indexer";
@@ -625,6 +625,12 @@ async function stepStashDir(
       placeholder: defaultDir,
       validate: (v) => {
         if (!v?.trim()) return "Path cannot be empty";
+        try {
+          assertSafeStashDir(v.trim());
+        } catch (err) {
+          if (err instanceof Error) return err.message;
+          return "Refused: unsafe stash directory";
+        }
       },
     }),
   );

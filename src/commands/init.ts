@@ -15,7 +15,7 @@ import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
-import { getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
+import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
 import { ensureRg } from "../setup/ripgrep-install";
 
 /**
@@ -68,6 +68,12 @@ export interface InitResponse {
 
 export async function akmInit(options?: { dir?: string }): Promise<InitResponse> {
   const stashDir = options?.dir ? path.resolve(options.dir) : getDefaultStashDir();
+
+  // Safety check (#473): refuse stashDir at /, $HOME, /etc, ~/.config, etc.
+  // Runs BEFORE any disk write — a fat-fingered `akm init --dir /` or
+  // `akm init --dir ~` would otherwise mkdir + git-init the user's system
+  // root or home directory. Catastrophic-on-misuse vs. trivial-to-recover-from.
+  assertSafeStashDir(stashDir);
 
   // Defense-in-depth: refuse to persist an explicit --dir /tmp/... stashDir
   // to config under a test runner. Default HOME-resolved paths are exempt.

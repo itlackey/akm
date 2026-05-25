@@ -305,7 +305,7 @@ Events, proposals, and task history are stored in `state.db` — not in flat
 files or in the search index. The search index (`index.db`) is derived from
 the asset directories and is rebuildable with `akm index`.
 
-Users upgrading from v0.7 should run `bun scripts/migrate-storage.ts --yes`
+Users upgrading from v0.7 should run `akm-migrate-storage --yes`
 once to move `index.db`, `workflow.db`, and flat-file state to their new
 locations. See [migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md) for
 the full guide.

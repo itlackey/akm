@@ -98,7 +98,7 @@ describe("error hint rendering (#8)", () => {
   test("ConfigError with hint: true returns hint", () => {
     const err = new ConfigError("bad", "STASH_DIR_NOT_FOUND");
     expect(err.hint()).toBeDefined();
-    expect(err.hint()).toMatch(/akm init/);
+    expect(err.hint()).toMatch(/akm setup/);
   });
 
   test("ConfigError with explicit hint returns it", () => {

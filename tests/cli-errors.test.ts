@@ -141,13 +141,13 @@ describe("CLI error handling", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("STASH_DIR_NOT_FOUND");
     expect(parsed.hint).toBe(new ConfigError("x", "STASH_DIR_NOT_FOUND").hint());
-    expect(parsed.hint).toContain("akm init");
+    expect(parsed.hint).toContain("akm setup");
   });
 });
 
 describe("error class hints", () => {
   test("ConfigError derives hint from code by default", () => {
-    expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm init");
+    expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm setup");
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
     expect(new ConfigError("no embedding", "EMBEDDING_NOT_CONFIGURED").hint()).toContain("akm config set embedding");

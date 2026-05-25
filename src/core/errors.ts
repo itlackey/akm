@@ -34,6 +34,11 @@ export type ConfigErrorCode =
   // See src/commands/init.ts.
   | "INIT_TMP_STASH_REFUSED"
   | "SETUP_TMP_STASH_REFUSED"
+  // Refused stashDir that would clobber a sensitive system path or the user's
+  // home directory (#473). Triggered by `akm init`/`akm setup` when the
+  // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
+  // `/etc`, etc.
+  | "UNSAFE_STASH_DIR"
   // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
   // when a test sets AKM_STASH_DIR but forgets to also point
   // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
@@ -70,7 +75,7 @@ export type NotFoundErrorCode =
  * imperative. Returning undefined means "no canned hint".
  */
 const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
-  STASH_DIR_NOT_FOUND: "Run `akm init` to create the default stash, or set stashDir in your config.",
+  STASH_DIR_NOT_FOUND: "Run `akm setup` to create and configure your stash, or set stashDir in your config.",
   STASH_DIR_NOT_A_DIRECTORY:
     "The configured stashDir exists but isn't a directory. Update stashDir to point at a folder.",
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update stashDir.",
@@ -81,6 +86,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Under bun test, when AKM_STASH_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   SETUP_TMP_STASH_REFUSED:
     "Use a persistent directory, or set AKM_FORCE_SETUP_TMP_STASH=1 to opt in to a sandboxed setup (setup also pre-sets AKM_STASH_DIR so config and cache writes auto-isolate into $stashDir/.akm/ — host config is preserved).",
+  UNSAFE_STASH_DIR:
+    "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The stash directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
 };
 
 /** Default hint for each UsageError code. */

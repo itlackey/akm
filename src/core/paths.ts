@@ -10,6 +10,7 @@
  * on Windows.
  */
 
+import os from "node:os";
 import path from "node:path";
 import { IS_WINDOWS } from "./common";
 import { ConfigError } from "./errors";
@@ -368,4 +369,116 @@ export function getDefaultStashDir(): string {
     throw new ConfigError("Unable to determine default stash directory. Set HOME.", "STASH_DIR_NOT_FOUND");
   }
   return path.join(home, "akm");
+}
+
+// ── Stash directory safety check (#473) ──────────────────────────────────────
+
+/**
+ * Refuse stashDir values that would clobber a sensitive system path or the
+ * user's home directory itself. Called from `akm init`, `akm setup`, and the
+ * setup-wizard validator before any disk write.
+ *
+ * Refuses:
+ *   - The filesystem root (`/` or Windows drive root `C:\`)
+ *   - Common system roots (`/etc`, `/var`, `/usr`, `/usr/local`, `/opt`,
+ *     `/sys`, `/proc`, `/boot`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/dev`,
+ *     `/run`, `/home`, `/root`, `/mnt`, `/media`,
+ *     `/Library`, `/System`, `/Applications`)
+ *   - The user's home directory itself (exact match — subdirs are fine)
+ *   - User-data dotfile parents: `~/.config`, `~/.local`, `~/.cache`,
+ *     `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.docker`,
+ *     and the macOS/Windows `~/Documents` and `~/Downloads` parents
+ *
+ * Subdirectories of any refused path are allowed (so `~/.local/share/akm-test`
+ * is fine even though `~/.local` is refused). This catches fat-finger
+ * `--dir /` or `--dir ~` without preventing legitimate nested use.
+ */
+export function assertSafeStashDir(stashDir: string): void {
+  const resolved = path.resolve(stashDir);
+
+  // Filesystem root — POSIX and Windows drive roots.
+  if (resolved === "/" || /^[A-Za-z]:[\\/]?$/.test(resolved)) {
+    throw new ConfigError(
+      `Refusing stashDir at filesystem root (${resolved}). Pick a subdirectory like ~/akm.`,
+      "UNSAFE_STASH_DIR",
+    );
+  }
+
+  // System directories — exact match only.
+  const SYSTEM_ROOTS = new Set([
+    "/etc",
+    "/var",
+    "/var/tmp",
+    "/usr",
+    "/usr/local",
+    "/opt",
+    "/sys",
+    "/proc",
+    "/boot",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/dev",
+    "/run",
+    "/home",
+    "/root",
+    "/mnt",
+    "/media",
+    "/Library",
+    "/System",
+    "/Applications",
+  ]);
+  if (SYSTEM_ROOTS.has(resolved)) {
+    throw new ConfigError(
+      `Refusing stashDir at system path (${resolved}). Pick a path inside your home directory.`,
+      "UNSAFE_STASH_DIR",
+    );
+  }
+
+  // User home — exact match only. Subdirs (~/akm, ~/work/stash) are fine.
+  // Check BOTH the env-controlled home and the OS-reported home, so the
+  // refusal can't be bypassed by unsetting HOME, and so it still fires
+  // under bun test (which isolates HOME to a tempdir while os.homedir()
+  // still returns the real user's home).
+  const candidateHomes = new Set<string>();
+  const envHome = (process.env.HOME ?? process.env.USERPROFILE)?.trim();
+  if (envHome) candidateHomes.add(path.resolve(envHome));
+  try {
+    const osHome = os.homedir();
+    if (osHome) candidateHomes.add(path.resolve(osHome));
+  } catch {
+    // os.homedir() can throw on misconfigured systems; ignore.
+  }
+
+  const HIDDEN_USER_PARENTS = [
+    ".config",
+    ".local",
+    ".cache",
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".kube",
+    ".docker",
+    "Documents",
+    "Downloads",
+    "AppData",
+  ];
+
+  for (const home of candidateHomes) {
+    if (resolved === home) {
+      throw new ConfigError(
+        `Refusing stashDir at your home directory (${resolved}). Pick a subdirectory like ~/akm.`,
+        "UNSAFE_STASH_DIR",
+      );
+    }
+    for (const sub of HIDDEN_USER_PARENTS) {
+      if (resolved === path.join(home, sub)) {
+        throw new ConfigError(
+          `Refusing stashDir at sensitive user directory (${resolved}). Pick a subdirectory or a dedicated workspace.`,
+          "UNSAFE_STASH_DIR",
+        );
+      }
+    }
+  }
 }

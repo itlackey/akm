@@ -57,7 +57,7 @@ Override env vars: `AKM_DATA_DIR` (for `$DATA`), `AKM_CACHE_DIR` (for `$CACHE`),
 
 `bin/` is cache-managed, not stash-local.
 
-> **Upgrading from v0.7?** Run `bun scripts/migrate-storage.ts --yes` to move
+> **Upgrading from v0.7?** Run `akm-migrate-storage --yes` to move
 > `index.db` and `workflow.db` from `$CONFIG` to `$DATA`. See
 > [docs/migration/v0.7-to-v0.8.md](../migration/v0.7-to-v0.8.md) for the full
 > guide.
