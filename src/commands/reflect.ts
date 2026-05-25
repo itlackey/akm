@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
+import { type AssetRef, parseAssetRef } from "../core/asset-ref";
 import { assembleAssetFromString } from "../core/asset-serialize";
 import { resolveStashDir } from "../core/common";
 import type { LlmConnectionConfig } from "../core/config";
@@ -874,7 +874,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // 2. Resolve target asset content (if a ref is supplied).
   let assetContent: string | undefined;
-  let parsedRef: { type: string; name: string } | undefined;
+  let parsedRef: AssetRef | undefined;
   if (options.ref) {
     parsedRef = parseAssetRef(options.ref);
 

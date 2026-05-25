@@ -11,7 +11,20 @@ import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type AkmAssetType = string;
+export const ASSET_TYPES = [
+  "skill",
+  "command",
+  "agent",
+  "knowledge",
+  "workflow",
+  "script",
+  "memory",
+  "vault",
+  "wiki",
+  "lesson",
+] as const;
+export type AkmAssetType = (typeof ASSET_TYPES)[number];
+export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -44,6 +57,15 @@ export function filterNonEmptyStrings(value: unknown): string[] | undefined {
 
 // ── Validators ──────────────────────────────────────────────────────────────
 
+/**
+ * Returns true if `type` is a known asset type — either a built-in from
+ * {@link ASSET_TYPES} or one dynamically registered via `registerAssetType`.
+ *
+ * The type guard narrows to `AkmAssetType` for all built-in types. Dynamic
+ * types (e.g. registered by plugins) are also accepted at runtime, but the
+ * type system treats them as `AkmAssetType` via assertion since they are not
+ * part of the static union.
+ */
 export function isAssetType(type: string): type is AkmAssetType {
   return Object.hasOwn(TYPE_DIRS, type);
 }

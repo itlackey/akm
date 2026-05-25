@@ -183,9 +183,10 @@ describe("writeAssetToSource — filesystem", () => {
     const source: WriteTargetSource = { kind: "filesystem", name: "mine", path: dir };
     const config: SourceConfigEntry = { type: "filesystem", writable: true };
 
-    await expect(writeAssetToSource(source, config, { type: "totally-not-a-type", name: "a" }, "body")).rejects.toThrow(
-      UsageError,
-    );
+    // Cast to bypass compile-time type guard — we're testing runtime rejection.
+    await expect(
+      writeAssetToSource(source, config, { type: "totally-not-a-type" as never, name: "a" }, "body"),
+    ).rejects.toThrow(UsageError);
   });
 
   test("rejects path traversal in asset name", async () => {

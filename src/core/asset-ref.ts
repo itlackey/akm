@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { isAssetType } from "./common";
+import { type AkmAssetType, isAssetType } from "./common";
 import { UsageError } from "./errors";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface AssetRef {
-  type: string;
+  type: AkmAssetType;
   name: string;
   /**
    * Where to find this asset.
