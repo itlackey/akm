@@ -1340,12 +1340,40 @@ const configCommand = defineCommand({
       args: {
         key: { type: "positional", required: true, description: "Config key (for example: embedding, llm)" },
         value: { type: "positional", required: true, description: "Config value" },
+        // #463: stable machine-friendly entry point for plugins / hooks.
+        // `--silent` suppresses the config dump on stdout so hook-driven
+        // writes don't pollute their host's output stream.
+        silent: {
+          type: "boolean",
+          description:
+            "Suppress the post-write config dump on stdout. Use from hooks and CI scripts; the write still happens and errors still print.",
+          default: false,
+        },
+        // #463: explicit layer flag for forward-compat. User layer is the only
+        // settable layer today; the flag exists so plugin authors can encode
+        // intent and the surface stays stable if project-layer writes return.
+        layer: {
+          type: "string",
+          description: "Config layer to write to. Currently only `user` is supported.",
+          default: "user",
+        },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const updated = setConfigValue(loadUserConfig(), args.key, args.value);
+          if (args.layer && args.layer !== "user") {
+            throw new UsageError(
+              `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+              "INVALID_FLAG_VALUE",
+            );
+          }
+          // Use loadConfig (not loadUserConfig) so the project-config
+          // deprecation warning fires consistently with `akm config get`
+          // (#457). Effective merged shape is identical post-0.8.0.
+          const updated = setConfigValue(loadConfig(), args.key, args.value);
           saveConfig(updated);
-          output("config", listConfig(updated));
+          if (!args.silent) {
+            output("config", listConfig(updated));
+          }
         });
       },
     }),
@@ -1353,12 +1381,30 @@ const configCommand = defineCommand({
       meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/llm section" },
       args: {
         key: { type: "positional", required: true, description: "Config key to unset" },
+        silent: {
+          type: "boolean",
+          description: "Suppress the post-write config dump on stdout.",
+          default: false,
+        },
+        layer: {
+          type: "string",
+          description: "Config layer to write to. Currently only `user` is supported.",
+          default: "user",
+        },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const updated = unsetConfigValue(loadUserConfig(), args.key);
+          if (args.layer && args.layer !== "user") {
+            throw new UsageError(
+              `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+              "INVALID_FLAG_VALUE",
+            );
+          }
+          const updated = unsetConfigValue(loadConfig(), args.key);
           saveConfig(updated);
-          output("config", listConfig(updated));
+          if (!args.silent) {
+            output("config", listConfig(updated));
+          }
         });
       },
     }),

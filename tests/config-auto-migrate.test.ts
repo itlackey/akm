@@ -22,6 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { migrateConfigFile, runConfigMigrate } from "../src/cli/config-migrate";
+import { runConfigValidate } from "../src/cli/config-validate";
 import { loadUserConfig, resetConfigCache, saveConfig } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
 
@@ -347,6 +348,72 @@ describe("config write lock (WS-3)", () => {
 
     // Lock sentinel must be cleaned up after write
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
+
+// ── #456: `akm config validate` end-to-end ──────────────────────────────────
+
+describe("runConfigValidate (#456)", () => {
+  test("succeeds quietly for a canonical 0.8.0 config", async () => {
+    writeConfig({ configVersion: "0.8.0", stashDir: "/x", semanticSearchMode: "auto" });
+    const logged: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+    try {
+      await runConfigValidate();
+    } finally {
+      console.log = origLog;
+    }
+    expect(logged.join("\n")).toContain("All checks passed");
+  });
+
+  test("throws ConfigError listing schema issues for a structurally invalid config", async () => {
+    // semanticSearchMode must be one of the enum values; "garbage" is invalid.
+    writeConfig({ configVersion: "0.8.0", semanticSearchMode: "garbage" });
+    await expect(runConfigValidate()).rejects.toThrow(ConfigError);
+  });
+
+  test("no-ops cleanly when the config file is absent (cold-start)", async () => {
+    const logged: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+    try {
+      await runConfigValidate();
+    } finally {
+      console.log = origLog;
+    }
+    expect(logged.join("\n")).toContain("nothing to validate");
+  });
+});
+
+// ── #459: backup retention prunes old config snapshots ──────────────────────
+
+describe("config backup retention (#459)", () => {
+  test("saveConfig keeps only the most-recent 5 timestamped backups", () => {
+    writeConfig({ configVersion: "0.8.0", stashDir: "/initial" });
+    resetConfigCache();
+    // 8 saves → 8 timestamped backups would accumulate without retention;
+    // prune is supposed to cap at 5.
+    for (let i = 0; i < 8; i++) {
+      saveConfig({
+        configVersion: "0.8.0",
+        semanticSearchMode: "auto",
+        stashDir: `/iter-${i}`,
+      });
+      resetConfigCache();
+      // Tiny sleep to ensure each timestamp string is unique.
+      const deadline = Date.now() + 5;
+      while (Date.now() < deadline) {
+        /* spin */
+      }
+    }
+    const backupDir = path.join(testCacheHome, "akm", "config-backups");
+    const timestamped = fs
+      .readdirSync(backupDir)
+      .filter((n) => n.startsWith("config-") && n.endsWith(".json") && n !== "config.latest.json");
+    expect(timestamped.length).toBeLessThanOrEqual(5);
+    // The pointer file is always present.
+    expect(fs.existsSync(path.join(backupDir, "config.latest.json"))).toBe(true);
   });
 });
 

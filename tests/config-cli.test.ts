@@ -292,3 +292,112 @@ describe("config CLI helpers", () => {
     expect(() => parseConfigValue("semanticSearchMode", "yes")).toThrow("Invalid value for semanticSearchMode");
   });
 });
+
+// ── #454: apiKey rejection at set time ──────────────────────────────────────
+
+describe("apiKey rejection (#454)", () => {
+  test("setConfigValue rejects llm.apiKey and points at AKM_LLM_API_KEY", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    expect(() => setConfigValue(base, "llm.apiKey", "sk-test")).toThrow(/AKM_LLM_API_KEY/);
+  });
+
+  test("setConfigValue rejects embedding.apiKey and points at AKM_EMBED_API_KEY", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    expect(() => setConfigValue(base, "embedding.apiKey", "sk-test")).toThrow(/AKM_EMBED_API_KEY/);
+  });
+
+  test("setConfigValue rejects profiles.llm.<name>.apiKey with per-profile env hint", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    expect(() => setConfigValue(base, "profiles.llm.local.apiKey", "sk-test")).toThrow(/AKM_PROFILE_LOCAL_API_KEY/);
+  });
+});
+
+// ── #455: every nested schema key is settable ───────────────────────────────
+
+describe("nested schema keys are all settable via zod walker (#455)", () => {
+  test("defaults.agent / defaults.improve are settable", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const withAgent = setConfigValue(base, "defaults.agent", "claude");
+    expect(withAgent.defaults?.agent).toBe("claude");
+    const withImprove = setConfigValue(base, "defaults.improve", "fast");
+    expect(withImprove.defaults?.improve).toBe("fast");
+  });
+
+  test("search.minScore and search.curateRerank.enabled are settable", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const withMinScore = setConfigValue(base, "search.minScore", "0.42");
+    expect(withMinScore.search?.minScore).toBe(0.42);
+    const withRerank = setConfigValue(base, "search.curateRerank.enabled", "true");
+    expect(withRerank.search?.curateRerank?.enabled).toBe(true);
+  });
+
+  test("feedback.requireReason / archiveRetentionDays / improve.eventRetentionDays settable", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const a = setConfigValue(base, "feedback.requireReason", "false");
+    expect(a.feedback?.requireReason).toBe(false);
+    const b = setConfigValue(base, "archiveRetentionDays", "90");
+    expect(b.archiveRetentionDays).toBe(90);
+    const c = setConfigValue(base, "improve.eventRetentionDays", "180");
+    expect(c.improve?.eventRetentionDays).toBe(180);
+  });
+
+  test("llm.temperature / llm.timeoutMs / llm.maxTokens settable via the legacy llm.* alias", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const c1 = setConfigValue(base, "llm.temperature", "0.7");
+    expect(c1.profiles?.llm?.default?.temperature).toBe(0.7);
+    const c2 = setConfigValue(base, "llm.timeoutMs", "30000");
+    expect(c2.profiles?.llm?.default?.timeoutMs).toBe(30000);
+  });
+});
+
+// ── #460: unknown-key hint references current schema (no legacy `agent`) ────
+
+describe("unknown-key hint stays in sync with schema (#460)", () => {
+  test("unknown top-level key error lists schema-derived keys and does not mention legacy 'agent'", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    try {
+      setConfigValue(base, "totally.unknown.path", "x");
+      throw new Error("should have thrown");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // The new schema-driven hint must include `defaults` and `profiles` and
+      // MUST NOT list the removed top-level `agent` as a valid key.
+      // Hint may be on .hint() if it's a UsageError; concatenate everything.
+      const combined = `${message} ${(err as { hint?: () => string }).hint?.() ?? ""}`;
+      expect(combined).toContain("defaults");
+      expect(combined).toContain("profiles");
+      // The removed legacy top-level `agent` key must NOT appear as a
+      // standalone valid key in the hint. Word-boundary regex avoids matching
+      // `agent.default` / `agents` substrings that legitimately appear.
+      expect(combined).not.toMatch(/\bagent\b(?!s?\.|s)/);
+    }
+  });
+});
+
+// ── #462: registries/sources reject unknown fields at set time ──────────────
+
+describe("registries/sources reject unknown fields at set time (#462)", () => {
+  test("set sources rejects an unknown field on a source entry", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    expect(() =>
+      setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git","secret":"oops"}]'),
+    ).toThrow(/Unrecognized key/);
+  });
+
+  test("set registries rejects an unknown field on a registry entry", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    expect(() =>
+      setConfigValue(base, "registries", '[{"name":"x","url":"https://example.com/r.json","secret":"oops"}]'),
+    ).toThrow(/Unrecognized key/);
+  });
+});
+
+// ── #464.b: semanticSearchMode can be unset ─────────────────────────────────
+
+describe("semanticSearchMode is unsettable (#464.b)", () => {
+  test("unsetConfigValue removes semanticSearchMode entirely (falls back to DEFAULT_CONFIG at load)", () => {
+    const base: AkmConfig = { semanticSearchMode: "off" };
+    const cleared = unsetConfigValue(base, "semanticSearchMode");
+    expect(cleared.semanticSearchMode).toBeUndefined();
+  });
+});
