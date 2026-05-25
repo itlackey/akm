@@ -49,6 +49,31 @@ export interface DerivedMemoryDraft {
 }
 
 /**
+ * Strict JSON Schema for the derived-memory payload. Sent to providers that
+ * opt in via `LlmConnectionConfig.supportsJsonSchema = true`; the client
+ * silently drops the schema for providers that don't.
+ *
+ * Extends the responseSchema lift (PR 1, asset-writers-investigation §5) to
+ * the memory-inference path. Mirrors the validation gate below
+ * (title/description/content + non-empty tags/searchHints) so a
+ * schema-compliant response is guaranteed to pass the downstream check
+ * — no more "incomplete derived memory payload from LLM; skipping memory"
+ * for shape-only failures.
+ */
+const DERIVED_MEMORY_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string", minLength: 1 },
+    description: { type: "string", minLength: 1 },
+    content: { type: "string", minLength: 1 },
+    tags: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
+    searchHints: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 6 },
+  },
+  required: ["title", "description", "content", "tags", "searchHints"],
+  additionalProperties: false,
+} as const;
+
+/**
  * Compress a single memory body into one derived memory via the configured LLM.
  *
  * Returns `undefined` on any failure (timeout, invalid JSON, empty response).
@@ -85,6 +110,7 @@ export async function compressMemoryToDerivedMemory(
             temperature: 0.1,
             timeoutMs: llmConfig.timeoutMs,
             signal,
+            responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
           },
         );
         if (!raw) return undefined;
