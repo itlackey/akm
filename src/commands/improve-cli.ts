@@ -1,0 +1,216 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import path from "node:path";
+import { defineCommand } from "citty";
+import { getStringArg, parseAutoAcceptFlag, parseNonNegativeIntFlag, parsePositiveIntFlag } from "../cli/parse-args";
+import { output, runWithJsonErrors } from "../cli/shared";
+import { loadConfig } from "../core/config";
+import { UsageError } from "../core/errors";
+import { getCacheDir } from "../core/paths";
+import { clearLogFile, setLogFile } from "../core/warn";
+import { resolveSourceEntries } from "../indexer/search-source";
+import { getHyphenatedArg, getHyphenatedBoolean, parseFlagValue } from "../output/context";
+import { akmImprove } from "./improve";
+import { buildImproveRunId, relativeImproveResultPath, writeImproveResultFile } from "./improve-result-file";
+
+export const improveCommand = defineCommand({
+  meta: {
+    name: "improve",
+    description:
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true",
+  },
+  args: {
+    scope: {
+      type: "positional",
+      description: "Optional asset type or asset ref to improve",
+      required: false,
+    },
+    task: { type: "string", description: "Add extra guidance for this improvement pass" },
+    "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
+    target: { type: "string", description: "Override the write target for accepted proposals" },
+    "auto-accept": {
+      type: "string",
+      description:
+        "Auto-accept proposals at or above this confidence threshold (0-100). Default: disabled. Pass a value 0-100 to enable. 'safe' is an alias for 90. Pass 'false' to be explicit.",
+    },
+    limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
+    "timeout-ms": {
+      type: "string",
+      description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
+    },
+    "ignore-cooldown": {
+      type: "boolean",
+      description:
+        "Ignore all cooldown periods (equivalent to --reflect-cooldown-days 0 --distill-cooldown-days 0 --consolidate-cooldown-days 0)",
+      default: false,
+    },
+    "reflect-cooldown-days": {
+      type: "string",
+      description:
+        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be configured via profiles.improve.<name>.processes.reflect.cooldownByType. Set 0 to disable.",
+    },
+    "distill-cooldown-days": {
+      type: "string",
+      description: "Override distill cooldown for this run only (default: 1, 0 to disable)",
+    },
+    "consolidate-cooldown-days": {
+      type: "string",
+      description: "Override consolidate cooldown for this run only (default: 14, 0 to disable)",
+    },
+    "consolidate-recovery": {
+      type: "string",
+      description:
+        "How to handle stale/incomplete consolidation journals: abort (default) or clean (remove stale journal artifacts)",
+    },
+    "require-feedback-signal": {
+      type: "boolean",
+      description: "Only process assets with recent feedback signals (disables retrieval fallback)",
+      default: false,
+    },
+    "min-retrieval-count": {
+      type: "string",
+      description:
+        "Minimum retrieval count for zero-feedback fallback eligibility (default: 1, set 0 to include all assets regardless of retrieval history)",
+    },
+    "json-to-stdout": {
+      type: "boolean",
+      description:
+        "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full result is recorded in the improve_runs table of state.db and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve --json-to-stdout | jq`.)",
+      default: false,
+    },
+    profile: {
+      type: "string",
+      description:
+        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus). Controls which sub-processes run and which asset types are processed.",
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const formatFlagValue = parseFlagValue(process.argv, "--format");
+      if (formatFlagValue !== undefined) {
+        throw new UsageError(
+          `akm improve does not accept --format. That flag controls output formatting for other commands (search, show, etc.).\n` +
+            `Did you mean: akm improve (no --format flag)?`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const jsonToStdout = getHyphenatedBoolean(args, "json-to-stdout");
+      const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
+      const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
+      const targetArg = getStringArg(args, "target");
+      const taskArg = getStringArg(args, "task");
+      const dryRun = getHyphenatedBoolean(args, "dry-run");
+      const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+      const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");
+      const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
+      const reflectCooldownDays = ignoreCooldown
+        ? 0
+        : parseNonNegativeIntFlag(reflectCooldownRaw, "--reflect-cooldown-days");
+      const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
+      const distillCooldownDays = ignoreCooldown
+        ? 0
+        : parseNonNegativeIntFlag(distillCooldownRaw, "--distill-cooldown-days");
+      const consolidateCooldownRaw = getHyphenatedArg<string>(args, "consolidate-cooldown-days");
+      const consolidateCooldownDays = ignoreCooldown
+        ? 0
+        : parseNonNegativeIntFlag(consolidateCooldownRaw, "--consolidate-cooldown-days");
+      const consolidateRecoveryRaw = getHyphenatedArg<string>(args, "consolidate-recovery");
+      const consolidateRecovery =
+        consolidateRecoveryRaw === undefined
+          ? undefined
+          : (consolidateRecoveryRaw.trim().toLowerCase() as "abort" | "clean" | string);
+      if (consolidateRecovery !== undefined && consolidateRecovery !== "abort" && consolidateRecovery !== "clean") {
+        throw new UsageError(
+          `Invalid --consolidate-recovery value: "${consolidateRecoveryRaw}". Must be one of: abort, clean.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
+      const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
+      const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
+      const profileArg = getStringArg(args, "profile");
+
+      const improveLogFile = path.join(
+        getCacheDir(),
+        "logs",
+        "improve",
+        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+      );
+      setLogFile(improveLogFile);
+      const startedAtMs = Date.now();
+      let improveResult: Awaited<ReturnType<typeof akmImprove>>;
+      try {
+        improveResult = await akmImprove({
+          scope: getStringArg(args, "scope"),
+          task: taskArg,
+          dryRun,
+          target: targetArg,
+          autoAccept,
+          ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
+          ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
+          ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
+          ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
+          ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
+          ...(profileArg !== undefined ? { profile: profileArg } : {}),
+          consolidateOptions: {
+            target: targetArg,
+            dryRun,
+            autoAccept,
+            task: taskArg,
+            ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
+          },
+        });
+      } finally {
+        clearLogFile();
+      }
+      const durationMs = Date.now() - startedAtMs;
+
+      if (jsonToStdout) {
+        // Legacy / escape-hatch mode: full JSON on stdout, no file write.
+        // Kept for scripts/agents that already pipe to jq.
+        output("improve", improveResult);
+        process.exit(0);
+      }
+
+      // Default mode (0.8.0+): persist the full result as a row in the
+      // `improve_runs` table of state.db (migration 003) and emit NOTHING
+      // on stdout. The verbose JSON would otherwise scroll earlier progress
+      // logs out of the terminal buffer. The existing `[improve] ...`
+      // progress log lines on stderr remain the canonical console UX —
+      // do NOT add any new console output here.
+      //
+      // Pre-0.8.0 wrote `<stash>/.akm/runs/<run-id>/improve-result.json`;
+      // those files are no longer authored. Query recent runs with:
+      //   sqlite3 "$AKM_DATA_DIR/state.db" \
+      //     "SELECT id, started_at, ok, dry_run FROM improve_runs \
+      //      ORDER BY started_at DESC LIMIT 10"
+      const runId = buildImproveRunId();
+      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      const resultRef = relativeImproveResultPath(runId);
+      if (primaryStashDir) {
+        try {
+          writeImproveResultFile(primaryStashDir, runId, improveResult);
+        } catch (err) {
+          // Stderr warning on the failure path is preferable to crashing
+          // the run after all the work has completed.
+          process.stderr.write(
+            `warning: failed to record improve run ${resultRef}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      } else {
+        process.stderr.write(
+          `warning: no writable stash directory resolved; improve result not persisted to state.db (use --json-to-stdout to capture)\n`,
+        );
+      }
+
+      // durationMs reserved for future use (no console emission today).
+      void durationMs;
+      process.exit(0);
+    });
+  },
+});
