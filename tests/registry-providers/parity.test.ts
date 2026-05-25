@@ -16,6 +16,7 @@ import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import type { ParsedGithubRef } from "../../src/registry/types";
+import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration of every built-in provider
 import "../../src/registry/providers/index";
@@ -77,14 +78,11 @@ function serveJson(body: unknown): { url: string; close: () => void } {
   };
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-parity-cache-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-parity-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-parity-state-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 });
 
 afterEach(() => {
@@ -96,22 +94,8 @@ afterEach(() => {
     }
   }
   servers.length = 0;
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

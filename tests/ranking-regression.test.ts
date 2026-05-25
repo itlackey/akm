@@ -19,6 +19,7 @@ import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 import { loadFixtureStash } from "./fixtures/stashes/load";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
@@ -40,38 +41,14 @@ function mergeStashHits(
 let FIXTURE_STASH: string;
 let fixtureCleanup: (() => void) | undefined;
 
-// ── Temp directory tracking ─────────────────────────────────────────────────
-
-const createdTmpDirs: string[] = [];
-
-function createTmpDir(prefix = "akm-ranking-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
-}
-
 // ── Environment isolation ───────────────────────────────────────────────────
 
-let originalXdgCacheHome: string | undefined;
-let originalXdgConfigHome: string | undefined;
-let originalAkmDataDir: string | undefined;
-let originalAkmStateDir: string | undefined;
-let originalAkmStashDir: string | undefined;
-let testCacheDir: string;
-let testConfigDir: string;
-let testDataDir: string;
-let testStateDir: string;
+let envCleanup: Cleanup = () => {};
 
 beforeAll(async () => {
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  originalAkmDataDir = process.env.AKM_DATA_DIR;
-  originalAkmStateDir = process.env.AKM_STATE_DIR;
-  originalAkmStashDir = process.env.AKM_STASH_DIR;
-  testCacheDir = createTmpDir("akm-ranking-cache-");
-  testConfigDir = createTmpDir("akm-ranking-config-");
-  testDataDir = createTmpDir("akm-ranking-data-");
-  testStateDir = createTmpDir("akm-ranking-state-");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
 
   // Materialise the shared ranking-baseline fixture into a tmp dir.
   // The suite indexes it in-process against isolated XDG dirs so the
@@ -81,12 +58,6 @@ beforeAll(async () => {
   FIXTURE_STASH = loaded.stashDir;
   fixtureCleanup = loaded.cleanup;
 
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.AKM_DATA_DIR = testDataDir;
-  // Pair AKM_STASH_DIR with AKM_STATE_DIR so the test-isolation guard in
-  // src/core/paths.ts (getStateDir) stays inert.
-  process.env.AKM_STATE_DIR = testStateDir;
   process.env.AKM_STASH_DIR = FIXTURE_STASH;
 
   saveConfig({
@@ -99,22 +70,11 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalAkmDataDir === undefined) delete process.env.AKM_DATA_DIR;
-  else process.env.AKM_DATA_DIR = originalAkmDataDir;
-  if (originalAkmStateDir === undefined) delete process.env.AKM_STATE_DIR;
-  else process.env.AKM_STATE_DIR = originalAkmStateDir;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  envCleanup();
+  envCleanup = () => {};
+  if (process.env.AKM_STASH_DIR === FIXTURE_STASH) delete process.env.AKM_STASH_DIR;
 
   fixtureCleanup?.();
-
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

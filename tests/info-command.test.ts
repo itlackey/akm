@@ -14,6 +14,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -33,28 +34,18 @@ afterAll(() => {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const savedEnv: Record<string, string | undefined> = {};
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  savedEnv.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
-  savedEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
-  savedEnv.XDG_DATA_HOME = process.env.XDG_DATA_HOME;
-  savedEnv.XDG_STATE_HOME = process.env.XDG_STATE_HOME;
-  savedEnv.AKM_STASH_DIR = process.env.AKM_STASH_DIR;
-  process.env.XDG_CACHE_HOME = tmpDir("cache");
-  process.env.XDG_CONFIG_HOME = tmpDir("config");
-  process.env.XDG_DATA_HOME = tmpDir("data");
-  process.env.XDG_STATE_HOME = tmpDir("state");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  for (const [key, val] of Object.entries(savedEnv)) {
-    if (val === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = val;
-    }
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -79,9 +70,6 @@ function makeEntry(type: string, name: string): StashEntry {
 
 describe("assembleInfo", () => {
   test("returns a version string", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(typeof info.version).toBe("string");
@@ -89,9 +77,6 @@ describe("assembleInfo", () => {
   });
 
   test("returns assetTypes array with built-in types", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(Array.isArray(info.assetTypes)).toBe(true);
@@ -104,9 +89,6 @@ describe("assembleInfo", () => {
   });
 
   test("returns searchModes array", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(Array.isArray(info.searchModes)).toBe(true);
@@ -115,9 +97,6 @@ describe("assembleInfo", () => {
   });
 
   test("works without an index (entryCount: 0)", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(info.indexStats.entryCount).toBe(0);
@@ -125,9 +104,6 @@ describe("assembleInfo", () => {
   });
 
   test("returns registries from config", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(Array.isArray(info.registries)).toBe(true);
@@ -139,7 +115,6 @@ describe("assembleInfo", () => {
 
   test("includes indexStats when index exists with entries", () => {
     const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
 
     // Create an index with some entries
     const dbPath = path.join(tmpDir("db"), "test.db");
@@ -159,7 +134,6 @@ describe("assembleInfo", () => {
 
   test("does not downgrade embedding metadata when reading info", () => {
     const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
 
     const dbPath = path.join(tmpDir("db"), "test.db");
     let db = openDatabase(dbPath, { embeddingDim: 4 });
@@ -191,18 +165,12 @@ describe("assembleInfo", () => {
   });
 
   test("returns sourceProviders from config", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(Array.isArray(info.sourceProviders)).toBe(true);
   });
 
   test("output is valid JSON-serializable", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
     const json = JSON.stringify(info);
     const parsed = JSON.parse(json);
@@ -214,9 +182,6 @@ describe("assembleInfo", () => {
   });
 
   test("reports pending semantic search status by default", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     const info = assembleInfo();
 
     expect(info.searchModes).toContain("fts");
@@ -227,9 +192,6 @@ describe("assembleInfo", () => {
   });
 
   test("does not leak apiKey from registry options", () => {
-    const stashDir = makeStashDir();
-    process.env.AKM_STASH_DIR = stashDir;
-
     // Write a config with a registry that has an apiKey in its options
     const config = loadConfig();
     config.registries = [

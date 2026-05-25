@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../src/commands/registry-search";
 import { searchRegistry } from "../src/commands/registry-search";
+import { type Cleanup, sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -111,41 +112,20 @@ afterAll(() => {
   }
 });
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
+let envCleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  // Isolate the in-process state. Note: XDG_CACHE_HOME alone is NOT enough —
-  // the registry_index_cache table lives in index.db under XDG_DATA_HOME,
-  // and loadIndex() calls openDatabase() with no args. Without XDG_DATA_HOME
-  // override, every registry-search run writes localhost test URLs into the
-  // user's real ~/.local/share/akm/index.db (24MB+ pollution observed) and
-  // concurrent Promise.allSettled hits SQLite lock contention, producing
-  // non-deterministic 0–5 failures per run.
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-search-cache-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-search-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-search-state-");
+  // Isolate cache per test
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
   delete process.env.AKM_REGISTRY_URL;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
   if (originalRegistryUrl === undefined) {
     delete process.env.AKM_REGISTRY_URL;
   } else {

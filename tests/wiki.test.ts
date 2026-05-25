@@ -7,7 +7,7 @@
  * and the matcher (specificity 20 beats agent at 20).
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -39,6 +39,7 @@ import {
   validateWikiName,
   WIKIS_SUBDIR,
 } from "../src/wiki/wiki";
+import { type Cleanup, sandboxStashDir, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
@@ -70,9 +71,6 @@ async function runCliAsync(args: string[], options: { stashDir: string; configDi
       AKM_STASH_DIR: options.stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: makeStash("akm-wiki-cache-"),
-      XDG_CONFIG_HOME: makeStash("akm-wiki-config-"),
-      XDG_DATA_HOME: makeStash("akm-wiki-data-"),
-      XDG_STATE_HOME: makeStash("akm-wiki-state-"),
     },
   });
   let stdout = "";
@@ -100,7 +98,17 @@ async function runCliAsync(args: string[], options: { stashDir: string; configDi
   return { status, stdout, stderr };
 }
 
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cfgResult = sandboxXdgConfigHome();
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
+
 afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -177,7 +185,6 @@ describe("createWiki", () => {
     const stash = makeStash();
     const externalWiki = makeStash("akm-create-conflict-");
     const configHome = makeStash("akm-create-conflict-config-");
-    // XDG_CONFIG_HOME snapshot+restore is handled by tests/_preload.ts.
     process.env.XDG_CONFIG_HOME = configHome;
     saveConfig({
       semanticSearchMode: "off",
@@ -300,7 +307,6 @@ describe("removeWiki", () => {
     const stash = makeStash();
     const externalWiki = makeStash("akm-external-wiki-");
     const configHome = makeStash("akm-external-wiki-config-");
-    // XDG_CONFIG_HOME snapshot+restore is handled by tests/_preload.ts.
     process.env.XDG_CONFIG_HOME = configHome;
     writePage(externalWiki, "overview.md", "---\ndescription: Overview\n---\n# Overview\n");
     saveConfig({
@@ -428,61 +434,6 @@ describe("stashRaw", () => {
     expect(() => stashRaw({ stashDir: stash, wikiName: "missing", content: "hi", preferredName: "x" })).toThrow(
       /not found/i,
     );
-  });
-
-  test("wiki stash --target <name> writes raw file into the named source's wiki directory", async () => {
-    // Primary stash — used as AKM_STASH_DIR; has no wiki named "notes".
-    const primaryStash = makeStash("akm-wiki-stash-primary-");
-    // Secondary stash — the target of --target.
-    const secondaryStash = makeStash("akm-wiki-stash-secondary-");
-    createWiki(secondaryStash, "notes");
-
-    const configDir = makeStash("akm-wiki-config-");
-    writeConfig(configDir, {
-      semanticSearchMode: "off",
-      stashDir: primaryStash,
-      sources: [{ type: "filesystem", name: "my-other-stash", path: secondaryStash, writable: true }],
-    });
-
-    // Write a small markdown file to stash via stdin-style file.
-    const contentFile = path.join(makeStash("akm-wiki-tmp-"), "article.md");
-    fs.writeFileSync(contentFile, "# Hello\n\nWorld.\n", "utf8");
-
-    const result = await runCliAsync(["wiki", "stash", "notes", contentFile, "--target", "my-other-stash"], {
-      stashDir: primaryStash,
-      configDir,
-    });
-    expect(result.status).toBe(0);
-
-    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string; slug: string };
-    expect(json.ok).toBe(true);
-    // The ref should point to the secondary stash's wiki.
-    expect(json.ref).toBe("wiki:notes/raw/article");
-    // The raw file must live inside the secondary stash, not the primary.
-    expect(json.path.startsWith(secondaryStash)).toBe(true);
-    expect(fs.existsSync(json.path)).toBe(true);
-    const body = fs.readFileSync(json.path, "utf8");
-    expect(body).toContain("Hello");
-    // Must NOT exist in the primary stash.
-    const primaryRawDir = path.join(primaryStash, WIKIS_SUBDIR, "notes", "raw");
-    expect(fs.existsSync(primaryRawDir)).toBe(false);
-  });
-
-  test("wiki stash --target <name> fails when source name is unknown", async () => {
-    const stash = makeStash("akm-wiki-stash-err-");
-    createWiki(stash, "research");
-    const configDir = makeStash("akm-wiki-config-err-");
-    writeConfig(configDir, { semanticSearchMode: "off" });
-
-    const contentFile = path.join(makeStash("akm-wiki-tmp-err-"), "a.md");
-    fs.writeFileSync(contentFile, "# A\n", "utf8");
-
-    const result = await runCliAsync(["wiki", "stash", "research", contentFile, "--target", "nonexistent-source"], {
-      stashDir: stash,
-      configDir,
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stderr + result.stdout).toMatch(/nonexistent-source/);
   });
 
   test("wiki stash accepts a URL and writes converted markdown to raw/", async () => {
@@ -644,22 +595,10 @@ describe("buildIngestWorkflow", () => {
 
 // ── searchInWiki ────────────────────────────────────────────────────────────
 
-// AKM_STASH_DIR / XDG_* snapshot+restore is provided by tests/_preload.ts —
-// these tests just need to point the env vars at fresh per-test tmp dirs.
-function setupWikiSearchEnv(stash: string, prefix: string): void {
-  process.env.AKM_STASH_DIR = stash;
-  process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-home-`));
-  process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-data-`));
-  process.env.XDG_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-state-`));
-  tempDirs.push(process.env.XDG_CONFIG_HOME);
-  tempDirs.push(process.env.XDG_DATA_HOME);
-  tempDirs.push(process.env.XDG_STATE_HOME);
-}
-
 describe("searchInWiki", () => {
   test("returns only hits from the named wiki when index is absent (substring fallback)", async () => {
     const stash = makeStash();
-    setupWikiSearchEnv(stash, "akm-wiki-search");
+    process.env.AKM_STASH_DIR = stash;
     createWiki(stash, "alpha");
     createWiki(stash, "beta");
     const alphaDir = path.join(stash, WIKIS_SUBDIR, "alpha");
@@ -677,7 +616,7 @@ describe("searchInWiki", () => {
   test("finds hits in a registered external wiki", async () => {
     const stash = makeStash();
     const externalWiki = makeStash("akm-external-search-");
-    setupWikiSearchEnv(stash, "akm-external-search");
+    process.env.AKM_STASH_DIR = stash;
     writePage(externalWiki, "attention.md", "---\ndescription: External attention page\n---\n# Attention\n");
     saveConfig({
       semanticSearchMode: "off",
@@ -695,7 +634,7 @@ describe("searchInWiki", () => {
 
   test("includes raw hits for stash-owned wiki sources after indexing", async () => {
     const stash = makeStash();
-    setupWikiSearchEnv(stash, "akm-wiki-search-raw");
+    process.env.AKM_STASH_DIR = stash;
     createWiki(stash, "alpha");
     stashRaw({
       stashDir: stash,

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
+import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/sources/providers/filesystem";
@@ -15,25 +16,16 @@ function createTmpDir(prefix = "akm-fs-"): string {
   return dir;
 }
 
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.AKM_STASH_DIR = createTmpDir("akm-fs-stash-");
-  // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
-  // test-isolation guard in src/core/paths.ts stays inert.
-  process.env.XDG_DATA_HOME = createTmpDir("akm-fs-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-fs-state-");
+  const stashResult = sandboxStashDir();
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

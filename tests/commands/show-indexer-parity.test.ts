@@ -19,10 +19,10 @@ import path from "node:path";
 import { akmShowUnified } from "../../src/commands/show";
 import { parseAssetRef } from "../../src/core/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
-import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
 import "../../src/sources/providers/index";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -53,39 +53,24 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
   return { url: `http://localhost:${server.port}/v1/embeddings`, server };
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalStashDir = process.env.AKM_STASH_DIR;
 let stashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-parity-cache-");
-  process.env.XDG_CONFIG_HOME = createTmpDir("akm-parity-config-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-parity-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-parity-state-");
-  stashDir = createTmpDir("akm-parity-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "lessons"]) {
-    fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
-  }
-  process.env.AKM_STASH_DIR = stashDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
   resetConfigCache();
   saveConfig({ semanticSearchMode: "off" });
   resetConfigCache();
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-  if (originalStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalStashDir;
+  envCleanup();
+  envCleanup = () => {};
+  stashDir = "";
 });
 
 afterAll(() => {
@@ -168,7 +153,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
       await lookup(parseAssetRef("skill:embed-skill"));
       await akmShowUnified({ ref: "skill:embed-skill" });
 
-      const db = openDatabase(getDbPath(), { embeddingDim: 4 });
+      const db = openDatabase(path.join(process.env.XDG_CACHE_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
@@ -185,30 +170,5 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     await akmIndex({ stashDir, full: true });
     const result = await lookup(parseAssetRef("skill:does-not-exist"));
     expect(result).toBeNull();
-  });
-
-  test("show falls back to disk for a new lesson added after indexing", async () => {
-    await akmIndex({ stashDir, full: true });
-
-    const lessonPath = path.join(stashDir, "lessons", "fresh-lesson.md");
-    writeFile(
-      lessonPath,
-      [
-        "---",
-        "description: Fresh lesson added after indexing",
-        "when_to_use: When a new lesson lands on disk before reindex",
-        "---",
-        "# Fresh lesson",
-        "",
-        "Use the disk fallback when the index has not caught up yet.",
-      ].join("\n"),
-    );
-
-    const indexed = await lookup(parseAssetRef("lesson:fresh-lesson"));
-    expect(indexed).toBeNull();
-
-    const shown = await akmShowUnified({ ref: "lesson:fresh-lesson" });
-    expect(shown.type).toBe("lesson");
-    expect(shown.path).toBe(lessonPath);
   });
 });

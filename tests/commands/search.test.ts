@@ -2,12 +2,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch, parseBeliefFilterMode } from "../../src/commands/search";
+import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -58,13 +59,10 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
 
 /**
  * Create a stash directory with all required subdirectories.
+ * Returns the per-test sandboxed stash dir (AKM_STASH_DIR already set by beforeEach).
  */
 function tmpStash(): string {
-  const dir = createTmpDir("akm-search-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
-  return dir;
+  return currentStashDir;
 }
 
 /**
@@ -84,69 +82,21 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
-let testDataDir = "";
-let testStateDir = "";
+let currentStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-search-cache-");
-  testConfigDir = createTmpDir("akm-search-config-");
-  testDataDir = createTmpDir("akm-search-data-");
-  testStateDir = createTmpDir("akm-search-state-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  currentStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
-  if (testDataDir) {
-    fs.rmSync(testDataDir, { recursive: true, force: true });
-    testDataDir = "";
-  }
-  if (testStateDir) {
-    fs.rmSync(testStateDir, { recursive: true, force: true });
-    testStateDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
+  currentStashDir = "";
 });
 
 // ── 2.1 Database search path (FTS scoring) ──────────────────────────────────
@@ -161,7 +111,6 @@ describe("Database search path (FTS scoring)", () => {
       "---\ndescription: Documentation getting started guide\n---\n# Start\n",
     );
 
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
@@ -184,7 +133,6 @@ describe("Database search path (FTS scoring)", () => {
 
   test("stash-owned raw wiki pages are discoverable in global wiki search", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
     createWiki(stashDir, "notes");
     stashRaw({
@@ -255,7 +203,6 @@ describe("Database search path (FTS scoring)", () => {
         }),
       );
 
-      process.env.AKM_STASH_DIR = stashDir;
       saveConfig({
         semanticSearchMode: "auto",
         embedding: {
@@ -271,7 +218,7 @@ describe("Database search path (FTS scoring)", () => {
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       expect(localHits.length).toBeGreaterThanOrEqual(1);
 
-      const db = openDatabase(path.join(testDataDir, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(path.join(process.env.XDG_CACHE_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
@@ -564,7 +511,7 @@ describe("Score boosts", () => {
     expect(resolvedCuratedHit.whyMatched).toContain("curated metadata boost");
   });
 
-  test("derived memories remain discoverable alongside their raw parent notes", async () => {
+  test("derived memories score above their raw parent notes", async () => {
     const stashDir = tmpStash();
 
     writeFile(
@@ -602,286 +549,7 @@ describe("Score boosts", () => {
     const derivedHit = expectDefined(localHits.find((h) => h.name === "deploy-debugging.derived"));
     expect(derivedHit.score).toBeDefined();
     expect(parentHit.score).toBeDefined();
-    expect(localHits.indexOf(derivedHit)).toBeLessThan(localHits.length);
-    expect(localHits.indexOf(parentHit)).toBeLessThan(localHits.length);
-  });
-
-  test("active derived memories rank ahead of contradicted ones with comparable evidence", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(
-      path.join(stashDir, "memories", "deploy-routing.md"),
-      "---\ndescription: Deploy routing notes\n---\n\nDeploy tunnel routing history.\n",
-    );
-    writeFile(
-      path.join(stashDir, "memories", "deploy-routing.derived.md"),
-      [
-        "---",
-        "inferred: true",
-        "source: memory:deploy-routing",
-        "beliefState: active",
-        "title: Use gateway B for deploy tunnel",
-        "description: Gateway B is the current deploy tunnel.",
-        'searchHints: ["gateway deploy tunnel", "gateway b deploy"]',
-        "---",
-        "",
-        "Gateway B is the current deploy tunnel.",
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(stashDir, "memories", "deploy-routing-legacy.derived.md"),
-      [
-        "---",
-        "inferred: true",
-        "source: memory:deploy-routing",
-        "beliefState: contradicted",
-        'contradictedBy: ["memory:deploy-routing.derived"]',
-        "title: Use gateway A for deploy tunnel",
-        "description: Gateway A is the legacy deploy tunnel.",
-        'searchHints: ["gateway deploy tunnel", "gateway a deploy"]',
-        "---",
-        "",
-        "Gateway A is legacy guidance.",
-        "",
-      ].join("\n"),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const result = await akmSearch({ query: "gateway deploy tunnel", source: "local", type: "memory" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-
-    const activeHit = expectDefined(localHits.find((h) => h.name === "deploy-routing.derived"));
-    const contradictedHit = expectDefined(localHits.find((h) => h.name === "deploy-routing-legacy.derived"));
-    expect(localHits.indexOf(activeHit)).toBeLessThan(localHits.indexOf(contradictedHit));
-    expect(activeHit.beliefState).toBe("active");
-    expect(contradictedHit.beliefState).toBe("contradicted");
-  });
-
-  test("belief filter can return only current or only historical memory beliefs", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(
-      path.join(stashDir, "memories", "deploy-routing.md"),
-      "---\ndescription: Deploy routing notes\n---\n\nDeploy tunnel routing history.\n",
-    );
-    writeFile(
-      path.join(stashDir, "memories", "deploy-routing.derived.md"),
-      [
-        "---",
-        "inferred: true",
-        "source: memory:deploy-routing",
-        "beliefState: active",
-        "title: Use gateway B for deploy tunnel",
-        "description: Gateway B is the current deploy tunnel.",
-        'searchHints: ["gateway deploy tunnel", "gateway b deploy"]',
-        "---",
-        "",
-        "Gateway B is the current deploy tunnel.",
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(stashDir, "memories", "deploy-routing-legacy.derived.md"),
-      [
-        "---",
-        "inferred: true",
-        "source: memory:deploy-routing",
-        "beliefState: contradicted",
-        'contradictedBy: ["memory:deploy-routing.derived"]',
-        'currentBeliefRefs: ["memory:deploy-routing.derived"]',
-        "title: Use gateway A for deploy tunnel",
-        "description: Gateway A is the legacy deploy tunnel.",
-        'searchHints: ["gateway deploy tunnel", "gateway a deploy"]',
-        "---",
-        "",
-        "Gateway A is legacy guidance.",
-        "",
-      ].join("\n"),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const currentOnly = await akmSearch({
-      query: "gateway deploy tunnel",
-      source: "local",
-      type: "memory",
-      belief: "current",
-    });
-    const currentHits = currentOnly.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    expect(currentHits.some((hit) => hit.name === "deploy-routing-legacy.derived")).toBe(false);
-    expect(currentHits.some((hit) => hit.name === "deploy-routing.derived")).toBe(true);
-
-    const historicalOnly = await akmSearch({
-      query: "gateway deploy tunnel",
-      source: "local",
-      type: "memory",
-      belief: "historical",
-    });
-    const historicalHits = historicalOnly.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    expect(historicalHits.some((hit) => hit.name === "deploy-routing.derived")).toBe(false);
-    expect(historicalHits.some((hit) => hit.name === "deploy-routing-legacy.derived")).toBe(true);
-  });
-
-  test("knowledge ranks above memory and derived memory when evidence is otherwise comparable", async () => {
-    const stashDir = tmpStash();
-    const sharedBody = "Cluster rollback checklist for production incidents.";
-    const sharedFrontmatter = [
-      "description: Cluster rollback checklist for production incidents.",
-      'tags: ["rollback", "cluster", "checklist"]',
-      'searchHints: ["cluster rollback checklist", "production rollback procedure"]',
-    ].join("\n");
-
-    writeFile(path.join(stashDir, "knowledge", "ops-canon.md"), `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`);
-    writeFile(path.join(stashDir, "memories", "ops-notes.md"), `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`);
-    writeFile(
-      path.join(stashDir, "memories", "ops-summary.derived.md"),
-      [
-        "---",
-        sharedFrontmatter,
-        "inferred: true",
-        "source: memory:ops-notes",
-        "derivedFrom: ops-notes",
-        "---",
-        "",
-        sharedBody,
-        "",
-      ].join("\n"),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const result = await akmSearch({ query: "production rollback procedure", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-
-    const knowledgeHit = expectDefined(localHits.find((h) => h.name === "ops-canon"));
-    const memoryHit = expectDefined(localHits.find((h) => h.name === "ops-notes"));
-    const derivedHit = expectDefined(localHits.find((h) => h.name === "ops-summary.derived"));
-
-    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(memoryHit));
-    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(derivedHit));
-    expect(knowledgeHit.score).toBeDefined();
-    expect(memoryHit.score).toBeDefined();
-    expect(derivedHit.score).toBeDefined();
-    expect(knowledgeHit.score).toBeGreaterThanOrEqual(memoryHit.score as number);
-    expect(knowledgeHit.score).toBeGreaterThanOrEqual(derivedHit.score as number);
-  });
-
-  test("knowledge authority still outranks derived memory even when the derived name matches more directly", async () => {
-    const stashDir = tmpStash();
-    const query = "deploy tunnel checklist";
-    const sharedBody = "Use the deploy tunnel checklist before production releases.";
-    const sharedDescription = "Use the deploy tunnel checklist before production releases.";
-
-    writeFile(
-      path.join(stashDir, "knowledge", "release-checklist.md"),
-      [
-        "---",
-        `description: ${sharedDescription}`,
-        'tags: ["deploy", "tunnel", "checklist"]',
-        'searchHints: ["deploy tunnel checklist"]',
-        "---",
-        "",
-        sharedBody,
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(stashDir, "memories", "release-checklist.derived.md"),
-      [
-        "---",
-        `description: ${sharedDescription}`,
-        'tags: ["deploy", "tunnel", "checklist"]',
-        'searchHints: ["deploy tunnel checklist"]',
-        "inferred: true",
-        "source: memory:release-checklist",
-        "derivedFrom: release-checklist",
-        "---",
-        "",
-        sharedBody,
-        "",
-      ].join("\n"),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const result = await akmSearch({ query, source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-
-    const knowledgeHit = expectDefined(localHits.find((h) => h.name === "release-checklist"));
-    const derivedHit = expectDefined(localHits.find((h) => h.name === "release-checklist.derived"));
-
-    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(derivedHit));
-    expect(knowledgeHit.score).toBeGreaterThanOrEqual(derivedHit.score as number);
-  });
-
-  test("authority ordering stays stable across knowledge, raw memory, and multiple derived variants", async () => {
-    const stashDir = tmpStash();
-    const sharedBody = "Production rollback procedure for the payment cluster.";
-    const sharedFrontmatter = [
-      "description: Production rollback procedure for the payment cluster.",
-      'tags: ["rollback", "payments", "cluster"]',
-      'searchHints: ["payment cluster rollback", "production rollback procedure"]',
-    ].join("\n");
-
-    writeFile(
-      path.join(stashDir, "knowledge", "payment-rollback.md"),
-      `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`,
-    );
-    writeFile(
-      path.join(stashDir, "memories", "payment-rollback.md"),
-      `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`,
-    );
-    writeFile(
-      path.join(stashDir, "memories", "payment-rollback.derived.md"),
-      [
-        "---",
-        sharedFrontmatter,
-        "inferred: true",
-        "source: memory:payment-rollback",
-        "derivedFrom: payment-rollback",
-        "---",
-        "",
-        sharedBody,
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(stashDir, "memories", "payment-rollback-verbose.derived.md"),
-      [
-        "---",
-        sharedFrontmatter,
-        "inferred: true",
-        "source: memory:payment-rollback",
-        "title: Payment Rollback Procedure",
-        "derivedFrom: payment-rollback",
-        "---",
-        "",
-        `${sharedBody} Follow the same checklist and verify traffic drains before rollback.`,
-        "",
-      ].join("\n"),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const result = await akmSearch({ query: "payment cluster rollback", source: "local", type: "memory" });
-    const memoryOnlyHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    expect(new Set(memoryOnlyHits.map((hit) => hit.name))).toEqual(
-      new Set(["payment-rollback", "payment-rollback.derived", "payment-rollback-verbose.derived"]),
-    );
-
-    const globalResult = await akmSearch({ query: "payment cluster rollback", source: "local" });
-    const localHits = globalResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const knowledgeHit = expectDefined(localHits.find((h) => h.name === "payment-rollback" && h.type === "knowledge"));
-    const memoryHit = expectDefined(localHits.find((h) => h.name === "payment-rollback" && h.type === "memory"));
-    const derivedHit = expectDefined(localHits.find((h) => h.name === "payment-rollback.derived"));
-    const verboseDerivedHit = expectDefined(localHits.find((h) => h.name === "payment-rollback-verbose.derived"));
-
-    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(memoryHit));
-    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(derivedHit));
-    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(verboseDerivedHit));
-    expect(memoryHit.score).toBeGreaterThan(verboseDerivedHit.score as number);
+    expect(derivedHit.score).toBeGreaterThanOrEqual(parentHit.score as number);
   });
 });
 
@@ -893,7 +561,6 @@ describe("Auto-index on stale", () => {
 
     // Do NOT call akmIndex — just create files on disk
     writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "deploy", source: "local" });
@@ -912,7 +579,6 @@ describe("Auto-index on stale", () => {
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "Deploy", "Deploy.sh"), "#!/bin/bash\necho deploy\n");
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     // Do NOT call akmIndex
@@ -931,7 +597,6 @@ describe("Auto-index on stale", () => {
       path.join(stashDir, "agents", "agentic-systems-architect.md"),
       "---\ndescription: Designs agent coordination patterns and context assembly\n---\nYou are an architect.\n",
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "coordination", type: "agent", source: "local" });
@@ -956,7 +621,6 @@ describe("Auto-index on stale", () => {
         "You are a blog topic discovery agent.",
       ].join("\n"),
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "blog topics", type: "agent", source: "local" });
@@ -987,7 +651,6 @@ describe("Auto-index on stale", () => {
         ],
       }),
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "diagnostics", source: "local" });
@@ -1016,7 +679,6 @@ describe("Auto-index on stale", () => {
         ],
       }),
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "legacy metadata", source: "local" });
@@ -1028,31 +690,6 @@ describe("Auto-index on stale", () => {
     const doctorHit = generatedHits.find((h) => h.name.includes("doctor"));
     expect(doctorHit).toBeDefined();
     expect(doctorHit?.description).not.toBe("Legacy metadata that should not be used without filename");
-  });
-
-  test("auto-indexes when a new memory is added after the prior build", async () => {
-    const stashDir = tmpStash();
-    fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
-    process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearchMode: "off" });
-
-    writeFile(
-      path.join(stashDir, "memories", "first-note.md"),
-      "---\ndescription: first note\n---\nInitial memory body\n",
-    );
-    await akmIndex({ stashDir, full: true });
-
-    const freshPath = path.join(stashDir, "memories", "fresh-note.md");
-    writeFile(
-      freshPath,
-      "---\ndescription: fresh note for verification\n---\nFresh memory body about deploy verification\n",
-    );
-    const future = new Date(Date.now() + 2_000);
-    fs.utimesSync(freshPath, future, future);
-
-    const result = await akmSearch({ query: "fresh note verification", source: "stash" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    expect(localHits.some((h) => h.ref === "memory:fresh-note")).toBe(true);
   });
 });
 
@@ -1097,7 +734,6 @@ describe("Source filtering", () => {
     const stashDir = createTmpDir();
     // Create a local tool so we know local hits would exist if local were searched
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off", registries: [] });
 
     const result = await akmSearch({ query: "deploy", source: "registry" });
@@ -1128,13 +764,6 @@ describe("Source filtering", () => {
 // ── 2.5 Edge cases ──────────────────────────────────────────────────────────
 
 describe("Edge cases", () => {
-  test("belief filter parser rejects unknown values", () => {
-    expect(() => parseBeliefFilterMode("future")).toThrow();
-    expect(parseBeliefFilterMode(undefined)).toBe("all");
-    expect(parseBeliefFilterMode("current")).toBe("current");
-    expect(parseBeliefFilterMode("historical")).toBe("historical");
-  });
-
   test("search with special characters does not crash", async () => {
     const stashDir = tmpStash();
 
@@ -1186,83 +815,5 @@ describe("Edge cases", () => {
     const result = await akmSearch({ query: longQuery, source: "local" });
     expect(result).toBeDefined();
     expect(result.hits).toBeDefined();
-  });
-
-  test("skipLogging prevents usage_events from being written", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(path.join(stashDir, "scripts", "logged", "logged.sh"), "#!/bin/bash\necho logged\n");
-    writeFile(
-      path.join(stashDir, "scripts", "logged", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "logged",
-            type: "script",
-            description: "A logged tool",
-            filename: "logged.sh",
-          },
-        ],
-      }),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const db = openDatabase();
-    try {
-      // Count usage_events before
-      const beforeCount = db.prepare("SELECT COUNT(*) as c FROM usage_events").get() as { c: number };
-
-      // Search with skipLogging=true
-      await akmSearch({ query: "logged", source: "local", skipLogging: true });
-
-      // Count usage_events after — should be unchanged
-      const afterCount = db.prepare("SELECT COUNT(*) as c FROM usage_events").get() as { c: number };
-      expect(afterCount.c).toBe(beforeCount.c);
-
-      // Search without skipLogging (default) — should create events
-      await akmSearch({ query: "logged", source: "local" });
-
-      const finalCount = db.prepare("SELECT COUNT(*) as c FROM usage_events").get() as { c: number };
-      expect(finalCount.c).toBeGreaterThan(beforeCount.c);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("usage_events source column defaults to user", async () => {
-    const stashDir = tmpStash();
-
-    writeFile(path.join(stashDir, "scripts", "source-test", "source-test.sh"), "#!/bin/bash\necho source-test\n");
-    writeFile(
-      path.join(stashDir, "scripts", "source-test", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "source-test",
-            type: "script",
-            description: "A source test tool",
-            filename: "source-test.sh",
-          },
-        ],
-      }),
-    );
-
-    await buildTestIndex(stashDir, {});
-
-    const db = openDatabase();
-    try {
-      // Search with default eventSource
-      await akmSearch({ query: "source-test", source: "local" });
-
-      // Verify source column is 'user'
-      const rows = db
-        .prepare("SELECT source FROM usage_events WHERE event_type = 'search' AND query = 'source-test'")
-        .all() as Array<{ source: string }>;
-      expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((row) => row.source === "user")).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
   });
 });

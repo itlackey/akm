@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   type LockfileEntry,
@@ -9,23 +8,15 @@ import {
   upsertLockEntry,
   writeLockfile,
 } from "../src/integrations/lockfile";
+import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalAkmDataDir = process.env.AKM_DATA_DIR;
-const originalAkmConfigDir = process.env.AKM_CONFIG_DIR;
-
-let testDataDir = "";
 let testConfigDir = "";
-
-function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-lockfile-test-"));
-}
+let envCleanup: Cleanup = () => {};
 
 function getLockfilePath(): string {
-  return path.join(testDataDir, "akm", "akm.lock");
+  return path.join(testConfigDir, "akm", "akm.lock");
 }
 
 function writeRawLockfile(content: string): void {
@@ -44,45 +35,15 @@ function validEntry(overrides?: Partial<LockfileEntry>): LockfileEntry {
 }
 
 beforeEach(() => {
-  testDataDir = makeTmpDir();
-  testConfigDir = makeTmpDir();
-  // Isolate both $DATA (primary) and $CONFIG (migration fallback) to empty
-  // tmpdirs so tests never touch the real user installation.
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  delete process.env.AKM_DATA_DIR;
-  delete process.env.AKM_CONFIG_DIR;
+  const cfgResult = sandboxXdgConfigHome();
+  testConfigDir = cfgResult.dir;
+  envCleanup = cfgResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalAkmDataDir === undefined) {
-    delete process.env.AKM_DATA_DIR;
-  } else {
-    process.env.AKM_DATA_DIR = originalAkmDataDir;
-  }
-  if (originalAkmConfigDir === undefined) {
-    delete process.env.AKM_CONFIG_DIR;
-  } else {
-    process.env.AKM_CONFIG_DIR = originalAkmConfigDir;
-  }
-  if (testDataDir) {
-    fs.rmSync(testDataDir, { recursive: true, force: true });
-    testDataDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
+  testConfigDir = "";
 });
 
 // ── readLockfile ────────────────────────────────────────────────────────────

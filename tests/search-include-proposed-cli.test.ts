@@ -6,7 +6,7 @@
  *   - default search excludes the proposed entry,
  *   - `--include-proposed` retains it in the hits list.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,15 +14,9 @@ import path from "node:path";
 
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -46,8 +40,6 @@ function runCli(args: string[], stashDir: string): { stdout: string; stderr: str
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-      XDG_STATE_HOME: process.env.XDG_STATE_HOME,
     },
   });
   return {
@@ -57,17 +49,18 @@ function runCli(args: string[], stashDir: string): { stdout: string; stderr: str
   };
 }
 
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
+
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
+  envCleanup();
+  envCleanup = () => {};
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -76,10 +69,6 @@ afterEach(() => {
 describe("akm search --include-proposed (CLI)", () => {
   test("default excludes proposed entries; --include-proposed keeps them", async () => {
     const stash = makeTempDir("akm-search-proposed-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-search-proposed-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-search-proposed-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-search-proposed-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-search-proposed-state-");
     for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
       fs.mkdirSync(path.join(stash, sub), { recursive: true });
     }

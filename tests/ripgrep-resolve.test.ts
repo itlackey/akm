@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRgAvailable, resolveRg } from "../src/setup/ripgrep-resolve";
+import { type Cleanup, sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -20,9 +21,8 @@ afterAll(() => {
   }
 });
 
-// HOME / XDG_* are snapshotted and restored by tests/_preload.ts. PATH is
-// not part of the harness contract, so this file still owns its restore.
 const origPath = process.env.PATH;
+let envCleanup: Cleanup = () => {};
 
 afterEach(() => {
   if (origPath === undefined) {
@@ -30,13 +30,14 @@ afterEach(() => {
   } else {
     process.env.PATH = origPath;
   }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 /** Isolate cache so getBinDir() never finds a real rg binary. */
 function isolateCache(): void {
-  process.env.XDG_CACHE_HOME = makeTempDir();
-  process.env.XDG_DATA_HOME = makeTempDir();
-  process.env.XDG_STATE_HOME = makeTempDir();
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 }
 
 // ── resolveRg ───────────────────────────────────────────────────────────────

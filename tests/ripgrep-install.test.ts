@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type Cleanup, sandboxHome, sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 // We test the module by importing and mocking its dependencies.
 // Since ensureRg calls spawnSync and resolveRg, we mock at the module level.
@@ -50,7 +51,17 @@ function makeRipgrepTarball(): string {
   return tarballPath;
 }
 
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const homeResult = sandboxHome(cacheResult.cleanup);
+  envCleanup = homeResult.cleanup;
+});
+
 afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
   for (const dir of tmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -69,10 +80,8 @@ describe("ensureRg", () => {
 
     // We need to isolate PATH so only our binDir is searched
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
-    const origHome = process.env.HOME;
+
     process.env.PATH = "";
-    process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
       const { ensureRg } = await import("../src/setup/ripgrep-install");
@@ -81,10 +90,6 @@ describe("ensureRg", () => {
       expect(result.installed).toBe(false);
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
-      if (origHome === undefined) delete process.env.HOME;
-      else process.env.HOME = origHome;
     }
   });
 });
@@ -97,9 +102,8 @@ describe("platform detection", () => {
   test("current platform is recognized (does not throw unsupported)", async () => {
     const binDir = makeTmpDir();
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
+
     process.env.PATH = makeFailingCurlDir();
-    process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
       const { ensureRg } = await import("../src/setup/ripgrep-install");
@@ -120,8 +124,6 @@ describe("platform detection", () => {
       }
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
     }
   });
 });
@@ -137,9 +139,8 @@ describe("getRgVersion", () => {
     fs.chmodSync(rgPath, 0o755);
 
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
+
     process.env.PATH = "";
-    process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
       const { ensureRg } = await import("../src/setup/ripgrep-install");
@@ -148,8 +149,6 @@ describe("getRgVersion", () => {
       expect(result.installed).toBe(false);
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
     }
   });
 
@@ -160,9 +159,8 @@ describe("getRgVersion", () => {
     fs.chmodSync(rgPath, 0o755);
 
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
+
     process.env.PATH = "";
-    process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
       const { ensureRg } = await import("../src/setup/ripgrep-install");
@@ -170,8 +168,6 @@ describe("getRgVersion", () => {
       expect(result.version).toBe("unknown");
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
     }
   });
 });
@@ -186,9 +182,8 @@ describe("EnsureRgResult", () => {
     fs.chmodSync(rgPath, 0o755);
 
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
+
     process.env.PATH = "";
-    process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
       const { ensureRg } = await import("../src/setup/ripgrep-install");
@@ -198,8 +193,6 @@ describe("EnsureRgResult", () => {
       expect(typeof result.version).toBe("string");
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
     }
   });
 });
@@ -217,9 +210,8 @@ describe("download error handling", () => {
     fs.chmodSync(rgPath, 0o755);
 
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
+
     process.env.PATH = "";
-    process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
       const { ensureRg } = await import("../src/setup/ripgrep-install");
@@ -228,17 +220,13 @@ describe("download error handling", () => {
       expect(result.installed).toBe(false);
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
     }
   });
 
   test("ensureRg returns installed=true when it installs a new binary", async () => {
     const binDir = makeTmpDir();
     const origPath = process.env.PATH;
-    const origXdgCache = process.env.XDG_CACHE_HOME;
     const origFakeCurlSource = process.env.FAKE_CURL_SOURCE;
-    process.env.XDG_CACHE_HOME = makeTmpDir();
     process.env.FAKE_CURL_SOURCE = makeRipgrepTarball();
     process.env.PATH = makeToolchainDir();
 
@@ -253,8 +241,6 @@ describe("download error handling", () => {
       expect(fs.existsSync(result.rgPath)).toBe(true);
     } finally {
       process.env.PATH = origPath;
-      if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = origXdgCache;
       if (origFakeCurlSource === undefined) delete process.env.FAKE_CURL_SOURCE;
       else process.env.FAKE_CURL_SOURCE = origFakeCurlSource;
     }

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
+import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/registry/providers/skills-sh";
@@ -86,18 +87,11 @@ function makeProvider(url: string, name = "skills.sh"): RegistryProvider {
   return factory({ url, name });
 }
 
-// XDG_* snapshot+restore is provided by tests/_preload.ts. This block only
-// points the XDG vars at per-test tmp dirs and stops the per-test Bun.serve
-// instances.
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  // The skills-sh registry cache lives in index.db under XDG_DATA_HOME, not
-  // XDG_CACHE_HOME. Without overriding DATA_HOME, every test writes localhost
-  // URLs into the user's real ~/.local/share/akm/index.db and concurrent
-  // openDatabase() calls trip SQLite lock contention.
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-skills-cache-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-skills-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-skills-state-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 });
 
 afterEach(() => {
@@ -109,6 +103,8 @@ afterEach(() => {
     }
   }
   servers.length = 0;
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

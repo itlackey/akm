@@ -6,25 +6,14 @@ import { getDbPath } from "../../src/core/paths";
 import { resetQuiet, resetVerbose, setVerbose } from "../../src/core/warn";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-let testConfigDir = "";
-let testCacheDir = "";
-let testDataDir = "";
-let testStateDir = "";
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-idx-config-"));
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-idx-cache-"));
-  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-idx-data-"));
-  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-idx-state-"));
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -43,30 +32,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testDataDir) {
-    fs.rmSync(testDataDir, { recursive: true, force: true });
-    testDataDir = "";
-  }
-  if (testStateDir) {
-    fs.rmSync(testStateDir, { recursive: true, force: true });
-    testStateDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
   resetVerbose();
   delete process.env.AKM_VERBOSE;
 });

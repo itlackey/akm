@@ -9,95 +9,43 @@ import type { StashEntry } from "../src/indexer/metadata";
 
 // Trigger source-provider self-registration
 import "../src/sources/providers/index";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-const createdTmpDirs: string[] = [];
+// Generic fixture dirs (not AKM env paths) — raw mkdtempSync is fine here.
+const fixtureDirs: string[] = [];
 
 function createTmpDir(prefix = "akm-prog-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
+  fixtureDirs.push(dir);
   return dir;
 }
+
+afterAll(() => {
+  for (const dir of fixtureDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function writeFile(filePath: string, content = "") {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
 }
 
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
-let testDataDir = "";
-let testStateDir = "";
 let stashDir = "";
+let cleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-prog-cache-");
-  testConfigDir = createTmpDir("akm-prog-config-");
-  testDataDir = createTmpDir("akm-prog-data-");
-  testStateDir = createTmpDir("akm-prog-state-");
-  stashDir = createTmpDir("akm-prog-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
-    fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
-  }
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
-  process.env.AKM_STASH_DIR = stashDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  cleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
-  if (originalStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
-  if (testDataDir) {
-    fs.rmSync(testDataDir, { recursive: true, force: true });
-    testDataDir = "";
-  }
-  if (testStateDir) {
-    fs.rmSync(testStateDir, { recursive: true, force: true });
-    testStateDir = "";
-  }
+  cleanup();
+  cleanup = () => {};
+  stashDir = "";
 });
 
 // ── Test 1: Summary show returns compact output ─────────────────────────────

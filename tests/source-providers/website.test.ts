@@ -1,6 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../../src/core/config";
 import { ConfigError, UsageError } from "../../src/core/errors";
@@ -15,51 +14,21 @@ import {
 
 // Trigger self-registration
 import "../../src/sources/providers/website";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-const createdTmpDirs: string[] = [];
-
-function createTmpDir(prefix = "akm-website-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
-}
-
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
+let cleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-website-cache-");
-  process.env.XDG_CONFIG_HOME = createTmpDir("akm-website-config-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-website-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-website-state-");
-  process.env.AKM_STASH_DIR = createTmpDir("akm-website-stash-");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  cleanup = stashResult.cleanup;
   saveConfig({ semanticSearchMode: "off" });
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
-});
-
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  cleanup();
+  cleanup = () => {};
 });
 
 describe("WebsiteSourceProvider", () => {

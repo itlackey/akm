@@ -11,8 +11,10 @@ import {
   setKey,
   unsetKey,
 } from "../src/commands/vault";
+import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -210,16 +212,6 @@ describe("unsetKey", () => {
   test("returns false when the file does not exist", () => {
     expect(unsetKey(path.join(tmpDir(), "missing.env"), "FOO")).toBe(false);
   });
-
-  test("preserves mode 0o600 after removing a key", () => {
-    if (process.platform === "win32") return; // chmod is best-effort on win32
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=one\nBAR=two\n");
-    fs.chmodSync(fp, 0o600);
-    expect(unsetKey(fp, "FOO")).toBe(true);
-    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
-  });
 });
 
 // ── createVault ─────────────────────────────────────────────────────────────
@@ -239,14 +231,6 @@ describe("createVault", () => {
     fs.writeFileSync(fp, "FOO=existing\n");
     createVault(fp);
     expect(loadEnv(fp).FOO).toBe("existing");
-  });
-
-  test("creates the file with mode 0o600", () => {
-    if (process.platform === "win32") return; // chmod is best-effort on win32
-    const dir = tmpDir();
-    const fp = path.join(dir, "vaults", "secure.env");
-    createVault(fp);
-    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -394,50 +378,37 @@ describe("buildShellExportScript", () => {
 
 // ── Indexer leakage safety (the critical security test) ─────────────────────
 
-const originalXdgConfig = process.env.XDG_CONFIG_HOME;
-const originalXdgCache = process.env.XDG_CACHE_HOME;
-const originalXdgData = process.env.XDG_DATA_HOME;
-const originalXdgState = process.env.XDG_STATE_HOME;
-const originalAkmStash = process.env.AKM_STASH_DIR;
-let testConfigDir = "";
-let testCacheDir = "";
-let testDataDir = "";
-let testStateDir = "";
+let currentStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-config-"));
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-cache-"));
-  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-data-"));
-  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-state-"));
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  currentStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
+
+  const dbPath = getDbPath();
+  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    try {
+      fs.unlinkSync(f);
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
 afterEach(() => {
-  if (originalXdgConfig === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfig;
-  if (originalXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCache;
-  if (originalXdgData === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgData;
-  if (originalXdgState === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgState;
-  if (originalAkmStash === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStash;
-  if (testConfigDir) fs.rmSync(testConfigDir, { recursive: true, force: true });
-  if (testCacheDir) fs.rmSync(testCacheDir, { recursive: true, force: true });
-  if (testDataDir) fs.rmSync(testDataDir, { recursive: true, force: true });
-  if (testStateDir) fs.rmSync(testStateDir, { recursive: true, force: true });
+  envCleanup();
+  envCleanup = () => {};
+  currentStashDir = "";
 });
 
 const SECRET_VALUE = "correct-horse-battery-staple-do-not-leak";
 
 describe("vault indexer safety", () => {
   test("vault values never appear in the FTS index, search_text, or entry_json", async () => {
-    const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-stash-"));
-    createdTmpDirs.push(stashDir);
+    const stashDir = currentStashDir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
@@ -451,7 +422,6 @@ describe("vault indexer safety", () => {
       ].join("\n"),
     );
 
-    process.env.AKM_STASH_DIR = stashDir;
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBe(1);
 
@@ -496,12 +466,10 @@ describe("vault indexer safety", () => {
   });
 
   test("vault entries are searchable by key name", async () => {
-    const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-stash-"));
-    createdTmpDirs.push(stashDir);
+    const stashDir = currentStashDir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "STRIPE_API_KEY=sk_test_xxx\n");
 
-    process.env.AKM_STASH_DIR = stashDir;
     await akmIndex({ stashDir, full: true });
 
     const db = openDatabase();

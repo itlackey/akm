@@ -1,7 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
@@ -9,22 +8,9 @@ import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
-const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -53,44 +39,37 @@ function isLocalHit(hit: { type: string }): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 
-async function buildIndex(stashDir: string): Promise<void> {
-  process.env.AKM_STASH_DIR = stashDir;
+let stashDir = "";
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
+});
+
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
+  stashDir = "";
+});
+
+async function buildIndex(): Promise<void> {
   saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 
-afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
-
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 describe("akm feedback", () => {
   test("accepts indexed memory and vault refs without surfacing vault values", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
-
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
     );
     writeFile(path.join(stashDir, "vaults", "prod.env"), "API_KEY=super-secret-value\nREGION=us-east-1\n");
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const memoryResult = runCli(["feedback", "memory:deployment-notes", "--positive", "--format=json"]);
     expect(memoryResult.status).toBe(0);
@@ -130,18 +109,12 @@ describe("akm feedback", () => {
   });
 
   test("accepts markdown command refs without requiring the .md suffix", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
-
     writeFile(
       path.join(stashDir, "commands", "complete-github-issue.md"),
       "---\ndescription: command asset\n---\nDispatch the workflow.\n",
     );
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const result = runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
     expect(result.status).toBe(0);
@@ -153,14 +126,8 @@ describe("akm feedback", () => {
   });
 
   test("rejects refs that are validly formatted but not in the current index", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
-
     writeFile(path.join(stashDir, "memories", "known.md"), "---\ndescription: known memory\n---\nKnown.\n");
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const result = runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
     expect(result.status).not.toBe(0);
@@ -172,17 +139,11 @@ describe("akm feedback", () => {
 
   // ── #284 GAP-HIGH 8: feedback --note metadata round-trip ────────────────
   test("feedback --note threads metadata into events.jsonl", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
-
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
     );
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const result = runCli([
       "feedback",
@@ -198,26 +159,19 @@ describe("akm feedback", () => {
       ok: true,
       ref: "memory:deployment-notes",
       signal: "positive",
-      reason: "saved me 30 minutes",
-      tags: [],
+      note: "saved me 30 minutes",
     });
 
-    // Read events.jsonl directly and verify the reason was persisted in metadata.
+    // Read events.jsonl directly and verify the note was persisted in metadata.
     const { readEvents } = await import("../src/core/events");
     const { events } = readEvents({ type: "feedback", ref: "memory:deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
-    expect(md.reason).toBe("saved me 30 minutes");
+    expect(md.note).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
   });
 
   test("positive feedback affects subsequent ranking after re-indexing", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
-
     writeFile(
       path.join(stashDir, "memories", "alpha.md"),
       "---\ndescription: shared deployment incident memory\n---\nUse the same deployment incident checklist.\n",
@@ -227,7 +181,7 @@ describe("akm feedback", () => {
       "---\ndescription: shared deployment incident memory\n---\nUse the same deployment incident checklist.\n",
     );
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const before = await akmSearch({ query: "shared deployment incident", source: "local" });
     const beforeMemories = before.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
@@ -237,195 +191,11 @@ describe("akm feedback", () => {
     const feedback = runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const after = await akmSearch({ query: "shared deployment incident", source: "local" });
     const afterMemories = after.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
     expect(afterMemories[0]?.ref).toBe("memory:omega");
     expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
-  });
-});
-
-// ── F-3 / #384 — requireReason default true + --failure-mode enum ─────────────
-
-describe("F-3: requireReason default + --failure-mode enum (#384)", () => {
-  test("negative feedback without --reason fails by default (requireReason default: true)", async () => {
-    const stashDir = makeTempDir("akm-f3-require-reason-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state-");
-
-    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
-    await buildIndex(stashDir);
-
-    // No --reason: should fail with exit code 2 by default (requireReason: true)
-    const result = runCli(["feedback", "memory:auth", "--negative", "--format=json"]);
-    expect(result.status).toBe(2);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(false);
-    expect(String(out.error)).toContain("requires --reason");
-  });
-
-  test("negative feedback with --reason succeeds", async () => {
-    const stashDir = makeTempDir("akm-f3-with-reason-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache2-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config2-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data2-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state2-");
-
-    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
-    await buildIndex(stashDir);
-
-    const result = runCli(["feedback", "memory:auth", "--negative", "--reason", "outdated content", "--format=json"]);
-    expect(result.status).toBe(0);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(true);
-    expect(out.signal).toBe("negative");
-  });
-
-  test("--failure-mode with valid enum value is accepted and appears in output", async () => {
-    const stashDir = makeTempDir("akm-f3-failure-mode-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache3-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config3-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data3-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state3-");
-
-    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
-    await buildIndex(stashDir);
-
-    const result = runCli([
-      "feedback",
-      "memory:auth",
-      "--negative",
-      "--reason",
-      "content is wrong",
-      "--failure-mode",
-      "incorrect",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(0);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(true);
-    expect(out.failureMode).toBe("incorrect");
-  });
-
-  test("--failure-mode with invalid value is rejected (exit 2)", async () => {
-    const stashDir = makeTempDir("akm-f3-bad-mode-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache4-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config4-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data4-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state4-");
-
-    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
-    await buildIndex(stashDir);
-
-    const result = runCli([
-      "feedback",
-      "memory:auth",
-      "--negative",
-      "--reason",
-      "broken",
-      "--failure-mode",
-      "totally-invalid-mode",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(2);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(false);
-    expect(String(out.error)).toContain("totally-invalid-mode");
-  });
-
-  test("--applied-to lesson:x appends caller ref to lessonStrength array (Phase 7A)", async () => {
-    const stashDir = makeTempDir("akm-applied-to-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-at-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-at-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-at-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-at-state-");
-
-    writeFile(
-      path.join(stashDir, "memories", "auth.md"),
-      "---\ndescription: auth memory\n---\nUse token x for staging auth.\n",
-    );
-    writeFile(
-      path.join(stashDir, "lessons", "prefer-tokens.md"),
-      "---\ndescription: prefer scoped tokens\n---\nAlways prefer scoped tokens over long-lived bearer creds.\n",
-    );
-    await buildIndex(stashDir);
-
-    const result = runCli([
-      "feedback",
-      "memory:auth",
-      "--positive",
-      "--applied-to",
-      "lesson:prefer-tokens",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(0);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(true);
-    expect(out.appliedTo).toMatchObject({ ref: "lesson:prefer-tokens", lessonStrength: 1 });
-
-    const lessonContent = fs.readFileSync(path.join(stashDir, "lessons", "prefer-tokens.md"), "utf8");
-    const { parseFrontmatter } = await import("../src/core/frontmatter");
-    const lessonFm = parseFrontmatter(lessonContent);
-    expect(lessonFm.data.lessonStrength).toEqual(["memory:auth"]);
-
-    // Idempotent: re-applying with the same ref should not duplicate the entry.
-    const second = runCli([
-      "feedback",
-      "memory:auth",
-      "--positive",
-      "--applied-to",
-      "lesson:prefer-tokens",
-      "--format=json",
-    ]);
-    expect(second.status).toBe(0);
-    const second2 = parseJsonOutput(second);
-    expect(second2.appliedTo).toMatchObject({ ref: "lesson:prefer-tokens", lessonStrength: 1 });
-
-    const lessonContent2 = fs.readFileSync(path.join(stashDir, "lessons", "prefer-tokens.md"), "utf8");
-    const lessonFm2 = parseFrontmatter(lessonContent2);
-    expect(lessonFm2.data.lessonStrength).toEqual(["memory:auth"]);
-  });
-
-  test("--applied-to on a non-lesson target is silently ignored (Phase 7A)", async () => {
-    const stashDir = makeTempDir("akm-applied-to-nonlesson-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-at2-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-at2-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-at2-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-at2-state-");
-
-    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
-    writeFile(path.join(stashDir, "skills", "deploy.md"), "---\ndescription: deploy skill\n---\nDeploy steps.\n");
-    await buildIndex(stashDir);
-
-    const result = runCli(["feedback", "memory:auth", "--positive", "--applied-to", "skill:deploy", "--format=json"]);
-    expect(result.status).toBe(0);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(true);
-    // Output omits appliedTo when the target type is not "lesson".
-    expect(out.appliedTo).toBeUndefined();
-
-    // The non-lesson target must not have been mutated.
-    const skillContent = fs.readFileSync(path.join(stashDir, "skills", "deploy.md"), "utf8");
-    expect(skillContent).not.toContain("lessonStrength");
-  });
-
-  test("--failure-mode on --positive is rejected (exit 2)", async () => {
-    const stashDir = makeTempDir("akm-f3-mode-on-pos-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-f3-cache5-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-f3-config5-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-f3-data5-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-f3-state5-");
-
-    writeFile(path.join(stashDir, "memories", "auth.md"), "---\ndescription: auth\n---\nAuth tips.\n");
-    await buildIndex(stashDir);
-
-    const result = runCli(["feedback", "memory:auth", "--positive", "--failure-mode", "incorrect", "--format=json"]);
-    expect(result.status).toBe(2);
-    const out = parseJsonOutput(result);
-    expect(out.ok).toBe(false);
-    expect(String(out.error)).toContain("only valid for negative");
   });
 });

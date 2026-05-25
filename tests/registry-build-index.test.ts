@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildRegistryIndex, writeRegistryIndex } from "../src/registry/build-index";
+import { sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 const CLI = path.join(import.meta.dir, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -120,16 +121,13 @@ afterAll(() => {
 
 describe("buildRegistryIndex", () => {
   test("writeRegistryIndex defaults under the cache registry-build directory", () => {
-    const cacheHome = makeTempDir("akm-registry-cache-");
-    const originalCacheHome = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = cacheHome;
+    const { dir: cacheHome, cleanup } = sandboxXdgCacheHome();
     try {
       const outPath = writeRegistryIndex({ version: 3, updatedAt: "2026-05-01T00:00:00.000Z", stashes: [] });
       expect(outPath).toBe(path.join(cacheHome, "akm", "registry-build", "index.json"));
       expect(fs.existsSync(outPath)).toBe(true);
     } finally {
-      if (originalCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = originalCacheHome;
+      cleanup();
     }
   });
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl, saveGitStash } from "../../src/sources/providers/git";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/sources/providers/git";
@@ -116,14 +117,6 @@ description: Demo skill
   return repoDir;
 }
 
-function createWorkingStash(): string {
-  const dir = createTmpDir("akm-git-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
-  return dir;
-}
-
 function initRepo(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
   for (const args of [
@@ -137,35 +130,18 @@ function initRepo(dir: string): void {
   }
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-git-cache-");
-  process.env.XDG_CONFIG_HOME = createTmpDir("akm-git-config-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-git-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-git-state-");
-  process.env.AKM_STASH_DIR = createWorkingStash();
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

@@ -8,26 +8,17 @@ import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/metadata";
 import { extractCommandParameters, generateMetadataFlat } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-let testConfigDir = "";
-let testCacheDir = "";
-let testDataDir = "";
-let testStateDir = "";
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
+let currentStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-config-"));
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-cache-"));
-  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-data-"));
-  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-state-"));
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  currentStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -40,59 +31,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
-  // Test 9 ("indexed command entries include parameters in search text")
-  // sets AKM_STASH_DIR but had no restore — leaking the stash dir to
-  // subsequent files where it tripped the test-isolation guard and
-  // silently broke registry-search / skills-sh caching tests.
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testDataDir) {
-    fs.rmSync(testDataDir, { recursive: true, force: true });
-    testDataDir = "";
-  }
-  if (testStateDir) {
-    fs.rmSync(testStateDir, { recursive: true, force: true });
-    testStateDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
+  currentStashDir = "";
 });
 
 function tmpStash(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-param-"));
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
-  return dir;
+  return currentStashDir;
 }
 
 function writeFile(filePath: string, content = "") {

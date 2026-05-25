@@ -18,6 +18,7 @@ import { akmPropose } from "../../src/commands/propose";
 import { akmReflect } from "../../src/commands/reflect";
 import { listProposals } from "../../src/core/proposals";
 import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const REAL_AGENT_TESTS = process.env.AKM_REAL_AGENT_TESTS === "1" || process.env.AKM_REAL_AGENT_TESTS === "true";
 
@@ -38,21 +39,17 @@ function makeStashDir(): string {
 }
 
 describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REAL_AGENT_TESTS)", () => {
-  let priorXdgCacheHome: string | undefined;
-  let priorXdgConfigHome: string | undefined;
+  let envCleanup: Cleanup = () => {};
 
   beforeAll(() => {
-    priorXdgCacheHome = process.env.XDG_CACHE_HOME;
-    priorXdgConfigHome = process.env.XDG_CONFIG_HOME;
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-real-agent-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-real-agent-config-");
+    const cacheResult = sandboxXdgCacheHome();
+    const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+    envCleanup = cfgResult.cleanup;
   });
 
   afterAll(() => {
-    if (priorXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-    else process.env.XDG_CACHE_HOME = priorXdgCacheHome;
-    if (priorXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-    else process.env.XDG_CONFIG_HOME = priorXdgConfigHome;
+    envCleanup();
+    envCleanup = () => {};
     for (const dir of tempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }

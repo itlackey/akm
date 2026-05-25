@@ -1,110 +1,163 @@
 /**
- * Sandbox helpers for tests.
+ * Test-isolation sandbox helpers.
  *
- * The preload (`tests/_preload.ts`) creates a fresh sandbox directory for
- * every test and points HOME, every `XDG_*`, and every AKM_*_DIR env var
- * at subdirectories of it. These helpers expose ergonomic accessors for
- * that sandbox state so test bodies don't have to read env vars by hand.
+ * These helpers create isolated temporary directories for AKM-specific paths
+ * (stash, HOME, XDG config/data) and set the corresponding env vars so tests
+ * never touch real user data.
  *
- * The contract:
+ * Usage pattern:
  *
- *   - The sandbox directories all live under `process.env.AKM_*_DIR` /
- *     `process.env.XDG_*_HOME` / `process.env.HOME`. The preload owns
- *     creation and teardown.
- *   - These helpers are pure accessors plus a couple of file-writing
- *     conveniences. They do NOT mutate the harnessed env vars themselves —
- *     that is the preload's job — and they do not need to be paired with
- *     restore logic.
- *   - `withMockedFetch` swaps `globalThis.fetch` for the duration of a
- *     callback and restores it before returning, so the tripwire's
- *     fetch-leak detector never fires.
+ *   import { sandboxStashDir, sandboxXdgConfigHome } from "./_helpers/sandbox";
+ *
+ *   let cleanup: () => void;
+ *   beforeEach(() => {
+ *     cleanup = sandboxStashDir();           // sets process.env.AKM_STASH_DIR
+ *     sandboxXdgConfigHome(cleanup);         // sets process.env.XDG_CONFIG_HOME
+ *   });
+ *   afterEach(() => cleanup());
+ *
+ * Each function returns a `cleanup` callback that removes the temp dir and
+ * restores the original env var value.  If you pass an existing `cleanup`
+ * callback as the first argument the new cleanup is chained onto it so a
+ * single call to the returned callback undoes all sandboxed env vars.
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-/**
- * Absolute path to a per-test stash directory under the sandbox HOME.
- *
- * The preload doesn't set `AKM_STASH_DIR` directly (see the comment in
- * `tests/_preload.ts`), but it does isolate `HOME`. Tests that want a
- * sandbox-local stash can call this and pass it as `AKM_STASH_DIR` to
- * spawned CLI processes — or use it as the `dir` argument to `loadConfig`
- * / `saveConfig` etc.
- */
-export function sandboxStashDir(): string {
-  const home = sandboxHome();
-  const dir = path.join(home, "stash");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
+export type Cleanup = () => void;
 
-/** Absolute path to the sandbox HOME for the current test. */
-export function sandboxHome(): string {
-  const home = process.env.HOME;
-  if (!home) throw new Error("sandboxHome(): HOME is not set — is the preload loaded?");
-  fs.mkdirSync(home, { recursive: true });
-  return home;
-}
-
-/** Absolute path to the sandbox XDG_CONFIG_HOME for the current test. */
-export function sandboxXdgConfigHome(): string {
-  const dir = process.env.XDG_CONFIG_HOME;
-  if (!dir) throw new Error("sandboxXdgConfigHome(): XDG_CONFIG_HOME is not set — is the preload loaded?");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-/** Absolute path to the sandbox XDG_DATA_HOME for the current test. */
-export function sandboxXdgDataHome(): string {
-  const dir = process.env.XDG_DATA_HOME;
-  if (!dir) throw new Error("sandboxXdgDataHome(): XDG_DATA_HOME is not set — is the preload loaded?");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-/** Absolute path to the sandbox root (parent of all of the above). */
-export function sandboxRoot(): string {
-  const stash = process.env.AKM_STASH_DIR;
-  if (!stash) throw new Error("sandboxRoot(): AKM_STASH_DIR is not set — is the preload loaded?");
-  // The preload colocates every sandbox dir under one mkdtemp root.
-  // AKM_STASH_DIR = <root>/stash, so the parent is the root.
-  return path.dirname(stash);
-}
+// ── Core primitive ───────────────────────────────────────────────────────────
 
 /**
- * Write a JSON `config.json` to the sandbox `$XDG_CONFIG_HOME/akm/`
- * directory (where `loadUserConfig()` reads from) and return the path.
+ * Create a temp dir, set `envVar` to it, and return a cleanup callback that
+ * restores the original value and (optionally) deletes the temp dir.
  *
- * Useful for tests that want to exercise `loadConfig()` with a specific
- * config shape without setting up directories by hand.
+ * @param prefix   Prefix passed to `mkdtempSync`.
+ * @param envVar   The process.env key to override.
+ * @param chain    An optional existing cleanup callback to chain onto.
  */
-export function writeSandboxConfig(partial: Record<string, unknown>): string {
-  const configRoot = sandboxXdgConfigHome();
-  const akmDir = path.join(configRoot, "akm");
-  fs.mkdirSync(akmDir, { recursive: true });
-  const configPath = path.join(akmDir, "config.json");
-  fs.writeFileSync(configPath, `${JSON.stringify(partial, null, 2)}\n`, "utf8");
-  return configPath;
+export function sandboxEnvDir(prefix: string, envVar: string, chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const previous = process.env[envVar];
+  process.env[envVar] = dir;
+
+  const cleanup: Cleanup = () => {
+    // Restore env var
+    if (previous === undefined) {
+      delete process.env[envVar];
+    } else {
+      process.env[envVar] = previous;
+    }
+    // Remove temp dir (best-effort)
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+    // Run any previously chained cleanup
+    if (chain) chain();
+  };
+
+  return { dir, cleanup };
+}
+
+// ── Named helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Sandbox `AKM_STASH_DIR`.  Returns `{ dir, cleanup }` where `dir` is the new
+ * stash root.  The standard stash subdirs (skills, commands, agents, knowledge,
+ * scripts, memories, lessons) are created automatically.
+ */
+export function sandboxStashDir(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  const result = sandboxEnvDir("akm-sb-stash-", "AKM_STASH_DIR", chain);
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts", "memories", "lessons"]) {
+    fs.mkdirSync(path.join(result.dir, sub), { recursive: true });
+  }
+  return result;
 }
 
 /**
- * Run `fn` with `globalThis.fetch` replaced by `mockFetch`. The original
- * fetch is restored before this returns (including on thrown errors), so
- * the harness tripwire never fires.
- *
- * Usage:
- *
- *   await withMockedFetch(async () => {
- *     await someCodeThatFetches();
- *   }, async (url) => new Response("ok"));
+ * Sandbox `HOME`.  Returns `{ dir, cleanup }` where `dir` is the fake HOME.
  */
-export async function withMockedFetch<T>(fn: () => Promise<T> | T, mockFetch: typeof globalThis.fetch): Promise<T> {
-  const original = globalThis.fetch;
-  globalThis.fetch = mockFetch;
+export function sandboxHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  return sandboxEnvDir("akm-sb-home-", "HOME", chain);
+}
+
+/**
+ * Sandbox `XDG_CONFIG_HOME`.  Returns `{ dir, cleanup }`.
+ * The `akm/` subdirectory is created automatically.
+ */
+export function sandboxXdgConfigHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  const result = sandboxEnvDir("akm-sb-cfg-", "XDG_CONFIG_HOME", chain);
+  fs.mkdirSync(path.join(result.dir, "akm"), { recursive: true });
+  return result;
+}
+
+/**
+ * Sandbox `XDG_DATA_HOME`.  Returns `{ dir, cleanup }`.
+ */
+export function sandboxXdgDataHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  return sandboxEnvDir("akm-sb-data-", "XDG_DATA_HOME", chain);
+}
+
+/**
+ * Sandbox `XDG_CACHE_HOME`.  Returns `{ dir, cleanup }`.
+ */
+export function sandboxXdgCacheHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  return sandboxEnvDir("akm-sb-cache-", "XDG_CACHE_HOME", chain);
+}
+
+// ── Config writer ────────────────────────────────────────────────────────────
+
+/**
+ * Write a (partial) AKM config JSON into the current `XDG_CONFIG_HOME/akm/`
+ * directory.  Merges `partial` over any existing config on disk.
+ *
+ * Must be called after `sandboxXdgConfigHome()` has been invoked so that
+ * `XDG_CONFIG_HOME` is set to an isolated temp dir.
+ */
+export function writeSandboxConfig(partial: Record<string, unknown>): void {
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+  if (!xdgConfigHome) {
+    throw new Error("writeSandboxConfig: XDG_CONFIG_HOME is not set — call sandboxXdgConfigHome() first");
+  }
+  const configPath = path.join(xdgConfigHome, "akm", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    } catch {
+      // start fresh if corrupt
+    }
+  }
+
+  fs.writeFileSync(configPath, `${JSON.stringify({ ...existing, ...partial }, null, 2)}\n`, "utf8");
+}
+
+// ── Fetch mock ───────────────────────────────────────────────────────────────
+
+/**
+ * Temporarily replace `globalThis.fetch` with a mock handler while running
+ * an async function.
+ *
+ * @param run    The async function to run with the mocked fetch.
+ * @param mock   A function that receives the request URL string and returns a
+ *               `Response` (or throws to simulate a network error).
+ */
+export async function withMockedFetch<T>(run: () => Promise<T>, mock: (url: string) => Response): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    return mock(url);
+  }) as typeof fetch;
+
   try {
-    return await fn();
+    return await run();
   } finally {
-    globalThis.fetch = original;
+    globalThis.fetch = originalFetch;
   }
 }

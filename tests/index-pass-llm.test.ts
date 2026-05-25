@@ -1,38 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config";
 import { loadUserConfig, resetConfigCache } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
 import { resolveIndexPassLLM } from "../src/llm/index-passes";
+import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // Tests for #208 — unified `akm.llm` config across all index-time passes.
 
-function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-index-pass-llm-"));
-}
-
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-let tmpHome = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  tmpHome = makeTmpDir();
-  process.env.XDG_CONFIG_HOME = tmpHome;
+  const cfgResult = sandboxXdgConfigHome();
+  envCleanup = cfgResult.cleanup;
   resetConfigCache();
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (tmpHome) {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
-    tmpHome = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
   resetConfigCache();
 });
 

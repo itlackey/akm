@@ -15,6 +15,7 @@ import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import type { ParsedGithubRef, ParsedNpmRef } from "../../src/registry/types";
+import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/registry/providers/static-index";
@@ -85,14 +86,11 @@ function makeProvider(url: string, name = "official"): RegistryProvider {
   return factory({ url, name });
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-si-cache-");
-  process.env.XDG_DATA_HOME = createTmpDir("akm-si-data-");
-  process.env.XDG_STATE_HOME = createTmpDir("akm-si-state-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 });
 
 afterEach(() => {
@@ -104,22 +102,8 @@ afterEach(() => {
     }
   }
   servers.length = 0;
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgDataHome === undefined) {
-    delete process.env.XDG_DATA_HOME;
-  } else {
-    process.env.XDG_DATA_HOME = originalXdgDataHome;
-  }
-  if (originalXdgStateHome === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = originalXdgStateHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

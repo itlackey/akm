@@ -1,22 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmClone } from "../src/commands/source-clone";
 import { saveConfig } from "../src/core/config";
 import { UsageError } from "../src/core/errors";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-const originalStashDir = process.env.AKM_STASH_DIR;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgDataHome = process.env.XDG_DATA_HOME;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-let testConfigDir = "";
-let testCacheDir = "";
-let testDataDir = "";
-let testStateDir = "";
-let stashDir = "";
-let searchPathDir = "";
+const fixtureDirs: string[] = [];
 
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -25,26 +16,24 @@ function writeFile(filePath: string, content: string) {
 
 function createStashDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  fixtureDirs.push(dir);
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return dir;
 }
 
+let stashDir = "";
+let searchPathDir = "";
+let envCleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-config-"));
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-cache-"));
-  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-data-"));
-  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-state-"));
-  stashDir = createStashDir("akm-clone-working-");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
   searchPathDir = createStashDir("akm-clone-searchpath-");
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
-  // write-guard in src/core/paths.ts stays inert.
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
-  process.env.AKM_STASH_DIR = stashDir;
 
   saveConfig({
     semanticSearchMode: "off",
@@ -53,16 +42,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.AKM_STASH_DIR = originalStashDir ?? undefined;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-  for (const dir of [testConfigDir, testCacheDir, testDataDir, testStateDir, stashDir, searchPathDir]) {
+  envCleanup();
+  envCleanup = () => {};
+  stashDir = "";
+  searchPathDir = "";
+});
+
+afterAll(() => {
+  for (const dir of fixtureDirs.splice(0)) {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 });

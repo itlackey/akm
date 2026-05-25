@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../src/commands/registry-search";
 import { searchRegistry } from "../src/commands/registry-search";
+import { type Cleanup, sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -102,27 +103,19 @@ afterAll(() => {
   }
 });
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalAkmDataDir = process.env.AKM_DATA_DIR;
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
+let envCleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-v2-cache-");
-  process.env.AKM_DATA_DIR = createTmpDir("akm-v2-data-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
   delete process.env.AKM_REGISTRY_URL;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalAkmDataDir === undefined) {
-    delete process.env.AKM_DATA_DIR;
-  } else {
-    process.env.AKM_DATA_DIR = originalAkmDataDir;
-  }
+  envCleanup();
+  envCleanup = () => {};
   if (originalRegistryUrl === undefined) {
     delete process.env.AKM_REGISTRY_URL;
   } else {
