@@ -620,40 +620,85 @@ function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number): Impro
   };
 }
 
+interface TaskRunInterval {
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+}
+
 /**
- * Build a wall-time lookup keyed by minute-truncated started_at. Joins
- * improve_runs to task_history (`task_id='akm-improve'`) by approximate
- * timestamp — within the same minute is treated as the same logical run.
+ * Load task_history intervals for `task_id='akm-improve'` in the window.
+ * Returned sorted by startMs ascending so containment lookups can use a
+ * linear scan (typical N is ~24/day; not worth a tree).
+ *
+ * The window filter is widened by 5 minutes on each side because the cron
+ * task wraps `akm improve` — the task `started_at` fires at e.g. :07:01
+ * while `recordImproveRun` writes the matching `improve_runs.started_at`
+ * later (after config load, planning, etc.), so the improve_runs row can
+ * be inside the window even when its enclosing task_history row started
+ * just before the window opened.
  */
-function buildWallTimeIndex(db: Database, since: string, until?: string): Map<string, number> {
-  const sql = until
-    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL"
-    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL";
-  const rows = (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as Array<{
+function loadTaskIntervals(db: Database, since: string, until?: string): TaskRunInterval[] {
+  const sinceMs = new Date(since).getTime();
+  const untilMs = until ? new Date(until).getTime() : Number.POSITIVE_INFINITY;
+  const widenedSince = new Date(sinceMs - 5 * 60 * 1000).toISOString();
+  const widenedUntil = Number.isFinite(untilMs) ? new Date(untilMs + 5 * 60 * 1000).toISOString() : undefined;
+
+  const sql = widenedUntil
+    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
+    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
+  const rows = (
+    widenedUntil ? db.prepare(sql).all(widenedSince, widenedUntil) : db.prepare(sql).all(widenedSince)
+  ) as Array<{
     started_at: string;
     completed_at: string;
   }>;
-  const index = new Map<string, number>();
+
+  const intervals: TaskRunInterval[] = [];
   for (const row of rows) {
     const startMs = new Date(row.started_at).getTime();
     const endMs = new Date(row.completed_at).getTime();
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) continue;
-    const key = String(Math.floor(startMs / 60000));
-    index.set(key, endMs - startMs);
+    intervals.push({ startMs, endMs, durationMs: endMs - startMs });
   }
-  return index;
+  return intervals;
+}
+
+/**
+ * Find the task_history interval that contains the given timestamp. The
+ * task wraps `akm improve`, so `improve_runs.started_at` (when
+ * `recordImproveRun` writes) always falls inside the enclosing task's
+ * [started_at, completed_at]. Returns undefined when no interval
+ * contains the timestamp (which happens for manually-invoked improve
+ * runs not driven by the `akm-improve` task).
+ *
+ * Linear scan because N is small. We tolerate a 1s slop on the upper
+ * bound to handle clock skew between the wrapper's `completed_at` write
+ * and recordImproveRun's `started_at` write.
+ */
+function findContainingTaskInterval(timestampMs: number, intervals: TaskRunInterval[]): TaskRunInterval | undefined {
+  const SLOP_MS = 1000;
+  for (const interval of intervals) {
+    if (timestampMs >= interval.startMs && timestampMs <= interval.endMs + SLOP_MS) {
+      return interval;
+    }
+  }
+  return undefined;
 }
 
 function buildPerRunSummaries(db: Database, since: string, until?: string): ImproveRunSummary[] {
   const rows = loadImproveRunRows(db, since, until);
-  const wallTimeIndex = buildWallTimeIndex(db, since, until);
+  const taskIntervals = loadTaskIntervals(db, since, until);
   const summaries: ImproveRunSummary[] = [];
   for (const row of rows) {
     const startMs = new Date(row.started_at).getTime();
     const endMs = new Date(row.completed_at).getTime();
+    // Prefer the task_history interval (which has distinct start/end timestamps).
+    // Fall back to the improve_runs row's own delta (usually 0 because
+    // recordImproveRun writes started_at == completed_at == end-of-run timestamp).
     const fallbackWallMs = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : 0;
-    const key = Number.isFinite(startMs) ? String(Math.floor(startMs / 60000)) : "";
-    const wallTimeMs = wallTimeIndex.get(key) ?? fallbackWallMs;
+    const interval = Number.isFinite(startMs) ? findContainingTaskInterval(startMs, taskIntervals) : undefined;
+    const wallTimeMs = interval?.durationMs ?? fallbackWallMs;
     summaries.push(projectImproveRunSummary(row, wallTimeMs));
   }
   return summaries;
