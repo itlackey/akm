@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> **CI / Docker users:** the 0.8.0 storage split moved `akm.lock`, the event
+> database, and the registry cache out of `$XDG_CONFIG_HOME/akm/` into
+> `$XDG_DATA_HOME`, `$XDG_STATE_HOME`, and `$XDG_CACHE_HOME` respectively. If
+> you override any of `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`,
+> `AKM_CACHE_DIR` in CI to isolate per-job state, set **all four** (or none,
+> and rely on XDG defaults). Overriding only `AKM_CONFIG_DIR` will leave the
+> lock file / event DB pointing at the host's default `$XDG_DATA_HOME`,
+> causing lock contention and bleed between jobs.
+
 ### Breaking Changes
 
 - **Project-level `.akm/config.json` files are no longer merged**. The

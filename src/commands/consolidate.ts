@@ -8,6 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
+import { assembleAssetFromString } from "../core/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
@@ -715,8 +716,7 @@ function archiveMemory(
       ...(supersededBy ? { superseded_by: supersededBy } : {}),
       superseded_reason: reason,
     };
-    const fmStr = yamlStringify(newFm).trimEnd();
-    content = `---\n${fmStr}\n---\n${parsed.content}`;
+    content = assembleAssetFromString(yamlStringify(newFm).trimEnd(), parsed.content);
   } catch {
     if (warnings) warnings.push(`archiveMemory: could not parse frontmatter for ${ref} — archiving raw`);
   }
@@ -1510,7 +1510,7 @@ export function sanitizeMergedContent(
     return { ok: false, reason: `YAML_STRINGIFY_FAILED: ${e instanceof Error ? e.message : String(e)}` };
   }
 
-  const cleaned = `---\n${serialized}\n---\n${match[2]}`;
+  const cleaned = assembleAssetFromString(serialized, match[2]);
   return { ok: true, result: { content: cleaned, frontmatter: fm } };
 }
 

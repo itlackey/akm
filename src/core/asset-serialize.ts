@@ -60,7 +60,33 @@ export function serializeFrontmatter(frontmatter: Record<string, unknown>): stri
  * Idempotent under round-trip through the project's `parseFrontmatter`.
  */
 export function assembleAsset(frontmatter: Record<string, unknown>, body: string): string {
-  const yaml = serializeFrontmatter(frontmatter);
+  return assembleAssetFromString(serializeFrontmatter(frontmatter), body);
+}
+
+/**
+ * Same fence/body assembly as `assembleAsset` but takes a pre-serialized
+ * frontmatter string. Use this when a caller needs its own frontmatter
+ * serializer (e.g. defensive single-line flattening for untrusted LLM
+ * output, or JSON.stringify-per-value for guaranteed-quoted scalars) while
+ * still sharing the canonical fence-and-body template.
+ *
+ * The `serializedFm` argument must already match `serializeFrontmatter`'s
+ * contract: no `---` fences, no trailing newline. Trailing whitespace is
+ * trimmed defensively.
+ *
+ * Output contract — identical to `assembleAsset`:
+ *   - `---\n<serializedFm>\n---\n\n<body>\n`
+ *   - body has leading `\n` characters stripped
+ *   - exactly one `\n` terminates the file
+ *
+ * This helper is the single point of truth for the fence-and-body template.
+ * Three command surfaces (`reflect`, `distill`, `consolidate`) call it
+ * directly because their inputs are pre-validated LLM payloads where the
+ * full `yamlStringify` may emit shapes (`|`-block scalars, anchors) that
+ * the project's hand-rolled `parseFrontmatter` subset parser cannot read.
+ */
+export function assembleAssetFromString(serializedFm: string, body: string): string {
+  const yaml = serializedFm.replace(/\s+$/, "");
   const normalizedBody = body.replace(/^\n+/, "");
   const withTrailingNewline = normalizedBody.endsWith("\n") ? normalizedBody : `${normalizedBody}\n`;
   return `---\n${yaml}\n---\n\n${withTrailingNewline}`;

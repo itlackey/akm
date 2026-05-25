@@ -27,6 +27,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
+import { assembleAssetFromString } from "../core/asset-serialize";
 import { resolveStashDir } from "../core/common";
 import type { LlmConnectionConfig } from "../core/config";
 import { loadConfig } from "../core/config";
@@ -541,6 +542,13 @@ function splitFrontmatter(raw: string): { fmText: string | null; body: string } 
  * Serialize a sanitized frontmatter map back into a YAML-subset block matching
  * what `parseFrontmatter` accepts. Conservative — strings, numbers, booleans,
  * scalar arrays. Anything exotic is JSON.stringified to keep the YAML valid.
+ *
+ * Why not `core/asset-serialize.ts#serializeFrontmatter`? The canonical helper
+ * uses the full `yaml` library, which can emit `|`-block scalars or other
+ * shapes that the project's hand-rolled `parseFrontmatter` subset parser
+ * cannot read. Reflect output reads its own product back via that subset
+ * parser, so we keep this defensive serializer here. The fence/body assembly
+ * is shared via `assembleAssetFromString` from `core/asset-serialize.ts`.
  */
 function serializeFrontmatter(data: Record<string, unknown>): string {
   const lines: string[] = [];
@@ -684,7 +692,7 @@ function sanitizeReflectPayload(
   // type guard via a custom registration.
   const hasFrontmatter = Object.keys(mergedFm).length > 0;
   const reassembled = hasFrontmatter
-    ? `---\n${serializeFrontmatter(mergedFm)}\n---\n\n${cleanedBody.trimStart()}`
+    ? assembleAssetFromString(serializeFrontmatter(mergedFm), cleanedBody)
     : cleanedBody;
 
   return {

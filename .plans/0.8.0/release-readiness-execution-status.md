@@ -67,6 +67,8 @@ When WS-4 produces `.plans/0.8.0/storage-consolidation-evaluation.md`, orchestra
 - `a9cc09e` — feat(config): --dry-run --print-diff flag + migration tests (WS-2) — cli.ts + config-migrate.ts + 15 new tests + adjacent fixes
 - `9546867` — docs(config): document WS-2 + WS-3 changes in CHANGELOG and migration guide
 - `a60c610` — fix(test): resolve pre-existing setup-run flaky test (adjacent fix, no WS-2/3 scope)
+- `e044d27` — chore(status): update release readiness status — WS-2 + WS-3 complete, gating ✅
+- `68f2db1` — feat(improve-stats): add runs-detail script (companion to 596142d) — was untracked stragler from improve-stats migration
 
 **Findings:**
 - WS-2/WS-3 were interleaved in config.ts imports so bundled into one core commit rather than two

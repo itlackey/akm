@@ -31,6 +31,9 @@
     "url": "https://github.com/itlackey/akm/issues"
   },
   "license": "MPL-2.0",
+  "pinNotes": {
+    "@opencode-ai/sdk@1.2.20": "Exact pin. The SDK surface we use (createOpencode + session.create/prompt/delete in src/integrations/agent/sdk-runner.ts) is stable across 1.x, but the SDK has shipped 5+ minor versions of unrelated provider/registry churn. akm-cli is a global CLI install so the pin is isolated from user-project deps. Re-test sdk-runner before bumping."
+  },
   "files": [
     "dist",
     "README.md",

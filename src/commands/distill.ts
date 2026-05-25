@@ -54,6 +54,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
+import { assembleAssetFromString } from "../core/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
@@ -485,7 +486,7 @@ export function assembleStructuredDistillMarkdown(
       return `${k}: ${JSON.stringify(v)}`;
     })
     .join("\n");
-  return `---\n${fmLines}\n---\n\n${body}\n`;
+  return assembleAssetFromString(fmLines, body);
 }
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
@@ -1334,7 +1335,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       // Only rewrite content if we actually have at least one field to write.
       // Otherwise leave the original content for the lint pass to reject.
       if (Object.keys(repairedFm).length > 0) {
-        content = `---\n${fmLines}\n---\n\n${body}`;
+        content = assembleAssetFromString(fmLines, body);
       }
     }
   }

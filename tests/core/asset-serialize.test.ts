@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
-import { assembleAsset, serializeFrontmatter } from "../../src/core/asset-serialize";
+import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset-serialize";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 
 describe("serializeFrontmatter — canonical YAML for the frontmatter block", () => {
@@ -212,6 +212,79 @@ describe("regression — 11 inline call sites → assembleAsset", () => {
     const inline = `---\n${yamlStringify(realisticFm).trimEnd()}\n---\n${parsedBodyContent.startsWith("\n") ? "" : "\n"}${parsedBodyContent}`;
     const refactored = assembleAsset(realisticFm, parsedBodyContent);
     expect(refactored).toBe(inline);
+  });
+});
+
+describe("assembleAssetFromString — shared fence/body template, BYO serializer", () => {
+  it("produces the same bytes as assembleAsset when the serializer matches", () => {
+    const fm = { description: "x", tags: ["a"] };
+    const direct = assembleAsset(fm, "body");
+    const fromString = assembleAssetFromString(serializeFrontmatter(fm), "body");
+    expect(fromString).toBe(direct);
+  });
+
+  it("accepts a custom JSON.stringify-per-value serializer (distill pattern)", () => {
+    // Mirrors src/commands/distill.ts:482-487 — every value JSON-stringified
+    // so unquoted/multiline strings can never break the subset parser.
+    const fm = { description: "Multi: line breaks: like this", tags: ["a", "b"] };
+    const fmLines = Object.entries(fm)
+      .map(([k, v]) => {
+        if (Array.isArray(v)) return `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]`;
+        return `${k}: ${JSON.stringify(v)}`;
+      })
+      .join("\n");
+    const out = assembleAssetFromString(fmLines, "Body text.");
+    expect(out).toBe(`---\n${fmLines}\n---\n\nBody text.\n`);
+    // And it round-trips through the subset parser without losing the description.
+    expect(parseFrontmatter(out).data.description).toBe(fm.description);
+  });
+
+  it("trims trailing whitespace from the serialized fm defensively", () => {
+    const out = assembleAssetFromString("description: x\n\n", "body");
+    expect(out).toBe("---\ndescription: x\n---\n\nbody\n");
+  });
+
+  it("strips leading newlines from the body (same contract as assembleAsset)", () => {
+    const a = assembleAssetFromString("description: x", "\nbody");
+    const b = assembleAssetFromString("description: x", "\n\n\nbody");
+    const c = assembleAssetFromString("description: x", "body");
+    expect(a).toBe(c);
+    expect(b).toBe(c);
+  });
+
+  it("adds exactly one trailing newline (same contract as assembleAsset)", () => {
+    const a = assembleAssetFromString("description: x", "body");
+    const b = assembleAssetFromString("description: x", "body\n");
+    expect(a).toBe(b);
+    expect(a.endsWith("\n")).toBe(true);
+    expect(a.endsWith("\n\n")).toBe(false);
+  });
+
+  it("is byte-identical for the inline pattern that consolidate.ts:719 used to emit", () => {
+    // Consolidate path: input was already round-tripped through parseFrontmatter,
+    // so parsed.content begins with `\n` for the standard `---\nfm\n---\n\nbody` shape.
+    // The OLD inline code: `---\n${fmStr}\n---\n${parsed.content}` — single \n separator
+    // plus parsed.content's leading \n produces the standard \n\n. assembleAssetFromString
+    // strips body's leading \n, then the \n\n in the template plus normalizedBody (no
+    // leading \n) gives the same total. Verify byte-identity on standard input.
+    const fmStr = yamlStringify({ description: "x", tags: ["a"] }).trimEnd();
+    const parsedContent = "\nbody content.\n";
+    const inline = `---\n${fmStr}\n---\n${parsedContent}`;
+    const refactored = assembleAssetFromString(fmStr, parsedContent);
+    expect(refactored).toBe(inline);
+  });
+
+  it("matches the reflect.ts inline pattern for cleaned bodies (no leading whitespace)", () => {
+    // Reflect path: cleanedBody = rawLlmBody.replace(/^\s+/, "") so it never starts
+    // with a newline. Old inline: `---\n${fm}\n---\n\n${cleanedBody.trimStart()}`.
+    // The cleanedBody has no leading whitespace, trimStart is a no-op. Bytes match
+    // except the helper now guarantees a trailing newline (which reflect's old code
+    // did not — but downstream proposal writes were already POSIX-tolerant).
+    const fmStr = "description: defensive\ntags:\n  - a";
+    const cleanedBody = "Body content with no leading whitespace.";
+    const oldInline = `---\n${fmStr}\n---\n\n${cleanedBody.trimStart()}`;
+    const refactored = assembleAssetFromString(fmStr, cleanedBody);
+    expect(refactored).toBe(`${oldInline}\n`); // helper adds the canonical trailing \n
   });
 });
 

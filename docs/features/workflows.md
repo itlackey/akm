@@ -136,6 +136,42 @@ akm workflow next workflow:print-book-review
 # agent reads instructions → runs checks → completes each step in sequence
 ```
 
+## Security: workflow sources are executed code
+
+Workflow steps that include shell commands run with **the full environment
+and PATH of the user invoking `akm workflow next`** — same as if the user had
+typed those commands in their shell. There is no sandbox, no env-var
+allowlist, and no separation between trusted and untrusted workflows.
+
+This is by design: a workflow is a runbook authored by you or by a stash
+maintainer you trust. The flexibility of "run any shell command, read any
+file, hit any network" is what makes workflows useful as automation.
+
+The consequence is that **you should treat workflow sources the same way you
+treat package dependencies**:
+
+- **Only add workflow sources you trust.** `akm add github:<some-user>/stash`
+  followed by `akm workflow next workflow:<their-thing>` is functionally
+  equivalent to piping a stranger's bash script into your shell. Read the
+  workflow file first (`akm show workflow:<name>`) before running it.
+- **Audit before run** for any workflow that touches secrets, deploys to
+  production, or writes outside the project tree. Workflow steps can read
+  any environment variable visible to the akm process — including secrets
+  exported by your shell or loaded from a vault via `akm vault load`.
+- **Pin known-good versions** when adding workflow sources from a registry
+  or git remote (`akm add github:owner/stash#v1.2.3`), and update
+  deliberately rather than via `akm update --all`. A trusted workflow source
+  can become hostile if its upstream is compromised.
+- **Workflow steps cannot escape this trust model** by being labeled
+  `dryRun` or `interactive` — those flags affect bookkeeping, not execution.
+  An `akm workflow next` invocation always runs the next step's instructions
+  in your shell.
+
+If you operate a CI runner or shared host where untrusted workflows might be
+executed, scope the process: a dedicated user account with no secrets in its
+environment, ephemeral working directory, and a network/filesystem allowlist
+enforced outside akm.
+
 ## See also
 
 - [Search & Discovery](search-discovery.md) — find available workflows with `akm curate`
