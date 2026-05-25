@@ -13,7 +13,6 @@
 // Catch the wrong-runtime case here with a friendly message instead of
 // a stack trace. Cross-runtime support is planned for 0.9 (issue #465).
 if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
-  // biome-ignore lint/suspicious/noConsole: this guard runs before our logger
   console.error(
     "\n  ERROR: akm-cli 0.8 requires the Bun runtime (https://bun.sh) or the prebuilt binary.\n" +
       "  Running under Node.js is not supported in this release.\n" +
@@ -301,7 +300,6 @@ function printSetupTtyHint(result: { stashDir?: string; configPath?: string }): 
   if (mode.format !== "json" && mode.format !== "jsonl") return;
   if (isQuiet()) return;
   if (!result?.stashDir) return;
-  // biome-ignore lint/suspicious/noConsole: TTY-only UX hint, gated above
   console.error(
     `\n✓ Stash created at ${result.stashDir}\n` +
       `  Next: \`akm add github:itlackey/akm-stash\` then \`akm index\` to populate the stash.`,
@@ -4862,7 +4860,6 @@ try {
     // If we can't resolve the config path, assume non-fresh and stay silent.
     return;
   }
-  // biome-ignore lint/suspicious/noConsole: first-run breadcrumb is intentional UX
   console.error(
     "👋 First time with akm? Run `akm setup` to get started.\n" + "   Docs: https://github.com/itlackey/akm#readme\n",
   );
