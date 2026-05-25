@@ -130,21 +130,41 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "vault-list": {
       const r = result as Record<string, unknown>;
       const vaults = Array.isArray(r.vaults) ? r.vaults : [];
-      return {
+      return stampEnvelope("vault-list", {
         ...r,
         vaults: vaults.map((v) => {
           const { path: _path, ...rest } = v as Record<string, unknown>;
           return rest;
         }),
-      };
+      });
     }
     default:
       // v1 spec §9 (output-shape registry exhaustive): identity-passthrough
       // commands are listed in PASSTHROUGH_COMMANDS; anything not in that set
       // is a registration bug — fail loudly.
-      if (PASSTHROUGH_COMMANDS.has(command)) return result;
+      if (PASSTHROUGH_COMMANDS.has(command)) return stampEnvelope(command, result);
       throw new Error(`output shape not registered for command: ${command}`);
   }
+}
+
+/**
+ * #484: stamp `schemaVersion` + `shape` discriminator on passthrough envelopes
+ * so third-party consumers can pin a schema version and dispatch on shape
+ * uniformly. Shaped commands (search, show, proposal-*, ...) gate schemaVersion
+ * to `detail=full` via maybeAddSchema and have their own brief/normal contracts;
+ * passthrough commands carry the envelope at every detail level since they
+ * have no per-detail shaping.
+ *
+ * Idempotent — never overwrites an existing `schemaVersion` or `shape` field
+ * the caller deliberately set.
+ */
+function stampEnvelope(command: string, result: unknown): unknown {
+  if (result === null || result === undefined) return result;
+  if (typeof result !== "object" || Array.isArray(result)) return result;
+  const obj = result as Record<string, unknown>;
+  if (obj.shape === undefined) obj.shape = command;
+  if (obj.schemaVersion === undefined) obj.schemaVersion = 1;
+  return obj;
 }
 
 function maybeAddSchema<T extends Record<string, unknown>>(
