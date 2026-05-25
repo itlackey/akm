@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 // Identity-passthrough commands — registered here so the registry stays
 // exhaustive (v1 spec §9). Each result object is already shaped at the
 // command boundary; the registry just confirms there's no surprise
