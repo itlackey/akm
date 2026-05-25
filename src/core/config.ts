@@ -369,29 +369,74 @@ export function saveConfig(config: AkmConfig): void {
 }
 
 /**
- * Strip apiKey fields before writing config to disk.
- * API keys should be provided via environment variables
- * AKM_EMBED_API_KEY and AKM_LLM_API_KEY.
+ * Strip literal apiKey fields before writing config to disk.
+ * API keys are expected to come from environment variables
+ * (AKM_EMBED_API_KEY, AKM_LLM_API_KEY, AKM_PROFILE_<NAME>_API_KEY).
+ *
+ * `${VAR}` / `$VAR` references are preserved — they are not secrets, they
+ * are deferred lookups resolved at consumption by `resolveSecret`. Dropping
+ * them would break the documented config-on-disk pattern.
+ *
+ * When a non-reference literal value is stripped, emit a `warn()` so the
+ * user knows their key was dropped and how to provide it at runtime (#474).
+ * Previously the strip was silent — a user invoking `akm setup --from <file>
+ * --yes` with an `apiKey` field expected persistence and got a wiped config
+ * with no feedback.
  */
 function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
-  if (config.embedding) {
-    const { apiKey, ...rest } = config.embedding;
-    sanitized.embedding = rest;
+  const stripped: string[] = [];
+
+  if (config.embedding?.apiKey !== undefined) {
+    const apiKey = config.embedding.apiKey;
+    if (isEnvReference(apiKey)) {
+      // Preserve reference verbatim — not a secret.
+      sanitized.embedding = { ...config.embedding };
+    } else {
+      const { apiKey: _drop, ...rest } = config.embedding;
+      sanitized.embedding = rest;
+      if (apiKey) stripped.push("embedding.apiKey (set AKM_EMBED_API_KEY to provide at runtime)");
+    }
+  } else if (config.embedding) {
+    sanitized.embedding = { ...config.embedding };
   }
+
   if (config.profiles?.llm) {
     const llmProfiles: Record<string, unknown> = {};
     for (const [name, profile] of Object.entries(config.profiles.llm)) {
-      const { apiKey: _apiKey, ...rest } = profile;
-      llmProfiles[name] = rest;
+      if (profile.apiKey !== undefined) {
+        if (isEnvReference(profile.apiKey)) {
+          llmProfiles[name] = { ...profile };
+        } else {
+          const { apiKey: _drop, ...rest } = profile;
+          llmProfiles[name] = rest;
+          if (profile.apiKey) {
+            const envVar = `AKM_PROFILE_${name.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+            stripped.push(`profiles.llm.${name}.apiKey (set ${envVar} to provide at runtime)`);
+          }
+        }
+      } else {
+        llmProfiles[name] = { ...profile };
+      }
     }
     sanitized.profiles = {
       ...((sanitized.profiles as Record<string, unknown> | undefined) ?? {}),
       llm: llmProfiles,
     };
   }
-  // Drop empty keys to keep config clean
+
+  if (stripped.length > 0) {
+    warn(
+      `Config sanitizer dropped API key(s) before writing to disk:\n  - ${stripped.join("\n  - ")}\n\nakm does not persist API keys to config.json. Set the listed environment variables to provide them at runtime, or use \`\${VAR}\` references in your config to defer lookup. See docs/data-and-telemetry.md.`,
+    );
+  }
+
   return sanitized;
+}
+
+/** Matches `${VAR}`, `${VAR:-default}`, or `$VAR`. */
+function isEnvReference(value: string): boolean {
+  return /^\$\{[^}]+\}$|^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {

@@ -509,8 +509,27 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
     return { committed: false, pushed: false, skipped: false, output: "nothing to commit, working tree clean" };
   }
 
+  // Safety check (#476): when the stash dir is shared with a non-akm project
+  // (stash root == project repo root), `git add -A` would stage every dirty
+  // file in the user's working tree and push their unrelated WIP to the
+  // stash's remote. Refuse if any dirty path is outside the known akm-
+  // managed subtrees (TYPE_DIRS + `.akm/` state).
+  const nonAkmDirty = collectNonAkmDirtyPaths(statusResult.stdout);
+  if (nonAkmDirty.length > 0) {
+    const sample = nonAkmDirty.slice(0, 10);
+    const more = nonAkmDirty.length > sample.length ? `\n  ...and ${nonAkmDirty.length - sample.length} more` : "";
+    throw new Error(
+      `refusing to push: stash repo at ${repoDir} has uncommitted non-akm changes:\n` +
+        sample.map((p) => `  ${p}`).join("\n") +
+        more +
+        `\nCommit or stash these manually before running an akm push. ` +
+        `Akm-managed paths are: ${Object.values(TYPE_DIRS).join(", ")}, .akm/`,
+    );
+  }
+
   // Stage and commit — supply fallback identity so fresh environments without
   // user.name/user.email configured can always commit to the default stash.
+  // `add -A` is safe here because nonAkmDirty was just verified empty.
   const addResult = spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
   if (addResult.status !== 0) {
     throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
@@ -590,6 +609,44 @@ function buildGithubTargetAliases(canonicalUrl: string): Set<string> {
   }
 }
 
+// ── Stash-safety helpers (#476) ──────────────────────────────────────────────
+
+/**
+ * Inspect `git status --porcelain` output and return every dirty path that is
+ * NOT inside an akm-managed subtree. Used by `runUpstreamPush` to refuse
+ * pushing unrelated WIP when a writable stash shares its root with a project
+ * repo.
+ *
+ * Porcelain v1 format: `XY <path>` or `XY <orig> -> <new>` for renames. We
+ * key off the post-rename path (or the only path) — that is the working-tree
+ * file at risk of being staged by `git add -A`.
+ */
+function collectNonAkmDirtyPaths(porcelainOutput: string): string[] {
+  const akmDirs = new Set<string>(Object.values(TYPE_DIRS));
+  const result: string[] = [];
+  for (const rawLine of porcelainOutput.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.length === 0) continue;
+    // Skip the 2-char status code + 1 space.
+    let p = line.length > 3 ? line.slice(3) : "";
+    // Renames / copies: `from -> to`. Stage decision applies to `to`.
+    const arrow = p.lastIndexOf(" -> ");
+    if (arrow !== -1) {
+      p = p.slice(arrow + 4);
+    }
+    // Strip surrounding quotes for paths with special chars.
+    if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
+      p = p.slice(1, -1);
+    }
+    if (!p) continue;
+    const segments = p.split("/");
+    const top = segments[0];
+    if (top === ".akm" || akmDirs.has(top)) continue;
+    result.push(p);
+  }
+  return result;
+}
+
 // ── Exports ─────────────────────────────────────────────────────────────────
 
-export { ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };
+export { collectNonAkmDirtyPaths, ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };

@@ -238,7 +238,24 @@ async function migrateEventsJsonl(ctx: MigrationContext): Promise<void> {
     const { openStateDatabase, importEventsJsonl } = await import("../src/core/state-db");
     const db = openStateDatabase(ctx.paths.stateDbPath);
     try {
-      const { imported, maxId, skipped } = await importEventsJsonl(db, src);
+      // Wrap the whole-file import in a single transaction so SIGINT or any
+      // mid-import failure rolls back atomically — half-imported state.db
+      // would otherwise leave the user with no error and silently missing
+      // rows the dedup check can't detect later (#475).
+      db.exec("BEGIN");
+      let imported = 0;
+      let maxId = 0;
+      let skipped = 0;
+      try {
+        const result = await importEventsJsonl(db, src);
+        imported = result.imported;
+        maxId = result.maxId;
+        skipped = result.skipped;
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
       const dedupNote = skipped > 0 ? ` (${skipped} duplicate(s) skipped — re-run idempotency)` : "";
       ctx.recordStep({
         name: "events.jsonl → state.db",
@@ -442,45 +459,61 @@ async function migrateTaskHistoryToDb(ctx: MigrationContext): Promise<void> {
     let failed = 0;
 
     try {
+      // Each file's rows commit atomically. If the process dies between
+      // files, prior files are durably imported; the in-flight file is
+      // rolled back; re-running the migration picks up where it left off
+      // (upsertTaskHistory dedupes on task_id PK).
+      // Previously the loop was unwrapped, so SIGINT mid-import left
+      // task_history half-populated with no error and no way to detect
+      // which rows were missing (#475).
       for (const file of files) {
         const filePath = path.join(src, file);
         const text = fs.readFileSync(filePath, "utf8");
         const lines = text.split("\n").filter((l) => l.trim().length > 0);
 
-        for (const line of lines) {
-          try {
-            const row = JSON.parse(line) as {
-              id: string;
-              status: string;
-              startedAt: string;
-              finishedAt: string;
-              durationMs: number;
-              log: string;
-              target: { kind: string; ref?: string; profile?: string };
-              detail?: Record<string, unknown>;
-            };
+        db.exec("BEGIN");
+        let fileImported = 0;
+        try {
+          for (const line of lines) {
+            try {
+              const row = JSON.parse(line) as {
+                id: string;
+                status: string;
+                startedAt: string;
+                finishedAt: string;
+                durationMs: number;
+                log: string;
+                target: { kind: string; ref?: string; profile?: string };
+                detail?: Record<string, unknown>;
+              };
 
-            const meta: Record<string, unknown> = { durationMs: row.durationMs };
-            if (row.detail !== undefined) meta.detail = row.detail;
-            if (row.target?.kind === "prompt" && row.target.profile !== undefined) {
-              meta.profile = row.target.profile;
+              const meta: Record<string, unknown> = { durationMs: row.durationMs };
+              if (row.detail !== undefined) meta.detail = row.detail;
+              if (row.target?.kind === "prompt" && row.target.profile !== undefined) {
+                meta.profile = row.target.profile;
+              }
+
+              upsertTaskHistory(db, {
+                task_id: row.id,
+                status: row.status,
+                started_at: row.startedAt,
+                completed_at: row.status !== "failed" ? row.finishedAt : null,
+                failed_at: row.status === "failed" ? row.finishedAt : null,
+                log_path: row.log || null,
+                target_kind: row.target?.kind ?? null,
+                target_ref: row.target?.kind === "workflow" ? (row.target.ref ?? null) : null,
+                metadata_json: JSON.stringify(meta),
+              });
+              fileImported++;
+            } catch {
+              failed++;
             }
-
-            upsertTaskHistory(db, {
-              task_id: row.id,
-              status: row.status,
-              started_at: row.startedAt,
-              completed_at: row.status !== "failed" ? row.finishedAt : null,
-              failed_at: row.status === "failed" ? row.finishedAt : null,
-              log_path: row.log || null,
-              target_kind: row.target?.kind ?? null,
-              target_ref: row.target?.kind === "workflow" ? (row.target.ref ?? null) : null,
-              metadata_json: JSON.stringify(meta),
-            });
-            imported++;
-          } catch {
-            failed++;
           }
+          db.exec("COMMIT");
+          imported += fileImported;
+        } catch (err) {
+          db.exec("ROLLBACK");
+          throw err;
         }
       }
     } finally {
@@ -919,9 +952,19 @@ function printGroupedSummary(): void {
   if (totalFailures > 0) {
     console.log(`\n${totalFailures} step(s) failed.`);
     process.exitCode = 1;
-  } else {
-    console.log("\nMigration complete. No errors.");
+    // Suppress the "you can delete legacy files" footer when any step
+    // failed — otherwise we tell users it's safe to `rm` files whose
+    // migration didn't actually complete (#475).
+    console.log(`
+Migration did NOT fully complete. DO NOT delete any legacy files yet.
+Re-run \`akm-migrate-storage --yes\` after addressing the failure(s) above.
+The migration is idempotent — successful steps are skipped on re-run via
+their dedup keys (events: (event_type, ts, ref, metadata_json);
+task_history: task_id PK).
+`);
+    return;
   }
+  console.log("\nMigration complete. No errors.");
 
   console.log(`
 Old files at the original locations are safe to delete manually after verifying akm works:
