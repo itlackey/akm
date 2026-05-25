@@ -23,6 +23,9 @@
  *   booleans, or numbers.
  * - **No nested objects beyond one level**: Only a single level of indented
  *   key-value pairs is supported.
+ * - **Block scalars**: `|` (literal), `|-` (strip), and `|+` (keep) block
+ *   scalars are supported for multi-line string values as emitted by the
+ *   `yaml` library's `stringify`.
  */
 export function parseFrontmatter(raw: string): {
   data: Record<string, unknown>;
@@ -37,10 +40,18 @@ export function parseFrontmatter(raw: string): {
 
   const data: Record<string, unknown> = {};
   let currentKey: string | null = null;
-  /** "scalar" | "list" | "object" | "pending" — "pending" means empty value, mode determined by next line */
-  let mode: "scalar" | "list" | "object" | "pending" = "scalar";
+  /**
+   * "scalar" | "list" | "object" | "pending" | "block" —
+   * "pending" means empty value, mode determined by next line.
+   * "block" means we are accumulating lines for a `|`-block scalar.
+   */
+  let mode: "scalar" | "list" | "object" | "pending" | "block" = "scalar";
   let nested: Record<string, unknown> | null = null;
   let currentList: unknown[] | null = null;
+  /** Lines collected while in "block" mode. */
+  let blockLines: string[] | null = null;
+  /** Block scalar chomping: "clip" (|), "strip" (|-), "keep" (|+). */
+  let blockChomping: "clip" | "strip" | "keep" = "clip";
 
   const flushPending = () => {
     // Called when we start a new top-level key and the previous key was still "pending".
@@ -50,7 +61,40 @@ export function parseFrontmatter(raw: string): {
     }
   };
 
+  const flushBlock = () => {
+    // Commit the accumulated block-scalar lines to `data[currentKey]`.
+    if (mode !== "block" || currentKey === null || blockLines === null) return;
+    // De-indent: strip the common 2-space prefix `yaml.stringify` emits.
+    const deindented = blockLines.map((l) => (l.startsWith("  ") ? l.slice(2) : l));
+    // Chomping: apply trailing-newline policy.
+    // "clip" (|): single trailing newline.
+    // "strip" (|-): no trailing newline.
+    // "keep" (|+): keep all trailing newlines as-is.
+    if (blockChomping === "keep") {
+      data[currentKey] = deindented.join("\n");
+    } else if (blockChomping === "strip") {
+      data[currentKey] = deindented.join("\n").replace(/\n+$/, "");
+    } else {
+      // "clip": exactly one trailing newline
+      data[currentKey] = `${deindented.join("\n").replace(/\n+$/, "")}\n`;
+    }
+  };
+
   for (const line of parsedBlock.frontmatter.split(/\r?\n/)) {
+    // If we are in block-scalar mode, collect indented lines or end the block.
+    if (mode === "block") {
+      if (line.startsWith("  ") || line === "") {
+        // Continuation of the block scalar (indented content or blank line).
+        (blockLines as string[]).push(line);
+        continue;
+      }
+      // Non-indented line ends the block scalar — flush and fall through to
+      // parse the new line as a top-level key.
+      flushBlock();
+      mode = "scalar";
+      blockLines = null;
+    }
+
     // Block-sequence item: "- value" or "  - value" (optional 2-space indent)
     // Only match when the current key is in list or pending mode.
     const seqItem = line.match(/^(?: {2})?- (.*)$/);
@@ -90,7 +134,14 @@ export function parseFrontmatter(raw: string): {
     currentKey = top[1];
     const value = top[2].trim();
 
-    if (value === "") {
+    if (value === "|" || value === "|-" || value === "|+") {
+      // Block scalar header — collect subsequent indented lines.
+      mode = "block";
+      blockLines = [];
+      blockChomping = value === "|-" ? "strip" : value === "|+" ? "keep" : "clip";
+      nested = null;
+      currentList = null;
+    } else if (value === "") {
       // Defer mode decision until we see the next line
       mode = "pending";
       nested = null;
@@ -100,6 +151,7 @@ export function parseFrontmatter(raw: string): {
       // Inline flow array: tags: [ops, networking]
       mode = "list";
       nested = null;
+      currentList = null;
       currentList = parseFlowArray(value);
       data[currentKey] = currentList;
     } else {
@@ -108,6 +160,11 @@ export function parseFrontmatter(raw: string): {
       currentList = null;
       data[currentKey] = parseYamlScalar(value);
     }
+  }
+
+  // Flush any in-progress block scalar at end of frontmatter.
+  if (mode === "block") {
+    flushBlock();
   }
 
   // Flush the last key if it was still pending (empty value, no continuation)

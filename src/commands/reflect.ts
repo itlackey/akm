@@ -27,7 +27,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { type AssetRef, parseAssetRef } from "../core/asset-ref";
-import { assembleAssetFromString } from "../core/asset-serialize";
+import { assembleAssetFromString, serializeFrontmatter } from "../core/asset-serialize";
 import { resolveStashDir } from "../core/common";
 import type { LlmConnectionConfig } from "../core/config";
 import { loadConfig } from "../core/config";
@@ -536,56 +536,6 @@ function splitFrontmatter(raw: string): { fmText: string | null; body: string } 
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!m) return { fmText: null, body: raw };
   return { fmText: m[1], body: m[2] };
-}
-
-/**
- * Serialize a sanitized frontmatter map back into a YAML-subset block matching
- * what `parseFrontmatter` accepts. Conservative — strings, numbers, booleans,
- * scalar arrays. Anything exotic is JSON.stringified to keep the YAML valid.
- *
- * Why not `core/asset-serialize.ts#serializeFrontmatter`? The canonical helper
- * uses the full `yaml` library, which can emit `|`-block scalars or other
- * shapes that the project's hand-rolled `parseFrontmatter` subset parser
- * cannot read. Reflect output reads its own product back via that subset
- * parser, so we keep this defensive serializer here. The fence/body assembly
- * is shared via `assembleAssetFromString` from `core/asset-serialize.ts`.
- */
-function serializeFrontmatter(data: Record<string, unknown>): string {
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined) continue;
-    if (value === null) {
-      lines.push(`${key}:`);
-      continue;
-    }
-    if (typeof value === "string") {
-      // Multi-line strings would break the YAML-subset parser — fold to a
-      // single line. The reflect prompt forbids multi-line frontmatter values
-      // so this branch is defensive.
-      const flat = value.includes("\n") ? value.replace(/\s+/g, " ").trim() : value;
-      lines.push(`${key}: ${flat}`);
-      continue;
-    }
-    if (typeof value === "number" || typeof value === "boolean") {
-      lines.push(`${key}: ${String(value)}`);
-      continue;
-    }
-    if (Array.isArray(value)) {
-      lines.push(`${key}:`);
-      for (const item of value) {
-        if (item === null || item === undefined) continue;
-        if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-          lines.push(`  - ${String(item)}`);
-        } else {
-          lines.push(`  - ${JSON.stringify(item)}`);
-        }
-      }
-      continue;
-    }
-    // Objects / unknowns → JSON-string fallback. Reviewer can re-shape on accept.
-    lines.push(`${key}: ${JSON.stringify(value)}`);
-  }
-  return lines.join("\n");
 }
 
 /**
