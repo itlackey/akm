@@ -413,6 +413,7 @@ export function shapeShowOutput(
       "steps",
       "keys",
       "comments",
+      "related",
     ]);
   }
   if (detail === "summary") {
@@ -428,6 +429,7 @@ export function shapeShowOutput(
       "origin",
       "keys",
       "comments",
+      "related",
     ]);
   }
 
@@ -454,9 +456,12 @@ export function shapeShowOutput(
     "activeRun",
     "keys",
     "comments",
+    "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).
-    "path",
+    // Exception: vault assets omit path to avoid leaking absolute disk paths
+    // into structured JSON output (security fix M3).
+    ...(result.type === "vault" ? [] : ["path"]),
     "editable",
   ]);
 

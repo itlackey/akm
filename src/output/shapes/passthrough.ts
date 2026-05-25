@@ -8,7 +8,19 @@
 // command name slipping through.
 import { registerOutputShape } from "./registry";
 
-const passthrough = (result: unknown) => result;
+// #484: stamp schemaVersion + shape discriminator on passthrough envelopes so
+// third-party consumers can pin a schema version and dispatch on shape uniformly.
+// Idempotent — never overwrites an existing schemaVersion or shape field.
+function makeStampHandler(command: string) {
+  return (result: unknown): unknown => {
+    if (result === null || result === undefined) return result;
+    if (typeof result !== "object" || Array.isArray(result)) return result;
+    const obj = result as Record<string, unknown>;
+    if (obj.shape === undefined) obj.shape = command;
+    if (obj.schemaVersion === undefined) obj.schemaVersion = 1;
+    return obj;
+  };
+}
 
 const PASSTHROUGH_COMMANDS = [
   "add",
@@ -38,7 +50,6 @@ const PASSTHROUGH_COMMANDS = [
   "update",
   "upgrade",
   "vault-create",
-  "vault-list",
   "vault-set",
   "vault-unset",
   "wiki-create",
@@ -61,5 +72,5 @@ const PASSTHROUGH_COMMANDS = [
 ] as const;
 
 for (const command of PASSTHROUGH_COMMANDS) {
-  registerOutputShape(command, passthrough);
+  registerOutputShape(command, makeStampHandler(command));
 }

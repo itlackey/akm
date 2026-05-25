@@ -399,6 +399,19 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
     if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
   }
+  const related =
+    typeof r.related === "object" && r.related !== null ? (r.related as Record<string, unknown>) : undefined;
+  const relatedHits = related && Array.isArray(related.hits) ? (related.hits as Array<Record<string, unknown>>) : [];
+  if (related) {
+    lines.push("");
+    lines.push(`related: ${String(related.total ?? relatedHits.length)}`);
+    for (const hit of relatedHits) {
+      lines.push(`  - ${String(hit.type ?? "?")}: ${formatRelatedLabel(hit)}`);
+      const shared = Array.isArray(hit.sharedEntities) ? (hit.sharedEntities as unknown[]).map(String) : [];
+      if (shared.length > 0) lines.push(`    shared: ${shared.join(", ")}`);
+      lines.push(`    relationCount: ${String(hit.relationCount ?? 0)}`);
+    }
+  }
   const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
   if (Array.isArray(r.steps) && r.steps.length > 0) {
     if (lines.length > 0) lines.push("");
@@ -672,6 +685,27 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     // `curated` boolean was removed in v1.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
+    }
+    const graph =
+      typeof hit.graph === "object" && hit.graph !== null ? (hit.graph as Record<string, unknown>) : undefined;
+    if (graph) {
+      const entities = Array.isArray(graph.entities) ? (graph.entities as Array<Record<string, unknown>>) : [];
+      if (entities.length > 0) {
+        const matched = entities
+          .filter((entity) => String(entity.kind ?? "") === "matched")
+          .map((entity) => String(entity.name ?? "?"));
+        const neighbors = entities
+          .filter((entity) => String(entity.kind ?? "") !== "matched")
+          .map((entity) => String(entity.name ?? "?"));
+        lines.push(
+          `  graph: ${[
+            matched.length > 0 ? `query match=${matched.join(", ")}` : undefined,
+            neighbors.length > 0 ? `neighbors=${neighbors.join(", ")}` : undefined,
+          ]
+            .filter(Boolean)
+            .join("; ")}`,
+        );
+      }
     }
 
     if (detail === "full") {
@@ -987,4 +1021,11 @@ export function formatVaultUnsetPlain(r: Record<string, unknown>): string {
 
 export function formatWorkflowResumePlain(r: Record<string, unknown>): string {
   return formatWorkflowStatusPlain(r) ?? `Resumed workflow run ${String(r.id ?? r.runId ?? "?")}`;
+}
+
+function formatRelatedLabel(hit: Record<string, unknown>): string {
+  const ref = typeof hit.ref === "string" ? hit.ref : undefined;
+  if (ref) return ref;
+  const pathValue = typeof hit.path === "string" ? hit.path : "?";
+  return pathValue.split("/").pop() ?? pathValue;
 }

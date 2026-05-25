@@ -8,15 +8,16 @@ import {
   upsertLockEntry,
   writeLockfile,
 } from "../src/integrations/lockfile";
-import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { type Cleanup, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-let testConfigDir = "";
+// akm.lock lives in getDataDir() = $XDG_DATA_HOME/akm/akm.lock
+let testDataDir = "";
 let envCleanup: Cleanup = () => {};
 
 function getLockfilePath(): string {
-  return path.join(testConfigDir, "akm", "akm.lock");
+  return path.join(testDataDir, "akm", "akm.lock");
 }
 
 function writeRawLockfile(content: string): void {
@@ -35,15 +36,15 @@ function validEntry(overrides?: Partial<LockfileEntry>): LockfileEntry {
 }
 
 beforeEach(() => {
-  const cfgResult = sandboxXdgConfigHome();
-  testConfigDir = cfgResult.dir;
-  envCleanup = cfgResult.cleanup;
+  const dataResult = sandboxXdgDataHome();
+  testDataDir = dataResult.dir;
+  envCleanup = dataResult.cleanup;
 });
 
 afterEach(() => {
   envCleanup();
   envCleanup = () => {};
-  testConfigDir = "";
+  testDataDir = "";
 });
 
 // ── readLockfile ────────────────────────────────────────────────────────────

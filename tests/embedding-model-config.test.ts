@@ -295,7 +295,7 @@ describe("config file parsing for localModel", () => {
     expect(config.embedding?.model).toBe("nomic-embed-text");
   });
 
-  test("parseEmbeddingConfig returns local-only config for localModel without endpoint", async () => {
+  test("local-only config: endpoint and model are undefined when only localModel is set", async () => {
     const { loadConfig } = await import("../src/core/config");
 
     const configData = {
@@ -312,9 +312,9 @@ describe("config file parsing for localModel", () => {
     const config = loadConfig();
     expect(config.embedding).toBeDefined();
     expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
-    // Sentinel empty strings for local-only config
-    expect(config.embedding?.endpoint).toBe("");
-    expect(config.embedding?.model).toBe("");
+    // sentinel "" injection was removed in 393de77; fields stay undefined
+    expect(config.embedding?.endpoint).toBeUndefined();
+    expect(config.embedding?.model).toBeUndefined();
   });
 });
 
@@ -336,7 +336,9 @@ describe("parseEmbeddingConfig edge cases", () => {
     cfgDir = "";
   });
 
-  test("warns when endpoint present but model missing with localModel set", async () => {
+  test("endpoint+localModel without model passes through as-is (no sentinel, no warn)", async () => {
+    // warn-and-drop preprocessing was removed in 393de77; partial embedding
+    // configs are now passed through by Zod as-is.
     const { loadConfig } = await import("../src/core/config");
 
     const configData = {
@@ -348,33 +350,22 @@ describe("parseEmbeddingConfig edge cases", () => {
       },
     };
 
-    const origWarn = console.warn;
-    const warnings: string[] = [];
-    try {
-      console.warn = (...args: unknown[]) => {
-        warnings.push(args.map(String).join(" "));
-      };
-      const akmDir = path.join(cfgDir, "akm");
-      fs.mkdirSync(akmDir, { recursive: true });
-      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+    const akmDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmDir, { recursive: true });
+    fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
-      const config = loadConfig();
-
-      // Should return local-only config (endpoint discarded)
-      expect(config.embedding).toBeDefined();
-      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
-      expect(config.embedding?.endpoint).toBe("");
-      expect(config.embedding?.model).toBe("");
-
-      // Should have emitted a warning about the ignored endpoint
-      const relevantWarning = warnings.find((w) => w.includes("ignored") && w.includes("model is required"));
-      expect(relevantWarning).toBeDefined();
-    } finally {
-      console.warn = origWarn;
-    }
+    const config = loadConfig();
+    expect(config.embedding).toBeDefined();
+    expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+    expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+    // model stays undefined since it was not set
+    expect(config.embedding?.model).toBeUndefined();
   });
 
-  test("returns undefined when endpoint present but model and localModel both missing", async () => {
+  test("endpoint-only config passes through (no undefined coercion)", async () => {
+    // The old parseEmbeddingConfig returned undefined when only endpoint was
+    // set (no model/localModel). That helper was deleted in 393de77; the Zod
+    // schema now accepts any combination of optional fields.
     const { loadConfig } = await import("../src/core/config");
 
     const configData = {
@@ -390,7 +381,9 @@ describe("parseEmbeddingConfig edge cases", () => {
     fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
     const config = loadConfig();
-    // parseEmbeddingConfig returns undefined => no embedding config set
-    expect(config.embedding).toBeUndefined();
+    expect(config.embedding).toBeDefined();
+    expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+    expect(config.embedding?.model).toBeUndefined();
+    expect(config.embedding?.localModel).toBeUndefined();
   });
 });
