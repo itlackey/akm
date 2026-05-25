@@ -845,11 +845,6 @@ const addCommand = defineCommand({
       description: "Mark a git stash as writable so changes can be pushed back",
       default: false,
     },
-    trust: {
-      type: "boolean",
-      description: "Bypass install-audit blocking for this add invocation only",
-      default: false,
-    },
     type: {
       type: "string",
       description: "Override asset type for all files in this stash (currently supports: wiki)",
@@ -933,7 +928,6 @@ const addCommand = defineCommand({
           ref,
           name: args.name,
           options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
-          trustThisInstall: args.trust,
           writable: args.writable,
         });
         appendEvent({
@@ -949,7 +943,6 @@ const addCommand = defineCommand({
         name: args.name,
         overrideType: args.type,
         options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
-        trustThisInstall: args.trust,
         writable: args.writable,
       });
       appendEvent({
@@ -3324,11 +3317,6 @@ const wikiRegisterCommand = defineCommand({
       description: "Mark a git-backed source as writable so changes can be pushed back",
       default: false,
     },
-    trust: {
-      type: "boolean",
-      description: "Bypass install-audit blocking for this registration only",
-      default: false,
-    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
@@ -3339,7 +3327,6 @@ const wikiRegisterCommand = defineCommand({
         ref: args.ref.trim(),
         name: args.name,
         options: Object.keys(buildWebsiteOptions(args)).length > 0 ? buildWebsiteOptions(args) : undefined,
-        trustThisInstall: args.trust,
         writable: args.writable,
       });
       output("wiki-register", result);

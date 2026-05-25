@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { InstallAuditReport } from "../commands/install-audit";
 import type { SourceSpec } from "../core/config";
 
 /**
@@ -78,7 +77,6 @@ export interface InstalledStashEntry {
 export interface StashInstallResult extends InstalledStashEntry {
   extractedDir: string;
   integrity?: string;
-  audit?: InstallAuditReport;
 }
 
 export interface RegistryAssetEntry {

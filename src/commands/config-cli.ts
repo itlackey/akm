@@ -53,21 +53,10 @@ function rewriteSourcesAlias(key: string): string {
   return key;
 }
 
-/**
- * Translate the legacy `security.installAudit.registryWhitelist` alias.
- */
-function rewriteSecurityAlias(key: string): string {
-  if (key === "security.installAudit.registryWhitelist") {
-    return "security.installAudit.registryAllowlist";
-  }
-  return key;
-}
-
 function rewriteKey(config: AkmConfig, key: string): string {
   let k = rewriteLegacyLlmPath(config, key);
   k = rewriteEmbeddingPath(k);
   k = rewriteSourcesAlias(k);
-  k = rewriteSecurityAlias(k);
   return k;
 }
 
@@ -162,7 +151,6 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   if (config.embedding) result.embedding = config.embedding;
   if (config.profiles) result.profiles = config.profiles;
   if (config.defaults) result.defaults = config.defaults;
-  if (config.security) result.security = config.security;
   if (config.search) result.search = config.search;
   if (config.index) result.index = config.index;
   if (config.feedback) result.feedback = config.feedback;

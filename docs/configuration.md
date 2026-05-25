@@ -29,7 +29,6 @@ akm config list                     # List current config
 akm config get embedding            # Read a single key
 akm config get output.format        # Read one nested key
 akm config set output.detail full   # Set one scalar key
-akm config set security.installAudit.enabled false
 akm config unset embedding          # Remove an optional key
 akm config migrate --dry-run        # Preview config v2 migration
 akm config migrate                  # Apply config v2 migration
@@ -136,10 +135,6 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project sources compose with global ones. |
 | `registries` | array | official + skills.sh | Configured registries. |
 | `stashDir` | string | platform default | Path to the working stash. |
-| `security.installAudit.enabled` | boolean | `true` | Enable or disable install-time auditing. |
-| `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected. |
-| `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts. |
-| `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist. |
 | `search.minScore` | number | `0.2` | Minimum score floor for semantic-only hits. |
 | `search.graphBoost.directBoostPerEntity` | number | `0.25` | Additive direct-match graph boost per matched entity. |
 | `search.graphBoost.directBoostCap` | number | `0.75` | Maximum direct-match additive graph boost per hit. |
@@ -560,46 +555,6 @@ single FTS5+boosts pipeline. Default values preserve current ranking behavior.
 - `confidenceMode` supports `off`, `blend`, and `multiply`.
 - `confidenceWeight` is clamped to `[0,1]` and only applies when
   `confidenceMode` is `"blend"`.
-
-## Install Security Audit
-
-akm audits managed installs before they are registered. The audit scans code,
-metadata, prompts, and install scripts for suspicious patterns such as prompt
-injection attempts, remote shell pipes, and risky lifecycle hooks.
-
-```sh
-akm config set security.installAudit.enabled true
-akm config set security.installAudit.blockOnCritical true
-akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
-akm config set security.installAudit.blockUnlistedRegistries true
-```
-
-Use `security.installAudit.enabled false` to disable the feature completely, or
-`security.installAudit.blockOnCritical false` to keep reporting findings without
-blocking the install.
-
-To allow a known false positive in user config without disabling the audit,
-add an exact finding waiver:
-
-```json
-{
-  "security": {
-    "installAudit": {
-      "allowedFindings": [
-        {
-          "id": "prompt-reveal-hidden-secrets",
-          "ref": "github:owner/repo",
-          "path": "skills/review/SKILL.md",
-          "reason": "Reviewed manually; benign system prompt reference"
-        }
-      ]
-    }
-  }
-}
-```
-
-`allowedFindings` uses exact matching on `id`, and optionally `ref` and `path`,
-so waivers stay narrowly scoped.
 
 ## Using Ollama
 

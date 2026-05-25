@@ -15,6 +15,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 > lock file / event DB pointing at the host's default `$XDG_DATA_HOME`,
 > causing lock contention and bleed between jobs.
 
+### Removed
+
+- **Install-time security audit (`security.installAudit`) and the `--trust`
+  flag**. The audit scanned incoming stash assets for risky patterns (e.g.
+  `curl ... | bash`, "ignore previous instructions") and blocked installs on
+  critical findings. In practice it produced too many false positives on
+  benign documentation strings and forced first-time users to pass `--trust`
+  or twiddle config just to install the official stash. The whole feature is
+  gone:
+  - `akm add` and `akm update` no longer scan synced content.
+  - The `--trust` flag is removed from `akm add` and `akm wiki register`.
+  - The `security.installAudit.*` config keys (`enabled`, `blockOnCritical`,
+    `registryAllowlist`, `registryWhitelist`, `blockUnlistedRegistries`,
+    `allowedFindings`) are no longer recognised; the entire `security` block
+    is removed from the config schema.
+  - The `akm config set security.installAudit.*` keys now error as unknown.
+  - `audit` fields are removed from `AddResponse.installed` and
+    `SourceInstallStatus`.
+
 ### Breaking Changes
 
 - **Project-level `.akm/config.json` files are no longer merged**. The

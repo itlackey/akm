@@ -919,69 +919,6 @@
         "additionalProperties": false
       }
     },
-    "security": {
-      "type": "object",
-      "properties": {
-        "installAudit": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "blockOnCritical": {
-              "type": "boolean"
-            },
-            "blockUnlistedRegistries": {
-              "type": "boolean"
-            },
-            "registryAllowlist": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "registryWhitelist": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "allowedFindings": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "ref": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "path": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "reason": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "id"
-                ],
-                "additionalProperties": false
-              }
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
     "output": {
       "type": "object",
       "properties": {
@@ -2035,69 +1972,6 @@
             ],
             "additionalProperties": false
           }
-        },
-        "security": {
-          "type": "object",
-          "properties": {
-            "installAudit": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "blockOnCritical": {
-                  "type": "boolean"
-                },
-                "blockUnlistedRegistries": {
-                  "type": "boolean"
-                },
-                "registryAllowlist": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "registryWhitelist": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "allowedFindings": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "ref": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "path": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "reason": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "id"
-                    ],
-                    "additionalProperties": false
-                  }
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
         },
         "output": {
           "type": "object",

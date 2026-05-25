@@ -70,10 +70,10 @@ output such as a direct path from `vault path`):
 {"ok": false, "error": "<message>", "hint": "<optional hint>"}
 ```
 
-The `hint` field is present only when actionable remediation is available (e.g.
-`"Run akm add <source> --trust to bypass the audit for this source."`). Agents
-should check `ok === false` on the parsed stderr envelope or a non-zero exit
-code to detect failure. Scripts can rely on the exit code alone.
+The `hint` field is present only when actionable remediation is available
+(e.g. a suggested flag or alternate command). Agents should check
+`ok === false` on the parsed stderr envelope or a non-zero exit code to
+detect failure. Scripts can rely on the exit code alone.
 
 ## Commands
 
@@ -624,17 +624,6 @@ Workflow markdown contract:
 | `akm add https://docs.example.com` | Crawls and caches a website as a `website` source |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
-`akm add` also supports a per-install audit bypass when you intentionally trust
-the source:
-
-```sh
-akm add github:owner/private-stash --trust
-```
-
-Use `--trust` only for one-off installs you have manually reviewed. It does not
-persist trust in config. Note: `--trust` has no effect on local directory
-sources — the audit is not run for local paths.
-
 HTTP(S) URLs pointing to known git hosts (GitHub, GitLab, Bitbucket, Codeberg,
 SourceHut) or ending in `.git` are treated as git sources. All other HTTP(S)
 URLs are treated as website sources.
@@ -663,7 +652,6 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | `--writable` | Mark a git source as writable so `akm save` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
-| `--trust` | Bypass install-audit blocking for this add invocation only |
 | `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous vault key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) vault keys that can hijack process execution. Use only after reviewing the stash manually |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |

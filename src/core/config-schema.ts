@@ -259,34 +259,6 @@ export const InstalledStashEntrySchema = z
     }
   });
 
-// ── Security / install audit ────────────────────────────────────────────────
-
-const InstallAuditAllowedFindingSchema = z
-  .object({
-    id: nonEmptyString,
-    ref: z.string().min(1).optional(),
-    path: z.string().min(1).optional(),
-    reason: z.string().min(1).optional(),
-  })
-  .strict();
-
-export const InstallAuditConfigSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    blockOnCritical: z.boolean().optional(),
-    blockUnlistedRegistries: z.boolean().optional(),
-    registryAllowlist: z.array(nonEmptyString).optional(),
-    registryWhitelist: z.array(nonEmptyString).optional(),
-    allowedFindings: z.array(InstallAuditAllowedFindingSchema).optional(),
-  })
-  .strict();
-
-export const SecurityConfigSchema = z
-  .object({
-    installAudit: InstallAuditConfigSchema.optional(),
-  })
-  .strict();
-
 // ── Output ──────────────────────────────────────────────────────────────────
 
 export const OutputConfigSchema = z
@@ -530,7 +502,6 @@ export const AkmConfigShape = {
   installed: z.array(InstalledStashEntrySchema).optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   sources: z.array(SourceConfigEntrySchema).optional(),
-  security: SecurityConfigSchema.optional(),
   output: OutputConfigSchema.optional(),
   writable: z.boolean().optional(),
   defaultWriteTarget: nonEmptyString.optional(),

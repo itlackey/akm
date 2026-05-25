@@ -283,8 +283,8 @@ On failure, every command emits:
 {"ok": false, "error": "<message>", "hint": "<optional remediation hint>"}
 ```
 
-The `hint` field is present only when there is an actionable next step (e.g.
-`"Run akm add <source> --trust to bypass the audit for this source."`).
+The `hint` field is present only when there is an actionable next step (a
+suggested flag or alternate command).
 
 Exit codes:
 

@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { InstallAuditReport } from "../commands/install-audit";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 
 export type AkmSearchType = string;
@@ -152,7 +151,6 @@ export interface AddResponse {
     cacheDir: string;
     extractedDir: string;
     installedAt: string;
-    audit?: InstallAuditReport;
   };
   /** Present for local directory adds (routed to stashes config) */
   sourceAdded?:
@@ -185,7 +183,6 @@ export interface AddResponse {
 
 export interface SourceInstallStatus extends InstalledStashEntry {
   extractedDir: string;
-  audit?: InstallAuditReport;
 }
 
 /**

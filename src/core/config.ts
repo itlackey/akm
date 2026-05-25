@@ -39,14 +39,11 @@ export type {
   IndexConfig,
   IndexConfigReservedKeys,
   IndexPassConfig,
-  InstallAuditAllowedFinding,
-  InstallAuditConfig,
   LlmCapabilities,
   LlmConnectionConfig,
   LlmProfileConfig,
   OutputConfig,
   RegistryConfigEntry,
-  SecurityConfig,
   SourceConfigEntry,
   SourceConfigEntryOptions,
   SourceSpec,
@@ -464,7 +461,7 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
 
   // Shallow-merge sub-objects so a partial update to e.g. `output.format`
   // doesn't drop the existing `output.detail`.
-  for (const key of ["output", "embedding", "index", "defaults", "security"] as const) {
+  for (const key of ["output", "embedding", "index", "defaults"] as const) {
     if (base[key] && override[key]) {
       // biome-ignore lint/suspicious/noExplicitAny: heterogeneous structural merge
       (merged as any)[key] = { ...base[key], ...override[key] };

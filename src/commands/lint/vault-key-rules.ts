@@ -12,8 +12,8 @@
  *
  * Enforcement scope:
  *   - `akm lint` reports findings as `dangerous-vault-key` (non-blocking warn).
- *   - `akm add` install-audit BLOCKS install unless `--allow-insecure` is set
- *     (or, on TTY, the user explicitly confirms at the prompt).
+ *   - `akm add` BLOCKS install unless `--allow-insecure` is set (or, on TTY,
+ *     the user explicitly confirms at the prompt).
  *   - `akm vault setKey` does NOT consult this list — by design, the operator
  *     owns their own vault and may legitimately store any key locally.  The
  *     gate exists only for third-party stash installation.

@@ -23,12 +23,6 @@ import { syncFromRef } from "../sources/providers/sync-from-ref";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../sources/types";
 import { ensureWebsiteMirror } from "../sources/website-ingest";
 import { listWikis, resolveWikisRoot } from "../wiki/wiki";
-import {
-  auditInstallCandidate,
-  deriveRegistryLabels,
-  enforceRegistryInstallPolicy,
-  formatInstallAuditFailureForAction,
-} from "./install-audit";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
 
@@ -248,35 +242,11 @@ async function updateWebsiteSource(
 async function updateRegistryEntry(
   entry: InstalledStashEntry,
   force: boolean,
-  auditConfig: ReturnType<typeof loadConfig>,
 ): Promise<UpdateResponse["processed"][number]> {
   if (force && shouldCleanupCache(entry)) {
     cleanupDirectoryBestEffort(entry.cacheDir);
   }
   const synced = await syncFromRef(entry.ref, { force });
-
-  // Mirror the post-sync audit hook from akmAdd so `akm update` can't
-  // silently land malicious content during refresh.
-  const registryLabels = deriveRegistryLabels({
-    source: synced.source,
-    ref: synced.ref,
-    artifactUrl: synced.artifactUrl,
-  });
-  enforceRegistryInstallPolicy(registryLabels, auditConfig, entry.ref);
-  const audit = auditInstallCandidate({
-    rootDir: synced.extractedDir,
-    source: synced.source,
-    ref: synced.ref,
-    registryLabels,
-    config: auditConfig,
-  });
-  if (audit.blocked) {
-    throw new UsageError(
-      formatInstallAuditFailureForAction(synced.ref, audit, "update"),
-      "INVALID_FLAG_VALUE",
-      `Re-run with \`akm update ${synced.ref} --trust\` only if you intentionally trust this source.`,
-    );
-  }
 
   const installedEntry: InstalledStashEntry = {
     id: synced.id,
@@ -316,7 +286,7 @@ async function updateRegistryEntry(
       resolvedRevision: entry.resolvedRevision,
       cacheDir: entry.cacheDir,
     },
-    installed: { ...installedEntry, extractedDir: synced.extractedDir, audit },
+    installed: { ...installedEntry, extractedDir: synced.extractedDir },
     changed: {
       version: versionChanged,
       revision: revisionChanged,
@@ -374,10 +344,9 @@ export async function akmUpdate(input?: {
   }
 
   const selectedEntries = selectTargets(installedEntries, target, all);
-  const auditConfig = config;
   const processed: UpdateResponse["processed"] = [];
   for (const entry of selectedEntries) {
-    processed.push(await updateRegistryEntry(entry, force, auditConfig));
+    processed.push(await updateRegistryEntry(entry, force));
   }
 
   return buildUpdateResponse(stashDir, target, all, processed);

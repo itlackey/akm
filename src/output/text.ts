@@ -10,7 +10,6 @@
  * Pure functions — no IO.
  */
 
-import { formatInstallAuditSummary } from "../commands/install-audit";
 import type { IndexResponse } from "../indexer/indexer";
 import type { DetailLevel } from "./context";
 
@@ -152,11 +151,6 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
       if (Array.isArray(warnings) && warnings.length > 0) {
         lines.push(`Warnings (${warnings.length}):`);
         for (const message of warnings) lines.push(`  - ${String(message)}`);
-      }
-      const installed = r.installed as Record<string, unknown> | undefined;
-      const audit = installed?.audit;
-      if (audit && typeof audit === "object") {
-        lines.push(formatInstallAuditSummary(audit as Parameters<typeof formatInstallAuditSummary>[0]));
       }
       return lines.join("\n");
     }

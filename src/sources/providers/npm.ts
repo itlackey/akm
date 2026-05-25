@@ -9,10 +9,6 @@
  * integrity, extracts it securely (via `extractTarGzSecure`), detects the
  * stash root inside the package, and applies any nested `.akm-include`
  * configuration. Cache hits short-circuit the fetch.
- *
- * Audit is intentionally NOT performed here — `akmAdd` calls
- * `auditInstallCandidate` after `sync()` so the policy decision lives at
- * the orchestrator layer where the `--trust` flag is known.
  */
 
 import fs from "node:fs";

@@ -232,26 +232,6 @@ export interface SourceConfigEntry {
   wikiName?: string;
 }
 
-export interface InstallAuditConfig {
-  enabled?: boolean;
-  blockOnCritical?: boolean;
-  blockUnlistedRegistries?: boolean;
-  registryAllowlist?: string[];
-  registryWhitelist?: string[];
-  allowedFindings?: InstallAuditAllowedFinding[];
-}
-
-export interface InstallAuditAllowedFinding {
-  id: string;
-  ref?: string;
-  path?: string;
-  reason?: string;
-}
-
-export interface SecurityConfig {
-  installAudit?: InstallAuditConfig;
-}
-
 export interface OutputConfig {
   format?: "json" | "yaml" | "text";
   detail?: "brief" | "normal" | "full";
@@ -357,8 +337,6 @@ export interface AkmConfig {
   registries?: RegistryConfigEntry[];
   /** Additional asset sources (filesystem paths and remote providers). */
   sources?: SourceConfigEntry[];
-  /** Security controls for install-time auditing and registry allowlists. */
-  security?: SecurityConfig;
   /** Output defaults for CLI rendering. */
   output?: OutputConfig;
   /** When true, the primary stash is treated as a writable git repo. */

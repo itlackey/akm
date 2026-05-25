@@ -8,10 +8,6 @@
  * Replaces the historical `installRegistryRef()` entry point. Given an
  * unparsed install ref, this resolves the right syncable provider and
  * invokes its `sync()` method.
- *
- * Audit is intentionally NOT performed here; callers (`akmAdd`,
- * `akmUpdate`) decide whether to run `auditInstallCandidate` on the
- * synced `contentDir` because they own the `--trust` flag.
  */
 
 import type { SourceSpec } from "../../core/config";

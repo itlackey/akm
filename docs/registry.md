@@ -235,27 +235,6 @@ Only the listed paths are copied into the install cache. Paths must be
 relative to the package root and cannot escape it. The `.git` directory is
 always excluded.
 
-### Install Audit Controls
-
-Install-time auditing is enabled by default. You can configure it in
-`config.json` or via `akm config`:
-
-```sh
-akm config set security.installAudit.enabled false
-akm config set security.installAudit.blockOnCritical false
-akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
-akm config set security.installAudit.blockUnlistedRegistries true
-```
-
-- `security.installAudit.enabled` disables auditing entirely.
-- `security.installAudit.blockOnCritical` reports critical findings without
-  blocking the install when set to `false`.
-- `security.installAudit.registryAllowlist` allows only named registries or
-  hosts (for example `npm`, `github.com`, `gitlab.com`) when allowlisting is
-  enabled.
-- `security.installAudit.blockUnlistedRegistries` blocks installs whose source
-  does not match the allowlist.
-
 ## Managing Managed Sources
 
 ```bash
