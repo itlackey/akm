@@ -1,19 +1,51 @@
 # improve-stats — Analyzing `akm improve` Runs
 
-These scripts analyze structured run logs from `akm improve`. Every
-invocation of `akm improve` writes a JSON envelope to
-`<stash>/.akm/runs/<run-id>/improve-result.json` capturing what was
-considered, what was acted on, what was skipped and why. The toolkit in
-`scripts/improve-stats/` reads those envelopes and produces compact,
-operator-friendly summaries so you don't have to grep raw JSON.
+> **Prefer `akm health` (0.8.0+)** for everything below. The bash
+> toolkit in `scripts/improve-stats/` is retained as a reference and
+> for ad-hoc cases the CLI doesn't cover, but every metric it computes
+> is now first-class on the health command's result envelope. See the
+> "Built-in via `akm health`" section below.
 
-The toolkit is shell + `jq`; no extra dependencies. Run from the source
-repo (or any clone of it) — the scripts read your local stash directly.
+`akm improve` records each run as a row in the `improve_runs` table of
+`state.db`, with `result_json` carrying the full envelope (planned
+refs, action outcomes, consolidation, memory inference, graph
+extraction, lint, etc.). The 0.8.0+ canonical analysis tool —
+`akm health` — queries that table directly and surfaces aggregates,
+per-run breakdowns, and window comparisons.
 
-## Quick start
+The bash toolkit in `scripts/improve-stats/` reads the same table.
+It's shell + `jq` + `sqlite3`; no extra dependencies. Run from the
+source repo — the scripts read your local `state.db` directly.
+
+## Built-in via `akm health` (recommended)
+
+```bash
+# Window rollup — distill/reflect outcome splits, mem-inference yield,
+# consolidation outcomes, graph quality, wall-time p50/p95
+akm health --since 24h | jq '.improve'
+
+# Per-run breakdown (replaces runs-detail and most of runs-list)
+akm health --since 24h --detail per-run --format md
+
+# A/B comparison — current vs prior window, with deltas
+akm health --window-compare 24h | jq '{windows, deltas}'
+
+# Explicit windows for incident reports
+akm health \
+  --windows 'name=before,since=<iso>,until=<iso>' \
+  --windows 'name=after,since=<iso>' \
+  | jq '.windows, .deltas'
+```
+
+Schema is `schemaVersion: 2`. See the [health command source](../src/commands/health.ts)
+for the full type. Follow-up phases (Phase 2 `--detail per-run` and Phase 3
+`--window-compare`/`--windows`) are documented in
+[health-command-enhancements.md](technical/health-command-enhancements.md).
+
+## Quick start (legacy bash toolkit)
 
 Clone the `akm` source repo (these scripts live in `scripts/improve-stats/`),
-then point them at your stash:
+then run any helper:
 
 ```bash
 cd ~/code/akm                              # or wherever the source lives
@@ -21,8 +53,9 @@ scripts/improve-stats/runs-trend 12 | column -t
 scripts/improve-stats/run-show latest
 ```
 
-By default the scripts read from `$AKM_STASH_DIR` (falling back to
-`~/akm`). Every script accepts `--stash <path>` to override per-call.
+By default the scripts query `$XDG_DATA_HOME/akm/state.db` (falling back
+to `~/.local/share/akm/state.db`). Every script accepts `--stash <path>`
+for back-compat though the value is no longer consulted for reads.
 
 ## Scripts
 

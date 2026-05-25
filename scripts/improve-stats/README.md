@@ -1,5 +1,13 @@
 # improve-stats — analysis toolkit for `akm improve` runs
 
+> **0.8.0+: prefer `akm health`.** Every metric these scripts compute
+> is now first-class on the health command's result envelope:
+> `akm health --since 24h` (rollup), `--detail per-run` (per-row table),
+> `--window-compare 24h` or `--windows 'name=...,since=...'` (A/B).
+> See [`docs/improve-stats.md`](../../docs/improve-stats.md). These
+> scripts are retained because they're convenient one-shot
+> ad-hoc tools that don't require remembering jq paths.
+
 Quick scripts for digging into improve-run envelopes. Built from the
 patterns that came out of tuning the improve pipeline in May 2026.
 

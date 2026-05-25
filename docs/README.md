@@ -30,7 +30,7 @@
 
 ## Operations
 
-- [Improve Stats](improve-stats.md) -- Analyze `akm improve` run logs with the `scripts/improve-stats/` toolkit (runs-trend, run-show, actions-breakdown, lint-current)
+- [Improve Stats](improve-stats.md) -- Analyze `akm improve` runs. Prefer `akm health` (0.8.0+) for rollup/per-run/window-compare views; bash toolkit in `scripts/improve-stats/` is retained for ad-hoc cases.
 
 ## Internals
 
