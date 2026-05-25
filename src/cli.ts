@@ -3,6 +3,28 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// Runtime guard: akm-cli 0.8 is Bun-only. The `preinstall` hook in
+// package.json blocks `npm install`, but it does not protect against a
+// stale node-resolved shebang, a wrong PATH entry, or someone running
+// `node dist/cli.js` directly from a clone. In any of those cases the
+// next line — `import { spawnSync } from "node:child_process";` — would
+// itself succeed under node, only to die a few imports later with a
+// confusing `ERR_MODULE_NOT_FOUND` for our extensionless internal paths.
+// Catch the wrong-runtime case here with a friendly message instead of
+// a stack trace. Cross-runtime support is planned for 0.9 (issue #465).
+if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
+  // biome-ignore lint/suspicious/noConsole: this guard runs before our logger
+  console.error(
+    "\n  ERROR: akm-cli 0.8 requires the Bun runtime (https://bun.sh) or the prebuilt binary.\n" +
+      "  Running under Node.js is not supported in this release.\n" +
+      "  Install options:\n" +
+      "    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\n" +
+      "    2. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n" +
+      "  Cross-runtime support is planned for 0.9.0.\n",
+  );
+  process.exit(1);
+}
+
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -107,7 +129,7 @@ import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { parseFrontmatter, parseFrontmatterBlock } from "./core/frontmatter";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
-import { clearLogFile, info, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
+import { clearLogFile, info, isQuiet, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
@@ -261,6 +283,30 @@ function output(command: string, result: unknown): void {
     }
   }
 }
+
+/**
+ * Stderr-only human-friendly hint after a non-interactive `setup` invocation.
+ * Default --format is `json`, so a CI or piped consumer sees only the JSON on
+ * stdout. But an interactive user running `akm setup --yes` would otherwise
+ * see only the JSON blob with no obvious next step. When stderr is a TTY and
+ * the JSON went to stdout, print a two-line summary to stderr telling the
+ * user (a) where the stash landed and (b) what to run next.
+ *
+ * Silent when: stderr is not a TTY (CI, pipes), --format=text/yaml (the user
+ * already gets readable output), --quiet, or the result is missing fields.
+ */
+function printSetupTtyHint(result: { stashDir?: string; configPath?: string }): void {
+  if (!process.stderr.isTTY) return;
+  const mode = getOutputMode();
+  if (mode.format !== "json" && mode.format !== "jsonl") return;
+  if (isQuiet()) return;
+  if (!result?.stashDir) return;
+  // biome-ignore lint/suspicious/noConsole: TTY-only UX hint, gated above
+  console.error(
+    `\n✓ Stash created at ${result.stashDir}\n` +
+      `  Next: \`akm add github:itlackey/akm-stash\` then \`akm index\` to populate the stash.`,
+  );
+}
 /**
  * Module Naming:
  * - sources/*           : Asset operations (search, show, add, clone)
@@ -320,6 +366,7 @@ const setupCommand = defineCommand({
           probe: args.probe,
         });
         output("setup", result);
+        printSetupTtyHint(result);
       } else if (args.config) {
         // Non-interactive config mode
         const { runSetupFromConfig } = await import("./setup/setup");
@@ -330,6 +377,7 @@ const setupCommand = defineCommand({
           probe: args.probe,
         });
         output("setup", result);
+        printSetupTtyHint(result);
       } else if (args.yes) {
         // Defaults mode — no prompts
         const { runSetupWithDefaults } = await import("./setup/setup");
@@ -339,6 +387,7 @@ const setupCommand = defineCommand({
           probe: args.probe,
         });
         output("setup", result);
+        printSetupTtyHint(result);
       } else {
         // Interactive wizard
         const { runSetupWizard } = await import("./setup/setup");
@@ -4671,7 +4720,14 @@ const main = defineCommand({
   },
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)", default: "brief" },
+    detail: {
+      type: "string",
+      description:
+        "Detail level. Stable: brief|normal|full. Experimental: summary|agent " +
+        "(supported on a subset of commands; coverage will expand or these will be replaced — " +
+        "see STABILITY.md). Default: brief.",
+      default: "brief",
+    },
     quiet: {
       type: "boolean",
       alias: "q",
@@ -4787,6 +4843,30 @@ try {
 } catch {
   // Non-fatal; one-time warning only.
 }
+
+// First-time-user breadcrumb: when run with no subcommand AND no config
+// exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`
+// above citty's auto-generated usage block. Triggers only when stdin/stderr
+// are interactive (so JSON-output users / CI consumers see nothing extra)
+// and stays silent for any flag-only invocation citty would handle itself
+// (--help, --version).
+(function maybePrintFirstTimeBanner(): void {
+  const argv = process.argv.slice(2);
+  // Fire only on completely bare `akm` invocation. Any explicit flag or
+  // subcommand means the user knows what they want.
+  if (argv.length > 0) return;
+  if (!process.stderr.isTTY) return;
+  try {
+    if (fs.existsSync(getConfigPath())) return;
+  } catch {
+    // If we can't resolve the config path, assume non-fresh and stay silent.
+    return;
+  }
+  // biome-ignore lint/suspicious/noConsole: first-run breadcrumb is intentional UX
+  console.error(
+    "👋 First time with akm? Run `akm setup` to get started.\n" + "   Docs: https://github.com/itlackey/akm#readme\n",
+  );
+})();
 
 runMain(main);
 
