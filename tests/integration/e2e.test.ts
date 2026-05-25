@@ -1229,7 +1229,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("upgrade --check returns version info (mocked fetch)", async () => {
-    const { checkForUpdate } = await import("../src/commands/self-update");
+    const { checkForUpdate } = await import("../../src/commands/self-update");
     const result = await withMockedFetch(
       () => Response.json({ tag_name: "v0.0.14" }),
       () => checkForUpdate("0.0.13"),
@@ -1241,7 +1241,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("performUpgrade detects non-binary install and returns guidance", async () => {
-    const { performUpgrade } = await import("../src/commands/self-update");
+    const { performUpgrade } = await import("../../src/commands/self-update");
     const result = await performUpgrade({
       currentVersion: "0.0.13",
       latestVersion: "0.0.14",

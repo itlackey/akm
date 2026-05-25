@@ -34,7 +34,7 @@ const originalAkmStashDir = process.env.AKM_STASH_DIR;
 const originalAkmVerbose = process.env.AKM_VERBOSE;
 const originalFetch = globalThis.fetch;
 
-mock.module("../src/llm/embedder.js", () => ({
+mock.module("../../src/llm/embedder.js", () => ({
   ...embedderModule,
   embedBatch: (texts: string[], embeddingConfig?: EmbeddingConnectionConfig) =>
     embedBatchImpl ? embedBatchImpl(texts, embeddingConfig) : actualEmbedBatch(texts, embeddingConfig),
@@ -343,7 +343,7 @@ test("akmIndex includes wiki raw files but excludes infrastructure files for wik
 
   const origStash = process.env.AKM_STASH_DIR;
   try {
-    const { saveConfig } = await import("../src/core/config");
+    const { saveConfig } = await import("../../src/core/config");
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
@@ -638,7 +638,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     const stashDir = tmpStash();
     writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-    const { saveConfig } = await import("../src/core/config");
+    const { saveConfig } = await import("../../src/core/config");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "auto",
@@ -717,7 +717,7 @@ test("akmIndex metadata enrichment progress events include visible per-entry pro
     defaults: { llm: "default" },
   });
 
-  const metadataEnhance = await import("../src/llm/metadata-enhance");
+  const metadataEnhance = await import("../../src/llm/metadata-enhance");
   const enhanceSpy = spyOn(metadataEnhance, "enhanceMetadata").mockImplementation(async (_config, entry) => ({
     description: entry.description ?? `Enhanced ${entry.name}`,
     tags: ["enhanced"],
@@ -800,13 +800,15 @@ test("akmIndex does not run slow passes", async () => {
     defaults: { llm: "default" },
   });
 
-  const memoryInfer = await import("../src/indexer/memory-inference");
-  const graphExtract = await import("../src/indexer/graph-extraction");
+  const memoryInfer = await import("../../src/indexer/memory-inference");
+  const graphExtract = await import("../../src/indexer/graph-extraction");
   const memorySpy = spyOn(memoryInfer, "runMemoryInferencePass").mockResolvedValue({
     considered: 0,
     splitParents: 0,
     writtenFacts: 0,
     skippedNoFacts: 0,
+
+    cacheHits: 0,
   });
   const graphSpy = spyOn(graphExtract, "runGraphExtractionPass").mockResolvedValue({
     considered: 0,
@@ -1194,7 +1196,7 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-  const { saveConfig } = await import("../src/core/config");
+  const { saveConfig } = await import("../../src/core/config");
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "auto",
@@ -1318,7 +1320,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   const secondStash = primaryStash;
 
   // Write a config that includes the same directory twice via stashes
-  const { saveConfig } = await import("../src/core/config");
+  const { saveConfig } = await import("../../src/core/config");
   process.env.AKM_STASH_DIR = primaryStash;
   saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: secondStash }] });
 
@@ -1346,7 +1348,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
   const stash1 = sharedDir;
   const stash2 = sharedDir;
 
-  const { saveConfig } = await import("../src/core/config");
+  const { saveConfig } = await import("../../src/core/config");
   process.env.AKM_STASH_DIR = stash1;
   saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: stash2 }] });
 
@@ -1622,8 +1624,8 @@ test("akmIndex removes graph rows when a stash source is no longer configured", 
   await akmIndex({ stashDir: primaryStash, full: true });
 
   // Seed graph rows for the secondary stash directly into the database.
-  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/graph-db");
-  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
+  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../../src/indexer/graph-db");
+  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph-extraction");
   const seedDb = openDatabase();
   try {
     replaceStoredGraph(seedDb, {
