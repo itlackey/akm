@@ -19,18 +19,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
-import { akmShowUnified as akmShow } from "../src/commands/show";
-import { loadConfig, saveConfig } from "../src/core/config";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/indexer/db";
-import { akmIndex } from "../src/indexer/indexer";
-import { loadStashFile } from "../src/indexer/metadata";
-import type { SearchHit, SourceSearchHit } from "../src/sources/types";
+import { akmSearch } from "../../src/commands/search";
+import { akmShowUnified as akmShow } from "../../src/commands/show";
+import { loadConfig, saveConfig } from "../../src/core/config";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../../src/indexer/db";
+import { akmIndex } from "../../src/indexer/indexer";
+import { loadStashFile } from "../../src/indexer/metadata";
+import type { SearchHit, SourceSearchHit } from "../../src/sources/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const FIXTURES = path.join(__dirname, "fixtures");
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
+const FIXTURES = path.join(__dirname, "..", "fixtures");
+const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 
 function expectDefined<T>(value: T | null | undefined): T {
   expect(value).toBeDefined();

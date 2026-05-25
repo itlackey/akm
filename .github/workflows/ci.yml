@@ -80,7 +80,7 @@ jobs:
       - run: bun install
 
       - name: Run Docker install tests
-        run: AKM_DOCKER_TESTS=1 bun test tests/docker-install.test.ts
+        run: AKM_DOCKER_TESTS=1 bun test tests/integration/docker-install.test.ts
         env:
           HF_HOME: ~/.cache/huggingface
           DOCKER_BUILDKIT: "1"

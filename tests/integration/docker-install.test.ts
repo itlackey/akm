@@ -5,7 +5,7 @@
  * the smoke-test.sh script inside them. They require Docker to be available.
  *
  * Run:
- *   bun test tests/docker-install.test.ts
+ *   bun test tests/integration/docker-install.test.ts
  *
  * Or run the shell orchestrator directly:
  *   ./tests/docker/run-docker-tests.sh
@@ -14,7 +14,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-const PROJECT_ROOT = path.resolve(import.meta.dirname, "..");
+const PROJECT_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const DOCKER_DIR = path.join(PROJECT_ROOT, "tests", "docker");
 const BUILD_DIR = path.join(DOCKER_DIR, ".build");
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes per container build+run

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EmbeddingConnectionConfig } from "../src/core/config";
-import { saveConfig } from "../src/core/config";
-import { getDbPath } from "../src/core/paths";
+import type { EmbeddingConnectionConfig } from "../../src/core/config";
+import { saveConfig } from "../../src/core/config";
+import { getDbPath } from "../../src/core/paths";
 import {
   closeDatabase,
   DB_VERSION,
@@ -13,10 +13,10 @@ import {
   getIndexDirState,
   getMeta,
   openDatabase,
-} from "../src/indexer/db";
-import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../src/indexer/indexer";
-import { buildSearchText } from "../src/indexer/search-fields";
-import * as embedderModule from "../src/llm/embedder";
+} from "../../src/indexer/db";
+import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
+import { buildSearchText } from "../../src/indexer/search-fields";
+import * as embedderModule from "../../src/llm/embedder";
 
 let testConfigDir = "";
 let testCacheDir = "";

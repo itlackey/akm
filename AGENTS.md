@@ -2,7 +2,7 @@
 
 ## Workflow
 - Runtime and tooling are Bun-first. Use `bun install`.
-- CI runs `bun run check`, which is `bun run lint && bunx tsc --noEmit && bun test ./tests`.
+- CI runs `bun run check`, which is `bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration`.
 - Before committing, run `bunx biome check --write src/ tests/`. Repo guidance prefers the write-capable Biome pass, not just `bun run lint`.
 - Build with `bun run build`. It compiles `src/**` only into `dist/`; `dist/tests` should never appear.
 - Prefer focused verification with `bun test tests/<file>.test.ts`. Do not rely on `bun run check:changed` without checking it first; the script references `tests/stash-search.test.ts`, which is not present.
@@ -20,8 +20,10 @@
 - `writable` defaults to `true` on `filesystem` and `false` on `git` / `website` / `npm`; `writable: true` on `website` or `npm` is rejected at config load.
 
 ## Tests
+- **Two test targets**: `bun run test:unit` (fast, < 60s, excludes `tests/integration/`) and `bun run test:integration` (slow, covers `tests/integration/`, `tests/commands/`, `tests/workflows/`). `bun run check` runs both in sequence after lint and typecheck.
+- For a tight inner feedback loop, use `bun run test:unit` or `bun test tests/<specific-file>.test.ts`.
 - Semantic search e2e is gated: `AKM_SEMANTIC_TESTS=1 bun test tests/semantic-search-e2e.test.ts`. First run downloads Hugging Face models.
-- Docker install coverage is gated: `AKM_DOCKER_TESTS=1 bun test tests/docker-install.test.ts` or `./tests/docker/run-docker-tests.sh`.
+- Docker install coverage is gated: `AKM_DOCKER_TESTS=1 bun test tests/integration/docker-install.test.ts` or `./tests/docker/run-docker-tests.sh`.
 - Release validation is `./tests/release-check.sh [--skip-docker]`. Its order is intentional: Biome write pass, typecheck, build, npm bin-target check, setup/install regression suite, full test suite, then optional Docker matrix.
 
 ### Test-isolation harness
