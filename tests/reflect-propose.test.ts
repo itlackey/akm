@@ -23,7 +23,7 @@ import { appendEvent, readEvents } from "../src/core/events";
 import { listProposals } from "../src/core/proposals";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../src/integrations/agent/spawn";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 

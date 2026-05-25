@@ -69,7 +69,7 @@ const FIXTURE_INDEX: RegistryIndex = {
 
 const createdTmpDirs: string[] = [];
 
-function createTmpDir(prefix = "akm-search-"): string {
+function _createTmpDir(prefix = "akm-search-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;

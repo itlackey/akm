@@ -75,7 +75,7 @@ const V2_INDEX: RegistryIndex = {
 
 const createdTmpDirs: string[] = [];
 
-function createTmpDir(prefix = "akm-v2-"): string {
+function _createTmpDir(prefix = "akm-v2-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;

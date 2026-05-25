@@ -26,7 +26,7 @@ import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHom
 
 const createdTmpDirs: string[] = [];
 
-function createTmpDir(prefix = "akm-parity-"): string {
+function _createTmpDir(prefix = "akm-parity-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;

@@ -58,7 +58,7 @@ const FIXTURE_INDEX = {
 const createdTmpDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
 
-function createTmpDir(prefix = "akm-static-index-"): string {
+function _createTmpDir(prefix = "akm-static-index-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;

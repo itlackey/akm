@@ -29,7 +29,7 @@ const FIXTURE_RESPONSE = {
 const createdTmpDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
 
-function createTmpDir(prefix = "akm-skills-sh-"): string {
+function _createTmpDir(prefix = "akm-skills-sh-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;
