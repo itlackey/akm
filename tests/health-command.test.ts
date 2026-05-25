@@ -4,9 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmHealth, parseHealthSince } from "../src/commands/health";
+import type { AkmImproveResult } from "../src/commands/improve";
 import { appendEvent } from "../src/core/events";
-import { openStateDatabase, upsertTaskHistory } from "../src/core/state-db";
+import { openStateDatabase, recordImproveRun, upsertTaskHistory } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
+
+function fixtureResult(partial: Record<string, unknown>): AkmImproveResult {
+  return partial as unknown as AkmImproveResult;
+}
 
 const savedEnv = {
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
@@ -49,60 +54,251 @@ describe("parseHealthSince", () => {
 });
 
 describe("akmHealth", () => {
-  test("reports deterministic improve metrics from improve_completed events", () => {
+  test("reports invoked/completed/skipped from the events stream", () => {
     const now = new Date().toISOString();
     appendEvent({ eventType: "improve_invoked", ref: "improve:all:all", metadata: { dryRun: false } });
     appendEvent({ eventType: "improve_skipped", ref: "memory:alpha", metadata: { reason: "reflect_cooldown" } });
     appendEvent({
       eventType: "improve_completed",
       ref: "improve:all:all",
-      metadata: {
-        completedAt: now,
-        plannedRefs: 4,
-        reflectActions: 2,
-        distillActions: 1,
-        distillSkippedActions: 1,
-        memoryPruneActions: 1,
-        memoryInferenceActions: 1,
-        graphExtractionActions: 1,
-        errorActions: 0,
-        reflectsWithErrorContext: 3,
-        coverageGapCount: 2,
-        executionLogCandidateCount: 5,
-        evalCasesWritten: 7,
-        deadUrlCount: 1,
-        memoryEligible: 6,
-        memoryDerived: 2,
-        memoryCleanupPruneCandidates: 3,
-        memoryCleanupContradictionCandidates: 1,
-        memoryCleanupBeliefStateTransitions: 2,
-        memoryCleanupConsolidationCandidates: 4,
-        memoryCleanupArchived: 2,
-        memoryCleanupWarnings: 1,
-        consolidationProcessed: 2,
-        consolidationDurationMs: 120,
-        memoryInferenceWrites: 5,
-        memoryInferenceDurationMs: 80,
-        graphExtractionExtractedFiles: 9,
-        graphExtractionDurationMs: 40,
-      },
+      metadata: { completedAt: now },
     });
 
     const result = akmHealth({ since: "7d" });
 
+    expect(result.schemaVersion).toBe(2);
     expect(result.improve.invoked).toBe(1);
     expect(result.improve.completed).toBe(1);
     expect(result.improve.skipped).toBe(1);
     expect(result.improve.skipReasons.reflect_cooldown).toBe(1);
+  });
+
+  test("reports rich improve metrics from improve_runs (Phase 1)", () => {
+    const startA = new Date(Date.now() - 60_000).toISOString();
+    const endA = new Date(Date.now() - 30_000).toISOString();
+    const startB = new Date(Date.now() - 25_000).toISOString();
+    const endB = new Date(Date.now() - 10_000).toISOString();
+    const startDry = new Date(Date.now() - 9_000).toISOString();
+    const endDry = new Date(Date.now() - 5_000).toISOString();
+
+    // Wall-time rows in task_history for task_id='akm-improve'.
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: startA,
+        completed_at: endA,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: startB,
+        completed_at: endB,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+
+      // Real improve_run row with rich envelope fields.
+      recordImproveRun(db, {
+        id: "run-a",
+        startedAt: startA,
+        completedAt: endA,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 4, derived: 2 },
+          plannedRefs: [{ ref: "memory:a" }, { ref: "memory:b" }, { ref: "memory:c" }],
+          actions: [
+            { ref: "memory:a", mode: "reflect", result: { ok: true } },
+            { ref: "memory:b", mode: "reflect-failed", result: { ok: false, error: "boom" } },
+            { ref: "memory:c", mode: "distill", result: { outcome: "queued" } },
+            { ref: "memory:d", mode: "distill", result: { outcome: "llm_failed" } },
+            { ref: "memory:e", mode: "distill", result: { outcome: "quality_rejected" } },
+            { ref: "memory:f", mode: "memory-inference", result: { ok: true } },
+            { ref: "memory:g", mode: "graph-extraction", result: { ok: true } },
+          ],
+          consolidation: {
+            schemaVersion: 1,
+            ok: true,
+            shape: "consolidate-result",
+            dryRun: false,
+            previewOnly: false,
+            target: "/tmp/stash",
+            processed: 3,
+            merged: 1,
+            deleted: 2,
+            promoted: ["lesson:foo", "lesson:bar"],
+            contradicted: 1,
+            warnings: [],
+            durationMs: 200,
+          },
+          memoryInference: {
+            considered: 10,
+            splitParents: 3,
+            writtenFacts: 6,
+            skippedNoFacts: 1,
+          },
+          graphExtraction: {
+            considered: 8,
+            extracted: 5,
+            totalEntities: 25,
+            totalRelations: 15,
+            written: true,
+            quality: {
+              consideredFiles: 8,
+              extractedFiles: 5,
+              entityCount: 25,
+              relationCount: 15,
+              extractionCoverage: 0.625,
+              density: 0.05,
+            },
+            telemetry: {
+              cacheHits: 6,
+              cacheMisses: 2,
+              truncationCount: 1,
+              failureCount: 0,
+            },
+          },
+          memoryInferenceDurationMs: 50,
+          graphExtractionDurationMs: 70,
+          reflectsWithErrorContext: 1,
+        }),
+      });
+
+      // Second real run — should aggregate.
+      recordImproveRun(db, {
+        id: "run-b",
+        startedAt: startB,
+        completedAt: endB,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [{ ref: "memory:z" }],
+          actions: [{ ref: "memory:z", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+
+      // Dry-run row — MUST be excluded.
+      recordImproveRun(db, {
+        id: "run-dry",
+        startedAt: startDry,
+        completedAt: endDry,
+        stashDir: "/tmp/stash",
+        dryRun: true,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: true,
+          memorySummary: { eligible: 999, derived: 999 },
+          plannedRefs: new Array(999).fill({ ref: "memory:dry" }),
+          actions: [{ ref: "memory:dry", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    // Dry-run was excluded — plannedRefs is 3 + 1, not 999+.
     expect(result.improve.plannedRefs).toBe(4);
-    expect(result.improve.actions.reflect).toBe(2);
-    expect(result.improve.actions.distill).toBe(1);
-    expect(result.improve.actions.distillSkipped).toBe(1);
-    expect(result.improve.reflectsWithErrorContext).toBe(3);
-    expect(result.improve.memorySummary).toEqual({ eligible: 6, derived: 2 });
-    expect(result.improve.consolidation).toEqual({ ran: true, processed: 2, durationMs: 120 });
-    expect(result.improve.memoryInference).toEqual({ ran: true, writes: 5, durationMs: 80 });
-    expect(result.improve.graphExtraction).toEqual({ ran: true, extractedFiles: 9, durationMs: 40 });
+
+    // Reflect outcome split.
+    expect(result.improve.actions.reflect.ok).toBe(1);
+    expect(result.improve.actions.reflect.failed).toBe(1);
+
+    // Distill outcome split (run-a: queued/llmFailed/qualityRejected, run-b: queued).
+    expect(result.improve.actions.distill.queued).toBe(2);
+    expect(result.improve.actions.distill.llmFailed).toBe(1);
+    expect(result.improve.actions.distill.qualityRejected).toBe(1);
+
+    // Action mode counts.
+    expect(result.improve.actions.memoryInference).toBe(1);
+    expect(result.improve.actions.graphExtraction).toBe(1);
+
+    // Consolidation outcomes.
+    expect(result.improve.consolidation.processed).toBe(3);
+    expect(result.improve.consolidation.promoted).toBe(2);
+    expect(result.improve.consolidation.merged).toBe(1);
+    expect(result.improve.consolidation.deleted).toBe(2);
+    expect(result.improve.consolidation.contradicted).toBe(1);
+
+    // Memory inference: 6/10 = 0.6 yield rate.
+    expect(result.improve.memoryInference.considered).toBe(10);
+    expect(result.improve.memoryInference.written).toBe(6);
+    expect(result.improve.memoryInference.splitParents).toBe(3);
+    expect(result.improve.memoryInference.skippedNoFacts).toBe(1);
+    expect(result.improve.memoryInference.yieldRate).toBe(0.6);
+    // Legacy alias for the v1 shape.
+    expect(result.improve.memoryInference.writes).toBe(result.improve.memoryInference.written);
+
+    // Graph extraction quality.
+    expect(result.improve.graphExtraction.entities).toBe(25);
+    expect(result.improve.graphExtraction.relations).toBe(15);
+    expect(result.improve.graphExtraction.cacheHits).toBe(6);
+    expect(result.improve.graphExtraction.cacheMisses).toBe(2);
+    expect(result.improve.graphExtraction.cacheHitRate).toBe(0.75);
+    expect(result.improve.graphExtraction.truncations).toBe(1);
+    expect(result.improve.graphExtraction.failures).toBe(0);
+
+    // Wall-time stats from task_history.
+    expect(result.improve.wallTime.count).toBe(2);
+    expect(result.improve.wallTime.minMs).toBeGreaterThan(0);
+    expect(result.improve.wallTime.maxMs).toBeGreaterThanOrEqual(result.improve.wallTime.minMs);
+    expect(result.improve.wallTime.medianMs).toBeGreaterThan(0);
+
+    // Schema bumped.
+    expect(result.schemaVersion).toBe(2);
+  });
+
+  test("createUnknownImproveMetrics-like shape when nothing recorded", () => {
+    const result = akmHealth({ since: "7d" });
+    expect(result.improve.actions.reflect).toEqual({ ok: 0, failed: 0, cooldown: 0, skipped: 0 });
+    expect(result.improve.actions.distill).toEqual({
+      queued: 0,
+      llmFailed: 0,
+      qualityRejected: 0,
+      configDisabled: 0,
+      skipped: 0,
+    });
+    expect(result.improve.consolidation.ran).toBe(false);
+    expect(result.improve.memoryInference.yieldRate).toBe(0);
+    expect(result.improve.graphExtraction.cacheHitRate).toBe(0);
+    expect(result.improve.wallTime).toEqual({ count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0 });
   });
 
   test("derives task and log metrics from task_history", () => {

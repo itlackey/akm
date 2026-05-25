@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { loadConfig } from "../core/config";
@@ -40,9 +41,28 @@ export interface ImproveHealthMetrics {
   skipReasons: Record<string, number>;
   plannedRefs: number;
   actions: {
-    reflect: number;
-    distill: number;
-    distillSkipped: number;
+    /**
+     * Reflect action outcomes split by mode. Sourced from improve_runs.result_json
+     * rather than the lossy events.metadata projection.
+     */
+    reflect: {
+      ok: number;
+      failed: number;
+      cooldown: number;
+      skipped: number;
+    };
+    /**
+     * Distill outcomes split by `AkmDistillResult.outcome`. `skipped` here is
+     * the distill-skipped action mode (cooldown), not the same as
+     * `outcome: "skipped"` inside a successful distill envelope.
+     */
+    distill: {
+      queued: number;
+      llmFailed: number;
+      qualityRejected: number;
+      configDisabled: number;
+      skipped: number;
+    };
     memoryPrune: number;
     memoryInference: number;
     graphExtraction: number;
@@ -68,17 +88,43 @@ export interface ImproveHealthMetrics {
   consolidation: {
     ran: boolean;
     processed: number;
+    promoted: number;
+    merged: number;
+    deleted: number;
+    contradicted: number;
     durationMs: number;
   };
   memoryInference: {
     ran: boolean;
-    writes: number;
+    considered: number;
+    splitParents: number;
+    written: number;
+    skippedNoFacts: number;
+    /** written / considered, 4dp; 0 when considered=0. */
+    yieldRate: number;
     durationMs: number;
+    /** @deprecated use `written` — kept as a soft-compat alias through 0.8.0. */
+    writes: number;
   };
   graphExtraction: {
     ran: boolean;
     extractedFiles: number;
+    entities: number;
+    relations: number;
+    cacheHits: number;
+    cacheMisses: number;
+    /** hits / (hits + misses), 4dp; 0 when both are 0. */
+    cacheHitRate: number;
+    truncations: number;
+    failures: number;
     durationMs: number;
+  };
+  wallTime: {
+    count: number;
+    medianMs: number;
+    p95Ms: number;
+    minMs: number;
+    maxMs: number;
   };
 }
 
@@ -90,7 +136,7 @@ export interface SessionLogAdvisory {
 }
 
 export interface AkmHealthResult {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: boolean;
   status: "pass" | "warn" | "fail";
   since: string;
@@ -153,9 +199,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     skipReasons: {},
     plannedRefs: 0,
     actions: {
-      reflect: 0,
-      distill: 0,
-      distillSkipped: 0,
+      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0 },
+      distill: { queued: 0, llmFailed: 0, qualityRejected: 0, configDisabled: 0, skipped: 0 },
       memoryPrune: 0,
       memoryInference: 0,
       graphExtraction: 0,
@@ -175,9 +220,30 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       archived: 0,
       warnings: 0,
     },
-    consolidation: { ran: false, processed: 0, durationMs: 0 },
-    memoryInference: { ran: false, writes: 0, durationMs: 0 },
-    graphExtraction: { ran: false, extractedFiles: 0, durationMs: 0 },
+    consolidation: { ran: false, processed: 0, promoted: 0, merged: 0, deleted: 0, contradicted: 0, durationMs: 0 },
+    memoryInference: {
+      ran: false,
+      considered: 0,
+      splitParents: 0,
+      written: 0,
+      skippedNoFacts: 0,
+      yieldRate: 0,
+      durationMs: 0,
+      writes: 0,
+    },
+    graphExtraction: {
+      ran: false,
+      extractedFiles: 0,
+      entities: 0,
+      relations: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      cacheHitRate: 0,
+      truncations: 0,
+      failures: 0,
+      durationMs: 0,
+    },
+    wallTime: { count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0 },
   };
 }
 
@@ -190,43 +256,220 @@ function toFiniteNumber(value: unknown): number {
   return 0;
 }
 
+/**
+ * Event-derived metrics. Only `completed` and skipReasons/invoked are sourced
+ * from events in v2 — the richer fields come from {@link summarizeImproveRuns}.
+ * The function still receives `improve_completed` events so that the completed
+ * count reflects the canonical event stream (it lines up 1:1 with improve_runs
+ * rows in practice, but the events table remains the system-of-record for the
+ * existence of a run).
+ */
 function summarizeImproveCompleted(events: ReturnType<typeof readEvents>["events"]): ImproveHealthMetrics {
   const metrics = createUnknownImproveMetrics();
   metrics.completed = events.length;
-  for (const event of events) {
-    const meta = event.metadata ?? {};
-    metrics.plannedRefs += toFiniteNumber(meta.plannedRefs);
-    metrics.actions.reflect += toFiniteNumber(meta.reflectActions);
-    metrics.actions.distill += toFiniteNumber(meta.distillActions);
-    metrics.actions.distillSkipped += toFiniteNumber(meta.distillSkippedActions);
-    metrics.actions.memoryPrune += toFiniteNumber(meta.memoryPruneActions);
-    metrics.actions.memoryInference += toFiniteNumber(meta.memoryInferenceActions);
-    metrics.actions.graphExtraction += toFiniteNumber(meta.graphExtractionActions);
-    metrics.actions.error += toFiniteNumber(meta.errorActions);
-    metrics.reflectsWithErrorContext += toFiniteNumber(meta.reflectsWithErrorContext);
-    metrics.coverageGapCount += toFiniteNumber(meta.coverageGapCount);
-    metrics.executionLogCandidateCount += toFiniteNumber(meta.executionLogCandidateCount);
-    metrics.evalCasesWritten += toFiniteNumber(meta.evalCasesWritten);
-    metrics.deadUrlCount += toFiniteNumber(meta.deadUrlCount);
-    metrics.memorySummary.eligible += toFiniteNumber(meta.memoryEligible);
-    metrics.memorySummary.derived += toFiniteNumber(meta.memoryDerived);
-    metrics.memoryCleanup.pruneCandidates += toFiniteNumber(meta.memoryCleanupPruneCandidates);
-    metrics.memoryCleanup.contradictionCandidates += toFiniteNumber(meta.memoryCleanupContradictionCandidates);
-    metrics.memoryCleanup.beliefStateTransitions += toFiniteNumber(meta.memoryCleanupBeliefStateTransitions);
-    metrics.memoryCleanup.consolidationCandidates += toFiniteNumber(meta.memoryCleanupConsolidationCandidates);
-    metrics.memoryCleanup.archived += toFiniteNumber(meta.memoryCleanupArchived);
-    metrics.memoryCleanup.warnings += toFiniteNumber(meta.memoryCleanupWarnings);
-    metrics.consolidation.processed += toFiniteNumber(meta.consolidationProcessed);
-    metrics.consolidation.durationMs += toFiniteNumber(meta.consolidationDurationMs);
-    metrics.memoryInference.writes += toFiniteNumber(meta.memoryInferenceWrites);
-    metrics.memoryInference.durationMs += toFiniteNumber(meta.memoryInferenceDurationMs);
-    metrics.graphExtraction.extractedFiles += toFiniteNumber(meta.graphExtractionExtractedFiles);
-    metrics.graphExtraction.durationMs += toFiniteNumber(meta.graphExtractionDurationMs);
-  }
-  metrics.consolidation.ran = metrics.consolidation.processed > 0 || metrics.consolidation.durationMs > 0;
-  metrics.memoryInference.ran = metrics.memoryInference.writes > 0 || metrics.memoryInference.durationMs > 0;
-  metrics.graphExtraction.ran = metrics.graphExtraction.extractedFiles > 0 || metrics.graphExtraction.durationMs > 0;
   return metrics;
+}
+
+function summarizeImproveRuns(db: Database, since: string): { metrics: ImproveHealthMetrics; runCount: number } {
+  const metrics = createUnknownImproveMetrics();
+  const rows = db
+    .prepare("SELECT result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0")
+    .all(since) as Array<{ result_json: string }>;
+
+  for (const row of rows) {
+    let result: Record<string, unknown>;
+    try {
+      result = JSON.parse(row.result_json) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    // plannedRefs (array of {ref, reason})
+    const plannedRefs = result.plannedRefs;
+    if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
+
+    // actions: split reflect / distill by outcome, count others.
+    const actions = result.actions;
+    if (Array.isArray(actions)) {
+      for (const action of actions as Array<Record<string, unknown>>) {
+        const mode = typeof action.mode === "string" ? action.mode : "";
+        switch (mode) {
+          case "reflect":
+            metrics.actions.reflect.ok += 1;
+            break;
+          case "reflect-failed":
+            metrics.actions.reflect.failed += 1;
+            break;
+          case "reflect-cooldown":
+            metrics.actions.reflect.cooldown += 1;
+            break;
+          case "reflect-skipped":
+            metrics.actions.reflect.skipped += 1;
+            break;
+          case "distill": {
+            const r = action.result as Record<string, unknown> | undefined;
+            const outcome = typeof r?.outcome === "string" ? r.outcome : "";
+            switch (outcome) {
+              case "queued":
+                metrics.actions.distill.queued += 1;
+                break;
+              case "llm_failed":
+                metrics.actions.distill.llmFailed += 1;
+                break;
+              case "quality_rejected":
+              case "review_needed":
+              case "validation_failed":
+                metrics.actions.distill.qualityRejected += 1;
+                break;
+              case "config_disabled":
+                metrics.actions.distill.configDisabled += 1;
+                break;
+              default:
+                // outcome==="skipped" or unknown — fall through; "skipped" here
+                // is distinct from the distill-skipped action mode (cooldown).
+                break;
+            }
+            break;
+          }
+          case "distill-skipped":
+            metrics.actions.distill.skipped += 1;
+            break;
+          case "memory-prune":
+            metrics.actions.memoryPrune += 1;
+            break;
+          case "memory-inference":
+            metrics.actions.memoryInference += 1;
+            break;
+          case "graph-extraction":
+            metrics.actions.graphExtraction += 1;
+            break;
+          case "error":
+            metrics.actions.error += 1;
+            break;
+        }
+      }
+    }
+
+    metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
+    if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
+    if (Array.isArray(result.executionLogCandidates))
+      metrics.executionLogCandidateCount += result.executionLogCandidates.length;
+    metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
+    if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
+
+    const memorySummary = result.memorySummary as Record<string, unknown> | undefined;
+    if (memorySummary) {
+      metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
+      metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
+    }
+
+    const memoryCleanup = result.memoryCleanup as Record<string, unknown> | undefined;
+    if (memoryCleanup) {
+      if (Array.isArray(memoryCleanup.pruneCandidates))
+        metrics.memoryCleanup.pruneCandidates += memoryCleanup.pruneCandidates.length;
+      if (Array.isArray(memoryCleanup.contradictionCandidates))
+        metrics.memoryCleanup.contradictionCandidates += memoryCleanup.contradictionCandidates.length;
+      if (Array.isArray(memoryCleanup.beliefStateTransitions))
+        metrics.memoryCleanup.beliefStateTransitions += memoryCleanup.beliefStateTransitions.length;
+      if (Array.isArray(memoryCleanup.consolidationCandidates))
+        metrics.memoryCleanup.consolidationCandidates += memoryCleanup.consolidationCandidates.length;
+      if (Array.isArray(memoryCleanup.archived)) metrics.memoryCleanup.archived += memoryCleanup.archived.length;
+      if (Array.isArray(memoryCleanup.warnings)) metrics.memoryCleanup.warnings += memoryCleanup.warnings.length;
+    }
+
+    const consolidation = result.consolidation as Record<string, unknown> | undefined;
+    if (consolidation) {
+      metrics.consolidation.processed += toFiniteNumber(consolidation.processed);
+      metrics.consolidation.merged += toFiniteNumber(consolidation.merged);
+      metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
+      metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
+      if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
+      metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
+    }
+
+    const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
+    if (memoryInference) {
+      metrics.memoryInference.considered += toFiniteNumber(memoryInference.considered);
+      metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
+      metrics.memoryInference.written += toFiniteNumber(memoryInference.writtenFacts);
+      metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
+      // memory-inference durationMs is not on MemoryInferenceResult directly;
+      // it's recorded on the post-loop envelope as memoryInferenceDurationMs.
+    }
+    metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
+
+    const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
+    if (graphExtraction) {
+      const quality = graphExtraction.quality as Record<string, unknown> | undefined;
+      if (quality) metrics.graphExtraction.extractedFiles += toFiniteNumber(quality.extractedFiles);
+      metrics.graphExtraction.entities += toFiniteNumber(graphExtraction.totalEntities);
+      metrics.graphExtraction.relations += toFiniteNumber(graphExtraction.totalRelations);
+      const telemetry = graphExtraction.telemetry as Record<string, unknown> | undefined;
+      if (telemetry) {
+        metrics.graphExtraction.cacheHits += toFiniteNumber(telemetry.cacheHits);
+        metrics.graphExtraction.cacheMisses += toFiniteNumber(telemetry.cacheMisses);
+        metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
+        metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
+      }
+    }
+    metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
+  }
+
+  // Derived flags / rates.
+  metrics.consolidation.ran =
+    metrics.consolidation.processed > 0 ||
+    metrics.consolidation.durationMs > 0 ||
+    metrics.consolidation.promoted > 0 ||
+    metrics.consolidation.merged > 0 ||
+    metrics.consolidation.deleted > 0 ||
+    metrics.consolidation.contradicted > 0;
+  metrics.memoryInference.ran =
+    metrics.memoryInference.considered > 0 ||
+    metrics.memoryInference.written > 0 ||
+    metrics.memoryInference.durationMs > 0;
+  metrics.memoryInference.writes = metrics.memoryInference.written;
+  metrics.memoryInference.yieldRate =
+    metrics.memoryInference.considered > 0
+      ? roundRate(metrics.memoryInference.written / metrics.memoryInference.considered)
+      : 0;
+  metrics.graphExtraction.ran =
+    metrics.graphExtraction.extractedFiles > 0 ||
+    metrics.graphExtraction.entities > 0 ||
+    metrics.graphExtraction.durationMs > 0;
+  const cacheTotal = metrics.graphExtraction.cacheHits + metrics.graphExtraction.cacheMisses;
+  metrics.graphExtraction.cacheHitRate = cacheTotal > 0 ? roundRate(metrics.graphExtraction.cacheHits / cacheTotal) : 0;
+
+  return { metrics, runCount: rows.length };
+}
+
+function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wallTime"] {
+  if (durationsMs.length === 0) return { count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0 };
+  const sorted = [...durationsMs].sort((a, b) => a - b);
+  const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+  return {
+    count: sorted.length,
+    medianMs: pick(0.5),
+    p95Ms: pick(0.95),
+    minMs: sorted[0] ?? 0,
+    maxMs: sorted[sorted.length - 1] ?? 0,
+  };
+}
+
+function collectImproveWallTimes(db: Database, since: string): number[] {
+  const rows = db
+    .prepare(
+      "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL",
+    )
+    .all(since) as Array<{ started_at: string; completed_at: string }>;
+  const out: number[] = [];
+  for (const row of rows) {
+    const startMs = new Date(row.started_at).getTime();
+    const endMs = new Date(row.completed_at).getTime();
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+      out.push(endMs - startMs);
+    }
+  }
+  return out;
 }
 
 function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]): {
@@ -482,11 +725,14 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
     const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
     const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events;
-    const improveSummary = summarizeImproveCompleted(improveCompletedEvents);
+    const eventsMetrics = summarizeImproveCompleted(improveCompletedEvents);
+    const { metrics: improveSummary } = summarizeImproveRuns(db, since);
     improveSummary.invoked = improveInvoked;
+    improveSummary.completed = eventsMetrics.completed;
     const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
     improveSummary.skipped = skipSummary.skipped;
     improveSummary.skipReasons = skipSummary.skipReasons;
+    improveSummary.wallTime = computeWallTimeStats(collectImproveWallTimes(db, since));
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
@@ -528,7 +774,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: !hardFailure,
       status,
       since,
