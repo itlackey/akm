@@ -183,7 +183,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
     writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
     const result = await runMemoryInferencePass({ semanticSearchMode: "auto" }, sources());
-    expect(result).toEqual({ considered: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(result).toEqual({ considered: 0, cacheHits: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
   });
 
   test("returns no-op when index.memory.llm = false", async () => {
@@ -252,7 +252,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
       index: { memory: { llm: true } },
     };
     const result = await runMemoryInferencePass(cfg, sources());
-    expect(result).toEqual({ considered: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(result).toEqual({ considered: 0, cacheHits: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
     expect(invocations).toBe(0);
     // Parent is not mutated when the feature gate blocks.
     const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
@@ -319,6 +319,7 @@ describe("runMemoryInferencePass — enabled", () => {
 
     expect(result).toEqual({
       considered: 1,
+      cacheHits: 0,
       splitParents: 1,
       writtenFacts: 1,
       skippedNoFacts: 0,

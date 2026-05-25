@@ -96,11 +96,30 @@ export interface ImproveHealthMetrics {
   };
   memoryInference: {
     ran: boolean;
+    /** All pending parents inspected this run, including cache hits. */
     considered: number;
+    /**
+     * Parents whose body hash matched a prior LLM call's cached result.
+     * Surfacing this separately keeps the operational yield rate
+     * interpretable as the cache warms — without it, `written / considered`
+     * collapses toward zero just because the cache absorbs most candidates.
+     */
+    cacheHits: number;
+    /** `considered - cacheHits` — the number of parents that actually hit the LLM. */
+    freshAttempts: number;
     splitParents: number;
     written: number;
     skippedNoFacts: number;
-    /** written / considered, 4dp; 0 when considered=0. */
+    /**
+     * `written / freshAttempts`, 4dp; 0 when freshAttempts=0.
+     *
+     * Was previously `written / considered`. Changed 2026-05-25 because
+     * the cache-hit denominator inflation made the metric drift toward
+     * zero as the cache warmed even when actual extraction productivity
+     * was steady. Use `freshAttempts` as the denominator so the rate
+     * reflects "of the parents we actually re-inferred, how many produced
+     * a fact?" — independent of cache state.
+     */
     yieldRate: number;
     durationMs: number;
     /** @deprecated use `written` — kept as a soft-compat alias through 0.8.0. */
@@ -271,6 +290,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     memoryInference: {
       ran: false,
       considered: 0,
+      cacheHits: 0,
+      freshAttempts: 0,
       splitParents: 0,
       written: 0,
       skippedNoFacts: 0,
@@ -429,6 +450,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
   if (memoryInference) {
     metrics.memoryInference.considered += toFiniteNumber(memoryInference.considered);
+    metrics.memoryInference.cacheHits += toFiniteNumber(memoryInference.cacheHits);
     metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
     metrics.memoryInference.written += toFiniteNumber(memoryInference.writtenFacts);
     metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
@@ -472,9 +494,15 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
     metrics.memoryInference.written > 0 ||
     metrics.memoryInference.durationMs > 0;
   metrics.memoryInference.writes = metrics.memoryInference.written;
+  // Yield denominator excludes cache hits — see ImproveHealthMetrics.memoryInference.yieldRate
+  // jsdoc for the rationale.
+  metrics.memoryInference.freshAttempts = Math.max(
+    0,
+    metrics.memoryInference.considered - metrics.memoryInference.cacheHits,
+  );
   metrics.memoryInference.yieldRate =
-    metrics.memoryInference.considered > 0
-      ? roundRate(metrics.memoryInference.written / metrics.memoryInference.considered)
+    metrics.memoryInference.freshAttempts > 0
+      ? roundRate(metrics.memoryInference.written / metrics.memoryInference.freshAttempts)
       : 0;
   metrics.graphExtraction.ran =
     metrics.graphExtraction.extractedFiles > 0 ||
@@ -523,6 +551,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.contradicted += src.consolidation.contradicted;
   dst.consolidation.durationMs += src.consolidation.durationMs;
   dst.memoryInference.considered += src.memoryInference.considered;
+  dst.memoryInference.cacheHits += src.memoryInference.cacheHits;
   dst.memoryInference.splitParents += src.memoryInference.splitParents;
   dst.memoryInference.written += src.memoryInference.written;
   dst.memoryInference.skippedNoFacts += src.memoryInference.skippedNoFacts;

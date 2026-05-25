@@ -257,8 +257,12 @@ describe("akmHealth", () => {
     expect(result.improve.consolidation.deleted).toBe(2);
     expect(result.improve.consolidation.contradicted).toBe(1);
 
-    // Memory inference: 6/10 = 0.6 yield rate.
+    // Memory inference: 6 written / (10 considered - 0 cache hits) = 0.6 yield.
+    // With no cache hits in this fixture, freshAttempts == considered, so the
+    // ratio matches the legacy "written/considered" reading.
     expect(result.improve.memoryInference.considered).toBe(10);
+    expect(result.improve.memoryInference.cacheHits).toBe(0);
+    expect(result.improve.memoryInference.freshAttempts).toBe(10);
     expect(result.improve.memoryInference.written).toBe(6);
     expect(result.improve.memoryInference.splitParents).toBe(3);
     expect(result.improve.memoryInference.skippedNoFacts).toBe(1);
@@ -373,6 +377,60 @@ describe("akmHealth", () => {
     expect(result.advisories.some((check) => check.name === "session-log-failures" && check.status === "warn")).toBe(
       true,
     );
+  });
+
+  // Regression guard for the 2026-05-25 yield-rate inflation: as the
+  // memory-inference cache warmed, `considered` grew (cache hits still
+  // count toward considered) while fresh LLM calls — and therefore
+  // `writtenFacts` — stayed flat. The legacy formula
+  // `written / considered` collapsed toward 0 and looked like a
+  // regression even though per-attempt productivity was unchanged. New
+  // formula divides by `freshAttempts = considered - cacheHits` so the
+  // rate reflects the rate model output succeeded for the calls that
+  // actually hit the LLM, independent of cache state.
+  test("memoryInference.yieldRate uses freshAttempts (considered - cacheHits), not considered", () => {
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-cache-heavy",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          // 20 considered, 18 absorbed by cache, 2 fresh LLM calls, 1 produced
+          // a write. Legacy formula would report yield = 1/20 = 5%. New formula:
+          // freshAttempts = 20 - 18 = 2; yield = 1/2 = 50%.
+          memoryInference: {
+            considered: 20,
+            cacheHits: 18,
+            splitParents: 1,
+            writtenFacts: 1,
+            skippedNoFacts: 1,
+          },
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    expect(result.improve.memoryInference.considered).toBe(20);
+    expect(result.improve.memoryInference.cacheHits).toBe(18);
+    expect(result.improve.memoryInference.freshAttempts).toBe(2);
+    expect(result.improve.memoryInference.written).toBe(1);
+    expect(result.improve.memoryInference.yieldRate).toBe(0.5);
   });
 });
 

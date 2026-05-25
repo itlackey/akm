@@ -53,6 +53,84 @@ describe("resolveIndexPassLLM", () => {
     expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
   });
 
+  // Regression guard: 2026-05-25 incident — graph and memory passes
+  // silently ignored profiles.improve.default.processes.<key>.profile
+  // and used the default LLM for everything. resolveIndexPassLLM now
+  // honors the per-process profile.
+  describe("honors profiles.improve.default.processes.<key>.profile", () => {
+    const PRIMARY = { endpoint: "http://localhost:11434/v1/chat/completions", model: "primary" };
+    const MINISTRAL = { endpoint: "http://localhost:11434/v1/chat/completions", model: "ministral-3b" };
+
+    test("memory pass uses processes.memoryInference.profile when set", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY }, ministral: { ...MINISTRAL } },
+          improve: {
+            default: {
+              processes: { memoryInference: { mode: "llm", profile: "ministral" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      expect(resolveIndexPassLLM("memory", config)).toEqual(MINISTRAL);
+      // Default LLM still wins for passes WITHOUT a per-process override.
+      expect(resolveIndexPassLLM("enrichment", config)).toEqual(PRIMARY);
+    });
+
+    test("graph pass uses processes.graphExtraction.profile when set", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY }, ministral: { ...MINISTRAL } },
+          improve: {
+            default: {
+              processes: { graphExtraction: { mode: "llm", profile: "ministral" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      expect(resolveIndexPassLLM("graph", config)).toEqual(MINISTRAL);
+      // Memory pass still falls through to default — no override for memory.
+      expect(resolveIndexPassLLM("memory", config)).toEqual(PRIMARY);
+    });
+
+    test("falls back to default LLM when the named profile does not exist", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY } },
+          improve: {
+            default: {
+              processes: { graphExtraction: { mode: "llm", profile: "no-such-profile" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      // Better to soft-fail to default than throw — saves the run on a typo.
+      expect(resolveIndexPassLLM("graph", config)).toEqual(PRIMARY);
+    });
+
+    test("processes.<key>.enabled === false opts the pass out", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY } },
+          improve: {
+            default: {
+              processes: { memoryInference: { enabled: false, profile: "default" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      expect(resolveIndexPassLLM("memory", config)).toBeUndefined();
+    });
+  });
+
   test("per-pass `llm: false` opts that pass out, leaving siblings intact", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",

@@ -14,6 +14,18 @@ import type { Database } from "bun:sqlite";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 
 /**
+ * Optional cache-event sink. Passes that want to track cache hit rate
+ * (e.g. for the `memoryInference.cacheHits` telemetry) supply an
+ * `onCacheHit` callback that the wrapper fires when a fresh cache hit
+ * short-circuits the LLM call. The signal is "this call would have hit
+ * the LLM but didn't" — fires once per `withLlmCache` invocation that
+ * returns a validated cached result, and never for misses.
+ */
+export interface WithLlmCacheHooks {
+  onCacheHit?: () => void;
+}
+
+/**
  * Generic LLM cache wrapper. Returns cached result if body unchanged,
  * otherwise calls llmFn(), caches the result, and returns it.
  * Returns undefined if llmFn() returns undefined or throws.
@@ -29,6 +41,9 @@ import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
  *                          the wrapper skips its internal hashing — callers that
  *                          already hashed the body (e.g. to reuse it elsewhere)
  *                          should pass this to avoid the redundant work.
+ * @param cacheVariant  - Namespace token for the cache row (e.g. staleness-detect
+ *                        sets one so its rows do not collide with memory-inference).
+ * @param hooks         - Optional event sink for telemetry (see {@link WithLlmCacheHooks}).
  */
 export async function withLlmCache<T>(
   db: Database,
@@ -39,6 +54,7 @@ export async function withLlmCache<T>(
   validate: (raw: unknown) => T | undefined,
   precomputedHash?: string,
   cacheVariant = "",
+  hooks?: WithLlmCacheHooks,
 ): Promise<T | undefined> {
   const bodyHash = precomputedHash ?? computeBodyHash(body);
   if (!reEnrich) {
@@ -46,7 +62,10 @@ export async function withLlmCache<T>(
       const cached = getLlmCacheEntry(db, cacheKey, bodyHash, cacheVariant);
       if (cached) {
         const result = validate(JSON.parse(cached.resultJson));
-        if (result !== undefined) return result;
+        if (result !== undefined) {
+          hooks?.onCacheHit?.();
+          return result;
+        }
       }
     } catch {
       // Cache corrupt — fall through

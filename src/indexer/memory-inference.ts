@@ -65,8 +65,15 @@ const FM_CAPTURE_MODE = "captureMode";
 
 /** Telemetry returned to the caller. Useful for tests + future progress events. */
 export interface MemoryInferenceResult {
-  /** Number of pending parent memories considered. */
+  /** Number of pending parent memories considered (includes cache hits). */
   considered: number;
+  /**
+   * Parents whose body hash matched a prior LLM call's cached result. These
+   * are no-op cache hits — no LLM call was made, no derived file was
+   * (re-)written. Track separately from `considered` so the operational yield
+   * rate (`writtenFacts / freshAttempts`) doesn't drift as the cache warms.
+   */
+  cacheHits: number;
   /** Parents whose inference returned a derived memory. */
   splitParents: number;
   /** Derived memory files actually written to disk. */
@@ -125,6 +132,7 @@ export async function runMemoryInferencePass(
 ): Promise<MemoryInferenceResult> {
   const result: MemoryInferenceResult = {
     considered: 0,
+    cacheHits: 0,
     splitParents: 0,
     writtenFacts: 0,
     skippedNoFacts: 0,
@@ -179,6 +187,12 @@ export async function runMemoryInferencePass(
         return undefined;
       };
 
+      // Track whether THIS candidate's result came from the body-hash
+      // cache vs. a fresh LLM call. The cache short-circuits when the
+      // parent body has not changed since a prior derived write — surfacing
+      // the hit count separately so the operational yield rate
+      // (writtenFacts / freshAttempts) is interpretable as the cache warms.
+      let fromCache = false;
       const derived = db
         ? await withLlmCache<DerivedMemoryDraft>(
             db,
@@ -190,20 +204,27 @@ export async function runMemoryInferencePass(
                 warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
               }),
             validate,
+            undefined,
+            "",
+            {
+              onCacheHit: () => {
+                fromCache = true;
+              },
+            },
           )
         : await memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
             warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
           });
 
       if (!derived) {
-        return { skipped: true } as const;
+        return { skipped: true, fromCache } as const;
       }
       const written = await writeDerivedMemory(record, derived);
       if (written > 0) {
         markParentProcessed(record);
-        return { skipped: false, splitParent: true, written } as const;
+        return { skipped: false, splitParent: true, written, fromCache } as const;
       }
-      return { skipped: false, splitParent: false, written: 0 } as const;
+      return { skipped: false, splitParent: false, written: 0, fromCache } as const;
     },
     // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
     // in config.json for local model servers (LM Studio, Ollama).
@@ -213,6 +234,9 @@ export async function runMemoryInferencePass(
   for (let i = 0; i < perRecordResults.length; i++) {
     const res = perRecordResults[i];
     if (!res) continue;
+    if (res.fromCache) {
+      result.cacheHits += 1;
+    }
     if (res.skipped) {
       result.skippedNoFacts += 1;
       // Intentionally NOT marked processed — a transient LLM failure should
