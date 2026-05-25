@@ -1,11 +1,12 @@
 # `akm health` enhancement roadmap
 
-This doc tracks follow-up work after Phase 1 (richer `ImproveHealthMetrics`
-sourced from `improve_runs.result_json`). Phase 1 lands the data
-richness that the in-tree analysis scripts under
-`scripts/improve-stats/` currently re-derive in bash + jq. Phases 2 and
-3 reduce the bash surface to thin shims by adding the missing CLI
-ergonomics.
+> **Status (May 2026):** All three phases shipped on `release/0.8.0`.
+> Phase 1 added the rich `ImproveHealthMetrics` shape sourced from
+> `improve_runs.result_json`; Phase 2 added `--detail per-run`;
+> Phase 3 added `--window-compare` / `--windows`. The bash analysis
+> toolkit at `scripts/improve-stats/` that this work superseded has
+> been removed. This doc is retained as historical context for the
+> design decisions.
 
 ## Background
 

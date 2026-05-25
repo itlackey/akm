@@ -1,16 +1,39 @@
 #!/usr/bin/env bash
-# lint-current — current lint flags grouped by issue type.
+# akm-lint-current — current lint flags grouped by issue type.
 #
 # Usage:
-#   lint-current [--stash <path>] [--sample N]
+#   akm-lint-current [--stash <path>] [--sample N]
 #
 # --sample shows N representative entries per issue class (default 0).
+#
+# Moved from scripts/improve-stats/lint-current when the rest of that
+# toolkit was retired in favor of `akm health` (May 2026). The remaining
+# helper this script depended on (resolve_stash) is inlined below.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_lib.sh
-source "$SCRIPT_DIR/_lib.sh"
+# Resolve the stash directory. Priority: --stash flag, $AKM_STASH_DIR
+# env, ~/akm fallback. Sets STASH_DIR and pushes unknown args back into
+# REMAINING_ARGS so the caller can continue parsing.
+resolve_stash() {
+  STASH_DIR="${AKM_STASH_DIR:-$HOME/akm}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --stash)
+        STASH_DIR="$2"
+        shift 2
+        ;;
+      --stash=*)
+        STASH_DIR="${1#--stash=}"
+        shift
+        ;;
+      *)
+        REMAINING_ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
 
 SAMPLE=0
 REMAINING_ARGS=()

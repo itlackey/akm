@@ -1304,8 +1304,10 @@ function renderTable(headers: string[], rows: string[][]): string {
 }
 
 /**
- * Render `--detail per-run` rows as a TSV-ish aligned table that mirrors the
- * column shape of `scripts/improve-stats/runs-detail`.
+ * Render `--detail per-run` rows as a TSV-ish aligned table. The column
+ * shape was originally inherited from the retired
+ * `scripts/improve-stats/runs-detail` bash helper; keep the same shape
+ * so operator muscle memory carries over.
  *
  * Columns: ts | ok | actions | refl_ok/fail/cd/skip |
  *   distill_q/llm-fail/qrej/cfg/skip | cons_proc/promo/merge/del |

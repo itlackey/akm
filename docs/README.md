@@ -30,7 +30,7 @@
 
 ## Operations
 
-- [Improve Stats](improve-stats.md) -- Analyze `akm improve` runs. Prefer `akm health` (0.8.0+) for rollup/per-run/window-compare views; bash toolkit in `scripts/improve-stats/` is retained for ad-hoc cases.
+- Analyzing `akm improve` runs -- use [`akm health`](../src/commands/health.ts) (0.8.0+): `--since`, `--detail per-run`, `--window-compare`, `--windows`. See [health-command-enhancements.md](technical/health-command-enhancements.md).
 
 ## Internals
 

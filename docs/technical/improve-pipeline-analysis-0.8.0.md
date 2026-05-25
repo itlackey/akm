@@ -1,5 +1,14 @@
 # akm Improve Pipeline — Audit, Roadmap, and Recommended Next Steps (`release/0.8.0`)
 
+> **Historical note (May 2026):** This document references the bash
+> analysis toolkit at `scripts/improve-stats/` and its companion doc
+> `docs/improve-stats.md`. Both were removed when the same metrics were
+> first-classed onto `akm health` (see
+> [health-command-enhancements.md](health-command-enhancements.md)).
+> Treat any operator-tooling references below as pointing at
+> `akm health --since N`, `akm health --detail per-run`, and
+> `akm health --window-compare`.
+
 > This document is the consolidated output of two external critical reviews
 > and a direct code audit of the `release/0.8.0` branch. It serves three
 > purposes: (1) preserve the corrections to the original external review,

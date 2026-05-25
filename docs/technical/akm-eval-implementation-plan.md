@@ -1,5 +1,13 @@
 # akm-eval — Lightweight Standalone Evaluation Toolkit (Implementation Plan)
 
+> **Historical note (May 2026):** This plan repeatedly cites
+> `scripts/improve-stats/` as the precedent toolkit pattern and
+> `docs/improve-stats.md` as its operator doc. Both were retired when
+> their metrics were first-classed onto `akm health` (see
+> [health-command-enhancements.md](health-command-enhancements.md)). The
+> design decisions captured here still apply to `scripts/akm-eval/`,
+> which remains active; the precedent references are historical only.
+
 > **Status.** All eight phases are implemented and shipping under
 > `scripts/akm-eval/`. CI-gated via `.github/workflows/akm-eval-smoke.yml`
 > (Phase 8). See `docs/akm-eval.md` for operator usage and

@@ -9,8 +9,9 @@ those artifacts plus the live `akm search` output and turns them into
 operator-friendly metrics — without modifying anything.
 
 The toolkit is shell + Bun TypeScript with no extra dependencies beyond
-what the `akm` repo already requires. It lives at `scripts/akm-eval/`
-and mirrors the established `scripts/improve-stats/` pattern.
+what the `akm` repo already requires. It lives at `scripts/akm-eval/`.
+(It originally mirrored a now-removed `scripts/improve-stats/` toolkit
+whose metrics were absorbed into `akm health`.)
 
 This page documents Phases 1–7 (read-only deterministic runner, paired
 mode, compare/trend/collect, regression diffing, memory-safety +
@@ -395,8 +396,8 @@ PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
   operator quick-start.
 - [`docs/technical/akm-eval-implementation-plan.md`](technical/akm-eval-implementation-plan.md) —
   the full eight-phase plan.
-- [`docs/improve-stats.md`](improve-stats.md) — companion toolkit for
-  per-improve-run analysis.
+- `akm health` (0.8.0+) — built-in per-improve-run + window analysis
+  ([health-command-enhancements.md](technical/health-command-enhancements.md)).
 - [`docs/technical/improve-pipeline-analysis-0.8.0.md`](technical/improve-pipeline-analysis-0.8.0.md) —
   the roadmap this toolkit implements R10 of (and Phases 2–6 implement
   R1, R3, R5, R8).
