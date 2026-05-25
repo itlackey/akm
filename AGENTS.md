@@ -1,23 +1,5 @@
 # AKM Repo Notes
 
-## 🏛 Coding Constitution
-
-**Every code change — human or agent — is reviewed against
-[`docs/CODING-CONSTITUTION.md`](./docs/CODING-CONSTITUTION.md).** That doc
-codifies the principles, patterns, smells, and anti-patterns that prevent the
-class of sprawl that triggered issues #489 + #490 (a one-file move blowing
-up into 500+ LOC of changes). Read it before writing non-trivial code in
-this repo. Highlights:
-
-- **Cohesion over convenience:** files ≤ 600 LOC; modules ≤ 1,000
-- **No raw `Database` outside `src/storage/repositories/`** — use the typed repo
-- **No `ref: string`** — use the `AssetRef` branded type
-- **No `mkdtempSync` outside `tests/_helpers/`** — use `withIsolatedAkmStorage`
-- **No new `case "<command>":` arms in central switches** — register a Strategy
-- **No `console.log(JSON.stringify({ok: false ...}))` bypass of `emitJsonError`**
-
-Full rule set + Fowler/Martin/GoF references: `docs/CODING-CONSTITUTION.md`.
-
 ## Workflow
 - Runtime and tooling are Bun-first. Use `bun install`.
 - CI runs `bun run check`, which is `bun run lint && bunx tsc --noEmit && bun test ./tests`.
