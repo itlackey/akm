@@ -1,4 +1,18 @@
+#Requires -Version 5.1
+# install.ps1 requires Windows PowerShell 5.1 (Windows 10 default) or newer.
+# Earlier versions lack `Get-FileHash -Algorithm SHA256` and the
+# `Invoke-WebRequest -UseBasicParsing` semantics this script relies on.
+
 $ErrorActionPreference = "Stop"
+
+# SmartScreen and ExecutionPolicy notes (#477): a one-shot `irm | iex` install
+# runs in the current PowerShell session. If you see a SmartScreen prompt or
+# ExecutionPolicy error, run PowerShell as the current user (not Admin) and
+# execute the install in a fresh session with:
+#   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+# or download install.ps1 manually from the release assets and unblock it:
+#   Unblock-File .\install.ps1; .\install.ps1
+# See docs/getting-started.md#windows-installation-notes for full guidance.
 
 $Repo = "itlackey/akm"
 $InstallDir = if ($env:AKM_INSTALL_DIR) { $env:AKM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "akm" }

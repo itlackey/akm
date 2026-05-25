@@ -13,10 +13,10 @@ using search and show to discover capabilities.
 
 ```sh
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/itlackey/akm/main/install.ps1 | iex
+irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
 Or download a standalone binary directly from the
@@ -27,6 +27,29 @@ Or download a standalone binary directly from the
 ```sh
 bun install -g akm-cli
 ```
+
+### Windows installation notes
+
+`install.ps1` requires Windows PowerShell 5.1 or newer (default on Windows 10
+and Windows 11). If you see a SmartScreen prompt or an ExecutionPolicy error
+when running `irm ... | iex`, do one of:
+
+```powershell
+# Allow scripts in this session only, then re-run the install:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
+```
+
+```powershell
+# Or download the script, unblock the file, and run it:
+Invoke-WebRequest -Uri https://github.com/itlackey/akm/releases/latest/download/install.ps1 -OutFile install.ps1
+Unblock-File .\install.ps1
+.\install.ps1
+```
+
+Windows ARM64 hosts install the x64 binary, which Windows runs via x86_64
+emulation. Native ARM64 support is tracked alongside Bun's ARM64-on-Windows
+progress.
 
 ## First-Time Setup
 

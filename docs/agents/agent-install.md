@@ -14,7 +14,7 @@ embeddings and no interactive prompts:
 set -euo pipefail
 
 # 1. Install (standalone binary)
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # 2. Initialize stash and accept all defaults (no prompts)
 akm setup --yes
@@ -39,7 +39,7 @@ To pre-configure a specific LLM endpoint at the same time, use `--config`:
 set -euo pipefail
 
 # Install
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # Initialize and configure in one step (no prompts)
 akm setup --config '{
@@ -65,7 +65,7 @@ Choose one method based on what runtime is available on the host:
 
 ```sh
 # Option A: Standalone binary (no runtime dependencies)
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # Option B: Bun (if already installed)
 bun install -g akm-cli

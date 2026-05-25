@@ -270,8 +270,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
 
     const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 });
     if (cloneResult.status !== 0) {
-      const err = cloneResult.stderr?.trim() || cloneResult.error?.message || "unknown error";
-      throw new Error(`Failed to clone ${parsed.url}: ${err}`);
+      throw new Error(classifyCloneFailure(parsed.url, cloneResult.stderr, cloneResult.error));
     }
 
     // Copy contents to extracted dir without .git
@@ -324,8 +323,7 @@ export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string,
   if (result.status !== 0) {
     // Clean up the (possibly partial) temp dir but leave destDir untouched.
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    const err = result.stderr?.trim() || result.error?.message || "unknown error";
-    throw new Error(`Failed to clone ${cloneUrl}: ${err}`);
+    throw new Error(classifyCloneFailure(cloneUrl, result.stderr, result.error));
   }
 
   try {
@@ -607,6 +605,71 @@ function buildGithubTargetAliases(canonicalUrl: string): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+// ── Clone-failure classification (#487) ─────────────────────────────────────
+
+/**
+ * Translate git's stderr into an actionable message. Without this, a user
+ * who passes a nonexistent or private repo to `akm add` sees:
+ *
+ *   "could not read Username for 'https://github.com': No such device or
+ *    address"
+ *
+ * That is git falling through to its auth-prompt path — the actual cause
+ * is "repo doesn't exist (or is private)". We classify the common patterns
+ * and emit a message that names the cause and the fix.
+ */
+export function classifyCloneFailure(
+  url: string,
+  stderr: string | undefined | null,
+  spawnError: NodeJS.ErrnoException | Error | undefined,
+): string {
+  const raw = (stderr ?? "").trim();
+  const spawnMsg = spawnError?.message ?? "";
+
+  // `git` binary not on PATH.
+  if ((spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+    return `Failed to clone ${url}: 'git' is not installed or not on PATH. Install git, then re-run.`;
+  }
+
+  // Auth-prompt fall-through (the headline #487 case).
+  if (/could not read Username|terminal prompts disabled|Authentication failed|fatal: Authentication/i.test(raw)) {
+    return (
+      `Failed to clone ${url}: repository not found or private. ` +
+      `If the repository is public, double-check the URL and try again. ` +
+      `If it is private, set GH_TOKEN (or configure a git credential helper) before re-running.`
+    );
+  }
+
+  // 404-style messages from git http.
+  if (/repository '.*' not found|HTTP 404|fatal: remote error|not found:|Not Found/i.test(raw)) {
+    return (
+      `Failed to clone ${url}: repository not found. ` +
+      `Check the URL — for GitHub, the form is 'owner/repo' or 'github:owner/repo'.`
+    );
+  }
+
+  // SSH connection issues.
+  if (
+    /Permission denied \(publickey\)|kex_exchange_identification|Connection refused|Connection timed out/i.test(raw)
+  ) {
+    return (
+      `Failed to clone ${url}: network or SSH failure. ` +
+      `Check connectivity, your SSH agent, and the remote host's availability.`
+    );
+  }
+
+  // Branch / ref-specific failures.
+  if (/Remote branch .* not found in upstream origin|couldn't find remote ref/i.test(raw)) {
+    return (
+      `Failed to clone ${url}: the requested branch/tag does not exist on the remote. ` +
+      `Verify the ref name and re-run.`
+    );
+  }
+
+  const detail = raw || spawnMsg || "unknown error";
+  return `Failed to clone ${url}: ${detail}`;
 }
 
 // ── Stash-safety helpers (#476) ──────────────────────────────────────────────

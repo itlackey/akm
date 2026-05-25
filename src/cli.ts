@@ -24,6 +24,46 @@ if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
   process.exit(1);
 }
 
+// Global error handlers (#478) — route any async work outside the
+// `runWithJsonErrors` envelope through the same JSON shape so users never see
+// a raw stack trace. Background timers, fire-and-forget appendEvent writes,
+// and lazy `import()` failures are the typical sources. Registered before
+// any other top-level work so the startup IIFE banner and the stale-DB
+// cleanup are also covered.
+process.on("unhandledRejection", (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error(
+    JSON.stringify(
+      {
+        ok: false,
+        error: `Unhandled rejection: ${err.message}`,
+        code: "UNHANDLED_REJECTION",
+        hint: "Re-run with AKM_DEBUG=1 for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+      },
+      null,
+      2,
+    ),
+  );
+  if (process.env.AKM_DEBUG === "1" && err.stack) console.error(err.stack);
+  process.exit(1);
+});
+process.on("uncaughtException", (err) => {
+  console.error(
+    JSON.stringify(
+      {
+        ok: false,
+        error: `Uncaught exception: ${err.message}`,
+        code: "UNCAUGHT_EXCEPTION",
+        hint: "Re-run with AKM_DEBUG=1 for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+      },
+      null,
+      2,
+    ),
+  );
+  if (process.env.AKM_DEBUG === "1" && err.stack) console.error(err.stack);
+  process.exit(1);
+});
+
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -3256,7 +3296,27 @@ const vaultRunCommand = defineCommand({
         stdio: "inherit",
         env: mergedEnv,
       });
-      if (result.error) throw result.error;
+      if (result.error) {
+        // Classify spawn failures (#483). Raw ErrnoException leaks a bare
+        // "spawn ENOENT" with no hint — wrap it so consumers get a usable
+        // code + hint in the standard JSON envelope.
+        const err = result.error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          throw new NotFoundError(
+            `Command not found: ${command[0]}`,
+            "FILE_NOT_FOUND",
+            `Install '${command[0]}' or add its directory to PATH before invoking 'akm vault run'.`,
+          );
+        }
+        if (err.code === "EACCES") {
+          throw new ConfigError(
+            `Command not executable: ${command[0]}`,
+            "STASH_DIR_UNREADABLE",
+            `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
+          );
+        }
+        throw err;
+      }
       process.exit(result.status ?? 0);
     });
   },
