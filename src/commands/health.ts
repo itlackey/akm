@@ -155,6 +155,27 @@ export interface ImproveRunSummary {
   lintFlagged: number;
 }
 
+export interface WindowSpec {
+  name: string;
+  since: string;
+  until?: string;
+}
+
+export interface WindowResult {
+  name: string;
+  since: string;
+  until: string;
+  runs: number;
+  improve: ImproveHealthMetrics;
+  metrics: HealthMetrics;
+}
+
+export interface DeltaEntry {
+  from: number;
+  to: number;
+  pctChange: number | string;
+}
+
 export interface AkmHealthResult {
   schemaVersion: 2;
   ok: boolean;
@@ -166,11 +187,15 @@ export interface AkmHealthResult {
   improve: ImproveHealthMetrics;
   sessionLogAdvisories: SessionLogAdvisory[];
   runs?: ImproveRunSummary[];
+  windows?: WindowResult[];
+  deltas?: Record<string, DeltaEntry>;
 }
 
 export interface AkmHealthOptions {
   since?: string;
   detail?: "brief" | "per-run";
+  windowCompare?: string;
+  windows?: WindowSpec[];
   getExecutionLogCandidatesFn?: (sinceDays?: number) => SessionLogEntry[];
 }
 
@@ -800,12 +825,188 @@ function runAgentProbe(): HealthCheckResult {
   };
 }
 
+/**
+ * Parse a `--window-compare <duration>` shorthand into two adjacent windows
+ * (current, prior). Duration syntax matches {@link parseHealthSince}.
+ */
+function resolveWindowCompare(duration: string): WindowSpec[] {
+  const trimmed = duration.trim();
+  const durationMatch = trimmed.match(/^(\d+)([dhm])$/i);
+  if (!durationMatch) {
+    throw new UsageError("--window-compare must be a duration like '24h', '7d', or '30m'.", "INVALID_FLAG_VALUE");
+  }
+  const amount = Number.parseInt(durationMatch[1] ?? "0", 10);
+  const unit = (durationMatch[2] ?? "h").toLowerCase();
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new UsageError("--window-compare must be a positive duration.", "INVALID_FLAG_VALUE");
+  }
+  const multiplier = unit === "h" ? 60 * 60 * 1000 : unit === "m" ? 60 * 1000 : 24 * 60 * 60 * 1000;
+  const ms = amount * multiplier;
+  const now = Date.now();
+  const currentSince = new Date(now - ms).toISOString();
+  const currentUntil = new Date(now).toISOString();
+  const priorSince = new Date(now - 2 * ms).toISOString();
+  const priorUntil = currentSince;
+  return [
+    { name: "current", since: currentSince, until: currentUntil },
+    { name: "prior", since: priorSince, until: priorUntil },
+  ];
+}
+
+/**
+ * Parse a single repeatable `--windows` value of the form
+ * `name=...,since=...,until=...`. All keys are optional EXCEPT name and since.
+ */
+export function parseWindowSpec(raw: string): WindowSpec {
+  const fields: Record<string, string> = {};
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq < 0) {
+      throw new UsageError(
+        `--windows entry must be a comma-separated list of key=value pairs: ${raw}`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1).trim();
+    fields[key] = value;
+  }
+  if (!fields.name) {
+    throw new UsageError(`--windows entry is missing required 'name': ${raw}`, "INVALID_FLAG_VALUE");
+  }
+  if (!fields.since) {
+    throw new UsageError(`--windows entry is missing required 'since': ${raw}`, "INVALID_FLAG_VALUE");
+  }
+  return {
+    name: fields.name,
+    since: fields.since,
+    ...(fields.until ? { until: fields.until } : {}),
+  };
+}
+
+/** Hard-coded list of "interesting" metric paths for window-compare deltas. */
+const INTERESTING_DELTA_PATHS = [
+  "improve.actions.reflect.failed",
+  "improve.actions.distill.llmFailed",
+  "improve.actions.distill.queued",
+  "improve.consolidation.promoted",
+  "improve.memoryInference.written",
+  "improve.memoryInference.yieldRate",
+  "improve.memoryInference.skippedNoFacts",
+  "improve.graphExtraction.cacheHitRate",
+  "improve.graphExtraction.failures",
+  "improve.wallTime.medianMs",
+  "improve.wallTime.p95Ms",
+] as const;
+
+function readNumericPath(obj: unknown, path: string): number {
+  const parts = path.split(".");
+  let cursor: unknown = obj;
+  for (const part of parts) {
+    if (typeof cursor !== "object" || cursor === null) return 0;
+    cursor = (cursor as Record<string, unknown>)[part];
+  }
+  return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : 0;
+}
+
+function computeDeltas(first: WindowResult, last: WindowResult): Record<string, DeltaEntry> {
+  const out: Record<string, DeltaEntry> = {};
+  for (const path of INTERESTING_DELTA_PATHS) {
+    const from = readNumericPath(first, path);
+    const to = readNumericPath(last, path);
+    if (from === 0 && to === 0) continue;
+    let pctChange: number | string;
+    if (from === 0) {
+      pctChange = to === 0 ? 0 : "+inf";
+    } else {
+      pctChange = Number((((to - from) / from) * 100).toFixed(2));
+    }
+    out[path] = { from, to, pctChange };
+  }
+  return out;
+}
+
+interface WindowMetricsBundle {
+  improve: ImproveHealthMetrics;
+  metrics: HealthMetrics;
+  runs: number;
+}
+
+function buildWindowMetrics(db: Database, stateDbPath: string, since: string, until: string): WindowMetricsBundle {
+  const taskRows = queryTaskHistory(db, { since }).filter((row) => {
+    const startMs = new Date(row.started_at).getTime();
+    const untilMs = new Date(until).getTime();
+    return !Number.isFinite(untilMs) || startMs < untilMs;
+  });
+  const taskRowsWithLogs = taskRows.filter((row) => row.log_path !== null);
+  const existingLogRows = taskRowsWithLogs.filter((row) => row.log_path && fs.existsSync(row.log_path));
+  const failedTaskRows = taskRows.filter((row) => row.status === "failed");
+  const activeRows = taskRows.filter((row) => row.status === "active");
+  const stuckActiveRuns = activeRows.filter(
+    (row) => Date.now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
+  ).length;
+  const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
+  const promptFailures = promptRows.filter((row) => {
+    const detail = parseTaskMetadata(row).detail;
+    return typeof detail?.reason === "string" && detail.reason.length > 0;
+  });
+  const logBackingRate = taskRowsWithLogs.length === 0 ? 1 : existingLogRows.length / taskRowsWithLogs.length;
+  const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
+  const agentFailureRate = promptRows.length === 0 ? 0 : promptFailures.length / promptRows.length;
+
+  const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.filter(
+    (event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime(),
+  ).length;
+  const improveCompletedEvents = readEvents(
+    { since, type: IMPROVE_COMPLETED_EVENT },
+    { dbPath: stateDbPath },
+  ).events.filter((event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime());
+  const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events.filter(
+    (event) => new Date(event.ts ?? since).getTime() < new Date(until).getTime(),
+  );
+  const eventsMetrics = summarizeImproveCompleted(improveCompletedEvents);
+  const { metrics: improveSummary, runCount } = summarizeImproveRuns(db, since, until);
+  improveSummary.invoked = improveInvoked;
+  improveSummary.completed = eventsMetrics.completed;
+  const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
+  improveSummary.skipped = skipSummary.skipped;
+  improveSummary.skipReasons = skipSummary.skipReasons;
+  improveSummary.wallTime = computeWallTimeStats(collectImproveWallTimes(db, since, until));
+
+  const metrics: HealthMetrics = {
+    taskFailRate: roundRate(taskFailRate),
+    agentFailureRate: roundRate(agentFailureRate),
+    stuckActiveRuns,
+    logBackingRate: roundRate(logBackingRate),
+    probeRoundTripMs: null,
+  };
+
+  return { improve: improveSummary, metrics, runs: runCount };
+}
+
 function validateAkmHealthOptions(options: AkmHealthOptions): void {
   if (options.detail !== undefined && options.detail !== "brief" && options.detail !== "per-run") {
     throw new UsageError(
       `Invalid value for --detail: ${options.detail}. Expected one of: brief|per-run`,
       "INVALID_DETAIL_VALUE",
     );
+  }
+  if (options.windowCompare !== undefined && options.windows !== undefined && options.windows.length > 0) {
+    throw new UsageError("--window-compare and --windows are mutually exclusive.", "INVALID_FLAG_VALUE");
+  }
+  if (options.windows) {
+    if (options.windows.length > 4) {
+      throw new UsageError("--windows accepts at most 4 entries.", "INVALID_FLAG_VALUE");
+    }
+    const seen = new Set<string>();
+    for (const spec of options.windows) {
+      if (seen.has(spec.name)) {
+        throw new UsageError(`--windows has duplicate name: ${spec.name}`, "INVALID_FLAG_VALUE");
+      }
+      seen.add(spec.name);
+    }
   }
 }
 
@@ -977,6 +1178,45 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     );
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
+    // ── Window-compare mode (Phase 3) ─────────────────────────────────────
+    let windowSpecs: WindowSpec[] | undefined;
+    if (options.windowCompare) {
+      windowSpecs = resolveWindowCompare(options.windowCompare);
+    } else if (options.windows && options.windows.length > 0) {
+      windowSpecs = options.windows;
+    }
+
+    let windowResults: WindowResult[] | undefined;
+    let deltas: Record<string, DeltaEntry> | undefined;
+    let topLevelImprove = improveSummary;
+    let topLevelMetrics = metrics;
+    let topLevelSince = since;
+
+    if (windowSpecs && db) {
+      windowResults = windowSpecs.map((spec) => {
+        const winSince = parseHealthSince(spec.since);
+        const winUntil = spec.until ? parseHealthSince(spec.until) : new Date().toISOString();
+        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil);
+        return {
+          name: spec.name,
+          since: winSince,
+          until: winUntil,
+          runs: bundle.runs,
+          improve: bundle.improve,
+          metrics: bundle.metrics,
+        };
+      });
+      // Preserve backward compat: top-level improve/metrics reflect window 0.
+      if (windowResults.length > 0) {
+        topLevelImprove = windowResults[0].improve;
+        topLevelMetrics = { ...windowResults[0].metrics, probeRoundTripMs: probe.durationMs };
+        topLevelSince = windowResults[0].since;
+      }
+      if (windowResults.length >= 2) {
+        deltas = computeDeltas(windowResults[0], windowResults[windowResults.length - 1]);
+      }
+    }
+
     // ── Per-run mode (Phase 2) ────────────────────────────────────────────
     let runs: ImproveRunSummary[] | undefined;
     if (options.detail === "per-run") {
@@ -987,13 +1227,15 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       schemaVersion: 2,
       ok: !hardFailure,
       status,
-      since,
+      since: topLevelSince,
       hardChecks,
       advisories,
-      metrics,
-      improve: improveSummary,
+      metrics: topLevelMetrics,
+      improve: topLevelImprove,
       sessionLogAdvisories: sessionLogEntries,
       ...(runs ? { runs } : {}),
+      ...(windowResults ? { windows: windowResults } : {}),
+      ...(deltas ? { deltas } : {}),
     };
   } finally {
     db.close();
@@ -1065,5 +1307,39 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
       `${r.lintFixed}/${r.lintFlagged}`,
     ];
   });
+  return renderTable(headers, rows);
+}
+
+/**
+ * Render a window-compare comparison as a side-by-side metric table with a
+ * delta column. Bad-direction deltas (e.g. +pct on failed counts) get a `!`
+ * marker prefix.
+ */
+export function renderWindowCompareMd(windows: WindowResult[], deltas: Record<string, DeltaEntry> | undefined): string {
+  if (windows.length === 0) return "";
+  const headers = ["metric", ...windows.map((w) => w.name), "delta"];
+  const badIfPositive = new Set([
+    "improve.actions.reflect.failed",
+    "improve.actions.distill.llmFailed",
+    "improve.graphExtraction.failures",
+    "improve.wallTime.medianMs",
+    "improve.wallTime.p95Ms",
+    "improve.memoryInference.skippedNoFacts",
+  ]);
+  const rows: string[][] = [];
+  for (const path of INTERESTING_DELTA_PATHS) {
+    const values = windows.map((w) => String(readNumericPath(w, path)));
+    const delta = deltas?.[path];
+    let deltaStr = "—";
+    if (delta) {
+      const pct = delta.pctChange;
+      const num = typeof pct === "number" ? pct : pct;
+      const sign = typeof num === "number" && num > 0 ? "+" : "";
+      const formatted = typeof num === "number" ? `${sign}${num}%` : String(num);
+      const marker = badIfPositive.has(path) && typeof num === "number" && num > 0 ? "!" : "";
+      deltaStr = marker + formatted;
+    }
+    rows.push([path, ...values, deltaStr]);
+  }
   return renderTable(headers, rows);
 }

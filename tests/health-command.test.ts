@@ -664,3 +664,186 @@ describe("akm health --detail per-run", () => {
     );
   });
 });
+
+// ── Phase 3: window-compare ──────────────────────────────────────────────────
+describe("akm health --window-compare / --windows", () => {
+  test("--window-compare 1h returns two windows named current and prior", () => {
+    const result = akmHealth({ windowCompare: "1h" });
+    expect(result.windows?.length).toBe(2);
+    expect(result.windows?.[0].name).toBe("current");
+    expect(result.windows?.[1].name).toBe("prior");
+    // chronologically current > prior
+    expect(new Date(result.windows?.[0].since ?? "").getTime()).toBeGreaterThan(
+      new Date(result.windows?.[1].since ?? "").getTime(),
+    );
+  });
+
+  test("explicit --windows supports multiple named windows", () => {
+    const now = Date.now();
+    const w1Since = new Date(now - 3 * 60 * 60 * 1000).toISOString();
+    const w1Until = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const w2Since = new Date(now - 1 * 60 * 60 * 1000).toISOString();
+    const result = akmHealth({
+      windows: [
+        { name: "baseline", since: w1Since, until: w1Until },
+        { name: "post-fix", since: w2Since },
+      ],
+    });
+    expect(result.windows?.length).toBe(2);
+    expect(result.windows?.[0].name).toBe("baseline");
+    expect(result.windows?.[1].name).toBe("post-fix");
+  });
+
+  test("deltas computed correctly for known seeded values", () => {
+    const now = Date.now();
+    const earlySince = new Date(now - 6 * 60 * 60 * 1000).toISOString();
+    const earlyEnd = new Date(now - 4 * 60 * 60 * 1000).toISOString();
+    const lateSince = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const lateEnd = new Date(now - 30 * 60 * 1000).toISOString();
+
+    const db = openStateDatabase();
+    try {
+      // Earlier window: 2 distill llm_failed
+      recordImproveRun(db, {
+        id: "run-early",
+        startedAt: earlySince,
+        completedAt: earlyEnd,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [
+            { ref: "memory:a", mode: "distill", result: { outcome: "llm_failed" } },
+            { ref: "memory:b", mode: "distill", result: { outcome: "llm_failed" } },
+          ],
+        }),
+      });
+      // Later window: 4 distill llm_failed (100% increase)
+      recordImproveRun(db, {
+        id: "run-late",
+        startedAt: lateSince,
+        completedAt: lateEnd,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [
+            { ref: "memory:a", mode: "distill", result: { outcome: "llm_failed" } },
+            { ref: "memory:b", mode: "distill", result: { outcome: "llm_failed" } },
+            { ref: "memory:c", mode: "distill", result: { outcome: "llm_failed" } },
+            { ref: "memory:d", mode: "distill", result: { outcome: "llm_failed" } },
+          ],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({
+      windows: [
+        { name: "early", since: earlySince, until: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
+        { name: "late", since: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
+      ],
+    });
+    expect(result.deltas).toBeDefined();
+    const delta = result.deltas?.["improve.actions.distill.llmFailed"];
+    expect(delta?.from).toBe(2);
+    expect(delta?.to).toBe(4);
+    expect(delta?.pctChange).toBe(100);
+  });
+
+  test("delta uses '+inf' when from is 0 and to is positive", () => {
+    const now = Date.now();
+    const earlySince = new Date(now - 6 * 60 * 60 * 1000).toISOString();
+    const lateStart = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const lateEnd = new Date(now - 30 * 60 * 1000).toISOString();
+
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-late-only",
+        startedAt: lateStart,
+        completedAt: lateEnd,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          actions: [{ ref: "memory:x", mode: "distill", result: { outcome: "llm_failed" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({
+      windows: [
+        { name: "early", since: earlySince, until: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
+        { name: "late", since: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
+      ],
+    });
+    expect(result.deltas?.["improve.actions.distill.llmFailed"]?.pctChange).toBe("+inf");
+  });
+
+  test("mutually exclusive flags throw UsageError", () => {
+    expect(() =>
+      akmHealth({
+        windowCompare: "1h",
+        windows: [{ name: "x", since: new Date().toISOString() }],
+      }),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  test("duplicate window names throw UsageError", () => {
+    expect(() =>
+      akmHealth({
+        windows: [
+          { name: "dup", since: new Date(Date.now() - 7200_000).toISOString() },
+          { name: "dup", since: new Date(Date.now() - 3600_000).toISOString() },
+        ],
+      }),
+    ).toThrow(/duplicate name/);
+  });
+
+  test("more than 4 windows throws UsageError", () => {
+    const now = Date.now();
+    expect(() =>
+      akmHealth({
+        windows: [
+          { name: "w1", since: new Date(now - 5 * 3600_000).toISOString() },
+          { name: "w2", since: new Date(now - 4 * 3600_000).toISOString() },
+          { name: "w3", since: new Date(now - 3 * 3600_000).toISOString() },
+          { name: "w4", since: new Date(now - 2 * 3600_000).toISOString() },
+          { name: "w5", since: new Date(now - 1 * 3600_000).toISOString() },
+        ],
+      }),
+    ).toThrow(/at most 4/);
+  });
+
+  test("invalid --window-compare duration throws UsageError", () => {
+    expect(() => akmHealth({ windowCompare: "not-a-duration" })).toThrow();
+  });
+});

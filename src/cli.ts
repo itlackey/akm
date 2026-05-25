@@ -89,7 +89,13 @@ import {
   akmGraphSummary,
   akmGraphUpdate,
 } from "./commands/graph";
-import { akmHealth, renderRunsDetailMd } from "./commands/health";
+import {
+  akmHealth,
+  parseWindowSpec,
+  renderRunsDetailMd,
+  renderWindowCompareMd,
+  type WindowSpec,
+} from "./commands/health";
 import { akmHistory } from "./commands/history";
 import { improveCommand } from "./commands/improve-cli";
 import { assembleInfo } from "./commands/info";
@@ -481,22 +487,45 @@ const healthCommand = defineCommand({
       type: "string",
       description: "Detail level: brief (default) or per-run for one row per improve_runs entry",
     },
+    "window-compare": {
+      type: "string",
+      description: "Compare current window vs prior window of the same duration (e.g. 24h, 7d, 30m)",
+    },
+    windows: {
+      type: "string",
+      description:
+        "Explicit comparison window 'name=...,since=ISO,until=ISO' (repeatable, up to 4; mutually exclusive with --window-compare)",
+    },
   },
   async run({ args }) {
     let resultStatus: "pass" | "warn" | "fail" | undefined;
     await runWithJsonErrors(() => {
+      // citty only surfaces the last value of a repeated flag, so read --windows
+      // directly from argv to support multi-window comparison.
+      const rawWindows = parseAllFlagValues("--windows");
+      const windows: WindowSpec[] | undefined =
+        rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
       const detailRaw = (args as Record<string, unknown>).detail as string | undefined;
+      const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
       const result = akmHealth({
         since: args.since,
         detail: detailRaw as "brief" | "per-run" | undefined,
+        windowCompare: windowCompareRaw,
+        windows,
       });
       resultStatus = result.status;
-      // `--format md` is health-specific: render a TSV-shaped per-run table to
-      // stdout instead of going through the JSON envelope. Other modes fall
-      // through to the standard output() path.
+      // `--format md` is health-specific: render a TSV-shaped per-run or
+      // window-compare table to stdout instead of going through the JSON
+      // envelope. Other modes fall through to the standard output() path.
       const mode = getOutputMode();
-      if (mode.format === "md" && result.runs) {
-        console.log(renderRunsDetailMd(result.runs));
+      if (mode.format === "md") {
+        if (result.windows && result.windows.length > 0) {
+          console.log(renderWindowCompareMd(result.windows, result.deltas));
+        } else if (result.runs) {
+          console.log(renderRunsDetailMd(result.runs));
+        } else {
+          output("health", result);
+        }
       } else {
         output("health", result);
       }

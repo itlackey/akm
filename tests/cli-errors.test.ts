@@ -123,6 +123,23 @@ describe("CLI error handling", () => {
     expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
   });
 
+  test("health --window-compare with bad duration yields UsageError exit 2", () => {
+    const { stderr, status } = runCli("health", "--window-compare", "bogus");
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+  });
+
+  test("health --window-compare combined with --windows is mutually exclusive (exit 2)", () => {
+    const sinceArg = new Date(Date.now() - 3600_000).toISOString();
+    const { stderr, status } = runCli("health", "--window-compare", "1h", "--windows", `name=a,since=${sinceArg}`);
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+  });
+
   test("error output is valid JSON", () => {
     const { stderr } = runCli("show", "invalid-ref-no-colon");
     const trimmed = stderr.trim();
