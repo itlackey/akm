@@ -514,6 +514,44 @@ When searching multi-thousand-file repos, prefer ripgrep to GNU grep — it is f
     // Crucially NOT the circular fallback string.
     expect((fm.when_to_use as string).toLowerCase()).not.toContain("when working with");
   });
+
+  test("LLM returns lesson with description leading 'When …' and a valid when_to_use → fields auto-swapped and queued", async () => {
+    // Recovery path for qwen-9b's ~50% "DO NOT start with When" prompt
+    // non-compliance. When the description leads with When/If but the
+    // when_to_use is a valid declarative sentence, the two fields are
+    // mis-fielded — `isValidDescription`'s error message itself says the
+    // pattern "belongs in when_to_use". The swap normalization commits the
+    // swap when revalidation passes and surfaces it via `descriptionSwapped`.
+    const stash = makeStashDir();
+    const lesson = `---
+description: When searching multi-thousand-file repos, prefer ripgrep to GNU grep because it respects .gitignore by default.
+when_to_use: Always validate the ripgrep installation before running searches across very large monorepos.
+---
+
+Body content explaining why ripgrep wins on large monorepos.`;
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => lesson,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.descriptionSwapped).toBe(1);
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    const fm = proposals[0].payload.frontmatter ?? {};
+    // After the swap: description should be the declarative sentence,
+    // when_to_use should be the conditional one.
+    expect((fm.description as string).toLowerCase()).not.toMatch(/^(when|if)\b/);
+    expect((fm.when_to_use as string).toLowerCase()).toMatch(/^when\b/);
+    expect(fm.description as string).toContain("validate the ripgrep installation");
+    expect(fm.when_to_use as string).toContain("multi-thousand-file repos");
+    const { events } = readEvents({ type: "distill_invoked" });
+    const queuedEvent = events.find((e) => e.metadata?.outcome === "queued");
+    expect(queuedEvent?.metadata?.descriptionSwapped).toBe(1);
+  });
 });
 
 // ── Acceptance: queued ──────────────────────────────────────────────────────

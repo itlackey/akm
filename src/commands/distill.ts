@@ -248,6 +248,13 @@ export interface AkmDistillResult {
    * One-sentence reason from the LLM judge when `outcome === "quality_rejected"`.
    */
   reason?: string;
+  /**
+   * Count of description ↔ when_to_use auto-swaps performed during this
+   * distill run (0 or 1 today; reserved as a counter so callers and health
+   * dashboards can track how often the swap-normalization guard triggers).
+   * Only present when at least one swap was applied.
+   */
+  descriptionSwapped?: number;
 }
 
 // ── Lesson-ref derivation ───────────────────────────────────────────────────
@@ -1373,6 +1380,44 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     }
   }
 
+  // Description ↔ when_to_use auto-swap normalization (recover ~93% of
+  // qwen-9b's `^when\b/i` rejections at zero LLM cost). When the LLM emits
+  // a conditional-framed description ("When X happens, do Y") and the
+  // when_to_use field looks like a declarative description (or is empty),
+  // the two fields are mis-fielded — exactly what `isValidDescription`'s
+  // error message says ("that pattern belongs in when_to_use"). We swap
+  // them and revalidate; the swap is committed only if BOTH fields pass
+  // their respective validators afterwards. If revalidation still fails,
+  // we fall through to the existing reject path.
+  let descriptionSwapped = 0;
+  if (effectiveProposalKind !== "knowledge") {
+    const parsedSwap = parseFrontmatter(content);
+    const fmSwap = (parsedSwap.data ?? {}) as Record<string, unknown>;
+    const descRaw = typeof fmSwap.description === "string" ? fmSwap.description.trim() : "";
+    const wtuRaw = typeof fmSwap.when_to_use === "string" ? fmSwap.when_to_use.trim() : "";
+    const descStartsConditional = /^(when|if)\b/i.test(descRaw);
+    const wtuStartsConditional = /^(when|if)\b/i.test(wtuRaw);
+    if (descStartsConditional && !wtuStartsConditional && wtuRaw.length > 0) {
+      // Try the swap and revalidate. The when_to_use validator requires the
+      // value not match `/^when working with\b/i` (the circular fallback) —
+      // a real description rarely does, so this usually passes.
+      const swappedDescCheck = isValidDescription(wtuRaw, inputRef);
+      const swappedWtuCheck = isValidWhenToUse(descRaw, inputRef);
+      if (swappedDescCheck.ok && swappedWtuCheck.ok) {
+        const swappedFm = {
+          ...fmSwap,
+          description: wtuRaw,
+          when_to_use: descRaw,
+        };
+        const swappedFmLines = Object.entries(swappedFm)
+          .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+          .join("\n");
+        content = assembleAssetFromString(swappedFmLines, parsedSwap.content);
+        descriptionSwapped = 1;
+      }
+    }
+  }
+
   // Parse + lint the lesson before creating the proposal. The lint is the
   // canonical gate for required frontmatter (v1 spec §13). On failure we
   // surface a structured error and exit non-zero — but still emit
@@ -1556,6 +1601,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       proposalId: proposal2.id,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+      ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
     },
   });
 
@@ -1570,6 +1616,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     proposalId: proposal2.id,
     proposal: proposal2,
     ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+    ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
   };
 }
 
