@@ -20,7 +20,6 @@ import type { AkmDistillResult } from "../src/commands/distill";
 import { akmImprove } from "../src/commands/improve";
 import type { AkmReflectResult } from "../src/commands/reflect";
 import { saveConfig } from "../src/core/config";
-import { AkmConfigSchema } from "../src/core/config-schema";
 import { appendEvent, readEvents } from "../src/core/events";
 import { akmIndex } from "../src/indexer/indexer";
 
