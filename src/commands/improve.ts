@@ -58,12 +58,13 @@ import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
 import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
-import { getExecutionLogCandidates } from "../integrations/session-logs";
-import { isProcessEnabled } from "../llm/feature-gate";
+import { getAvailableHarnesses, getExecutionLogCandidates } from "../integrations/session-logs";
+import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
+import { type AkmExtractResult, akmExtract } from "./extract";
 import { resolveImproveProfile, shouldSkipRef } from "./improve-profiles";
 import { akmLint } from "./lint/index";
 import { type AkmReflectResult, akmReflect } from "./reflect";
@@ -239,6 +240,12 @@ export interface AkmImproveResult {
     error?: string;
   }>;
   consolidation?: ConsolidateResult;
+  /**
+   * Session-extract pass results (one entry per available harness). Present
+   * when `profiles.improve.default.processes.extract.enabled` is true (default)
+   * and at least one harness reports `isAvailable() === true`.
+   */
+  extract?: AkmExtractResult[];
   lintSummary?: { fixed: number; flagged: number };
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
   coverageGaps?: string[];
@@ -272,6 +279,8 @@ interface ImprovePreparationResult {
   appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
   executionLogCandidates: string[];
+  /** Session-extract pass results (one per available harness), when enabled. */
+  extract?: AkmExtractResult[];
   /**
    * Genuinely processable refs in priority order: post-validation, post-cooldown
    * (fully reflect+distill cooled refs are excluded and their synthetic skip
@@ -887,6 +896,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(preparation.executionLogCandidates.length > 0
         ? { executionLogCandidates: preparation.executionLogCandidates }
         : {}),
+      ...(preparation.extract && preparation.extract.length > 0 ? { extract: preparation.extract } : {}),
       ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
       ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
       ...(reflectsWithErrorContext > 0 ? { reflectsWithErrorContext } : {}),
@@ -1114,6 +1124,50 @@ async function runImprovePreparationStage(args: {
     executionLogCandidates = logEntries.filter((e) => e.isFailurePattern).map((e) => e.topic);
   } catch {
     // best-effort
+  }
+
+  // Phase 0.4 — session-extract pass.
+  //
+  // Reads native session files (claude-code JSONL, opencode storage tree)
+  // through the SessionLogHarness registry, pre-filters noise, and asks a
+  // bounded in-tree LLM to produce candidate memory/lesson/knowledge
+  // proposals for content the agent did NOT preserve via inline `akm remember`
+  // / `akm feedback` invocations. Replaces the akm-plugin session-checkpoint
+  // hook with an on-demand pull pipeline.
+  //
+  // Default-on; opt out via `profiles.improve.default.processes.extract.enabled: false`.
+  // Each available harness gets one call with the default --since window;
+  // already-seen sessions (tracked in state.db.extract_sessions_seen) are
+  // skipped automatically so re-runs don't burn LLM calls on unchanged data.
+  //
+  // Failures are non-fatal — one harness throwing doesn't abort improve.
+  // The extract envelope's own `warnings` field surfaces what went wrong.
+  let extractResults: AkmExtractResult[] | undefined;
+  const extractConfig = options.config ?? loadConfig();
+  if (isLlmFeatureEnabled(extractConfig, "session_extraction")) {
+    const availableHarnesses = getAvailableHarnesses();
+    if (availableHarnesses.length > 0) {
+      extractResults = [];
+      for (const h of availableHarnesses) {
+        try {
+          const result = await akmExtract({
+            type: h.name,
+            ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
+            config: extractConfig,
+            dryRun: options.dryRun ?? false,
+          });
+          extractResults.push(result);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          cleanupWarnings.push(`extract(${h.name}) failed: ${msg}`);
+        }
+      }
+      if (extractResults.length === 0) {
+        // All harnesses threw — clear so the envelope's `extract` field is
+        // absent rather than misleadingly empty.
+        extractResults = undefined;
+      }
+    }
   }
 
   // eligibleCount = raw pre-filter count (before cooldown/signal/cleanup filters).
@@ -1668,6 +1722,7 @@ async function runImprovePreparationStage(args: {
     appliedCleanup,
     memoryIndexHealth,
     executionLogCandidates,
+    extract: extractResults,
     actionableRefs,
     signalBearingSet,
     validationFailures,
