@@ -80,6 +80,27 @@ export interface MemoryInferenceResult {
   writtenFacts: number;
   /** Parents skipped because the LLM returned no usable derived memory (left unmarked → retried next run). */
   skippedNoFacts: number;
+  /**
+   * Parents where the LLM returned a valid derived draft but the
+   * `<parent>.derived.md` file already exists on disk (or the write threw).
+   * The LLM attempt was consumed but no new fact was written — without this
+   * counter the attempt would silently bleed into `freshAttempts` and drag
+   * the health-reported yield rate below the operational truth.
+   */
+  skippedChildExists: number;
+  /**
+   * Parents short-circuited by an abort signal (Ctrl-C, budget timeout)
+   * BEFORE a fresh LLM call was issued. Counted so `considered` decomposes
+   * cleanly into accounted categories and aborts do not pollute yield.
+   */
+  skippedAborted: number;
+  /**
+   * Catch-all for any per-record result that did not fall into one of the
+   * categorised buckets. Must stay zero in normal operation — a non-zero
+   * value indicates a missing case in the per-record state machine.
+   * Exposed (not asserted) so health can surface drift loudly.
+   */
+  unaccounted: number;
 }
 
 export interface MemoryInferencePassOptions {
@@ -136,6 +157,9 @@ export async function runMemoryInferencePass(
     splitParents: 0,
     writtenFacts: 0,
     skippedNoFacts: 0,
+    skippedChildExists: 0,
+    skippedAborted: 0,
+    unaccounted: 0,
   };
 
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
@@ -167,7 +191,12 @@ export async function runMemoryInferencePass(
   const perRecordResults = await concurrentMap(
     pending,
     async (record) => {
-      if (signal?.aborted) return undefined;
+      // Aborted BEFORE a fresh LLM call. Returned as a typed outcome so the
+      // for-loop below increments `skippedAborted` instead of silently
+      // dropping the record (which historically inflated freshAttempts and
+      // dragged the health-reported yield rate down — see investigation
+      // 2026-05-26).
+      if (signal?.aborted) return { aborted: true } as const;
 
       // Incremental cache: skip LLM call when body hash is unchanged and
       // --re-enrich was not requested. The cache ref is the absolute file path.
@@ -224,7 +253,12 @@ export async function runMemoryInferencePass(
         markParentProcessed(record);
         return { skipped: false, splitParent: true, written, fromCache } as const;
       }
-      return { skipped: false, splitParent: false, written: 0, fromCache } as const;
+      // LLM produced a valid derived draft but no file was written — either
+      // because `<parent>.derived.md` already exists on disk or
+      // `writeAssetToSource` threw. Categorise as `childExists` so the
+      // attempt is accounted for in health metrics rather than vanishing
+      // into the freshAttempts denominator.
+      return { skipped: false, splitParent: false, written: 0, fromCache, childExists: true } as const;
     },
     // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
     // in config.json for local model servers (LM Studio, Ollama).
@@ -234,6 +268,18 @@ export async function runMemoryInferencePass(
   for (let i = 0; i < perRecordResults.length; i++) {
     const res = perRecordResults[i];
     if (!res) continue;
+    if ("aborted" in res && res.aborted) {
+      result.skippedAborted += 1;
+      processed++;
+      onProgress?.({
+        processed,
+        total,
+        writtenFacts: result.writtenFacts,
+        skippedNoFacts: result.skippedNoFacts,
+        currentRef: pending[i]?.ref,
+      });
+      continue;
+    }
     if (res.fromCache) {
       result.cacheHits += 1;
     }
@@ -244,6 +290,20 @@ export async function runMemoryInferencePass(
     } else if (res.splitParent) {
       result.splitParents += 1;
       result.writtenFacts += res.written;
+    } else if ("childExists" in res && res.childExists) {
+      // LLM call was consumed but the derived file already existed (or the
+      // write threw). Track separately so this category is observable in
+      // health output and stops bleeding into the freshAttempts denominator.
+      result.skippedChildExists += 1;
+      warn(
+        `memory inference: derived child for ${pending[i]?.ref ?? "<unknown>"} already existed or write failed; counted as skippedChildExists`,
+      );
+    } else {
+      // The per-record state machine should cover every outcome. A hit here
+      // means a new code path slipped past the categorisation — surface it
+      // loudly so health metrics stay honest and we get a signal to fix.
+      result.unaccounted += 1;
+      warn(`memory inference: unaccounted per-record outcome for ${pending[i]?.ref ?? "<unknown>"}`);
     }
     processed++;
     onProgress?.({

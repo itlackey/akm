@@ -423,7 +423,9 @@ describe("akm improve memory cleanup", () => {
           splitParents: 1,
           writtenFacts: 1,
           skippedNoFacts: 0,
-
+          skippedChildExists: 0,
+          skippedAborted: 0,
+          unaccounted: 0,
           cacheHits: 0,
         } satisfies MemoryInferenceResult;
       },
@@ -458,7 +460,9 @@ describe("akm improve memory cleanup", () => {
       splitParents: 1,
       writtenFacts: 1,
       skippedNoFacts: 0,
-
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
       cacheHits: 0,
     });
     expect(result.graphExtraction?.written).toBe(true);
@@ -505,7 +509,9 @@ describe("akm improve memory cleanup", () => {
           splitParents: 1,
           writtenFacts: 1,
           skippedNoFacts: 0,
-
+          skippedChildExists: 0,
+          skippedAborted: 0,
+          unaccounted: 0,
           cacheHits: 0,
         } satisfies MemoryInferenceResult;
       },
@@ -659,7 +665,9 @@ describe("akm improve memory cleanup", () => {
         splitParents: 1,
         writtenFacts: 1,
         skippedNoFacts: 0,
-
+        skippedChildExists: 0,
+        skippedAborted: 0,
+        unaccounted: 0,
         cacheHits: 0,
       }),
       graphExtractionFn: async () => ({

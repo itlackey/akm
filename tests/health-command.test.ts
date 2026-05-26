@@ -257,16 +257,18 @@ describe("akmHealth", () => {
     expect(result.improve.consolidation.deleted).toBe(2);
     expect(result.improve.consolidation.contradicted).toBe(1);
 
-    // Memory inference: 6 written / (10 considered - 0 cache hits) = 0.6 yield.
-    // With no cache hits in this fixture, freshAttempts == considered, so the
-    // ratio matches the legacy "written/considered" reading.
+    // Memory inference: the fixture envelope omits the `cacheHits` field,
+    // so it counts as a legacy (pre-2026-05-26) envelope and is excluded
+    // from the yield aggregate (freshAttempts/yieldRate=0). Totals still
+    // include it. See the legacy-gating regression test below.
     expect(result.improve.memoryInference.considered).toBe(10);
     expect(result.improve.memoryInference.cacheHits).toBe(0);
-    expect(result.improve.memoryInference.freshAttempts).toBe(10);
+    expect(result.improve.memoryInference.freshAttempts).toBe(0);
     expect(result.improve.memoryInference.written).toBe(6);
     expect(result.improve.memoryInference.splitParents).toBe(3);
     expect(result.improve.memoryInference.skippedNoFacts).toBe(1);
-    expect(result.improve.memoryInference.yieldRate).toBe(0.6);
+    expect(result.improve.memoryInference.yieldRate).toBe(0);
+    expect(result.improve.memoryInference.yieldEligibleRuns).toBe(0);
     // Legacy alias for the v1 shape.
     expect(result.improve.memoryInference.writes).toBe(result.improve.memoryInference.written);
 

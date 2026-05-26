@@ -183,7 +183,16 @@ describe("runMemoryInferencePass — disabled by default", () => {
     writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
     const result = await runMemoryInferencePass({ semanticSearchMode: "auto" }, sources());
-    expect(result).toEqual({ considered: 0, cacheHits: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(result).toEqual({
+      considered: 0,
+      cacheHits: 0,
+      splitParents: 0,
+      writtenFacts: 0,
+      skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
+    });
   });
 
   test("returns no-op when index.memory.llm = false", async () => {
@@ -252,7 +261,16 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
       index: { memory: { llm: true } },
     };
     const result = await runMemoryInferencePass(cfg, sources());
-    expect(result).toEqual({ considered: 0, cacheHits: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(result).toEqual({
+      considered: 0,
+      cacheHits: 0,
+      splitParents: 0,
+      writtenFacts: 0,
+      skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
+    });
     expect(invocations).toBe(0);
     // Parent is not mutated when the feature gate blocks.
     const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
@@ -323,6 +341,9 @@ describe("runMemoryInferencePass — enabled", () => {
       splitParents: 1,
       writtenFacts: 1,
       skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
     });
 
     const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));
@@ -424,5 +445,47 @@ describe("runMemoryInferencePass — enabled", () => {
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
+  });
+
+  // Regression guard for the 2026-05-26 yield-leak investigation: when a
+  // parent already has its `<parent>.derived.md` on disk but is NOT marked
+  // `inferenceProcessed: true` (crash mid-write, manual edit, etc.), the
+  // LLM is still re-invoked. Pre-fix that attempt vanished into the
+  // `freshAttempts` denominator. Now it must surface as
+  // `skippedChildExists`.
+  test("counts skippedChildExists when derived file already exists on disk", async () => {
+    writeMemory("parent", {}, "Body.");
+    // Seed the derived child on disk so writeDerivedMemory short-circuits.
+    fs.writeFileSync(
+      path.join(tmpStash, "memories", "parent.derived.md"),
+      "---\ninferred: true\n---\n\nPre-existing child.\n",
+      "utf8",
+    );
+    compressor = () => sampleDraft();
+
+    const result = await runMemoryInferencePass(configWithLlm(), sources());
+
+    expect(result.considered).toBe(1);
+    expect(result.skippedChildExists).toBe(1);
+    expect(result.skippedNoFacts).toBe(0);
+    expect(result.splitParents).toBe(0);
+    expect(result.writtenFacts).toBe(0);
+    expect(result.unaccounted).toBe(0);
+  });
+
+  test("counts skippedAborted when the signal aborts before the LLM call", async () => {
+    writeMemory("parent-a", {}, "Body A.");
+    writeMemory("parent-b", {}, "Body B.");
+    const controller = new AbortController();
+    controller.abort();
+    compressor = () => sampleDraft();
+
+    const result = await runMemoryInferencePass(configWithLlm(), sources(), controller.signal);
+
+    expect(result.considered).toBe(2);
+    expect(result.skippedAborted).toBe(2);
+    expect(result.splitParents).toBe(0);
+    expect(result.writtenFacts).toBe(0);
+    expect(result.unaccounted).toBe(0);
   });
 });
