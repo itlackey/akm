@@ -9,12 +9,24 @@ import { plainize, shouldDecorate } from "../src/core/tty";
 
 const ENV_KEYS = ["NO_COLOR", "FORCE_COLOR"] as const;
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+const savedIsTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+
+function setStderrTTY(value: boolean): void {
+  Object.defineProperty(process.stderr, "isTTY", {
+    value,
+    configurable: true,
+    writable: true,
+  });
+}
 
 beforeEach(() => {
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
   }
+  // Tests run under either a piped or attached TTY depending on the invoker;
+  // pin stderr to non-TTY so the FORCE_COLOR-fallthrough cases are deterministic.
+  setStderrTTY(false);
 });
 
 afterEach(() => {
@@ -22,6 +34,12 @@ afterEach(() => {
     const v = savedEnv[k];
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
+  }
+  if (savedIsTTY) {
+    Object.defineProperty(process.stderr, "isTTY", savedIsTTY);
+  } else {
+    // Was undefined originally → remove the property entirely.
+    delete (process.stderr as { isTTY?: boolean }).isTTY;
   }
 });
 
