@@ -188,7 +188,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": true
+                    "additionalProperties": false
                   },
                   "distill": {
                     "type": "object",
@@ -245,7 +245,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": true
+                    "additionalProperties": false
                   },
                   "consolidate": {
                     "type": "object",
@@ -302,7 +302,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": true
+                    "additionalProperties": false
                   },
                   "memoryInference": {
                     "type": "object",
@@ -359,7 +359,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": true
+                    "additionalProperties": false
                   },
                   "graphExtraction": {
                     "type": "object",
@@ -416,7 +416,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": true
+                    "additionalProperties": false
                   },
                   "validation": {
                     "type": "object",
@@ -473,7 +473,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": true
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": true
@@ -1108,7 +1108,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                       },
                       "distill": {
                         "type": "object",
@@ -1165,7 +1165,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                       },
                       "consolidate": {
                         "type": "object",
@@ -1222,7 +1222,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                       },
                       "memoryInference": {
                         "type": "object",
@@ -1279,7 +1279,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                       },
                       "graphExtraction": {
                         "type": "object",
@@ -1336,7 +1336,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                       },
                       "validation": {
                         "type": "object",
@@ -1393,7 +1393,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": true
@@ -2010,7 +2010,7 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "ImproveProfileConfig": {
       "type": "object",
@@ -2077,7 +2077,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             },
             "distill": {
               "type": "object",
@@ -2134,7 +2134,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             },
             "consolidate": {
               "type": "object",
@@ -2191,7 +2191,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             },
             "memoryInference": {
               "type": "object",
@@ -2248,7 +2248,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             },
             "graphExtraction": {
               "type": "object",
@@ -2305,7 +2305,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             },
             "validation": {
               "type": "object",
@@ -2362,7 +2362,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           },
           "additionalProperties": true
