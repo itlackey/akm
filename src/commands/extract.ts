@@ -42,6 +42,7 @@ import {
   upsertExtractedSession,
 } from "../core/state-db";
 import { warn } from "../core/warn";
+import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { getAvailableHarnesses } from "../integrations/session-logs";
 import { preFilterSession } from "../integrations/session-logs/pre-filter";
 import type { SessionLogHarness, SessionRef, SessionSummary } from "../integrations/session-logs/types";
@@ -213,6 +214,7 @@ async function processSession(
   sourceRun: string,
   dryRun: boolean,
   timeoutMs: number,
+  maxTotalChars: number | undefined,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -231,7 +233,9 @@ async function processSession(
     };
   }
 
-  const filtered = preFilterSession(data);
+  const filtered = preFilterSession(data, {
+    ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
+  });
   const prompt = buildExtractPrompt({ data, events: filtered.events, inlineRefs: data.inlineRefs });
 
   let llmRaw = "";
@@ -387,7 +391,12 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const stashDir = options.stashDir ?? resolveStashDir();
   const dryRun = options.dryRun ?? false;
   const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
-  const timeoutMs = options.timeoutMs ?? 60_000;
+
+  // Read the per-process extract config from the active improve profile. Matches
+  // the pattern reflect/distill/consolidate use: `profiles.improve.<active>.processes.extract`.
+  // Only the `default` improve profile is consulted here — extract isn't invoked
+  // with a profile flag yet (parity item for a future change).
+  const extractProcess = config.profiles?.improve?.default?.processes?.extract;
 
   // Feature-gate early so we get a clean "skipped because disabled" envelope.
   if (!isLlmFeatureEnabled(config, "session_extraction")) {
@@ -409,12 +418,39 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     };
   }
 
-  const llmConfig = getDefaultLlmConfig(config);
+  // Resolve the LLM connection. Priority order:
+  //   1. Options.config.profiles.improve.default.processes.extract.profile
+  //      (per-process override, matches reflect/distill/consolidate)
+  //   2. config.defaults.llm (the default LLM profile)
+  //   3. throw — extract requires an LLM.
+  let llmConfig: (LlmConnectionConfig & { supportsJsonSchema?: boolean }) | undefined;
+  const runnerSpec = resolveImproveProcessRunnerFromProfile(extractProcess, config);
+  if (runnerSpec) {
+    if (runnerSpec.kind !== "llm") {
+      throw new ConfigError(
+        `Extract only supports mode: "llm" (in-tree LLM call). Got mode: "${runnerSpec.kind}" from profiles.improve.default.processes.extract — change it to "llm" or remove the override.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    llmConfig = runnerSpec.connection;
+  } else {
+    llmConfig = getDefaultLlmConfig(config) ?? undefined;
+  }
   if (!llmConfig) {
     throw new ConfigError(
-      "No default LLM connection configured. Set profiles.llm in your config to use `akm extract`.",
+      "No LLM connection configured for extract. Set profiles.llm + defaults.llm, or set profiles.improve.default.processes.extract.profile to a configured LLM profile.",
     );
   }
+
+  // Honor per-process timeoutMs override; fall back to options.timeoutMs; then 60s.
+  const timeoutMs =
+    options.timeoutMs ??
+    (typeof extractProcess?.timeoutMs === "number" ? extractProcess.timeoutMs : undefined) ??
+    60_000;
+  // Pre-filter budget — process config can raise it for large-context models.
+  const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
+  // Default discovery window — process config can override the built-in 24h.
+  const effectiveSince = options.since ?? extractProcess?.defaultSince;
 
   const harness = resolveHarness(options.type, options.harnesses);
   if (!harness) {
@@ -475,7 +511,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     }
     candidates = [target];
   } else {
-    const sinceMs = parseSinceArg(options.since);
+    const sinceMs = parseSinceArg(effectiveSince);
     candidates = harness.listSessions({
       sinceMs,
       ...(options.location ? { location: options.location } : {}),
@@ -547,6 +583,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         sourceRun,
         dryRun,
         timeoutMs,
+        maxTotalChars,
       );
       sessions.push(result);
       if (result.skipped) skippedCount += 1;

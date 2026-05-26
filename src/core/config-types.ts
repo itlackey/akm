@@ -134,6 +134,21 @@ export interface ImproveProcessConfig {
    * the `consolidate` process.
    */
   contradictionDetection?: { enabled?: boolean };
+  /**
+   * Default discovery window for the `extract` process when the caller does
+   * not pass an explicit `--since`. Accepts ISO timestamps or duration
+   * strings (`24h`, `7d`, `30m`). Only meaningful on the `extract` process.
+   * Defaults to `24h` when absent.
+   */
+  defaultSince?: string;
+  /**
+   * Pre-filter total-character budget. Once kept events exceed this many
+   * chars, older events are dropped (recency-bias) so the prompt stays
+   * within the model's context window. Only meaningful on the `extract`
+   * process. Defaults to 80_000 when absent — chosen for 32K-token models;
+   * raise it for larger-context models.
+   */
+  maxTotalChars?: number;
 }
 
 export interface ImproveProfileConfig {

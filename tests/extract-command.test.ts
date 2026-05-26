@@ -422,3 +422,208 @@ describe("akmExtract — LLM call wiring", () => {
     expect(receivedPrompt).toContain("Session ses_prompt");
   });
 });
+
+// ── per-process profile + config support ────────────────────────────────────
+
+describe("akmExtract — profile + config resolution", () => {
+  function configWithProfile(stashDir: string, processOverride: Record<string, unknown>): AkmConfig {
+    return {
+      semanticSearchMode: "auto",
+      stashDir,
+      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      defaultWriteTarget: "stash",
+      profiles: {
+        llm: {
+          default: {
+            endpoint: "http://localhost:11434/v1/chat/completions",
+            model: "default-model",
+            supportsJsonSchema: true,
+          },
+          "extract-special": {
+            endpoint: "http://192.168.0.205:1234/v1/chat/completions",
+            model: "extract-special-model",
+            supportsJsonSchema: true,
+            timeoutMs: 90_000,
+            contextLength: 131_072,
+          },
+        },
+        improve: {
+          default: { processes: { extract: { enabled: true, ...processOverride } } },
+        },
+      },
+      defaults: { llm: "default" },
+    } as AkmConfig;
+  }
+
+  test("honors profiles.improve.default.processes.extract.profile to pick a non-default LLM", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_profile", Date.now() - 60_000);
+    let receivedEndpoint = "";
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_profile",
+      stashDir: stash,
+      config: configWithProfile(stash, { mode: "llm", profile: "extract-special" }),
+      harnesses: [makeFakeHarness([session])],
+      chat: async (cfg) => {
+        receivedEndpoint = cfg.endpoint;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(receivedEndpoint).toBe("http://192.168.0.205:1234/v1/chat/completions");
+  });
+
+  test("falls back to defaults.llm when the process config has no profile override", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_default", Date.now() - 60_000);
+    let receivedModel = "";
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_default",
+      stashDir: stash,
+      config: configWithProfile(stash, {}),
+      harnesses: [makeFakeHarness([session])],
+      chat: async (cfg) => {
+        receivedModel = cfg.model;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(receivedModel).toBe("default-model");
+  });
+
+  test("rejects non-llm mode in the process config", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
+    // Build a config where the agent profile EXISTS so the runner resolver
+    // succeeds and akmExtract's own kind-check fires (not the resolver's
+    // missing-profile guard).
+    const config = configWithProfile(stash, { mode: "agent", profile: "fake-agent" }) as AkmConfig & {
+      profiles: { agent?: Record<string, unknown> };
+    };
+    config.profiles.agent = {
+      "fake-agent": { platform: "opencode" as const, bin: "opencode", args: ["run"] },
+    };
+    await expect(
+      akmExtract({
+        type: "claude-code",
+        sessionId: "ses_bad_mode",
+        stashDir: stash,
+        config,
+        harnesses: [makeFakeHarness([session])],
+        chat: async () => JSON.stringify({ candidates: [] }),
+      }),
+    ).rejects.toThrow(/only supports mode/);
+  });
+
+  test("honors process timeoutMs override", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_to", Date.now() - 60_000);
+    let receivedTimeout = 0;
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_to",
+      stashDir: stash,
+      config: configWithProfile(stash, { mode: "llm", profile: "extract-special", timeoutMs: 45_000 }),
+      harnesses: [makeFakeHarness([session])],
+      chat: async (_cfg, _msgs, opts) => {
+        receivedTimeout = opts?.timeoutMs ?? 0;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(receivedTimeout).toBe(45_000);
+  });
+
+  test("explicit options.timeoutMs overrides the process config", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_to2", Date.now() - 60_000);
+    let receivedTimeout = 0;
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_to2",
+      stashDir: stash,
+      config: configWithProfile(stash, { mode: "llm", profile: "extract-special", timeoutMs: 45_000 }),
+      harnesses: [makeFakeHarness([session])],
+      timeoutMs: 30_000,
+      chat: async (_cfg, _msgs, opts) => {
+        receivedTimeout = opts?.timeoutMs ?? 0;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(receivedTimeout).toBe(30_000);
+  });
+
+  test("honors defaultSince when --since is not passed", async () => {
+    const stash = makeStashDir();
+    const now = Date.now();
+    // session is 5 days old — would be excluded by the default 24h window
+    // but defaultSince: 7d should keep it.
+    const old = fakeSession("ses_5d", now - 5 * 86_400_000);
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: configWithProfile(stash, { defaultSince: "7d" }),
+      harnesses: [makeFakeHarness([old])],
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(chatCalls).toBe(1);
+    expect(result.sessions).toHaveLength(1);
+  });
+
+  test("honors maxTotalChars override for the pre-filter budget", async () => {
+    const stash = makeStashDir();
+    // Build a session with many fat events. Run extract twice — once with a
+    // tight budget, once with a generous one — and assert the tight-budget
+    // prompt is meaningfully smaller. This verifies the wiring without baking
+    // a brittle absolute size assertion against the prompt template.
+    const fatSession: SessionData = {
+      ref: {
+        harness: "claude-code",
+        sessionId: "ses_budget",
+        filePath: "/tmp/fake/ses_budget.jsonl",
+        startedAt: Date.now() - 3600_000,
+        endedAt: Date.now(),
+      },
+      events: Array.from({ length: 20 }, (_, i) => ({
+        harness: "claude-code",
+        text: `event ${i} `.padEnd(800, "x"),
+        ts: Date.now() - 60_000 * (20 - i),
+        sessionId: "ses_budget",
+        role: "user" as const,
+        filePath: "/tmp/fake/ses_budget.jsonl",
+      })),
+      inlineRefs: [],
+    };
+
+    let tightPromptLen = 0;
+    let generousPromptLen = 0;
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_budget",
+      stashDir: stash,
+      config: configWithProfile(stash, { maxTotalChars: 1500 }),
+      harnesses: [makeFakeHarness([fatSession])],
+      chat: async (_cfg, msgs) => {
+        tightPromptLen = msgs[0]?.content.length ?? 0;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_budget",
+      stashDir: stash,
+      config: configWithProfile(stash, { maxTotalChars: 100_000 }),
+      harnesses: [makeFakeHarness([fatSession])],
+      chat: async (_cfg, msgs) => {
+        generousPromptLen = msgs[0]?.content.length ?? 0;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    // Tight budget should drop ~15-18 of the 20 events; generous keeps all.
+    expect(tightPromptLen).toBeLessThan(generousPromptLen);
+    expect(generousPromptLen - tightPromptLen).toBeGreaterThan(8000);
+  });
+});
