@@ -50,6 +50,16 @@ export interface ImproveHealthMetrics {
       failed: number;
       cooldown: number;
       skipped: number;
+      /**
+       * Content-policy guard rejections (e.g. reflect size-rail hits:
+       * `EXCESSIVE_SHRINKAGE` / `EXCESSIVE_EXPANSION`). These are NOT LLM
+       * faults — the LLM produced a syntactically valid response and a
+       * downstream deterministic guard blocked it. Split out of `failed`
+       * so failure-rate dashboards do not conflate "model is broken" with
+       * "model proposed an unsafe edit and we caught it". See
+       * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
+       */
+      guardRejected: number;
     };
     /**
      * Distill outcomes split by `AkmDistillResult.outcome`. `skipped` here is
@@ -62,6 +72,19 @@ export interface ImproveHealthMetrics {
       qualityRejected: number;
       configDisabled: number;
       skipped: number;
+      /**
+       * Distill actions where the planner produced a result with
+       * `outcome: "skipped"` — i.e. the LLM was either bypassed by an
+       * input-type guard (`recursive_lesson_input`), resolved a destination
+       * conflict as NOOP, or its proposal was deduped at the persistence
+       * layer (cooldown / content-hash match). These are successful no-ops,
+       * not failures. Pre-2026-05-26 they were dropped on the floor by
+       * health.ts (no `case "skipped"`). 465 events/7d were invisible in
+       * the user's stack. See review §1d.
+       */
+      deferred: number;
+      /** Breakdown of `deferred` by `skipReason` field on the result. */
+      deferredByReason: Record<string, number>;
     };
     memoryPrune: number;
     memoryInference: number;
@@ -193,6 +216,28 @@ export interface ImproveHealthMetrics {
     p95Ms: number;
     minMs: number;
     maxMs: number;
+    /**
+     * Per-phase wall-time aggregates derived from per-envelope `durationMs`
+     * fields that the passes already record. Answers "where did the 19-min
+     * p95 go?" without raw envelope spelunking.
+     *
+     * Only phases that record their own durationMs surface here:
+     *   - consolidation: from `consolidation.durationMs` on each envelope.
+     *   - memoryInference: from top-level `memoryInferenceDurationMs`.
+     *   - graphExtraction: from top-level `graphExtractionDurationMs`.
+     *
+     * `count` is the number of envelopes that contributed a duration (i.e.
+     * the phase actually ran on that run). `totalMs` is the sum across the
+     * window. Reflect and distill per-loop aggregates are deferred — only
+     * per-action `durationMs` is recorded today; aggregating them is the
+     * P1 follow-up (review §3 / P1 #8). See
+     * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k.
+     */
+    byPhase: {
+      consolidation: { count: number; totalMs: number; medianMs: number; p95Ms: number };
+      memoryInference: { count: number; totalMs: number; medianMs: number; p95Ms: number };
+      graphExtraction: { count: number; totalMs: number; medianMs: number; p95Ms: number };
+    };
   };
 }
 
@@ -314,8 +359,16 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     skipReasons: {},
     plannedRefs: 0,
     actions: {
-      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0 },
-      distill: { queued: 0, llmFailed: 0, qualityRejected: 0, configDisabled: 0, skipped: 0 },
+      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0 },
+      distill: {
+        queued: 0,
+        llmFailed: 0,
+        qualityRejected: 0,
+        configDisabled: 0,
+        skipped: 0,
+        deferred: 0,
+        deferredByReason: {},
+      },
       memoryPrune: 0,
       memoryInference: 0,
       graphExtraction: 0,
@@ -376,7 +429,18 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       failures: 0,
       durationMs: 0,
     },
-    wallTime: { count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0 },
+    wallTime: {
+      count: 0,
+      medianMs: 0,
+      p95Ms: 0,
+      minMs: 0,
+      maxMs: 0,
+      byPhase: {
+        consolidation: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+        memoryInference: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+        graphExtraction: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+      },
+    },
   };
 }
 
@@ -433,6 +497,9 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
         case "reflect-skipped":
           metrics.actions.reflect.skipped += 1;
           break;
+        case "reflect-guard-rejected":
+          metrics.actions.reflect.guardRejected += 1;
+          break;
         case "distill": {
           const r = action.result as Record<string, unknown> | undefined;
           const outcome = typeof r?.outcome === "string" ? r.outcome : "";
@@ -451,6 +518,29 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
             case "config_disabled":
               metrics.actions.distill.configDisabled += 1;
               break;
+            case "skipped": {
+              // Previously dropped on the floor. The four sub-paths that emit
+              // `outcome: "skipped"` (see distill.ts:893, 1024, 1120, 1576):
+              //   - recursive_lesson_input (type guard refused a lesson input)
+              //   - conflict_noop (LLM resolved destination conflict as NOOP)
+              //   - proposal-skipped cooldown / dedup at persistence
+              // 465 events/7d in the user's live stack. The result message
+              // typically encodes the reason; we also accept an explicit
+              // `skipReason` field when downstream code sets it.
+              metrics.actions.distill.deferred += 1;
+              const explicitReason = typeof r?.skipReason === "string" ? r.skipReason : undefined;
+              const msg = typeof r?.message === "string" ? r.message : "";
+              let reason = explicitReason ?? "unknown";
+              if (!explicitReason) {
+                if (/lesson inputs/i.test(msg)) reason = "recursive_lesson_input";
+                else if (/NOOP/.test(msg)) reason = "conflict_noop";
+                else if (/cooldown/i.test(msg)) reason = "proposal_cooldown";
+                else if (/content[_ ]?hash/i.test(msg)) reason = "content_hash_match";
+              }
+              metrics.actions.distill.deferredByReason[reason] =
+                (metrics.actions.distill.deferredByReason[reason] ?? 0) + 1;
+              break;
+            }
             default:
               break;
           }
@@ -611,11 +701,16 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.reflect.failed += src.actions.reflect.failed;
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
   dst.actions.reflect.skipped += src.actions.reflect.skipped;
+  dst.actions.reflect.guardRejected += src.actions.reflect.guardRejected;
   dst.actions.distill.queued += src.actions.distill.queued;
   dst.actions.distill.llmFailed += src.actions.distill.llmFailed;
   dst.actions.distill.qualityRejected += src.actions.distill.qualityRejected;
   dst.actions.distill.configDisabled += src.actions.distill.configDisabled;
   dst.actions.distill.skipped += src.actions.distill.skipped;
+  dst.actions.distill.deferred += src.actions.distill.deferred;
+  for (const [reason, count] of Object.entries(src.actions.distill.deferredByReason)) {
+    dst.actions.distill.deferredByReason[reason] = (dst.actions.distill.deferredByReason[reason] ?? 0) + count;
+  }
   dst.actions.memoryPrune += src.actions.memoryPrune;
   dst.actions.memoryInference += src.actions.memoryInference;
   dst.actions.graphExtraction += src.actions.graphExtraction;
@@ -688,6 +783,15 @@ function summarizeImproveRuns(
   const accum = createUnknownImproveMetrics();
   const rows = loadImproveRunRows(db, since, until);
 
+  // Per-phase wall-time samples. Each entry is one envelope's durationMs for
+  // that phase. Phases that did not run on a given envelope are simply
+  // omitted (NOT counted as 0) so the median/p95 reflect actual phase work.
+  const phaseDurations = {
+    consolidation: [] as number[],
+    memoryInference: [] as number[],
+    graphExtraction: [] as number[],
+  };
+
   for (const row of rows) {
     let result: Record<string, unknown>;
     try {
@@ -697,10 +801,51 @@ function summarizeImproveRuns(
     }
     const perRow = projectRunMetrics(result);
     mergeImproveMetrics(accum, perRow);
+
+    // Collect per-phase durations directly off the envelope. consolidation's
+    // duration lives inside the sub-object; memoryInference and graphExtraction
+    // expose top-level *DurationMs keys (`memoryInferenceDurationMs`,
+    // `graphExtractionDurationMs`) when they actually ran on that envelope.
+    const consol = result.consolidation as { durationMs?: unknown } | undefined;
+    const consolMs = toFiniteNumber(consol?.durationMs);
+    if (consolMs > 0) phaseDurations.consolidation.push(consolMs);
+    const memMs = toFiniteNumber(result.memoryInferenceDurationMs);
+    if (memMs > 0) phaseDurations.memoryInference.push(memMs);
+    const graphMs = toFiniteNumber(result.graphExtractionDurationMs);
+    if (graphMs > 0) phaseDurations.graphExtraction.push(graphMs);
   }
 
   finalizeImproveMetrics(accum);
+  accum.wallTime.byPhase = {
+    consolidation: summarizePhaseDurations(phaseDurations.consolidation),
+    memoryInference: summarizePhaseDurations(phaseDurations.memoryInference),
+    graphExtraction: summarizePhaseDurations(phaseDurations.graphExtraction),
+  };
   return { metrics: accum, runCount: rows.length };
+}
+
+/**
+ * Aggregate a list of per-envelope phase durations into the
+ * `wallTime.byPhase.*` shape: count, total, median, p95. Median/p95 use the
+ * same nearest-rank picker as the top-level wallTime stats so the two are
+ * comparable.
+ */
+function summarizePhaseDurations(samples: number[]): {
+  count: number;
+  totalMs: number;
+  medianMs: number;
+  p95Ms: number;
+} {
+  if (samples.length === 0) return { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 };
+  const sorted = [...samples].sort((a, b) => a - b);
+  const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+  const totalMs = sorted.reduce((acc, n) => acc + n, 0);
+  return {
+    count: sorted.length,
+    totalMs,
+    medianMs: pick(0.5),
+    p95Ms: pick(0.95),
+  };
 }
 
 /**
@@ -830,8 +975,20 @@ function buildPerRunSummaries(db: Database, since: string, until?: string): Impr
   return summaries;
 }
 
-function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wallTime"] {
-  if (durationsMs.length === 0) return { count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0 };
+function emptyPhaseStats(): ImproveHealthMetrics["wallTime"]["byPhase"] {
+  return {
+    consolidation: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+    memoryInference: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+    graphExtraction: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+  };
+}
+
+function computeWallTimeStats(
+  durationsMs: number[],
+  byPhase?: ImproveHealthMetrics["wallTime"]["byPhase"],
+): ImproveHealthMetrics["wallTime"] {
+  const phase = byPhase ?? emptyPhaseStats();
+  if (durationsMs.length === 0) return { count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0, byPhase: phase };
   const sorted = [...durationsMs].sort((a, b) => a - b);
   const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
   return {
@@ -840,6 +997,7 @@ function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wall
     p95Ms: pick(0.95),
     minMs: sorted[0] ?? 0,
     maxMs: sorted[sorted.length - 1] ?? 0,
+    byPhase: phase,
   };
 }
 
@@ -1060,8 +1218,10 @@ export function parseWindowSpec(raw: string): WindowSpec {
 /** Hard-coded list of "interesting" metric paths for window-compare deltas. */
 const INTERESTING_DELTA_PATHS = [
   "improve.actions.reflect.failed",
+  "improve.actions.reflect.guardRejected",
   "improve.actions.distill.llmFailed",
   "improve.actions.distill.queued",
+  "improve.actions.distill.deferred",
   "improve.consolidation.promoted",
   "improve.memoryInference.written",
   "improve.memoryInference.yieldRate",
@@ -1144,7 +1304,12 @@ function buildWindowMetrics(db: Database, stateDbPath: string, since: string, un
   const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
   improveSummary.skipped = skipSummary.skipped;
   improveSummary.skipReasons = skipSummary.skipReasons;
-  improveSummary.wallTime = computeWallTimeStats(collectImproveWallTimes(db, since, until));
+  // Preserve the per-phase aggregation computed by summarizeImproveRuns —
+  // computeWallTimeStats only refreshes the top-level wrapper stats.
+  improveSummary.wallTime = computeWallTimeStats(
+    collectImproveWallTimes(db, since, until),
+    improveSummary.wallTime.byPhase,
+  );
 
   const metrics: HealthMetrics = {
     taskFailRate: roundRate(taskFailRate),
@@ -1308,7 +1473,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
     improveSummary.skipped = skipSummary.skipped;
     improveSummary.skipReasons = skipSummary.skipReasons;
-    improveSummary.wallTime = computeWallTimeStats(collectImproveWallTimes(db, since));
+    improveSummary.wallTime = computeWallTimeStats(collectImproveWallTimes(db, since), improveSummary.wallTime.byPhase);
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {

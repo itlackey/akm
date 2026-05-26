@@ -287,24 +287,175 @@ describe("akmHealth", () => {
     expect(result.improve.wallTime.maxMs).toBeGreaterThanOrEqual(result.improve.wallTime.minMs);
     expect(result.improve.wallTime.medianMs).toBeGreaterThan(0);
 
+    // Per-phase wall-time aggregation (2026-05-26). Only run-a has phase
+    // durations on its envelope (consolidation=200, memoryInf=50, graph=70);
+    // run-b omits them and must NOT inflate counts to 2.
+    expect(result.improve.wallTime.byPhase.consolidation.count).toBe(1);
+    expect(result.improve.wallTime.byPhase.consolidation.totalMs).toBe(200);
+    expect(result.improve.wallTime.byPhase.consolidation.medianMs).toBe(200);
+    expect(result.improve.wallTime.byPhase.memoryInference.count).toBe(1);
+    expect(result.improve.wallTime.byPhase.memoryInference.totalMs).toBe(50);
+    expect(result.improve.wallTime.byPhase.graphExtraction.count).toBe(1);
+    expect(result.improve.wallTime.byPhase.graphExtraction.totalMs).toBe(70);
+
     // Schema bumped.
     expect(result.schemaVersion).toBe(2);
   });
 
+  test("reflect content-policy guard hits are counted separately from failed (Pattern A)", () => {
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-guard",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: [],
+          actions: [
+            // Pre-2026-05-26 these would have all been "reflect-failed".
+            { ref: "memory:a", mode: "reflect", result: { ok: true } },
+            {
+              ref: "memory:b",
+              mode: "reflect-failed",
+              result: { ok: false, reason: "parse_error", error: "missing required ref field" },
+            },
+            {
+              ref: "memory:c",
+              mode: "reflect-guard-rejected",
+              result: {
+                ok: false,
+                reason: "content_policy_reject",
+                error: "Reflect rejected: EXCESSIVE_SHRINKAGE — proposed body is 12% of source",
+              },
+            },
+            {
+              ref: "memory:d",
+              mode: "reflect-guard-rejected",
+              result: {
+                ok: false,
+                reason: "content_policy_reject",
+                error: "Reflect rejected: EXCESSIVE_EXPANSION — proposed body is 380% of source",
+              },
+            },
+          ],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    // The two guard hits MUST land in guardRejected, NOT failed. The user's
+    // dashboards depend on "failed = LLM faults only" semantics.
+    expect(result.improve.actions.reflect.ok).toBe(1);
+    expect(result.improve.actions.reflect.failed).toBe(1);
+    expect(result.improve.actions.reflect.guardRejected).toBe(2);
+  });
+
+  test("distill outcome:skipped surfaces as actions.distill.deferred with skipReason breakdown", () => {
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-deferred",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: [],
+          actions: [
+            {
+              ref: "lesson:a",
+              mode: "distill",
+              result: {
+                outcome: "skipped",
+                skipReason: "recursive_lesson_input",
+                message: "Distill refuses lesson inputs",
+              },
+            },
+            {
+              ref: "knowledge:b",
+              mode: "distill",
+              result: {
+                outcome: "skipped",
+                message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
+              },
+            },
+            {
+              ref: "knowledge:c",
+              mode: "distill",
+              result: { outcome: "skipped", skipReason: "cooldown", message: "proposal cooldown" },
+            },
+            { ref: "knowledge:d", mode: "distill", result: { outcome: "queued" } },
+          ],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    // Pre-fix: deferred would be 0 (silently dropped by missing case "skipped").
+    expect(result.improve.actions.distill.deferred).toBe(3);
+    expect(result.improve.actions.distill.queued).toBe(1);
+    expect(result.improve.actions.distill.deferredByReason).toEqual({
+      recursive_lesson_input: 1,
+      conflict_noop: 1,
+      cooldown: 1,
+    });
+  });
+
   test("createUnknownImproveMetrics-like shape when nothing recorded", () => {
     const result = akmHealth({ since: "7d" });
-    expect(result.improve.actions.reflect).toEqual({ ok: 0, failed: 0, cooldown: 0, skipped: 0 });
+    expect(result.improve.actions.reflect).toEqual({ ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0 });
     expect(result.improve.actions.distill).toEqual({
       queued: 0,
       llmFailed: 0,
       qualityRejected: 0,
       configDisabled: 0,
       skipped: 0,
+      deferred: 0,
+      deferredByReason: {},
     });
     expect(result.improve.consolidation.ran).toBe(false);
     expect(result.improve.memoryInference.yieldRate).toBe(0);
     expect(result.improve.graphExtraction.cacheHitRate).toBe(0);
-    expect(result.improve.wallTime).toEqual({ count: 0, medianMs: 0, p95Ms: 0, minMs: 0, maxMs: 0 });
+    expect(result.improve.wallTime).toEqual({
+      count: 0,
+      medianMs: 0,
+      p95Ms: 0,
+      minMs: 0,
+      maxMs: 0,
+      byPhase: {
+        consolidation: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+        memoryInference: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+        graphExtraction: { count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 },
+      },
+    });
   });
 
   test("derives task and log metrics from task_history", () => {

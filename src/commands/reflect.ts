@@ -631,7 +631,11 @@ function sanitizeReflectPayload(
       content: payload.content,
       warnings,
       reject: {
-        reason: "parse_error" as AgentFailureReason,
+        // Content-policy guard hit (EXCESSIVE_SHRINKAGE / EXCESSIVE_EXPANSION).
+        // This is the guard working as designed — the LLM responded fine, we
+        // blocked the output. Routed through `content_policy_reject` so the
+        // health aggregator can split guard hits out of true LLM faults.
+        reason: "content_policy_reject" as AgentFailureReason,
         error: `Reflect rejected: ${sizeOutcome.code} — proposed body is ${pct}% of source (${limit}) for ref ${targetRef}. ${cause}`,
       },
     };

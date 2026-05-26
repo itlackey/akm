@@ -22,7 +22,16 @@ import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
-/** Stable failure-reason vocabulary. Wider strings are not allowed. */
+/** Stable failure-reason vocabulary. Wider strings are not allowed.
+ *
+ * Note on `content_policy_reject`: this is NOT an LLM fault — it is a
+ * downstream deterministic content-policy guard (e.g. reflect's
+ * EXCESSIVE_SHRINKAGE/EXCESSIVE_EXPANSION size rails) rejecting an
+ * otherwise well-formed LLM response. The agent worked; our guard blocked
+ * the output. Health aggregators count these in a separate
+ * `guardRejected` bucket so the LLM-failure-rate numerator is not
+ * inflated. See `/tmp/akm-health-investigations/metrics-taxonomy-review.md`
+ * §1a / Pattern A. */
 export type AgentFailureReason =
   | "timeout"
   | "spawn_failed"
@@ -31,7 +40,8 @@ export type AgentFailureReason =
   | "cooldown"
   | "llm_rate_limit"
   | "llm_content_filter"
-  | "llm_invalid_json";
+  | "llm_invalid_json"
+  | "content_policy_reject";
 
 /** Minimum subprocess surface we need. Bun.spawn returns this shape. */
 export interface SpawnedSubprocess {

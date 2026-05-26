@@ -310,7 +310,10 @@ describe("Reflect size guard — diff-size safety rails", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("parse_error");
+    // Reason changed 2026-05-26: content-policy guard hits now route through
+    // `content_policy_reject` (not `parse_error`) so health.ts can split them
+    // out of LLM-failure aggregates. See metrics-taxonomy-review §1a / Pattern A.
+    expect(result.reason).toBe("content_policy_reject");
     expect(result.error).toContain("EXCESSIVE_SHRINKAGE");
     expect(listProposals(stash).length).toBe(0);
   });
@@ -332,7 +335,10 @@ describe("Reflect size guard — diff-size safety rails", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("parse_error");
+    // Reason changed 2026-05-26: content-policy guard hits now route through
+    // `content_policy_reject` (not `parse_error`) so health.ts can split them
+    // out of LLM-failure aggregates. See metrics-taxonomy-review §1a / Pattern A.
+    expect(result.reason).toBe("content_policy_reject");
     expect(result.error).toContain("EXCESSIVE_EXPANSION");
     expect(listProposals(stash).length).toBe(0);
   });

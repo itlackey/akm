@@ -175,6 +175,7 @@ export interface ImproveActionResult {
     | "reflect-failed"
     | "reflect-cooldown"
     | "reflect-skipped"
+    | "reflect-guard-rejected"
     | "distill"
     | "distill-skipped"
     | "memory-prune"
@@ -258,6 +259,13 @@ export interface AkmImproveResult {
   reflectCooldownActions?: number;
   /** Number of reflect actions skipped because the asset type is not supported by reflect. */
   reflectSkippedActions?: number;
+  /**
+   * Number of reflect actions where a downstream content-policy guard
+   * (e.g. EXCESSIVE_SHRINKAGE/EXCESSIVE_EXPANSION size rails) blocked an
+   * otherwise valid LLM response. NOT counted as LLM failure. See
+   * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
+   */
+  reflectGuardRejectedActions?: number;
 }
 
 type ImproveScope = ReturnType<typeof resolveImproveScope>;
@@ -984,6 +992,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
       reflectSkippedActions: finalActions.filter((a) => a.mode === "reflect-skipped").length,
+      reflectGuardRejectedActions: finalActions.filter((a) => a.mode === "reflect-guard-rejected").length,
     };
     if (!result.dryRun)
       emitImproveCompletedEvent(
@@ -1976,13 +1985,29 @@ async function runImproveLoopStage(args: {
             reflectResult = await reflectFn(reflectCallArgs);
           }
           const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
+          // Content-policy guard hits (reflect size-rail rejections) are NOT
+          // LLM faults — the agent responded fine, the downstream guard
+          // blocked the output. Route them to a distinct `reflect-guard-rejected`
+          // mode so health metrics can split deterministic guard hits out of
+          // true LLM failures. See
+          // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
+          const isGuardReject = !reflectResult.ok && reflectResult.reason === "content_policy_reject";
           actions.push({
             ref: planned.ref,
-            mode: reflectResult.ok ? "reflect" : isCooldown ? "reflect-cooldown" : "reflect-failed",
+            mode: reflectResult.ok
+              ? "reflect"
+              : isCooldown
+                ? "reflect-cooldown"
+                : isGuardReject
+                  ? "reflect-guard-rejected"
+                  : "reflect-failed",
             result: reflectResult,
           });
-          // Cooldown skips are not failures — do not pollute recentErrors with them
-          // (those get injected as `avoidPatterns` into the next reflect prompt).
+          // Cooldown skips and guard rejects are not failures — do not pollute
+          // recentErrors with them (those get injected as `avoidPatterns` into
+          // the next reflect prompt). Guard rejects ARE worth showing the LLM
+          // as a learn-signal, so we still include them in pushRecentError so
+          // the next iteration sees "your last expansion was too large".
           if (!reflectResult.ok && !isCooldown) {
             const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
             pushRecentError("reflect", errMsg);
