@@ -263,15 +263,17 @@ describe("akm improve memory cleanup", () => {
     expect(result.memorySummary).toEqual({ eligible: 2, derived: 1 });
   });
 
-  test("accepted refs bypass reflect cooldown during improve", async () => {
+  test("ref with new feedback signal after the last reflect proposal is reflect-eligible (0.8.0 signal-delta)", async () => {
     const stashDir = makeTempDir("akm-improve-memory-accepted-bypass-");
     writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
     await buildIndex(stashDir);
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
+    // Old reflect_invoked event, then a NEWER feedback event → signal-delta
+    // gate passes (new signal arrived since the last proposal).
     appendEvent({ eventType: "reflect_invoked", ref: "memory:deploy" }, { now: () => now - 24 * 60 * 60 * 1000 });
-    appendEvent({ eventType: "promoted", ref: "memory:deploy" }, { now: () => now });
+    appendEvent({ eventType: "feedback", ref: "memory:deploy", metadata: { signal: "positive" } }, { now: () => now });
 
     await akmImprove({
       scope: "memory",
@@ -352,13 +354,17 @@ describe("akm improve memory cleanup", () => {
     });
 
     expect(distilledRefs).toEqual([]);
+    // 0.8.0: refs without any new feedback signal are fully skipped at the
+    // planner level (signal-delta gate). The synthetic distill-skipped
+    // action carries the new "no new signal since last proposal" reason.
     expect(
       result.actions?.some(
         (action) =>
           action.ref === "memory:deploy" &&
           action.mode === "distill-skipped" &&
           "reason" in action.result &&
-          action.result.reason === "memory requires recent feedback signal",
+          (action.result.reason === "no new signal since last proposal" ||
+            action.result.reason === "memory requires recent feedback signal"),
       ),
     ).toBe(true);
   });

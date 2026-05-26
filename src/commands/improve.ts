@@ -130,17 +130,6 @@ export interface AkmImproveOptions {
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
   repairValidationFailures?: boolean;
   /**
-   * Global reflect cooldown override in days. When set, applies uniformly to all asset types,
-   * overriding per-type defaults (memory=7, workflow=14, skill/agent/command=21,
-   * knowledge/script/wiki=30, task=60, lesson=90). Set to 0 to disable cooldowns entirely.
-   * Only for this run; does not persist to config.
-   */
-  reflectCooldownDays?: number;
-  /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 1. Set to 0 to disable. Only for this run; does not persist to config. */
-  distillCooldownDays?: number;
-  /** Cooldown in days before re-consolidating memories. Defaults to 14. Set to 0 to disable. Only for this run; does not persist to config. */
-  consolidateCooldownDays?: number;
-  /**
    * When true, only assets with recent feedback signals are eligible.
    * Disables the high-retrieval fallback path for type/all scope runs.
    */
@@ -573,6 +562,98 @@ function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
     return !parsed.name.endsWith(".derived");
   }
   return !parsed.name.endsWith(".derived");
+}
+
+// ── Signal-delta eligibility helpers (0.8.0) ────────────────────────────────
+//
+// The 0.8.0 redesign replaced flat time-based cooldowns for reflect/distill
+// with a *signal-delta* gate: a ref is re-eligible iff new feedback has
+// landed since the last proposal was generated for it. These helpers build
+// the two timestamp maps the gate needs in bulk, so the planner avoids
+// N+1 queries across the full postCleanupRefs set.
+
+/**
+ * Latest feedback event timestamp per ref in the active window. Reads all
+ * `feedback` events newer than `sinceIso` in one query and indexes by ref,
+ * keeping the maximum `ts` per ref.
+ *
+ * Only events with a meaningful payload count as "signal" — `metadata.signal`
+ * (positive/negative) OR `metadata.note` (a free-form annotation). Empty
+ * metadata events are ignored so a stray `akm feedback <ref>` invocation
+ * without a flag doesn't trigger downstream re-processing.
+ */
+function buildLatestFeedbackTsMap(refs: ReadonlyArray<string>, sinceIso: string): Map<string, string> {
+  const out = new Map<string, string>();
+  if (refs.length === 0) return out;
+  const refSet = new Set(refs);
+  const { events } = readEvents({ type: "feedback", since: sinceIso });
+  for (const e of events) {
+    const ref = e.ref;
+    if (!ref || !refSet.has(ref)) continue;
+    const meta = e.metadata as { signal?: unknown; note?: unknown } | undefined;
+    const hasSignal = meta !== undefined && (typeof meta.signal === "string" || typeof meta.note === "string");
+    if (!hasSignal) continue;
+    const ts = e.ts ?? "";
+    if (ts > (out.get(ref) ?? "")) out.set(ref, ts);
+  }
+  return out;
+}
+
+/**
+ * Latest proposal timestamp per input-ref, filtered by source ('reflect' or
+ * 'distill'). Reads the corresponding `*_invoked` events from state.db —
+ * these events are emitted at proposal creation time and carry the *input*
+ * asset ref (memory:foo, skill:bar, etc.) directly. We use them rather than
+ * `listProposals` because distill proposals are keyed by the derived
+ * lesson/knowledge ref, not the source memory — joining back through the
+ * payload would be fragile.
+ */
+function buildLatestProposalTsMap(
+  refs: ReadonlyArray<string>,
+  source: "reflect" | "distill",
+  _stashDir: string | undefined,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  if (refs.length === 0) return out;
+  const refSet = new Set(refs);
+  const eventType = source === "reflect" ? "reflect_invoked" : "distill_invoked";
+  const { events } = readEvents({ type: eventType });
+  for (const e of events) {
+    const ref = e.ref;
+    if (!ref || !refSet.has(ref)) continue;
+    // For distill_invoked we only count attempts that produced (or attempted
+    // to produce) a real proposal — config_disabled / parse-error outcomes
+    // should not move the signal-delta cursor forward.
+    if (eventType === "distill_invoked") {
+      const outcome = (e.metadata as { outcome?: unknown } | undefined)?.outcome;
+      if (outcome !== "queued" && outcome !== "skipped" && outcome !== "validation_failed") continue;
+    }
+    const ts = e.ts ?? "";
+    if (ts > (out.get(ref) ?? "")) out.set(ref, ts);
+  }
+  return out;
+}
+
+/**
+ * Signal-delta eligibility predicate.
+ *
+ * True iff `latestFeedback[ref]` is defined AND either no prior proposal
+ * exists for this (ref, source) OR `latestFeedback[ref] > lastProposal[ref]`.
+ *
+ * Refs with no feedback signal at all are ineligible by definition — the
+ * high-retrieval fallback path (see `noFeedbackCandidates` later in the
+ * planner) handles never-touched-but-frequently-read assets separately.
+ */
+function isSignalDeltaEligible(
+  ref: string,
+  latestFeedback: Map<string, string>,
+  lastProposal: Map<string, string>,
+): boolean {
+  const fb = latestFeedback.get(ref);
+  if (!fb) return false;
+  const lp = lastProposal.get(ref);
+  if (!lp) return true;
+  return fb > lp;
 }
 
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
@@ -1093,7 +1174,10 @@ async function runImprovePreparationStage(args: {
     budgetMs,
     eventsCtx,
     initialCleanupWarnings,
-    improveProfile,
+    // improveProfile is part of the preparation-stage signature for future use
+    // (per-process gating moved into the in-loop stage). Kept here so the
+    // signature does not drift away from the rest of the planner stack.
+    improveProfile: _improveProfile,
   } = args;
 
   const actions: ImproveActionResult[] = [];
@@ -1308,209 +1392,110 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  // ── Phase 2: cooldown sets built EARLY ────────────────────────────────────
-  // Read all cooldown-relevant events in 4 bulk queries and materialise two
-  // Sets used by the partition (next phase). Doing this before signal/feedback/
-  // utility/sort means the expensive ranking work only runs on refs that can
-  // actually be processed this run.
+  // ── Phase 2: signal-delta eligibility sets built EARLY ────────────────────
+  // 0.8.0 replaces the flat time-based cooldowns (which produced synchronised
+  // waves whenever many refs cooled at the same instant — see the 2026-05-26
+  // 54-ref simultaneous-reflect incident) with a *signal-delta* gate:
   //
-  // SM-2 tier for reflect uses promoted/rejected events (recorded by
-  // `akm proposal accept/reject`) rather than the per-ref listProposals()
-  // filesystem scan, giving identical tier logic without touching the disk.
-  // Built-in per-type reflect cooldown defaults. Higher-churn types get shorter
-  // windows; stable reference material gets longer ones.
-  // Overridable via profiles.improve[name].processes.reflect.cooldownByType,
-  // or globally via --reflect-cooldown-days (CLI flag, highest priority).
-  const REFLECT_COOLDOWN_BUILTIN: Readonly<Record<string, number>> = {
-    memory: 2,
-    lesson: 7,
-    workflow: 30,
-    skill: 30,
-    agent: 30,
-    command: 30,
-    knowledge: 30,
-    script: 30,
-    wiki: 30,
-    task: 60,
-  };
-  const REFLECT_COOLDOWN_FALLBACK = 30;
+  //   reflectEligible(ref) ≡ latestFeedbackTs(ref) > lastReflectProposalTs(ref)
+  //   distillEligible(ref) ≡ latestFeedbackTs(ref) > lastDistillProposalTs(ref)
+  //
+  // i.e. a ref is re-eligible iff new feedback has landed since the last
+  // proposal was generated for it. Stable content with no new signal stays
+  // out of the queue regardless of clock time; a sudden burst of feedback
+  // surfaces only the refs that the burst actually touches.
+  //
+  // The 30-day FEEDBACK_SIGNAL_WINDOW_DAYS bound still applies — only feedback
+  // events newer than that count as "current signal". Ancient one-off
+  // negatives don't permanently lock a ref into every run.
+  //
+  // High-retrieval refs (P0-A path) use a simpler "eligible once" rule: a
+  // ref with no feedback signal but retrievalCount ≥ threshold is eligible
+  // exactly once (no prior reflect proposal). Subsequent re-eligibility for
+  // those refs requires either a new feedback event (then the normal
+  // signal-delta gate applies) or human action. Documented limitation: this
+  // path does not re-fire on retrieval-count growth alone in 0.8.0; storing
+  // the retrieval count in proposal metadata for proper delta-tracking is
+  // captured as future work.
+  const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
+  const feedbackSinceCutoff = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
 
-  const profileCooldownByType: Record<string, number> = Object.fromEntries(
-    Object.entries(improveProfile.processes?.reflect?.cooldownByType ?? {}).filter(
-      (entry): entry is [string, number] => entry[1] !== undefined,
-    ),
-  );
-  const REFLECT_COOLDOWN_BY_TYPE: Readonly<Record<string, number>> = {
-    ...REFLECT_COOLDOWN_BUILTIN,
-    ...profileCooldownByType,
-  };
+  // Build the three timestamp maps once across the entire postCleanupRefs set.
+  // Per-ref queries would be N+1 and the planner is already the hottest path
+  // in `akm improve`.
+  const candidateRefs = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref)).map((r) => r.ref);
+  const latestFeedbackTs = buildLatestFeedbackTsMap(candidateRefs, feedbackSinceCutoff);
+  const lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect", primaryStashDir ?? options.stashDir);
+  const lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill", primaryStashDir ?? options.stashDir);
 
-  const profileCooldownDays = improveProfile.processes?.reflect?.cooldownDays;
-  const reflectCooldownForRef = (ref: string): number => {
-    if (options.reflectCooldownDays !== undefined) return options.reflectCooldownDays;
-    const type = ref.split(":")[0] ?? "";
-    return REFLECT_COOLDOWN_BY_TYPE[type] ?? profileCooldownDays ?? REFLECT_COOLDOWN_FALLBACK;
-  };
-
-  const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 1;
-
-  const reflectCooledRefs = new Set<string>();
+  // distillCooledRefs preserves the in-loop guard semantics: any ref the
+  // distill signal-delta gate rejects ends up in this set so the existing
+  // loop-time `distillCooledRefs.has(...)` check still works without
+  // restructuring the entire loop.
   const distillCooledRefs = new Set<string>();
+  const preCooldownCount = postCleanupRefs.length;
 
-  // Use the largest possible reflect window when querying bulk events so we
-  // don't miss cooldown records for long-window types (e.g. lesson = 90 days).
-  const maxReflectCooldownDays =
-    options.reflectCooldownDays !== undefined
-      ? options.reflectCooldownDays
-      : Math.max(...Object.values(REFLECT_COOLDOWN_BY_TYPE));
-  const effectiveDistillCooldown = DISTILL_COOLDOWN_DAYS;
-  const reflectCooldownActive = options.reflectCooldownDays !== 0;
-
-  if (reflectCooldownActive || effectiveDistillCooldown > 0) {
-    const bulkWindowMs = daysToMs(Math.max(maxReflectCooldownDays, effectiveDistillCooldown));
-    const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
-
-    // TODO(refactor): 4 separate readEvents calls with same time bound — could be one WHERE type IN (...) query if readEvents grew a `types?: string[]` option. Marginal win with WAL+long-lived connection, defer.
-    const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
-    const bulkDistills = readEvents({ type: "distill_invoked", since: bulkSince }).events;
-    const bulkPromoted = readEvents({ type: "promoted", since: bulkSince }).events;
-    const bulkRejected = readEvents({ type: "rejected", since: bulkSince }).events;
-
-    const promotedTs = new Map<string, string>();
-    for (const e of bulkPromoted) {
-      if (e.ref && (e.ts ?? "") > (promotedTs.get(e.ref) ?? "")) promotedTs.set(e.ref, e.ts ?? "");
-    }
-    const rejectedTs = new Map<string, string>();
-    for (const e of bulkRejected) {
-      if (e.ref && (e.ts ?? "") > (rejectedTs.get(e.ref) ?? "")) rejectedTs.set(e.ref, e.ts ?? "");
-    }
-
-    if (reflectCooldownActive) {
-      const latestReflect = new Map<string, string>();
-      for (const e of bulkReflects) {
-        if (e.ref && (e.ts ?? "") > (latestReflect.get(e.ref) ?? "")) latestReflect.set(e.ref, e.ts ?? "");
-      }
-      for (const [ref, lastTs] of latestReflect) {
-        if (!lastTs) continue;
-        const hasAccepted = (promotedTs.get(ref) ?? "") > lastTs;
-        const hasRejected = (rejectedTs.get(ref) ?? "") > lastTs;
-        if (hasAccepted) continue;
-        const typeCooldown = reflectCooldownForRef(ref);
-        const effectiveCooldownDays = hasRejected ? Math.min(typeCooldown, 3) : typeCooldown;
-        if (Date.now() - new Date(lastTs).getTime() < daysToMs(effectiveCooldownDays)) {
-          reflectCooledRefs.add(ref);
-        }
-      }
-    }
-
-    if (DISTILL_COOLDOWN_DAYS > 0) {
-      const distillCooldownMs = daysToMs(DISTILL_COOLDOWN_DAYS);
-      // B5: track both queued and validation_failed outcomes for cooldown.
-      // validation_failed assets previously were never cooled so they re-distilled on every run.
-      const validationFailedCooldownMs = daysToMs(Math.ceil(DISTILL_COOLDOWN_DAYS / 2));
-      const latestQueuedDistill = new Map<string, string>();
-      const latestValidationFailed = new Map<string, string>();
-      for (const e of bulkDistills) {
-        if (e.ref && e.metadata?.outcome === "queued" && (e.ts ?? "") > (latestQueuedDistill.get(e.ref) ?? "")) {
-          latestQueuedDistill.set(e.ref, e.ts ?? "");
-        }
-        if (
-          e.ref &&
-          e.metadata?.outcome === "validation_failed" &&
-          (e.ts ?? "") > (latestValidationFailed.get(e.ref) ?? "")
-        ) {
-          latestValidationFailed.set(e.ref, e.ts ?? "");
-        }
-      }
-      for (const [ref, lastTs] of latestQueuedDistill) {
-        if (lastTs && Date.now() - new Date(lastTs).getTime() < distillCooldownMs) {
-          distillCooledRefs.add(ref);
-        }
-      }
-      for (const [ref, lastTs] of latestValidationFailed) {
-        if (lastTs && Date.now() - new Date(lastTs).getTime() < validationFailedCooldownMs) {
-          distillCooledRefs.add(ref);
-        }
-      }
-    }
-  }
-
-  // ── Phase 3: partition postCleanupRefs by cooldown BEFORE signal/sort ─────
+  // ── Phase 3: partition postCleanupRefs by signal-delta eligibility ────────
   // Three buckets (validation failures are excluded entirely):
-  //   eligibleRefs        — not reflect-cooled (normal reflect path; distill
-  //                         guard remains in the loop for distill-cooled refs).
-  //   distillOnlyRefs     — reflect-cooled, distill-cooldown expired, is a distill
-  //                         candidate → skip reflect but allow distill (Bug D2).
-  //   fullySkippedCount   — reflect-cooled AND (distill-cooled OR not a candidate)
-  //                         → emit synthetic skip action and exclude from further
-  //                         processing (signal/sort never sees these).
-  //
-  // Bug D1: distill-cooled distill-candidates that are NOT reflect-cooled have their
-  // synthetic distill-skipped action emitted here before any LLM call or budget check.
-  // Bug B1: synthetic skip emissions for the fully-skipped bucket happen here so
-  // telemetry (improve_skipped events with reason=reflect_cooldown/distill_cooldown)
-  // remains accurate even though these refs do not enter ranking.
-  const DISTILL_COOLDOWN_DAYS_PREFILT = options.distillCooldownDays ?? 1;
+  //   eligibleRefs        — reflect signal-delta passes (full reflect+distill
+  //                         loop path; distill guard remains in the loop for
+  //                         refs that fail the distill signal-delta gate).
+  //   distillOnlyRefs     — reflect blocked but distill signal-delta passes
+  //                         AND ref is a distill candidate.
+  //   fullySkippedCount   — neither gate passes → synthetic skip action
+  //                         + improve_skipped event, excluded from sort.
   const eligibleRefs: ImproveEligibleRef[] = [];
   const distillOnlyRefs: ImproveEligibleRef[] = [];
   let fullySkippedCount = 0;
-  const preCooldownCount = postCleanupRefs.length;
 
-  // O-2 (#365): When the user explicitly targets a single ref via `--scope`,
-  // their intent is unambiguous — they want a fresh evaluation now. Cooldown
-  // policies are designed for unattended nightly runs; silently blocking an
-  // explicit retry violates the principle of least surprise (Sagas, 1987).
+  // O-2 (#365): explicit --scope <ref> bypasses every gate (user intent wins).
   const scopeRefBypass = scope.mode === "ref";
 
   for (const r of postCleanupRefs) {
     if (validationFailureRefs.has(r.ref)) continue;
 
-    // When --scope <ref> is active, bypass all cooldown checks for this ref.
     if (scopeRefBypass) {
       eligibleRefs.push(r);
       continue;
     }
 
-    const onReflectCooldown = reflectCooledRefs.has(r.ref);
-    const onDistillCooldown = DISTILL_COOLDOWN_DAYS_PREFILT > 0 && distillCooledRefs.has(r.ref);
-    // Pre-fix this read `isLessonCandidate(r.ref) || shouldDistillMemoryRef(...)`,
-    // which queued `lesson:*` refs into the distill path even though distill
-    // refuses them at runtime (DISTILL_REFUSED_INPUT_TYPES). That was pure
-    // planner waste — observed re-queuing the same 19 lessons every hourly run.
+    const reflectOk = isSignalDeltaEligible(r.ref, latestFeedbackTs, lastReflectProposalTs);
+    const distillOk = isSignalDeltaEligible(r.ref, latestFeedbackTs, lastDistillProposalTs);
     const isDistillCandidate = isDistillCandidateRef(r.ref, options.stashDir);
 
-    if (!onReflectCooldown) {
-      if (onDistillCooldown && isDistillCandidate) {
-        // Bug D1: pre-emit synthetic distill-skipped action before any LLM call.
-        actions.push({ ref: r.ref, mode: "distill-skipped", result: { ok: true, reason: "distill cooldown" } });
-        // TODO(refactor): 7 inline appendEvent calls with eventType "improve_skipped". A helper emitImproveSkipped(ref, reason, extra?) would consolidate them, but each site has slightly different metadata shape — defer until shapes converge.
+    if (reflectOk) {
+      if (!distillOk && isDistillCandidate) {
+        // Reflect passes the gate, distill does not — emit the synthetic
+        // distill-skipped action and event up-front so the in-loop guard
+        // does not have to re-derive eligibility.
+        distillCooledRefs.add(r.ref);
+        actions.push({ ref: r.ref, mode: "distill-skipped", result: { ok: true, reason: "distill signal-delta" } });
         appendEvent(
           {
             eventType: "improve_skipped",
             ref: r.ref,
-            metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS_PREFILT },
+            metadata: { reason: "distill_no_new_signal" },
           },
           eventsCtx,
         );
+      } else if (!distillOk) {
+        // Not a distill candidate AND distill gate doesn't pass — just mark
+        // distillCooled so the loop's distill section is a no-op.
+        distillCooledRefs.add(r.ref);
       }
-      // Asset is not on reflect cooldown — allow reflect (distill-cooled path
-      // already emitted its synthetic action above; the loop's distillCooledRefs
-      // guard prevents the actual distill call).
       eligibleRefs.push(r);
+    } else if (distillOk && isDistillCandidate) {
+      // Reflect blocked but distill passes → distill-only bucket.
+      distillOnlyRefs.push(r);
     } else {
-      if (!onDistillCooldown && isDistillCandidate) {
-        // Bug D2: reflect-cooled but distill cooldown expired and is a distill candidate.
-        distillOnlyRefs.push(r);
-      } else {
-        // Fully cooled or not a distill candidate — emit synthetic skip and exclude.
-        fullySkippedCount++;
-        actions.push({
-          ref: r.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
-        });
-        appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } }, eventsCtx);
-      }
+      // Neither gate passes — fully skipped.
+      fullySkippedCount++;
+      actions.push({
+        ref: r.ref,
+        mode: "distill-skipped",
+        result: { ok: true, reason: "no new signal since last proposal" },
+      });
+      appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "no_new_signal" } }, eventsCtx);
     }
   }
 
@@ -1524,8 +1509,8 @@ async function runImprovePreparationStage(args: {
   // ancient one-off feedback events don't permanently lock an asset into
   // every improve run. Assets with only stale signals fall through to the
   // high-retrieval path (P0-A) or are skipped until new signals arrive.
-  const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
-  const feedbackSinceCutoff = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
+  // (FEEDBACK_SIGNAL_WINDOW_DAYS / feedbackSinceCutoff are already defined in
+  // Phase 2 above for the signal-delta gate; we reuse them here.)
 
   // Pre-compute feedback summary per ref in a single pass so we don't issue
   // two readEvents({type:"feedback", ref}) per asset (one for signal filtering,
@@ -1577,8 +1562,15 @@ async function runImprovePreparationStage(args: {
       dbForRetrieval,
       noFeedbackCandidates.map((r) => r.ref),
     );
+    // High-retrieval signal-delta (simplified rule, 0.8.0): a no-feedback
+    // ref qualifies exactly once — when retrievalCount ≥ threshold AND no
+    // prior reflect proposal exists for it. Once a reflect proposal is on
+    // record, subsequent re-eligibility requires explicit feedback (which
+    // flows through the normal signal-delta gate above). Tracking growth in
+    // retrieval count would require persisting the count in proposal
+    // metadata; deferred to a follow-up.
     highRetrievalRefs = noFeedbackCandidates.filter(
-      (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
+      (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD && !lastReflectProposalTs.has(r.ref),
     );
   } catch (err) {
     rethrowIfTestIsolationError(err);
@@ -1692,10 +1684,10 @@ async function runImprovePreparationStage(args: {
   // shape change keeps downstream consumers consistent).
   const distillOnlyRefsResult = distillOnlyRefsAfterSort;
 
-  const totalReflectCooled = fullySkippedCount + distillOnlyRefs.length;
-  if (totalReflectCooled > 0) {
+  const totalReflectBlocked = fullySkippedCount + distillOnlyRefs.length;
+  if (totalReflectBlocked > 0) {
     info(
-      `[improve] ${totalReflectCooled} of ${preCooldownCount} indexed refs on reflect cooldown ` +
+      `[improve] ${totalReflectBlocked} of ${preCooldownCount} indexed refs blocked by reflect signal-delta ` +
         `(${fullySkippedCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
     );
   }
@@ -2154,12 +2146,15 @@ async function runImproveLoopStage(args: {
 
           // D-2 (#370): reject-aware cooldown for distill. When the reviewer
           // recently rejected a distilled lesson or knowledge proposal for this
-          // asset, skip re-distillation for DISTILL_REJECT_COOLDOWN_DAYS.
-          // Prevents the same rejected proposal from returning the next day.
+          // asset, skip re-distillation for a 1-day grace window. Prevents the
+          // same rejected proposal from being regenerated immediately. The
+          // window is fixed (the 0.8.0 redesign moved per-ref cooldowns to
+          // signal-delta gates and dropped --distill-cooldown-days; a short
+          // reject grace is preserved here so a fresh rejection isn't
+          // overridden by the same run).
           // References: ExpeL arXiv:2308.10144, STaR arXiv:2203.14465.
-          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(options.distillCooldownDays ?? 1);
+          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(1);
           const recentlyRejectedLesson =
-            DISTILL_REJECT_COOLDOWN_MS > 0 &&
             !explicitRefScope && // O-2: bypass when --scope <ref> is explicit
             (rejectedProposalsByRef.has(lessonRef) || rejectedProposalsByRef.has(knowledgeRef));
           if (recentlyRejectedLesson) {
@@ -2169,15 +2164,14 @@ async function runImproveLoopStage(args: {
               actions.push({
                 ref: planned.ref,
                 mode: "distill-skipped",
-                result: { ok: true, reason: "distill reject cooldown" },
+                result: { ok: true, reason: "distill reject grace window" },
               });
               appendEvent(
                 {
                   eventType: "improve_skipped",
                   ref: planned.ref,
                   metadata: {
-                    reason: "distill_reject_cooldown",
-                    cooldownDays: options.distillCooldownDays ?? 1,
+                    reason: "distill_reject_grace_window",
                   },
                 },
                 eventsCtx,
@@ -2332,19 +2326,45 @@ async function runImprovePostLoopStage(args: {
       }
     : baseConfig;
 
-  // TODO(refactor): the reflect/distill cooldown above and this consolidation gate share the "is the most recent event of type X within window" pattern. Unifying would muddy the per-ref tier logic above — defer.
-  const consolidateCooldownDays = options.consolidateCooldownDays ?? 14;
-  const CONSOLIDATE_COOLDOWN_MS = daysToMs(consolidateCooldownDays);
-  const consolidationCutoff = new Date(Date.now() - CONSOLIDATE_COOLDOWN_MS).toISOString();
-  const recentConsolidations = readEvents({ type: "consolidate_completed", since: consolidationCutoff });
+  // 0.8.0 pool-delta gate for consolidate: re-eligible iff at least one
+  // memory file has been updated since the most recent successful
+  // consolidate_completed event. Time-based cooldowns produced the same
+  // synchronised-wave failure mode the reflect/distill cooldowns did; the
+  // pool-delta gate ties consolidation to actual work-to-do.
+  const recentConsolidations = readEvents({ type: "consolidate_completed" });
   const lastConsolidation = recentConsolidations.events
     .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
     .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-  const consolidationOnCooldown =
-    !volumeTriggered &&
-    consolidateCooldownDays > 0 &&
-    lastConsolidation?.ts &&
-    Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
+  const lastConsolidateTs = lastConsolidation?.ts;
+
+  // Pool-delta: any memory file with mtime > lastConsolidateTs flags work to do.
+  // Using file mtime keeps this query DB-free and matches what the indexer
+  // already uses as the canonical `memory.updated_at` proxy.
+  //
+  // Bootstrap: when no successful consolidate_completed event has ever been
+  // recorded, we cannot evaluate the pool-delta — treat as eligible so a
+  // fresh stash runs consolidate once before the steady-state gate kicks in.
+  const memoryUpdatedAfterLastConsolidate = (() => {
+    if (volumeTriggered) return true; // volume override forces the run regardless.
+    if (!lastConsolidateTs) return true; // bootstrap path: never consolidated.
+    if (!primaryStashDir) return false;
+    const memoriesDir = path.join(primaryStashDir, "memories");
+    if (!fs.existsSync(memoriesDir)) return false;
+    try {
+      return fs.readdirSync(memoriesDir).some((f) => {
+        if (!f.endsWith(".md")) return false;
+        try {
+          return fs.statSync(path.join(memoriesDir, f)).mtime.toISOString() > lastConsolidateTs;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      return false;
+    }
+  })();
+
+  const consolidationOnCooldown = !volumeTriggered && !memoryUpdatedAfterLastConsolidate;
 
   // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
   const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
@@ -2391,20 +2411,18 @@ async function runImprovePostLoopStage(args: {
       );
     }
   } else {
-    const daysAgo = Math.round((Date.now() - new Date(lastConsolidation?.ts ?? 0).getTime()) / 86400000);
     appendEvent(
       {
         eventType: "improve_skipped",
         ref: "memory:_consolidation",
         metadata: {
-          reason: "consolidation_cooldown",
-          cooldownDays: consolidateCooldownDays,
+          reason: "consolidation_no_memory_updates",
           lastEventTs: lastConsolidation?.ts ?? null,
         },
       },
       eventsCtx,
     );
-    info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown ${consolidateCooldownDays}d)`);
+    info("[improve] consolidation skipped (no memory updates since last run)");
   }
 
   // D9: track whether consolidation wrote any data so graph extraction can reindex if needed

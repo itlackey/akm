@@ -51,36 +51,13 @@ afterAll(() => {
   }
 });
 
-describe("improve CLI cooldown flags", () => {
-  test("rejects negative reflect cooldown days", () => {
-    const result = runCli(["improve", "--reflect-cooldown-days", "-1", "--dry-run"]);
-    expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--reflect-cooldown-days");
-    expect(parsed.error).toContain("non-negative integer");
-  });
-
-  test("rejects negative distill cooldown days", () => {
-    const result = runCli(["improve", "--distill-cooldown-days", "-1", "--dry-run"]);
-    expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--distill-cooldown-days");
-    expect(parsed.error).toContain("non-negative integer");
-  });
-
-  test("rejects negative consolidate cooldown days", () => {
-    const result = runCli(["improve", "--consolidate-cooldown-days", "-1", "--dry-run"]);
-    expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--consolidate-cooldown-days");
-    expect(parsed.error).toContain("non-negative integer");
-  });
+describe("improve CLI flags (0.8.0)", () => {
+  // 0.8.0 deleted --reflect-cooldown-days / --distill-cooldown-days /
+  // --consolidate-cooldown-days. The reflect/distill gates now use
+  // signal-delta eligibility (see tests/improve-eligibility.test.ts);
+  // consolidate uses pool-delta. citty silently ignores unknown flags
+  // so we cannot pin rejection here — the flag-rejection tests were
+  // dropped along with the flags.
 
   test("rejects negative min retrieval count", () => {
     const result = runCli(["improve", "--min-retrieval-count", "-1", "--dry-run"]);
@@ -103,19 +80,12 @@ describe("improve CLI cooldown flags", () => {
     expect(parsed.error).toContain("clean");
   });
 
-  test("--ignore-cooldown takes precedence over explicit cooldown values", () => {
+  test("improve dry-run completes successfully (no cooldown flags needed)", () => {
     const stash = makeStashDir();
     const result = runCli(
       [
         "improve",
         "--dry-run",
-        "--ignore-cooldown",
-        "--reflect-cooldown-days",
-        "-1",
-        "--distill-cooldown-days",
-        "-1",
-        "--consolidate-cooldown-days",
-        "-1",
         // 0.8.0+ default mode writes JSON to a file; use the legacy escape
         // hatch so this assertion can read `ok` from stdout.
         "--json-to-stdout",

@@ -7,6 +7,7 @@ import { akmImprove } from "../../src/commands/improve";
 import type { AkmReflectResult } from "../../src/commands/reflect";
 import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
+import { appendEvent } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
 import { akmIndex } from "../../src/indexer/indexer";
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
@@ -213,6 +214,15 @@ describe("akm improve memory cleanup", () => {
     );
 
     await buildIndex(stashDir);
+
+    // 0.8.0: signal-delta gate requires recent feedback to make the parent
+    // memory eligible for reflect/distill. Without this the test's
+    // reflectFn / distillFn assertions don't fire.
+    appendEvent({
+      eventType: "feedback",
+      ref: "memory:deploy",
+      metadata: { signal: "positive" },
+    });
 
     const reflectedRefs: string[] = [];
     const distilledRefs: string[] = [];

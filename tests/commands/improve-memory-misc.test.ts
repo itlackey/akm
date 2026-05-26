@@ -111,7 +111,6 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     await akmImprove({
       scope: "memory:auth-tips",
       stashDir,
-      reflectCooldownDays: 7,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -150,7 +149,6 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     await akmImprove({
       scope: "memory",
       stashDir,
-      reflectCooldownDays: 7,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -273,7 +271,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       scope: "memory",
       stashDir,
       minRetrievalCount: 0,
-      distillCooldownDays: 30,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
@@ -317,7 +314,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     await akmImprove({
       scope: "memory:auth-tips",
       stashDir,
-      distillCooldownDays: 30,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
@@ -686,6 +682,12 @@ describe("new 0.8.0 improve metrics", () => {
     writeMemory(stashDir, "beta", { description: "Beta memory" }, "Beta content.");
     writeMemory(stashDir, "gamma", { description: "Gamma memory" }, "Gamma content.");
     await buildIndex(stashDir);
+
+    // 0.8.0 signal-delta gate requires recent feedback to make a ref eligible
+    // for reflect. Add a feedback event for each ref so the planner queues
+    // them and reflectFn (which returns cooldown) is actually called.
+    appendEvent({ eventType: "feedback", ref: "memory:beta", metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref: "memory:gamma", metadata: { signal: "positive" } });
 
     // Return a cooldown result for every ref to drive reflectCooldownActions up.
     const result = await akmImprove({

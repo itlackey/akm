@@ -44,18 +44,10 @@ Options:
   --profile <name>     Improve profile to apply. Built-ins: default, quick,
                         thorough, memory-focus. User-defined profiles under
                         `profiles.improve.<name>` in config are also accepted.
-                        Profiles bundle process gating, type filters,
-                        cooldown overrides, and run-level autoAccept/limit
-                        defaults. Falls back to `defaults.improve` in config,
-                        then to "default". Unknown names fall back to default
-                        with a warning.
-  --ignore-cooldown    Disable reflect/distill/consolidate cooldown checks for this run
-  --reflect-cooldown-days <n>
-                        Override reflect cooldown with a non-negative integer
-  --distill-cooldown-days <n>
-                        Override distill cooldown with a non-negative integer
-  --consolidate-cooldown-days <n>
-                        Override consolidate cooldown with a non-negative integer
+                        Profiles bundle process gating, type filters, and
+                        run-level autoAccept/limit defaults. Falls back to
+                        `defaults.improve` in config, then to "default".
+                        Unknown names fall back to default with a warning.
   --consolidate-recovery <mode>
                         Recovery mode for stale consolidate journals: abort (default) or clean
   --require-feedback-signal

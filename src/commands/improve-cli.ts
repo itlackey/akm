@@ -46,25 +46,6 @@ export const improveCommand = defineCommand({
       type: "string",
       description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
     },
-    "ignore-cooldown": {
-      type: "boolean",
-      description:
-        "Ignore all cooldown periods (equivalent to --reflect-cooldown-days 0 --distill-cooldown-days 0 --consolidate-cooldown-days 0)",
-      default: false,
-    },
-    "reflect-cooldown-days": {
-      type: "string",
-      description:
-        "Override reflect cooldown for this run only, applying uniformly to all asset types. Per-type defaults (memory=2d, lesson=7d, workflow/skill/agent/command/knowledge/script/wiki=30d, task=60d) can be configured via profiles.improve.<name>.processes.reflect.cooldownByType. Set 0 to disable.",
-    },
-    "distill-cooldown-days": {
-      type: "string",
-      description: "Override distill cooldown for this run only (default: 1, 0 to disable)",
-    },
-    "consolidate-cooldown-days": {
-      type: "string",
-      description: "Override consolidate cooldown for this run only (default: 14, 0 to disable)",
-    },
     "consolidate-recovery": {
       type: "string",
       description:
@@ -110,19 +91,6 @@ export const improveCommand = defineCommand({
       const dryRun = getHyphenatedBoolean(args, "dry-run");
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
-      const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");
-      const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
-      const reflectCooldownDays = ignoreCooldown
-        ? 0
-        : parseNonNegativeIntFlag(reflectCooldownRaw, "--reflect-cooldown-days");
-      const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
-      const distillCooldownDays = ignoreCooldown
-        ? 0
-        : parseNonNegativeIntFlag(distillCooldownRaw, "--distill-cooldown-days");
-      const consolidateCooldownRaw = getHyphenatedArg<string>(args, "consolidate-cooldown-days");
-      const consolidateCooldownDays = ignoreCooldown
-        ? 0
-        : parseNonNegativeIntFlag(consolidateCooldownRaw, "--consolidate-cooldown-days");
       const consolidateRecoveryRaw = getHyphenatedArg<string>(args, "consolidate-recovery");
       const consolidateRecovery =
         consolidateRecoveryRaw === undefined
@@ -209,9 +177,6 @@ export const improveCommand = defineCommand({
           autoAccept,
           ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-          ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
-          ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
-          ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
           ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
           ...(profileArg !== undefined ? { profile: profileArg } : {}),

@@ -120,10 +120,6 @@ export interface ImproveProcessConfig {
    * full-pass operations.
    */
   allowedTypes?: string[];
-  /** Per-type cooldown overrides in days for this process. */
-  cooldownByType?: Partial<Record<string, number>>;
-  /** Uniform cooldown in days for types not covered by cooldownByType. */
-  cooldownDays?: number;
   /**
    * Optional LLM-as-judge quality gate. Fail-open: judge failures always pass.
    * Replaces the legacy `lesson_quality_gate` / `proposal_quality_gate` flags.

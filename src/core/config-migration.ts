@@ -160,12 +160,9 @@ function migrateProcessEntryToImprove(result: Record<string, unknown>, processNa
   if (legacy.timeoutMs === null || typeof legacy.timeoutMs === "number") target.timeoutMs = legacy.timeoutMs;
   if (isObj(legacy.options)) {
     const opts = legacy.options;
-    if (typeof opts.cooldown === "object" && opts.cooldown !== null) {
-      target.cooldownByType = opts.cooldown;
-    }
-    if (typeof opts.cooldownDays === "number") {
-      target.cooldownDays = opts.cooldownDays;
-    }
+    // 0.8.0 removed `cooldown` / `cooldownDays` — drop them silently. Reflect
+    // and distill now use signal-delta eligibility; consolidate uses
+    // pool-delta. Carrying these forward would just trip the schema gate.
     if (Array.isArray(opts.allowedTypes)) {
       target.allowedTypes = opts.allowedTypes;
     }
@@ -540,11 +537,9 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
   if (isObj(result.improve)) {
     const improve = { ...(result.improve as Record<string, unknown>) };
 
-    if (isObj(improve.reflectCooldownByType)) {
-      const reflect = getImproveProcess(result, "reflect");
-      reflect.cooldownByType = improve.reflectCooldownByType;
-      changed = true;
-    }
+    // 0.8.0 removed reflectCooldownByType — reflect now uses signal-delta
+    // eligibility. Drop the key silently rather than carrying it into a shape
+    // the schema rejects.
     if (typeof improve.limit === "number") {
       const profiles = getObj(result, "profiles");
       const improveProfiles = getObj(profiles, "improve");

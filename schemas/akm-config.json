@@ -169,17 +169,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -199,7 +188,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "distill": {
                     "type": "object",
@@ -237,17 +226,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -267,7 +245,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "consolidate": {
                     "type": "object",
@@ -305,17 +283,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -335,7 +302,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "memoryInference": {
                     "type": "object",
@@ -373,17 +340,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -403,7 +359,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "graphExtraction": {
                     "type": "object",
@@ -441,17 +397,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -471,7 +416,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "feedbackDistillation": {
                     "type": "object",
@@ -509,17 +454,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -539,7 +473,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "validation": {
                     "type": "object",
@@ -577,17 +511,6 @@
                           "minLength": 1
                         }
                       },
-                      "cooldownByType": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      },
-                      "cooldownDays": {
-                        "type": "number",
-                        "minimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -607,7 +530,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "additionalProperties": false
@@ -1223,17 +1146,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1253,7 +1165,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "distill": {
                         "type": "object",
@@ -1291,17 +1203,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1321,7 +1222,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "consolidate": {
                         "type": "object",
@@ -1359,17 +1260,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1389,7 +1279,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "memoryInference": {
                         "type": "object",
@@ -1427,17 +1317,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1457,7 +1336,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "graphExtraction": {
                         "type": "object",
@@ -1495,17 +1374,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1525,7 +1393,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "feedbackDistillation": {
                         "type": "object",
@@ -1563,17 +1431,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1593,7 +1450,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "validation": {
                         "type": "object",
@@ -1631,17 +1488,6 @@
                               "minLength": 1
                             }
                           },
-                          "cooldownByType": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number",
-                              "minimum": 0
-                            }
-                          },
-                          "cooldownDays": {
-                            "type": "number",
-                            "minimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1661,7 +1507,7 @@
                             "additionalProperties": false
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": false
@@ -2259,17 +2105,6 @@
             "minLength": 1
           }
         },
-        "cooldownByType": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "number",
-            "minimum": 0
-          }
-        },
-        "cooldownDays": {
-          "type": "number",
-          "minimum": 0
-        },
         "qualityGate": {
           "type": "object",
           "properties": {
@@ -2289,7 +2124,7 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ImproveProfileConfig": {
       "type": "object",
@@ -2337,17 +2172,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2367,7 +2191,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "distill": {
               "type": "object",
@@ -2405,17 +2229,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2435,7 +2248,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "consolidate": {
               "type": "object",
@@ -2473,17 +2286,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2503,7 +2305,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "memoryInference": {
               "type": "object",
@@ -2541,17 +2343,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2571,7 +2362,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "graphExtraction": {
               "type": "object",
@@ -2609,17 +2400,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2639,7 +2419,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "feedbackDistillation": {
               "type": "object",
@@ -2677,17 +2457,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2707,7 +2476,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "validation": {
               "type": "object",
@@ -2745,17 +2514,6 @@
                     "minLength": 1
                   }
                 },
-                "cooldownByType": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number",
-                    "minimum": 0
-                  }
-                },
-                "cooldownDays": {
-                  "type": "number",
-                  "minimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -2775,7 +2533,7 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
           "additionalProperties": false

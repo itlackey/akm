@@ -86,16 +86,14 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(search.curateRerank?.enabled).toBe(true);
   });
 
-  test("migrates reflectCooldownByType to profiles.improve.default.processes.reflect.cooldownByType", () => {
+  test("drops legacy reflectCooldownByType (0.8.0 removed time-based reflect cooldowns)", () => {
     const input = { improve: { reflectCooldownByType: { memory: 1, lesson: 5 } } };
-    const { changed, result } = migrateConfigShape(input);
-    expect(changed).toBe(true);
-    const profiles = result.profiles as Record<string, unknown>;
-    const profilesImprove = profiles.improve as Record<string, unknown>;
-    const defaultProfile = profilesImprove.default as Record<string, unknown>;
-    const processes = defaultProfile.processes as Record<string, unknown>;
-    const reflect = processes.reflect as Record<string, unknown>;
-    expect(reflect.cooldownByType).toEqual({ memory: 1, lesson: 5 });
+    const { result } = migrateConfigShape(input);
+    const profiles = result.profiles as Record<string, unknown> | undefined;
+    const profilesImprove = profiles?.improve as Record<string, unknown> | undefined;
+    const defaultProfile = profilesImprove?.default as Record<string, unknown> | undefined;
+    const processes = defaultProfile?.processes as Record<string, Record<string, unknown>> | undefined;
+    expect(processes?.reflect?.cooldownByType).toBeUndefined();
     expect(result.improve).toBeUndefined();
   });
 
@@ -108,14 +106,14 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(defaultProfile.limit).toBe(50);
   });
 
-  test("migrates improve.reflectCooldownByType + improve.limit together", () => {
+  test("drops legacy reflectCooldownByType while preserving improve.limit migration", () => {
     const input = { improve: { reflectCooldownByType: { memory: 5 }, limit: 25 } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);
     const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
       .default as Record<string, unknown>;
-    const processes = defaultProfile.processes as Record<string, { cooldownByType?: unknown }>;
-    expect(processes.reflect.cooldownByType).toEqual({ memory: 5 });
+    const processes = defaultProfile.processes as Record<string, { cooldownByType?: unknown }> | undefined;
+    expect(processes?.reflect?.cooldownByType).toBeUndefined();
     expect(defaultProfile.limit).toBe(25);
     expect(result.improve).toBeUndefined();
   });
@@ -269,7 +267,8 @@ describe("migrateConfigShape (CLI wrapper)", () => {
       expect(entry?.profile).toBe("opencode");
       expect(entry?.timeoutMs).toBe(12345);
       expect(entry?.allowedTypes).toEqual(["lesson"]);
-      expect(entry?.cooldownDays).toBe(7);
+      // 0.8.0 dropped cooldownDays from process options — should not survive migration.
+      expect(entry?.cooldownDays).toBeUndefined();
       expect(messages.some((m) => m.includes("customAgentProcess"))).toBe(true);
     });
 
