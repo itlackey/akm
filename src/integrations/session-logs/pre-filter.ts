@@ -34,6 +34,14 @@ import type { SessionData, SessionEvent } from "./types";
 export const DEFAULT_MAX_EVENT_LENGTH = 2000;
 
 /**
+ * Default cap on total transcript characters fed to the LLM. Chosen for a
+ * 32K-token context model with room for the prompt scaffolding (~3K chars)
+ * and JSON output (~4K chars). Adjust via {@link PreFilterOptions.maxTotalChars}
+ * when targeting larger-context models.
+ */
+export const DEFAULT_MAX_TOTAL_CHARS = 80_000;
+
+/**
  * `akm` subcommands that are read-only / introspective — their invocations
  * are operational noise, not engineering signal. Mutating commands (remember,
  * feedback, accept, reject, extract, import, save, ...) are kept.
@@ -80,6 +88,14 @@ export interface PreFilterStats {
   droppedByRule: Record<string, number>;
   /** Events that were kept but had their text truncated. */
   truncatedCount: number;
+  /** Total characters across kept event texts (post-truncation). */
+  totalChars: number;
+  /**
+   * Events dropped solely because the running character total would have
+   * exceeded {@link PreFilterOptions.maxTotalChars}. Separate from rule-based
+   * drops so operators can see if context-budget pressure is the real loss.
+   */
+  budgetDroppedCount: number;
 }
 
 export interface PreFilterResult {
@@ -90,6 +106,14 @@ export interface PreFilterResult {
 export interface PreFilterOptions {
   akmReadOnlyOps?: ReadonlySet<string>;
   maxEventTextLength?: number;
+  /**
+   * Total character budget across all kept events. Once the running total
+   * crosses this threshold, additional events are dropped from the HEAD
+   * (oldest first) — insight typically emerges through the session, so
+   * recency-bias keeps the most signal-dense events. Defaults to
+   * {@link DEFAULT_MAX_TOTAL_CHARS}.
+   */
+  maxTotalChars?: number;
 }
 
 /**
@@ -148,18 +172,52 @@ function classifyEvent(
 export function preFilterSession(data: SessionData, options: PreFilterOptions = {}): PreFilterResult {
   const akmReadOnlyOps = options.akmReadOnlyOps ?? DEFAULT_AKM_READONLY_OPS;
   const maxLen = options.maxEventTextLength ?? DEFAULT_MAX_EVENT_LENGTH;
+  const maxTotalChars = options.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS;
   const droppedByRule: Record<string, number> = {};
   const kept: SessionEvent[] = [];
   let truncatedCount = 0;
 
+  // First pass: apply per-event rules. Track running char total so the budget
+  // pass can operate on already-truncated events.
+  type KeptEvent = { event: SessionEvent; truncated: boolean; chars: number };
+  const candidates: KeptEvent[] = [];
   for (const event of data.events) {
     const verdict = classifyEvent(event, akmReadOnlyOps, maxLen);
     if (!verdict.keep) {
       droppedByRule[verdict.reason] = (droppedByRule[verdict.reason] ?? 0) + 1;
       continue;
     }
-    kept.push(verdict.event);
-    if (verdict.truncated) truncatedCount += 1;
+    candidates.push({
+      event: verdict.event,
+      truncated: verdict.truncated,
+      chars: verdict.event.text.length,
+    });
+  }
+
+  // Second pass: total-budget cap. Walk from the END (most recent first) and
+  // accept events until the budget is exhausted. The remaining (head) events
+  // are dropped — insight typically emerges later in a session, so this
+  // recency-bias is the cheapest sampling heuristic that respects context
+  // limits. Maintains original timestamp order in the output.
+  let totalChars = 0;
+  let budgetDroppedCount = 0;
+  const keptIdxFromTail: number[] = [];
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const c = candidates[i];
+    if (!c) continue;
+    if (totalChars + c.chars > maxTotalChars && keptIdxFromTail.length > 0) {
+      budgetDroppedCount += 1;
+      continue;
+    }
+    keptIdxFromTail.push(i);
+    totalChars += c.chars;
+  }
+  keptIdxFromTail.reverse(); // restore timestamp order
+  for (const idx of keptIdxFromTail) {
+    const c = candidates[idx];
+    if (!c) continue;
+    kept.push(c.event);
+    if (c.truncated) truncatedCount += 1;
   }
 
   return {
@@ -169,6 +227,8 @@ export function preFilterSession(data: SessionData, options: PreFilterOptions = 
       outputCount: kept.length,
       droppedByRule,
       truncatedCount,
+      totalChars,
+      budgetDroppedCount,
     },
   };
 }

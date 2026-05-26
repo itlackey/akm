@@ -163,6 +163,55 @@ describe("preFilterSession — stats", () => {
   });
 });
 
+describe("preFilterSession — total-character budget", () => {
+  test("drops oldest events when running total would exceed maxTotalChars", () => {
+    // 5 events × 1000 chars each = 5000. With maxTotalChars=2500, only the
+    // most recent 2-3 should survive.
+    const events = Array.from({ length: 5 }, (_, i) =>
+      event({ text: "x".repeat(1000), ts: 1700000000000 + i * 60_000 }),
+    );
+    const result = preFilterSession(makeData(events), { maxTotalChars: 2500 });
+    expect(result.events.length).toBeLessThanOrEqual(3);
+    expect(result.stats.totalChars).toBeLessThanOrEqual(2500);
+    expect(result.stats.budgetDroppedCount).toBeGreaterThanOrEqual(2);
+    // Recency bias: the LAST event must always survive (highest signal density).
+    expect(result.events.at(-1)?.ts).toBe(events.at(-1)?.ts);
+  });
+
+  test("preserves timestamp order in the output even when dropping from the head", () => {
+    const events = [
+      event({ text: "old".padEnd(500, "."), ts: 100 }),
+      event({ text: "mid".padEnd(500, "."), ts: 200 }),
+      event({ text: "new".padEnd(500, "."), ts: 300 }),
+    ];
+    const result = preFilterSession(makeData(events), { maxTotalChars: 1100 });
+    // Should keep at least the newest two
+    const timestamps = result.events.map((e) => e.ts);
+    expect(timestamps).toEqual([...timestamps].sort((a, b) => (a ?? 0) - (b ?? 0)));
+  });
+
+  test("when all events fit in budget, none are budget-dropped", () => {
+    const events = Array.from({ length: 3 }, (_, i) => event({ text: "x".repeat(500), ts: i }));
+    const result = preFilterSession(makeData(events), { maxTotalChars: 10_000 });
+    expect(result.events).toHaveLength(3);
+    expect(result.stats.budgetDroppedCount).toBe(0);
+  });
+
+  test("always keeps at least the most recent event even if it exceeds the budget", () => {
+    // Single huge event larger than the budget — keep it anyway so the LLM
+    // never sees an empty transcript.
+    const huge = event({ text: "x".repeat(5000), ts: 100 });
+    const result = preFilterSession(makeData([huge]), { maxTotalChars: 1000 });
+    expect(result.events).toHaveLength(1);
+  });
+
+  test("stats.totalChars matches the sum of kept event text lengths", () => {
+    const events = [event({ text: "a".repeat(200) }), event({ text: "b".repeat(300) })];
+    const result = preFilterSession(makeData(events), { maxTotalChars: 10_000 });
+    expect(result.stats.totalChars).toBe(500);
+  });
+});
+
 describe("preFilterSession — custom options", () => {
   test("custom akmReadOnlyOps lets the caller broaden what counts as noise", () => {
     // Treat `remember` as read-only too (just for this test) and confirm it
