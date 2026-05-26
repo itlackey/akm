@@ -1237,26 +1237,45 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
-      // Cross-run + within-run content dedup: if an identical payload already
+      // Parse the source memory up-front so the body/frontmatter checks below
+      // share the same parsed view.
+      const parsedMemory = parseFrontmatter(memoryContent);
+
+      // Reject sources whose body is too small to make useful knowledge.
+      // Observed failure: memory files whose body is literally a tags string
+      // ("discord,notification,send-notification") get promoted to knowledge
+      // proposals that no reviewer would accept. Threshold is conservative —
+      // 100 chars catches single-line tag dumps without rejecting genuinely
+      // terse but valid notes.
+      const PROMOTE_BODY_MIN_CHARS = 100;
+      const sourceBody = parsedMemory.content.trim();
+      if (sourceBody.length < PROMOTE_BODY_MIN_CHARS) {
+        warnings.push(
+          `Promote: rejected ${op.ref} → ${knowledgeRef} — source memory body is too small (${sourceBody.length} chars; need ≥${PROMOTE_BODY_MIN_CHARS}) to make useful knowledge.`,
+        );
+        continue;
+      }
+
+      // Cross-run + within-run content dedup: if an identical body already
       // exists in ANY pending consolidate proposal (regardless of target ref),
       // skip. This prevents duplicate proposals when:
-      //   (a) Multiple source memories have identical content (duplicate memories
-      //       that were not merged) and each gets a different knowledgeRef from
-      //       the LLM in the same run.
-      //   (b) A prior run created a proposal for the same content under a
+      //   (a) Multiple source memories have identical bodies but differ only
+      //       in noise frontmatter (`inferenceProcessed: true` twin alongside
+      //       the original; differing `updated:` timestamps; etc.) — the body
+      //       is the load-bearing content, so dedup must hash on body only.
+      //   (b) A prior run created a proposal for the same body under a
       //       different knowledgeRef slug.
-      // We use SHA-256 of the raw file content — same algorithm as createProposal's
-      // internal contentHash so the comparison is consistent.
-      const newContentHash = createHash("sha256").update(memoryContent, "utf8").digest("hex");
+      const bodyHash = createHash("sha256").update(sourceBody, "utf8").digest("hex");
       const allPendingConsolidateProposals = listProposals(stashDir, { status: "pending" }).filter(
         (p) => p.source === "consolidate",
       );
-      const contentDupProposal = allPendingConsolidateProposals.find(
-        (p) => createHash("sha256").update(p.payload.content, "utf8").digest("hex") === newContentHash,
-      );
+      const contentDupProposal = allPendingConsolidateProposals.find((p) => {
+        const otherBody = parseFrontmatter(p.payload.content).content.trim();
+        return createHash("sha256").update(otherBody, "utf8").digest("hex") === bodyHash;
+      });
       if (contentDupProposal) {
         warnings.push(
-          `Skipping promote: identical content already pending as proposal ${contentDupProposal.id} (ref: ${contentDupProposal.ref}); skipping duplicate for ${op.ref} → ${knowledgeRef}`,
+          `Skipping promote: identical body already pending as proposal ${contentDupProposal.id} (ref: ${contentDupProposal.ref}); skipping duplicate for ${op.ref} → ${knowledgeRef}`,
         );
         continue;
       }
@@ -1264,7 +1283,6 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       try {
         // Use LLM-provided description; fall back to memory's own description
         // (post-sanitization frontmatter is authoritative).
-        const parsedMemory = parseFrontmatter(memoryContent);
         const description: string =
           (typeof op.description === "string" && op.description.trim()
             ? op.description.trim()
@@ -1281,13 +1299,22 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           continue;
         }
 
-        // (Body-frontmatter check REMOVED 2026-05-20: zero observed fires
-        // across 17 sampled runs, and structurally redundant with
-        // sanitizeMergedContent which already round-trips the body
-        // frontmatter through the yaml library. The body and envelope
-        // frontmatter come from the same `parsedMemory.data` object in this
-        // scope, so the outer `validateProposalFrontmatter({ description })`
-        // call above is sufficient.)
+        // Merge `description` INTO the body's YAML frontmatter so it lands in
+        // the on-disk asset when the proposal is accepted. The descriptionQuality
+        // validator parses `payload.content` body (not the envelope
+        // `payload.frontmatter`), and a memory's native frontmatter has
+        // `captureMode`/`beliefState`/etc. but never `description` — without
+        // this merge, 60+ pending proposals were blocked at accept-time with
+        // MISSING_FRONTMATTER_DESCRIPTION even though the envelope had it.
+        // (The body-frontmatter assumption baked into the 2026-05-20 comment
+        // below was wrong: body fm and envelope fm only converge when the
+        // writer explicitly merges them, which it now does.)
+        const mergedBodyFm: Record<string, unknown> = {
+          ...(parsedMemory.data ?? {}),
+          description,
+        };
+        const serializedMergedFm = yamlStringify(mergedBodyFm).trimEnd();
+        const proposalContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
 
         // Pre-emit dedup against pending consolidate proposals from the
         // same improve run (slug-variant match). The cross-run content-hash
@@ -1309,7 +1336,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           ref: knowledgeRef,
           source: "consolidate",
           payload: {
-            content: memoryContent,
+            content: proposalContent,
             frontmatter: { description },
           },
         });
