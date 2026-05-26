@@ -14,7 +14,8 @@
  *     under a tmpdir-staged stash.
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,25 +30,108 @@ import {
 import type { EvalCase, EvalContext } from "../scripts/akm-eval/src/types";
 
 const createdTmpDirs: string[] = [];
+const ORIGINAL_AKM_DATA_DIR = process.env.AKM_DATA_DIR;
 
 afterAll(() => {
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  if (ORIGINAL_AKM_DATA_DIR === undefined) {
+    delete process.env.AKM_DATA_DIR;
+  } else {
+    process.env.AKM_DATA_DIR = ORIGINAL_AKM_DATA_DIR;
+  }
 });
 
+afterEach(() => {
+  if (ORIGINAL_AKM_DATA_DIR === undefined) {
+    delete process.env.AKM_DATA_DIR;
+  } else {
+    process.env.AKM_DATA_DIR = ORIGINAL_AKM_DATA_DIR;
+  }
+});
+
+/**
+ * Initialize a fresh state.db with the `improve_runs` schema in the given
+ * data dir. The runner reads from this database via `AKM_DATA_DIR`.
+ */
+function initStateDb(dataDir: string): void {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const db = new Database(path.join(dataDir, "state.db"));
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS improve_runs (
+        id            TEXT    PRIMARY KEY,
+        started_at    TEXT    NOT NULL,
+        completed_at  TEXT,
+        stash_dir     TEXT    NOT NULL,
+        dry_run       INTEGER NOT NULL DEFAULT 0,
+        profile       TEXT,
+        scope_mode    TEXT    NOT NULL,
+        scope_value   TEXT,
+        guidance      TEXT,
+        ok            INTEGER NOT NULL,
+        result_json   TEXT    NOT NULL,
+        metrics_json  TEXT,
+        metadata_json TEXT    NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_started ON improve_runs(started_at);
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_dry_run ON improve_runs(dry_run);
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_stash_scope ON improve_runs(stash_dir, scope_mode);
+    `);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Create a temp stash with its own state.db, and point AKM_DATA_DIR at it
+ * so the runner's source loader resolves to this stash's database.
+ */
 function makeTmpStash(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-eval-reflect-"));
   createdTmpDirs.push(dir);
   fs.mkdirSync(path.join(dir, ".akm", "runs"), { recursive: true });
+  const dataDir = path.join(dir, ".akm", "data");
+  initStateDb(dataDir);
+  process.env.AKM_DATA_DIR = dataDir;
   return dir;
 }
 
+/**
+ * Derive a started_at timestamp from the runId so chronological ordering
+ * by `started_at` matches the lexicographic ordering of ISO-prefixed ids
+ * the legacy filesystem layout used.
+ */
+function startedAtFromRunId(runId: string): string {
+  // Run ids look like "2026-05-21T10-00-00-000Z-abc"; turn the leading
+  // dash-encoded ISO stamp back into a proper ISO-8601 string when
+  // possible, otherwise fall back to a derived monotonic stamp keyed on
+  // the id so sort-by-started_at remains stable across inserts.
+  const m = runId.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
+  if (m) return `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`;
+  return new Date().toISOString();
+}
+
+/**
+ * Insert an improve-run row into the state.db indicated by AKM_DATA_DIR.
+ * Replaces the legacy `<stash>/.akm/runs/<id>/improve-result.json` write.
+ */
 function writeImproveRun(stashRoot: string, runId: string, actions: ReflectActionInput[]): void {
-  const dir = path.join(stashRoot, ".akm", "runs", runId);
-  fs.mkdirSync(dir, { recursive: true });
+  const dataDir = process.env.AKM_DATA_DIR;
+  if (!dataDir) throw new Error("writeImproveRun: AKM_DATA_DIR not set (call makeTmpStash first)");
   const envelope = { schemaVersion: 1, ok: true, actions };
-  fs.writeFileSync(path.join(dir, "improve-result.json"), `${JSON.stringify(envelope, null, 2)}\n`);
+  const db = new Database(path.join(dataDir, "state.db"));
+  try {
+    db.prepare(
+      `INSERT INTO improve_runs
+         (id, started_at, completed_at, stash_dir, dry_run, profile,
+          scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+       VALUES (?, ?, NULL, ?, 0, NULL, 'all', NULL, NULL, 1, ?, NULL, '{}')`,
+    ).run(runId, startedAtFromRunId(runId), stashRoot, JSON.stringify(envelope));
+  } finally {
+    db.close();
+  }
 }
 
 function makeCtx(stashRoot: string): EvalContext {
@@ -321,9 +405,12 @@ describe("collectReflectActions (end-to-end fixture)", () => {
     expect(refs).toEqual(["memory:b", "memory:c"]);
   });
 
-  test("returns empty when stash has no .akm/runs", () => {
+  test("returns empty when stash has no improve runs", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-eval-empty-"));
     createdTmpDirs.push(dir);
+    const dataDir = path.join(dir, ".akm", "data");
+    initStateDb(dataDir);
+    process.env.AKM_DATA_DIR = dataDir;
     const collected = collectReflectActions(dir, 20);
     expect(collected.actions).toEqual([]);
     expect(collected.runIdsRead).toEqual([]);
