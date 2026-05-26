@@ -838,11 +838,16 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // (script / vault / task) up-front so reflect never prepends YAML to a
     // `.ts` file or rewrites a `.env` blob as prose. See REFLECT_ALLOWED_TYPES.
     if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
-      emitReflectFailed("parse_error", "unsupported_type", options.ref, { type: parsedRef.type });
+      // Deterministic type-guard rejection — the LLM is never invoked. Emit
+      // with reason `unsupported_type` so the improve loop can route this to
+      // the `reflect-skipped` action bucket instead of `reflect-failed`. See
+      // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a
+      // ("Reflect refused asset type" — ~9% of reflect-failed events).
+      emitReflectFailed("unsupported_type", "unsupported_type", options.ref, { type: parsedRef.type });
       return {
         schemaVersion: 1,
         ok: false,
-        reason: "parse_error" as AgentFailureReason,
+        reason: "unsupported_type" as AgentFailureReason,
         error: `Reflect refused: asset type "${parsedRef.type}" is not supported by reflect (only markdown-canonical types are allowed: ${[...REFLECT_ALLOWED_TYPES].sort().join(", ")}). Use \`akm propose\` or edit the file directly.`,
         ref: options.ref,
         exitCode: null,

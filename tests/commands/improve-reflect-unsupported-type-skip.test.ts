@@ -205,3 +205,165 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     expect(skillReflectActions.length).toBeGreaterThan(0);
   });
 });
+
+describe("improve loop: inner reflect type-guard fallback maps to reflect-skipped (not failed)", () => {
+  test("reflectFn returning reason `unsupported_type` is recorded as `reflect-skipped`, not `reflect-failed`", async () => {
+    // This covers the residual case where the planner-side `shouldSkipRef`
+    // pre-check is bypassed (e.g. an allowed-type ref is dispatched but
+    // reflect's internal type guard still fires due to an out-of-band classify
+    // mismatch). Previously, reflect.ts returned `reason: "parse_error"` and
+    // the loop emitted `reflect-failed`, inflating the LLM-failure rate by
+    // ~9% on the user's stack. After the 2026-05-26 follow-up, reflect.ts
+    // returns `reason: "unsupported_type"` and the loop maps it to
+    // `reflect-skipped`. See metrics-taxonomy-review §1a.
+    const stash = makeTempDir("akm-improve-reflect-typerefused-fallback-stash-");
+    fs.mkdirSync(path.join(stash, "skills", "deploy-guide"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stash, "skills", "deploy-guide", "SKILL.md"),
+      "---\ndescription: Deploy guide\nwhen_to_use: When deploying\n---\n\nDeploy carefully.\n",
+      "utf8",
+    );
+    await indexStash(stash);
+    appendEvent({
+      eventType: "feedback",
+      ref: "skill:deploy-guide",
+      metadata: { signal: "positive", note: "fixture" },
+    });
+
+    const result = await akmImprove({
+      stashDir: stash,
+      ensureIndexFn: async () => undefined,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      // Force the inner-guard return path: simulate reflect.ts refusing the
+      // ref with the new `unsupported_type` reason even though the planner
+      // dispatched it (an allowed-type skill ref).
+      reflectFn: async (options): Promise<AkmReflectResult> => ({
+        schemaVersion: 1,
+        ok: false,
+        reason: "unsupported_type",
+        error: `Reflect refused: asset type "script" is not supported by reflect.`,
+        ref: options.ref ?? "unknown",
+        exitCode: null,
+      }),
+      distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
+    });
+
+    const skillActions = (result.actions ?? []).filter((a) => a.ref === "skill:deploy-guide");
+    expect(skillActions.length).toBeGreaterThan(0);
+    // MUST be reflect-skipped, NOT reflect-failed.
+    expect(skillActions.filter((a) => a.mode === "reflect-failed")).toEqual([]);
+    expect(skillActions.filter((a) => a.mode === "reflect-skipped").length).toBeGreaterThan(0);
+  });
+});
+
+describe("improve envelope: per-phase wall-clock durations are emitted at the top level", () => {
+  test("memoryInferenceDurationMs and graphExtractionDurationMs surface on the result envelope when the passes run", async () => {
+    // The `health.ts#summarizeImproveRuns` `wallTime.byPhase` aggregator (and
+    // the older `metrics.{memoryInference,graphExtraction}.durationMs`
+    // rollups) all read these fields directly off the top of the envelope.
+    // Until the 2026-05-26 follow-up they were captured locally in
+    // improve.ts and only emitted on the `improve_completed` event — never
+    // on the persisted result envelope — so every byPhase median came back
+    // as zero. This test pins the top-level surfacing so the aggregator
+    // has data to chew on.
+    const stash = makeTempDir("akm-improve-byphase-emission-stash-");
+    fs.mkdirSync(path.join(stash, "skills", "byphase-fixture"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stash, "skills", "byphase-fixture", "SKILL.md"),
+      "---\ndescription: Fixture\nwhen_to_use: When testing byPhase emission\n---\n\nFixture body.\n",
+      "utf8",
+    );
+    await indexStash(stash);
+    // graph_extraction defaults enabled when the feature key is absent
+    // (see tests/llm-feature-gate.test.ts) — no explicit config opt-in.
+    appendEvent({
+      eventType: "feedback",
+      ref: "skill:byphase-fixture",
+      metadata: { signal: "positive", note: "fixture" },
+    });
+
+    const result = await akmImprove({
+      stashDir: stash,
+      ensureIndexFn: async () => undefined,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async (options): Promise<AkmReflectResult> => ({
+        schemaVersion: 1,
+        ok: true,
+        ref: options.ref ?? "unknown",
+        agentProfile: "test-agent",
+        durationMs: 1,
+        proposal: {
+          id: `reflect-${(options.ref ?? "x").replace(/[^a-z0-9]/gi, "-")}`,
+          ref: options.ref ?? "unknown",
+          status: "pending",
+          source: "reflect",
+          createdAt: "2026-05-26T00:00:00.000Z",
+          updatedAt: "2026-05-26T00:00:00.000Z",
+          payload: { content: "# stub reflect" },
+        },
+      }),
+      distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
+      // Inject memory inference + graph extraction passes that simulate
+      // taking measurable wall-clock time. The improve loop wraps these
+      // calls with Date.now() bookends, so the envelope MUST end up with
+      // a non-zero `memoryInferenceDurationMs` / `graphExtractionDurationMs`
+      // at the top level.
+      memoryInferenceFn: async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return {
+          schemaVersion: 1 as const,
+          considered: 0,
+          splitParents: 0,
+          writtenFacts: 0,
+          retiredParents: 0,
+          skippedNoFacts: 0,
+          skippedConflict: 0,
+          skippedRateLimited: 0,
+          skippedBudget: 0,
+          unaccounted: 0,
+          warnings: [],
+        };
+      },
+      graphExtractionFn: async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return {
+          schemaVersion: 1 as const,
+          quality: {
+            extractedFiles: 0,
+            emptyFiles: 0,
+            failedFiles: 0,
+            extractionCoverage: 0,
+            density: 0,
+            entityCount: 0,
+            genericEntityRatio: 0,
+            lowConfidenceRatio: 0,
+          },
+          files: [],
+          telemetry: { failureCount: 0, failuresByReason: {} },
+        };
+      },
+    });
+
+    // Top-level emission contract — both fields land on the envelope and
+    // carry a strictly-positive duration. The aggregator filters by `> 0`,
+    // so a zero would silently drop the sample.
+    expect(typeof result.memoryInferenceDurationMs).toBe("number");
+    expect(result.memoryInferenceDurationMs ?? 0).toBeGreaterThan(0);
+    expect(typeof result.graphExtractionDurationMs).toBe("number");
+    expect(result.graphExtractionDurationMs ?? 0).toBeGreaterThan(0);
+  });
+});

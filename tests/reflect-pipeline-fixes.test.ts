@@ -152,7 +152,11 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("parse_error");
+    // Reason changed 2026-05-26: deterministic type-guard rejections (LLM
+    // never invoked) now route through `unsupported_type` so the improve
+    // loop can map them to `reflect-skipped` instead of inflating
+    // `reflect-failed`. See metrics-taxonomy-review §1a.
+    expect(result.reason).toBe("unsupported_type");
     expect(result.error).toContain("not supported by reflect");
     expect(result.error).toContain("script");
     // Spawning the agent must NOT happen — the guard fires before the agent invocation.
@@ -170,7 +174,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("parse_error");
+    expect(result.reason).toBe("unsupported_type");
     expect(result.error).toContain("vault");
   });
 
@@ -184,7 +188,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("parse_error");
+    expect(result.reason).toBe("unsupported_type");
   });
 
   test("knowledge:* (markdown-canonical) is allowed by the type guard", async () => {

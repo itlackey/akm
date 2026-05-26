@@ -246,6 +246,21 @@ export interface AkmImproveResult {
   reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
+  /**
+   * Wall-clock duration of the memory-inference pass (ms). Surfaced at the
+   * top level (not inside `memoryInference`) because both
+   * `health.ts#summarizeImproveRuns` (wallTime.byPhase aggregator) and the
+   * existing `metrics.memoryInference.durationMs` rollup read it from here.
+   * Omitted entirely when the pass did not run.
+   */
+  memoryInferenceDurationMs?: number;
+  /**
+   * Wall-clock duration of the graph-extraction pass (ms). Same surfacing
+   * convention as `memoryInferenceDurationMs` — top-level so the
+   * `wallTime.byPhase.graphExtraction` aggregator in health.ts picks it up.
+   * Omitted entirely when the pass did not run.
+   */
+  graphExtractionDurationMs?: number;
   /** Phase 4A: result of the staleness-detection pass (only present when the feature is enabled and produced telemetry). */
   stalenessDetection?: StalenessDetectionResult;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
@@ -987,6 +1002,20 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(reflectsWithErrorContext > 0 ? { reflectsWithErrorContext } : {}),
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
+      // Per-phase wall-clock durations. Surfaced at the top level of the
+      // envelope (not nested) because `health.ts`'s `wallTime.byPhase`
+      // aggregator and the existing `memoryInference.durationMs` /
+      // `graphExtraction.durationMs` health buckets all read
+      // `result.{memoryInferenceDurationMs,graphExtractionDurationMs}`
+      // directly. Mirrors how `consolidation.durationMs` is surfaced inside
+      // the consolidation sub-object (different convention because the
+      // consolidation result type already owns that field). Phases that did
+      // not run (zero duration) are omitted so the aggregator's
+      // "phase actually ran" filter (`> 0`) excludes them from the median/p95
+      // sample. Plumbed in d1273d0's follow-up — see
+      // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k / §3.
+      ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
+      ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
       ...(stalenessDetection ? { stalenessDetection } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
@@ -1992,6 +2021,13 @@ async function runImproveLoopStage(args: {
           // true LLM failures. See
           // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
           const isGuardReject = !reflectResult.ok && reflectResult.reason === "content_policy_reject";
+          // Type-guard rejection (reflect refused a script/vault/task ref) is
+          // also NOT an LLM failure — the LLM is never invoked. Route to the
+          // existing `reflect-skipped` bucket so it does not inflate the
+          // failure-rate numerator. ~9% of `reflect-failed` events in the
+          // user's stack were this case; see review §1a row "Reflect refused
+          // asset type".
+          const isTypeRefused = !reflectResult.ok && reflectResult.reason === "unsupported_type";
           actions.push({
             ref: planned.ref,
             mode: reflectResult.ok
@@ -2000,15 +2036,18 @@ async function runImproveLoopStage(args: {
                 ? "reflect-cooldown"
                 : isGuardReject
                   ? "reflect-guard-rejected"
-                  : "reflect-failed",
+                  : isTypeRefused
+                    ? "reflect-skipped"
+                    : "reflect-failed",
             result: reflectResult,
           });
-          // Cooldown skips and guard rejects are not failures — do not pollute
-          // recentErrors with them (those get injected as `avoidPatterns` into
-          // the next reflect prompt). Guard rejects ARE worth showing the LLM
-          // as a learn-signal, so we still include them in pushRecentError so
-          // the next iteration sees "your last expansion was too large".
-          if (!reflectResult.ok && !isCooldown) {
+          // Cooldown skips, guard rejects, and type-refused skips are not
+          // failures — do not pollute recentErrors with them (those get
+          // injected as `avoidPatterns` into the next reflect prompt). Guard
+          // rejects ARE worth showing the LLM as a learn-signal so the next
+          // iteration sees "your last expansion was too large"; type-refused
+          // is deterministic and adds no learning signal.
+          if (!reflectResult.ok && !isCooldown && !isTypeRefused) {
             const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
             pushRecentError("reflect", errMsg);
           }

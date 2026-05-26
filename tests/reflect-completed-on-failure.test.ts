@@ -123,7 +123,10 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     expect(events.length).toBe(1);
     const meta = events[0]?.metadata as Record<string, unknown>;
     expect(meta.ok).toBe(false);
-    expect(meta.reason).toBe("parse_error");
+    // Reason changed 2026-05-26: deterministic type-guard rejections route
+    // through dedicated `unsupported_type` (was `parse_error`) so the improve
+    // loop can map them to `reflect-skipped`. See metrics-taxonomy-review §1a.
+    expect(meta.reason).toBe("unsupported_type");
     expect(meta.subreason).toBe("unsupported_type");
     expect(meta.source).toBe("reflect");
     expect(events[0]?.ref).toBe("script:dangerous");

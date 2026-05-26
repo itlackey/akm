@@ -31,7 +31,15 @@ import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
  * the output. Health aggregators count these in a separate
  * `guardRejected` bucket so the LLM-failure-rate numerator is not
  * inflated. See `/tmp/akm-health-investigations/metrics-taxonomy-review.md`
- * §1a / Pattern A. */
+ * §1a / Pattern A.
+ *
+ * Note on `unsupported_type`: deterministic type-guard rejection. Reflect
+ * refuses to operate on non-markdown asset types (script, vault, task);
+ * the LLM is never even invoked. Previously emitted as `parse_error` and
+ * conflated with true LLM failures — see review §1a, "Reflect refused
+ * asset type" row (~9% of reflect-failed events). Routed to the
+ * `reflect-skipped` action bucket by the improve loop so it does not
+ * inflate the failure-rate numerator. */
 export type AgentFailureReason =
   | "timeout"
   | "spawn_failed"
@@ -41,7 +49,8 @@ export type AgentFailureReason =
   | "llm_rate_limit"
   | "llm_content_filter"
   | "llm_invalid_json"
-  | "content_policy_reject";
+  | "content_policy_reject"
+  | "unsupported_type";
 
 /** Minimum subprocess surface we need. Bun.spawn returns this shape. */
 export interface SpawnedSubprocess {
