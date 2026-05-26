@@ -86,9 +86,15 @@ function knownTypeList(): string {
  */
 const RESPONSE_CONTRACT_JSON = [
   "Respond ONLY with a single JSON object. No prose before or after.",
-  'Shape: {"ref": "<type>:<name>", "content": "<full file contents>", "frontmatter": {...}}',
+  'Shape: {"ref": "<type>:<name>", "content": "<full file contents>", "frontmatter": {...}, "confidence": <number 0..1>}',
   "`content` is the full file body that will be written if accepted.",
   "`frontmatter` is optional — include it if `content` starts with `---` so reviewers can sanity-check the keys.",
+  "`confidence` is REQUIRED. Self-rate this proposal on [0, 1] by how certain you are it materially improves the source asset. Calibrate honestly:",
+  "  • 0.90+ — high certainty: fixes a real defect or adds load-bearing missing content; a reviewer would clearly accept.",
+  "  • 0.70–0.89 — clear improvement, but a reviewer might reasonably prefer different framing or scope.",
+  "  • 0.50–0.69 — marginal / judgment call; might help, might not be worth the churn.",
+  "  • Below 0.50 — you are not confident this improves on the source. Prefer returning the source body roughly unchanged with a low score over inventing changes.",
+  "Auto-accept gates on confidence ≥ 0.80 by default. Overclaiming ships low-quality changes; underclaiming leaves good ones stuck in queue. Be honest.",
 ].join("\n");
 
 /**
@@ -101,8 +107,34 @@ function fileWriteContract(draftFilePath: string): string {
     `Write the complete improved asset content to: ${draftFilePath}`,
     "Use your file-editing tools to create or overwrite that file.",
     "Do NOT output JSON to stdout. Do NOT print the file contents. Just write the file.",
-    "When you are done writing the file, output a single line: DRAFT_WRITTEN",
+    "When done, output a single line on stdout: DRAFT_WRITTEN confidence=<0.0-1.0>",
+    "`confidence` is REQUIRED and must be your honest self-rated [0, 1] score for this proposal:",
+    "  • 0.90+ — fixes a real defect or adds load-bearing missing content; reviewer would clearly accept.",
+    "  • 0.70–0.89 — clear improvement, but a reviewer might prefer different framing.",
+    "  • 0.50–0.69 — marginal / judgment call.",
+    "  • Below 0.50 — not confident; prefer not writing changes at all.",
+    "Auto-accept gates on confidence ≥ 0.80. Overclaim → low-quality changes land; underclaim → good changes stuck in queue.",
   ].join("\n");
+}
+
+/**
+ * Extract a confidence score from a `DRAFT_WRITTEN confidence=<n>` line emitted
+ * by an agent following {@link fileWriteContract}. Tolerates trailing prose,
+ * surrounding log lines, and missing/invalid confidence (returns `undefined`
+ * so callers can keep the proposal but skip auto-accept).
+ *
+ * Matched forms (case-insensitive, anywhere in stdout):
+ *   - `DRAFT_WRITTEN confidence=0.85`
+ *   - `DRAFT_WRITTEN confidence=0.85 ...trailing`
+ *   - `DRAFT_WRITTEN` (no confidence — returns `undefined`)
+ */
+export function extractDraftConfidence(stdout: string | undefined): number | undefined {
+  if (!stdout) return undefined;
+  const match = stdout.match(/\bDRAFT_WRITTEN\b[^\S\r\n]+confidence=([0-9]*\.?[0-9]+)/i);
+  if (!match) return undefined;
+  const value = Number.parseFloat(match[1] ?? "");
+  if (!Number.isFinite(value) || value < 0 || value > 1) return undefined;
+  return value;
 }
 
 /** A previously-rejected proposal injected as verbal-RL context (Reflexion pattern). */

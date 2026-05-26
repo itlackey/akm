@@ -57,6 +57,7 @@ import {
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import {
   buildReflectPrompt,
+  extractDraftConfidence,
   parseAgentProposalPayload,
   type RejectedProposalContext,
 } from "../integrations/agent/prompts";
@@ -1159,9 +1160,15 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
       // below has no effect when there is no expected ref).
       const fileContent = fs.readFileSync(lastDraftPath, "utf8");
+      // Phase 6A: file-write contract carries self-rated confidence on the
+      // `DRAFT_WRITTEN confidence=<n>` sentinel line. Extract it so the
+      // file-write path is on equal footing with the JSON-stdout path for
+      // auto-accept gating in `akm improve`.
+      const draftConfidence = extractDraftConfidence(result.stdout);
       payload = {
         ref: options.ref ?? "",
         content: fileContent,
+        ...(draftConfidence !== undefined ? { confidence: draftConfidence } : {}),
       };
       // The agent followed the file-write contract — `payload.ref` mirrors the
       // caller's expected ref, so the R-3 guard below cannot fire. The agent
