@@ -397,3 +397,79 @@ describe("purgeOldImproveRuns", () => {
     }
   });
 });
+
+// Regression guard: 2026-05-26. Pre-fix, runs SIGTERM'd by the cron timeout
+// (or that threw mid-loop) left NO improve_runs row because the writer fired
+// only at successful end-of-run. recordTerminatedImproveRun now persists an
+// ok:false row with the reason captured in metadata.terminated so
+// `akm health` can see what happened without inferring from task_history.
+describe("recordTerminatedImproveRun", () => {
+  test("writes an ok:false row with metadata.terminated.reason for SIGTERM", async () => {
+    const { recordTerminatedImproveRun } = await import("../../src/commands/improve-result-file");
+    const db = openStateDatabase();
+    try {
+      const runId = "2026-05-26T05-07-01-587Z-deadbeef";
+      const startedAt = "2026-05-26T05:07:01.587Z";
+      recordTerminatedImproveRun("/tmp/test-stash", runId, startedAt, "SIGTERM", {
+        scopeMode: "all",
+        dryRun: false,
+        profile: null,
+      });
+
+      const row = db
+        .prepare("SELECT id, ok, dry_run, scope_mode, result_json, metadata_json FROM improve_runs WHERE id = ?")
+        .get(runId) as {
+        id: string;
+        ok: number;
+        dry_run: number;
+        scope_mode: string;
+        result_json: string;
+        metadata_json: string;
+      };
+      expect(row).toBeDefined();
+      expect(row.ok).toBe(0);
+      expect(row.dry_run).toBe(0);
+      expect(row.scope_mode).toBe("all");
+
+      const metadata = JSON.parse(row.metadata_json) as { terminated?: { reason?: string } };
+      expect(metadata.terminated?.reason).toBe("SIGTERM");
+
+      const result = JSON.parse(row.result_json) as {
+        ok: boolean;
+        terminated?: { reason?: string; errorMessage?: string };
+      };
+      expect(result.ok).toBe(false);
+      expect(result.terminated?.reason).toBe("SIGTERM");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("captures errorMessage for exception terminations and preserves scope_value", async () => {
+    const { recordTerminatedImproveRun } = await import("../../src/commands/improve-result-file");
+    const db = openStateDatabase();
+    try {
+      const runId = "2026-05-26T05-08-00-000Z-cafebabe";
+      const startedAt = "2026-05-26T05:08:00.000Z";
+      recordTerminatedImproveRun("/tmp/test-stash", runId, startedAt, "exception", {
+        scopeMode: "type",
+        scopeValue: "memory",
+        dryRun: false,
+        errorMessage: "LLM provider returned 503",
+      });
+
+      const row = db.prepare("SELECT result_json, scope_value FROM improve_runs WHERE id = ?").get(runId) as {
+        result_json: string;
+        scope_value: string;
+      };
+      const result = JSON.parse(row.result_json) as {
+        terminated?: { reason?: string; errorMessage?: string };
+      };
+      expect(result.terminated?.reason).toBe("exception");
+      expect(result.terminated?.errorMessage).toBe("LLM provider returned 503");
+      expect(row.scope_value).toBe("memory");
+    } finally {
+      db.close();
+    }
+  });
+});

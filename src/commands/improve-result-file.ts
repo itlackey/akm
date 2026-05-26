@@ -105,3 +105,87 @@ export function writeImproveResultFile(stashDir: string, runId: string, result: 
   }
   return relativeImproveResultPath(runId);
 }
+
+/**
+ * Reason this run terminated before completing. Used by
+ * {@link recordTerminatedImproveRun} to populate `metadata.terminated.reason`
+ * so post-mortem queries can distinguish a `SIGTERM` from the cron timeout,
+ * a `SIGINT` from operator Ctrl-C, and an in-process exception.
+ */
+export type TerminationReason = "SIGTERM" | "SIGINT" | "SIGHUP" | "exception" | string;
+
+/**
+ * Persist an improve_runs row for a run that did NOT complete normally.
+ * 2026-05-26 incident: the cron's `timeout_ms: 1800000` SIGTERM'd an
+ * akm-improve invocation at 30:00 with 54 actionable refs in-flight. No
+ * `improve_runs` row was written because the writer only fired at successful
+ * end-of-run, so the run vanished from `akm health --detail per-run` even
+ * though it had consumed 30 min of LLM time and produced 29 ref-level
+ * proposals. This helper closes that gap: signal handlers and the CLI
+ * try/catch wrapper call it on the abnormal-exit paths so the row exists
+ * with `ok: false` and `metadata.terminated.reason` set.
+ *
+ * The persisted result envelope is minimal — we don't try to reconstruct
+ * the in-flight `actions[]` because that state lives inside `akmImprove`
+ * and is gone by the time the signal handler runs. The row captures
+ * enough to know: a run started, was scoped to X, did NOT complete, and
+ * why.
+ */
+export function recordTerminatedImproveRun(
+  stashDir: string,
+  runId: string,
+  startedAt: string,
+  reason: TerminationReason,
+  ctx?: {
+    scopeMode?: "all" | "type" | "ref";
+    scopeValue?: string | null;
+    dryRun?: boolean;
+    profile?: string | null;
+    errorMessage?: string;
+  },
+): void {
+  const completedAt = new Date().toISOString();
+  const minimalResult: AkmImproveResult = {
+    schemaVersion: 1,
+    ok: false,
+    scope: { mode: ctx?.scopeMode ?? "all", ...(ctx?.scopeValue ? { value: ctx.scopeValue } : {}) },
+    dryRun: Boolean(ctx?.dryRun),
+    actions: [],
+    plannedRefs: [],
+    terminated: {
+      reason,
+      at: completedAt,
+      ...(ctx?.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+    },
+  } as unknown as AkmImproveResult;
+
+  const db = openStateDatabase();
+  try {
+    recordImproveRun(db, {
+      id: runId,
+      startedAt,
+      completedAt,
+      stashDir,
+      dryRun: Boolean(ctx?.dryRun),
+      profile: ctx?.profile ?? null,
+      scopeMode: ctx?.scopeMode ?? "all",
+      scopeValue: ctx?.scopeValue ?? null,
+      guidance: null,
+      ok: false,
+      result: minimalResult,
+      metadata: {
+        terminated: {
+          reason,
+          at: completedAt,
+          ...(ctx?.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+        },
+      },
+    });
+  } finally {
+    try {
+      db.close();
+    } catch {
+      // best-effort
+    }
+  }
+}

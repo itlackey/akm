@@ -13,7 +13,13 @@ import { clearLogFile, setLogFile } from "../core/warn";
 import { resolveSourceEntries } from "../indexer/search-source";
 import { getHyphenatedArg, getHyphenatedBoolean, parseFlagValue } from "../output/context";
 import { akmImprove } from "./improve";
-import { buildImproveRunId, relativeImproveResultPath, writeImproveResultFile } from "./improve-result-file";
+import {
+  buildImproveRunId,
+  recordTerminatedImproveRun,
+  relativeImproveResultPath,
+  type TerminationReason,
+  writeImproveResultFile,
+} from "./improve-result-file";
 
 export const improveCommand = defineCommand({
   meta: {
@@ -141,10 +147,62 @@ export const improveCommand = defineCommand({
       );
       setLogFile(improveLogFile);
       const startedAtMs = Date.now();
+      const startedAtIso = new Date(startedAtMs).toISOString();
+
+      // Mint the run-id up front so signal handlers can persist a partial
+      // record if the process is killed mid-run. Pre-2026-05-26 the runId
+      // was minted at end-of-run, so SIGTERM'd runs (cron timeout) left no
+      // row in improve_runs and effectively disappeared from `akm health`.
+      const runId = buildImproveRunId();
+      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      const scopeArg = getStringArg(args, "scope");
+      const inferredScopeMode = (scopeArg ?? "").includes(":") ? "ref" : scopeArg ? "type" : "all";
+
+      // Signal handler + exception path both flow through this helper so
+      // every abnormal termination produces a row with ok:false and a
+      // reason in metadata.terminated.
+      let runRecorded = false;
+      const persistTerminated = (reason: TerminationReason, errorMessage?: string): void => {
+        if (runRecorded) return;
+        if (!primaryStashDir) return;
+        runRecorded = true;
+        try {
+          recordTerminatedImproveRun(primaryStashDir, runId, startedAtIso, reason, {
+            scopeMode: inferredScopeMode,
+            scopeValue: scopeArg ?? null,
+            dryRun: Boolean(dryRun),
+            profile: profileArg ?? null,
+            ...(errorMessage ? { errorMessage } : {}),
+          });
+        } catch (err) {
+          process.stderr.write(
+            `warning: failed to persist terminated improve run ${runId}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      };
+
+      const sigtermHandler = () => {
+        persistTerminated("SIGTERM");
+        process.stderr.write(`[improve] received SIGTERM; recorded terminated run ${runId}\n`);
+        process.exit(143);
+      };
+      const sigintHandler = () => {
+        persistTerminated("SIGINT");
+        process.stderr.write(`[improve] received SIGINT; recorded terminated run ${runId}\n`);
+        process.exit(130);
+      };
+      const sighupHandler = () => {
+        persistTerminated("SIGHUP");
+        process.exit(129);
+      };
+      process.once("SIGTERM", sigtermHandler);
+      process.once("SIGINT", sigintHandler);
+      process.once("SIGHUP", sighupHandler);
+
       let improveResult: Awaited<ReturnType<typeof akmImprove>>;
       try {
         improveResult = await akmImprove({
-          scope: getStringArg(args, "scope"),
+          scope: scopeArg,
           task: taskArg,
           dryRun,
           target: targetArg,
@@ -165,7 +223,17 @@ export const improveCommand = defineCommand({
             ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
           },
         });
+      } catch (err) {
+        // akmImprove threw — record the failure before letting runWithJsonErrors
+        // emit the standard JSON error envelope. Without this, exceptions in
+        // the main loop (LLM provider crash, OOM, etc.) leave no improve_runs
+        // row, matching the SIGTERM gap.
+        persistTerminated("exception", err instanceof Error ? err.message : String(err));
+        throw err;
       } finally {
+        process.removeListener("SIGTERM", sigtermHandler);
+        process.removeListener("SIGINT", sigintHandler);
+        process.removeListener("SIGHUP", sighupHandler);
         clearLogFile();
       }
       const durationMs = Date.now() - startedAtMs;
@@ -189,9 +257,10 @@ export const improveCommand = defineCommand({
       //   sqlite3 "$AKM_DATA_DIR/state.db" \
       //     "SELECT id, started_at, ok, dry_run FROM improve_runs \
       //      ORDER BY started_at DESC LIMIT 10"
-      const runId = buildImproveRunId();
-      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      // runId + primaryStashDir minted up-top so signal handlers can record
+      // partial runs; reuse them here for the success path.
       const resultRef = relativeImproveResultPath(runId);
+      runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
           writeImproveResultFile(primaryStashDir, runId, improveResult);
