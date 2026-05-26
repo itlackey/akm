@@ -4,9 +4,26 @@
 
 import { ClaudeCodeProvider } from "./providers/claude-code";
 import { OpenCodeProvider } from "./providers/opencode";
-import type { SessionEvent, SessionLogEntry, SessionLogHarness } from "./types";
+import type {
+  InlineRefMention,
+  SessionData,
+  SessionEvent,
+  SessionLogEntry,
+  SessionLogHarness,
+  SessionRef,
+  SessionSummary,
+} from "./types";
 
-export type { SessionEvent, SessionLogEntry, SessionLogHarness };
+export { extractInlineRefMentions } from "./inline-refs";
+export type {
+  InlineRefMention,
+  SessionData,
+  SessionEvent,
+  SessionLogEntry,
+  SessionLogHarness,
+  SessionRef,
+  SessionSummary,
+};
 
 const HARNESSES: SessionLogHarness[] = [new ClaudeCodeProvider(), new OpenCodeProvider()];
 const ERROR_PATTERNS = /error|failed|exception|cannot|undefined|null pointer|ENOENT|timeout/i;

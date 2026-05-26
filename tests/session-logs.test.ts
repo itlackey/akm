@@ -34,6 +34,8 @@ describe("session log aggregation", () => {
         yield { harness: "available", text: "timeout while syncing repo" };
         yield { harness: "available", text: "timeout while syncing repo" };
       },
+      listSessions: () => [],
+      readSession: (ref) => ({ ref: { ...ref, harness: "available" }, events: [], inlineRefs: [] }),
     };
     const unavailableHarness: SessionLogHarness = {
       name: "unavailable",
@@ -41,6 +43,8 @@ describe("session log aggregation", () => {
       *readEvents() {
         yield { harness: "unavailable", text: "error should not appear" };
       },
+      listSessions: () => [],
+      readSession: (ref) => ({ ref: { ...ref, harness: "unavailable" }, events: [], inlineRefs: [] }),
     };
 
     const entries = getExecutionLogCandidatesFromHarnesses([availableHarness, unavailableHarness], 7);
