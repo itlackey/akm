@@ -134,7 +134,8 @@ describe("akm save", () => {
     initGitRepo(stashDir);
 
     // Write a file so there's something to commit
-    fs.writeFileSync(path.join(stashDir, "skill.md"), "# Test");
+    fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
 
     const result = runCli(["save", "-m", "test commit"], stashDir);
     expect(result.status).toBe(0);
@@ -151,7 +152,8 @@ describe("akm save", () => {
   test("uses timestamp message when -m is omitted", () => {
     const stashDir = makeTempDir("akm-save-ts-");
     initGitRepo(stashDir);
-    fs.writeFileSync(path.join(stashDir, "skill.md"), "# Test");
+    fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
 
     const result = runCli(["save"], stashDir);
     expect(result.status).toBe(0);
@@ -173,7 +175,8 @@ describe("akm save", () => {
     initGitRepo(namedRepoDir);
 
     fs.writeFileSync(path.join(primaryStashDir, "primary.md"), "# primary\n");
-    fs.writeFileSync(path.join(namedRepoDir, "named.md"), "# named\n");
+    fs.mkdirSync(path.join(namedRepoDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(namedRepoDir, "skills", "named.md"), "# named\n");
 
     writeJson(path.join(xdgConfigHome, "akm", "config.json"), {
       semanticSearchMode: "off",
@@ -208,7 +211,8 @@ describe("akm save", () => {
     initGitRepo(namedRepoDir);
 
     fs.writeFileSync(path.join(primaryStashDir, "primary.md"), "# primary\n");
-    fs.writeFileSync(path.join(namedRepoDir, "named.md"), "# named\n");
+    fs.mkdirSync(path.join(namedRepoDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(namedRepoDir, "skills", "named.md"), "# named\n");
 
     writeJson(path.join(configRoot, "akm", "config.json"), {
       semanticSearchMode: "off",

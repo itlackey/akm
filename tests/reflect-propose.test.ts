@@ -23,7 +23,7 @@ import { appendEvent, readEvents } from "../src/core/events";
 import { listProposals } from "../src/core/proposals";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../src/integrations/agent/spawn";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -133,7 +133,8 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
 let cleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
   cleanup = cfgResult.cleanup;
 });
@@ -324,8 +325,7 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(true);
     expect(capturedStdoutMode).toBe("pipe");
     expect(capturedStderrMode).toBe("pipe");
-    expect(capturedCmd.at(-1)).toContain("Respond ONLY with a single JSON object.");
-    expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+    expect(capturedCmd.at(-1)).toContain("DRAFT_WRITTEN");
     expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
   });
 });

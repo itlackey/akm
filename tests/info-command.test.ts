@@ -14,7 +14,13 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -37,7 +43,8 @@ afterAll(() => {
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   envCleanup = stashResult.cleanup;

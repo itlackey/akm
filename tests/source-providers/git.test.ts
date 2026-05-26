@@ -350,7 +350,7 @@ describe("saveGitStash named stash resolution", () => {
     });
     resetConfigCache();
 
-    writeFile(path.join(cachePaths.repoDir, "content", "skills", "named", "SKILL.md"), "# named\n");
+    writeFile(path.join(cachePaths.repoDir, "skills", "named", "SKILL.md"), "# named\n");
 
     const result = saveGitStash("itlackey/akm-stash", "slash name");
     expect(result.committed).toBe(true);
@@ -371,7 +371,7 @@ describe("saveGitStash named stash resolution", () => {
     });
     resetConfigCache();
 
-    writeFile(path.join(cachePaths.repoDir, "content", "skills", "owner-repo", "SKILL.md"), "# owner-repo\n");
+    writeFile(path.join(cachePaths.repoDir, "skills", "owner-repo", "SKILL.md"), "# owner-repo\n");
 
     const result = saveGitStash("itlackey/akm-stash", "owner repo");
     expect(result.committed).toBe(true);
@@ -392,7 +392,7 @@ describe("saveGitStash named stash resolution", () => {
     });
     resetConfigCache();
 
-    writeFile(path.join(cachePaths.repoDir, "content", "skills", "branch-ref", "SKILL.md"), "# branch-ref\n");
+    writeFile(path.join(cachePaths.repoDir, "skills", "branch-ref", "SKILL.md"), "# branch-ref\n");
 
     const result = saveGitStash("github:itlackey/akm-stash#feature/save-fix", "branch ref");
     expect(result.committed).toBe(true);

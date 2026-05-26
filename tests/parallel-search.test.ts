@@ -18,7 +18,13 @@ import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import type { SourceSearchHit } from "../src/sources/types";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -104,7 +110,8 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   envCleanup = stashResult.cleanup;
@@ -156,9 +163,11 @@ describe("Parallel search: result parity", () => {
 
     await buildTestIndex(stashDir, {});
 
-    // Run the same query twice and verify identical results
-    const result1 = await akmSearch({ query: "deploy", source: "local" });
-    const result2 = await akmSearch({ query: "deploy", source: "local" });
+    // Run the same query twice and verify identical results.
+    // skipLogging prevents utility-score bumps from the first call affecting
+    // the second call's ranking scores.
+    const result1 = await akmSearch({ query: "deploy", source: "local", skipLogging: true });
+    const result2 = await akmSearch({ query: "deploy", source: "local", skipLogging: true });
     const localHits1 = result1.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const localHits2 = result2.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 

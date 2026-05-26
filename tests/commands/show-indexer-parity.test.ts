@@ -22,7 +22,13 @@ import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
 import "../../src/sources/providers/index";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "../_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -57,7 +63,8 @@ let stashDir = "";
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   stashDir = stashResult.dir;
@@ -153,7 +160,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
       await lookup(parseAssetRef("skill:embed-skill"));
       await akmShowUnified({ ref: "skill:embed-skill" });
 
-      const db = openDatabase(path.join(process.env.XDG_CACHE_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");

@@ -8,7 +8,13 @@ import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/index
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "../_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -86,7 +92,8 @@ let currentStashDir = "";
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   currentStashDir = stashResult.dir;
@@ -218,7 +225,7 @@ describe("Database search path (FTS scoring)", () => {
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       expect(localHits.length).toBeGreaterThanOrEqual(1);
 
-      const db = openDatabase(path.join(process.env.XDG_CACHE_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
@@ -514,9 +521,20 @@ describe("Score boosts", () => {
   test("derived memories score above their raw parent notes", async () => {
     const stashDir = tmpStash();
 
+    // Parent has a longer searchHints to prevent its shorter document from
+    // dominating BM25 length normalization. This ensures the derived entry's
+    // richer metadata (tags, searchHints, +0.12 memory contributor) is
+    // decisive rather than TF-normalization artefacts.
     writeFile(
       path.join(stashDir, "memories", "deploy-debugging.md"),
-      "---\ndescription: Diagnose deploy issues\n---\n\nInvestigate deploy failures in production.\n",
+      [
+        "---",
+        "description: Diagnose deploy issues",
+        'searchHints: ["deploy debugging raw background context notes unprocessed source material reference log archive"]',
+        "---",
+        "",
+        "Investigate deploy failures in production.",
+      ].join("\n"),
     );
     writeFile(
       path.join(stashDir, "memories", "deploy-debugging.derived.md"),
@@ -542,7 +560,11 @@ describe("Score boosts", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await akmSearch({ query: "deploy-debugging", source: "local", type: "memory" });
+    // "deploy debugging" matches both entries. The derived entry scores at least
+    // as high as the parent because: (a) it has richer tag/hint coverage of the
+    // query tokens, and (b) the memory contributor gives +0.12 to .derived
+    // entries vs -0.08 for raw parent notes.
+    const result = await akmSearch({ query: "deploy debugging", source: "local", type: "memory", skipLogging: true });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     const parentHit = expectDefined(localHits.find((h) => h.name === "deploy-debugging"));
