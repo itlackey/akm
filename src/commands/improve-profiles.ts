@@ -85,6 +85,10 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   graphExtraction: true,
   feedbackDistillation: true,
   validation: false,
+  // session-extraction reads native session files from claude-code / opencode
+  // and queues durable-insight proposals. Default on — opt out via
+  // profiles.improve.default.processes.extract.enabled: false.
+  extract: true,
 };
 
 /**

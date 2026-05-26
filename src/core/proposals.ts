@@ -70,6 +70,7 @@ export const PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
+  "extract",
   "improve",
   // Semi-automated / tool-driven.
   "feedback",
@@ -87,6 +88,7 @@ export const AUTOMATED_PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
+  "extract",
   "improve",
   "schema-repair",
 ] as const satisfies ReadonlyArray<(typeof PROPOSAL_SOURCES)[number]>;

@@ -38,7 +38,8 @@ export type LlmFeatureKey =
   | "curate_rerank"
   | "lesson_quality_gate"
   | "proposal_quality_gate"
-  | "memory_contradiction_detection";
+  | "memory_contradiction_detection"
+  | "session_extraction";
 
 /**
  * For each feature key, return the effective enabled state by reading the
@@ -67,6 +68,10 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
   // Legacy default: false
   memory_contradiction_detection: (cfg) =>
     cfg.profiles?.improve?.default?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
+  // Default: true. Session extraction replaces the akm-plugin checkpoint hook
+  // and is the primary path for capturing durable signal from real sessions.
+  // Opt out via `profiles.improve.default.processes.extract.enabled: false`.
+  session_extraction: (cfg) => cfg.profiles?.improve?.default?.processes?.extract?.enabled ?? true,
 };
 
 /**

@@ -78,6 +78,7 @@ import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./
 import { akmCurate } from "./commands/curate";
 import { akmDbBackups } from "./commands/db-cli";
 import { akmEventsList, akmEventsTail } from "./commands/events";
+import { extractCommand } from "./commands/extract-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import {
   akmGraphEntities,
@@ -3578,6 +3579,7 @@ const main = defineCommand({
     agent: agentCommand,
     lint: lintCommand,
     improve: improveCommand,
+    extract: extractCommand,
     propose: proposeCommand,
     proposals: proposalsCommand,
     accept: acceptCommand,

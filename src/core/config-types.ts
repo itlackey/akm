@@ -148,6 +148,12 @@ export interface ImproveProfileConfig {
     feedbackDistillation?: ImproveProcessConfig;
     /** Third-tier classifier runner. Used by staleness/confidence/classification. */
     validation?: ImproveProcessConfig;
+    /**
+     * Gates the `akm extract` pass that reads native session files via the
+     * session-log harness registry and queues durable-insight proposals.
+     * Default: enabled.
+     */
+    extract?: ImproveProcessConfig;
   };
   autoAccept?: number;
   limit?: number;

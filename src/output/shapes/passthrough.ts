@@ -37,6 +37,7 @@ const PASSTHROUGH_COMMANDS = [
   "graph-related",
   "graph-relations",
   "graph-summary",
+  "extract",
   "health",
   "improve",
   "lessons-coverage",
