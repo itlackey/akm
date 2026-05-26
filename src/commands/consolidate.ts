@@ -32,6 +32,7 @@ import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
+import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { chatCompletion } from "../llm/client";
 import { cosineSimilarity, embedBatch } from "../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
@@ -94,6 +95,22 @@ export interface ConsolidateResult {
   promoted: string[];
   /** Number of contradiction edges written (C-3 / #382). */
   contradicted: number;
+  /**
+   * Number of LLM chunks that failed (HTTP error, empty/invalid plan, etc.)
+   * during this run. Counterpart to {@link processed}, which counts INPUT
+   * memories — `failedChunks` is the visibility signal for silent LLM
+   * failures so they surface in `akm health` instead of being absorbed into
+   * a misleadingly healthy `processed` count.
+   *
+   * Backstory: 2026-05-26 incident — 21/21 runs reported `processed: 118` /
+   * `merged: 0` / `deleted: 0` while every chunk was actually being rejected
+   * with `n_keep > n_ctx`. The "OK + warnings" envelope hid the fact that
+   * the pass was a no-op. See
+   * `/tmp/akm-health-investigations/consolidation-no-op.md`.
+   */
+  failedChunks?: number;
+  /** Total chunks attempted this run; lets callers compute a failure rate. */
+  totalChunks?: number;
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
@@ -730,6 +747,39 @@ function archiveMemory(
   }
 }
 
+// ── LLM resolution ──────────────────────────────────────────────────────────
+
+/**
+ * Resolve the LLM connection for the consolidate pass.
+ *
+ * Priority order (mirrors extract / reflect / distill — see
+ * `src/commands/extract.ts:421-438` and the canonical
+ * `resolveImproveProcessRunnerFromProfile` pattern):
+ *
+ *   1. `profiles.improve.default.processes.consolidate.profile` (or `mode`)
+ *      via {@link resolveImproveProcessRunnerFromProfile}. Lets the user pin
+ *      a dedicated model (e.g. `ministral-3b`) for consolidation instead of
+ *      whatever `defaults.llm` happens to be.
+ *   2. `getDefaultLlmConfig(config)` — the baseline default LLM profile.
+ *
+ * Regression guard (2026-05-26): before this resolver, `akmConsolidate`
+ * called `getDefaultLlmConfig` directly and silently ignored a configured
+ * `processes.consolidate.profile`, sending every chunk to the default LLM
+ * (often a long-context model loaded with a smaller runtime `n_ctx`, causing
+ * silent 400s from LM Studio). The investigation lives at
+ * `/tmp/akm-health-investigations/consolidation-no-op.md`.
+ */
+function resolveConsolidateLlmConfig(config: AkmConfig) {
+  const consolidateProcess = config.profiles?.improve?.default?.processes?.consolidate;
+  const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
+  if (runnerSpec && runnerSpec.kind === "llm") {
+    return runnerSpec.connection;
+  }
+  // Non-LLM runner modes (agent/sdk) don't apply to consolidate's HTTP path;
+  // fall back to the default LLM profile rather than disabling the pass.
+  return getDefaultLlmConfig(config);
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
@@ -781,7 +831,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // Consolidation always uses the HTTP LLM client directly — never the agent
   // CLI. The agent CLI is for interactive agent sessions (reflect, propose);
   // structured JSON generation works better and faster via HTTP.
-  const llmConfig = getDefaultLlmConfig(config);
+  //
+  // Honor `profiles.improve.default.processes.consolidate.profile` first; fall
+  // back to the default LLM. See {@link resolveConsolidateLlmConfig}.
+  const llmConfig = resolveConsolidateLlmConfig(config);
   const isHttpPath = !!llmConfig;
 
   // Chunk sizing: derive a safe chunk size from the configured model context
@@ -931,6 +984,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       deleted: 0,
       promoted: [],
       contradicted: 0,
+      failedChunks: totalChunksFailed,
+      totalChunks: chunks.length,
       planned: allOps,
       warnings,
       durationMs: Date.now() - startMs,
@@ -968,6 +1023,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           deleted: 0,
           promoted: [],
           contradicted: 0,
+          failedChunks: totalChunksFailed,
+          totalChunks: chunks.length,
           planned: allOps,
           warnings: [...warnings, nonInteractive ? "Non-interactive context: skipped apply." : "Aborted by user."],
           durationMs: Date.now() - startMs,
@@ -1424,6 +1481,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     deleted,
     promoted,
     contradicted,
+    failedChunks: totalChunksFailed,
+    totalChunks: chunks.length,
     warnings,
     durationMs: Date.now() - startMs,
   };
@@ -1749,7 +1808,9 @@ async function generateMergedContent(
     secBody,
   ].join("\n");
 
-  const llmConfig = getDefaultLlmConfig(config);
+  // Use the same per-process profile resolution as the chunk-plan call above
+  // so the merge generation step doesn't silently revert to the default LLM.
+  const llmConfig = resolveConsolidateLlmConfig(config);
   const result = await tryLlmFeature(
     "memory_consolidation",
     config,

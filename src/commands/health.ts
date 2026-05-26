@@ -92,6 +92,16 @@ export interface ImproveHealthMetrics {
     merged: number;
     deleted: number;
     contradicted: number;
+    /**
+     * Aggregated count of chunks that failed (HTTP error / empty response /
+     * invalid plan) across runs in the window. Pre-2026-05-26 this was
+     * invisible: a 100%-failure run still reported a healthy
+     * `processed = memories.length` and `ok: true`. See
+     * `/tmp/akm-health-investigations/consolidation-no-op.md`.
+     */
+    failedChunks: number;
+    /** Aggregated total chunks attempted across runs in the window. */
+    totalChunks: number;
     durationMs: number;
   };
   memoryInference: {
@@ -110,6 +120,45 @@ export interface ImproveHealthMetrics {
     splitParents: number;
     written: number;
     skippedNoFacts: number;
+    /**
+     * LLM produced a valid derived draft but `<parent>.derived.md` already
+     * existed on disk (or the write threw). Without this counter the
+     * attempt would silently inflate `freshAttempts` and tank the
+     * health-reported yield rate. Plumbed straight through from the
+     * `memoryInference` envelope.
+     */
+    skippedChildExists: number;
+    /**
+     * Records short-circuited by an abort signal before issuing a fresh
+     * LLM call. Counted (rather than dropped) so `considered` decomposes
+     * cleanly and aborts do not pollute yield.
+     */
+    skippedAborted: number;
+    /**
+     * Catch-all for per-record outcomes the pass could not categorise.
+     * Should stay zero; a non-zero value means a code path is leaking
+     * attempts past the counter taxonomy.
+     */
+    unaccounted: number;
+    /**
+     * Count of envelopes that contributed to the yield denominator. A run
+     * is yield-eligible iff its `memoryInference` envelope has a
+     * `cacheHits` field (i.e. it post-dates the cache-hits metric). Older
+     * envelopes are still counted in `considered`/`written` but excluded
+     * from `freshAttempts` and `yieldRate` so legacy data does not drag
+     * the rate down. See investigation 2026-05-26.
+     */
+    yieldEligibleRuns: number;
+    /**
+     * Sum of `considered` across yield-eligible runs only. This — not the
+     * top-level `considered` — is what `freshAttempts` is derived from.
+     */
+    yieldEligibleConsidered: number;
+    /**
+     * Sum of `writtenFacts` across yield-eligible runs only. Numerator of
+     * the gated `yieldRate`.
+     */
+    yieldEligibleWritten: number;
     /**
      * `written / freshAttempts`, 4dp; 0 when freshAttempts=0.
      *
@@ -286,7 +335,17 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       archived: 0,
       warnings: 0,
     },
-    consolidation: { ran: false, processed: 0, promoted: 0, merged: 0, deleted: 0, contradicted: 0, durationMs: 0 },
+    consolidation: {
+      ran: false,
+      processed: 0,
+      promoted: 0,
+      merged: 0,
+      deleted: 0,
+      contradicted: 0,
+      failedChunks: 0,
+      totalChunks: 0,
+      durationMs: 0,
+    },
     memoryInference: {
       ran: false,
       considered: 0,
@@ -295,6 +354,12 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       splitParents: 0,
       written: 0,
       skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
+      yieldEligibleRuns: 0,
+      yieldEligibleConsidered: 0,
+      yieldEligibleWritten: 0,
       yieldRate: 0,
       durationMs: 0,
       writes: 0,
@@ -444,16 +509,35 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
     metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
     if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
+    metrics.consolidation.failedChunks += toFiniteNumber(consolidation.failedChunks);
+    metrics.consolidation.totalChunks += toFiniteNumber(consolidation.totalChunks);
     metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
   }
 
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
   if (memoryInference) {
-    metrics.memoryInference.considered += toFiniteNumber(memoryInference.considered);
+    const considered = toFiniteNumber(memoryInference.considered);
+    const writtenFacts = toFiniteNumber(memoryInference.writtenFacts);
+    metrics.memoryInference.considered += considered;
     metrics.memoryInference.cacheHits += toFiniteNumber(memoryInference.cacheHits);
     metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
-    metrics.memoryInference.written += toFiniteNumber(memoryInference.writtenFacts);
+    metrics.memoryInference.written += writtenFacts;
     metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
+    metrics.memoryInference.skippedChildExists += toFiniteNumber(memoryInference.skippedChildExists);
+    metrics.memoryInference.skippedAborted += toFiniteNumber(memoryInference.skippedAborted);
+    metrics.memoryInference.unaccounted += toFiniteNumber(memoryInference.unaccounted);
+    // Yield-rate gating: pre-cache-feature envelopes lack the `cacheHits`
+    // field entirely. Treating their `considered` as freshAttempts (since
+    // cacheHits=0) is mathematically tempting but operationally wrong —
+    // historical runs with the legacy schema have no cache instrumentation
+    // and the SUM dragged the reported rate to ~14% in local data. Only
+    // contribute to the yield aggregate when the envelope actually carries
+    // the field. See investigation 2026-05-26.
+    if (Object.hasOwn(memoryInference, "cacheHits")) {
+      metrics.memoryInference.yieldEligibleRuns += 1;
+      metrics.memoryInference.yieldEligibleConsidered += considered;
+      metrics.memoryInference.yieldEligibleWritten += writtenFacts;
+    }
   }
   metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
 
@@ -488,21 +572,26 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
     metrics.consolidation.promoted > 0 ||
     metrics.consolidation.merged > 0 ||
     metrics.consolidation.deleted > 0 ||
-    metrics.consolidation.contradicted > 0;
+    metrics.consolidation.contradicted > 0 ||
+    metrics.consolidation.totalChunks > 0;
   metrics.memoryInference.ran =
     metrics.memoryInference.considered > 0 ||
     metrics.memoryInference.written > 0 ||
     metrics.memoryInference.durationMs > 0;
   metrics.memoryInference.writes = metrics.memoryInference.written;
-  // Yield denominator excludes cache hits — see ImproveHealthMetrics.memoryInference.yieldRate
+  // Yield denominator excludes cache hits AND legacy (pre-cacheHits-field)
+  // envelopes. Only runs whose envelope carries a `cacheHits` field
+  // contribute to freshAttempts/yieldRate; legacy rows remain in
+  // `considered`/`written` for totals but are excluded from the rate so
+  // they cannot drag it down. See ImproveHealthMetrics.memoryInference
   // jsdoc for the rationale.
   metrics.memoryInference.freshAttempts = Math.max(
     0,
-    metrics.memoryInference.considered - metrics.memoryInference.cacheHits,
+    metrics.memoryInference.yieldEligibleConsidered - metrics.memoryInference.cacheHits,
   );
   metrics.memoryInference.yieldRate =
     metrics.memoryInference.freshAttempts > 0
-      ? roundRate(metrics.memoryInference.written / metrics.memoryInference.freshAttempts)
+      ? roundRate(metrics.memoryInference.yieldEligibleWritten / metrics.memoryInference.freshAttempts)
       : 0;
   metrics.graphExtraction.ran =
     metrics.graphExtraction.extractedFiles > 0 ||
@@ -549,12 +638,20 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.merged += src.consolidation.merged;
   dst.consolidation.deleted += src.consolidation.deleted;
   dst.consolidation.contradicted += src.consolidation.contradicted;
+  dst.consolidation.failedChunks += src.consolidation.failedChunks;
+  dst.consolidation.totalChunks += src.consolidation.totalChunks;
   dst.consolidation.durationMs += src.consolidation.durationMs;
   dst.memoryInference.considered += src.memoryInference.considered;
   dst.memoryInference.cacheHits += src.memoryInference.cacheHits;
   dst.memoryInference.splitParents += src.memoryInference.splitParents;
   dst.memoryInference.written += src.memoryInference.written;
   dst.memoryInference.skippedNoFacts += src.memoryInference.skippedNoFacts;
+  dst.memoryInference.skippedChildExists += src.memoryInference.skippedChildExists;
+  dst.memoryInference.skippedAborted += src.memoryInference.skippedAborted;
+  dst.memoryInference.unaccounted += src.memoryInference.unaccounted;
+  dst.memoryInference.yieldEligibleRuns += src.memoryInference.yieldEligibleRuns;
+  dst.memoryInference.yieldEligibleConsidered += src.memoryInference.yieldEligibleConsidered;
+  dst.memoryInference.yieldEligibleWritten += src.memoryInference.yieldEligibleWritten;
   dst.memoryInference.durationMs += src.memoryInference.durationMs;
   dst.graphExtraction.extractedFiles += src.graphExtraction.extractedFiles;
   dst.graphExtraction.entities += src.graphExtraction.entities;
