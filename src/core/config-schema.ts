@@ -147,45 +147,7 @@ export const ImproveProcessConfigSchema = z
     qualityGate: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).strict().optional(),
   })
-  .passthrough()
-  .superRefine((val, ctx) => {
-    // 0.8.0 removed `cooldownByType` and `cooldownDays` from process configs.
-    // Reflect and distill now use signal-delta eligibility (re-fire iff new
-    // feedback arrived since the last proposal). Consolidate uses a pool-delta
-    // gate (re-fire iff any memory has been updated since the last run).
-    const raw = val as Record<string, unknown>;
-    if ("cooldownByType" in raw || "cooldownDays" in raw) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "cooldownByType and cooldownDays were removed in 0.8.0 — reflect and distill now use " +
-          "signal-delta eligibility (proposals re-fire iff new feedback arrived). " +
-          "Remove these keys from your config.",
-      });
-      return;
-    }
-    // Reject any other unrecognized key (replicates the prior .strict()
-    // behaviour for forward compatibility — only the deleted keys get the
-    // friendly migration message above).
-    const allowed = new Set([
-      "enabled",
-      "mode",
-      "profile",
-      "timeoutMs",
-      "allowedTypes",
-      "qualityGate",
-      "contradictionDetection",
-    ]);
-    for (const k of Object.keys(raw)) {
-      if (!allowed.has(k)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.unrecognized_keys,
-          keys: [k],
-          message: `Unrecognized key in improve process config: "${k}".`,
-        });
-      }
-    }
-  });
+  .strict();
 
 const ImproveProfileProcessesSchema = z
   .object({

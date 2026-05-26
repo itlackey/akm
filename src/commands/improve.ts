@@ -608,11 +608,7 @@ function buildLatestFeedbackTsMap(refs: ReadonlyArray<string>, sinceIso: string)
  * lesson/knowledge ref, not the source memory — joining back through the
  * payload would be fragile.
  */
-function buildLatestProposalTsMap(
-  refs: ReadonlyArray<string>,
-  source: "reflect" | "distill",
-  _stashDir: string | undefined,
-): Map<string, string> {
+function buildLatestProposalTsMap(refs: ReadonlyArray<string>, source: "reflect" | "distill"): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
   const refSet = new Set(refs);
@@ -1425,13 +1421,12 @@ async function runImprovePreparationStage(args: {
   // in `akm improve`.
   const candidateRefs = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref)).map((r) => r.ref);
   const latestFeedbackTs = buildLatestFeedbackTsMap(candidateRefs, feedbackSinceCutoff);
-  const lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect", primaryStashDir ?? options.stashDir);
-  const lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill", primaryStashDir ?? options.stashDir);
+  const lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect");
+  const lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill");
 
-  // distillCooledRefs preserves the in-loop guard semantics: any ref the
-  // distill signal-delta gate rejects ends up in this set so the existing
-  // loop-time `distillCooledRefs.has(...)` check still works without
-  // restructuring the entire loop.
+  // Refs the distill signal-delta gate rejected at planning time. The main
+  // loop reads this to skip distill for these refs without re-checking
+  // eligibility per iteration.
   const distillCooledRefs = new Set<string>();
   const preCooldownCount = postCleanupRefs.length;
 
