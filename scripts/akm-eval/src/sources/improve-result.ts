@@ -1,20 +1,18 @@
 /**
- * Loader for `<stash>/.akm/runs/<run-id>/improve-result.json` (the run
- * envelope written by `akm improve`).
+ * Loader for improve run envelopes.
  *
- * The toolkit treats `schemaVersion: 1` as the stable contract and
- * refuses to operate on unknown versions, matching the §1.3 grounding
- * note in the implementation plan.
+ * Source of truth: the `improve_runs` table in `state.db` (added in 0.8.0).
+ * Each row holds the full result envelope as `result_json`. The legacy
+ * filesystem layout (`<stash>/.akm/runs/<id>/improve-result.json`) was
+ * archived during the 0.8.0 migration and is no longer read.
  *
- * Phase 6: `loadImproveResult` accepts an optional `recorder` (captures the
- * raw file content for later replay) or `player` (returns previously-
- * captured content without touching disk). Callers that don't need replay
- * pass nothing and get the live filesystem behaviour.
+ * Phase 6 record/replay: `loadImproveResult` honors an optional `recorder`
+ * (captures the resolved row for later replay) or `player` (returns
+ * previously-captured content without touching the database).
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { resolveImproveRunsRoot } from "./paths";
+import { Database } from "bun:sqlite";
+import { resolveStateDbPath } from "./paths";
 import { type ReplayPlayer, type ReplayRecorder } from "./replay-log";
 
 export interface ImproveResultEnvelope {
@@ -49,37 +47,77 @@ export interface ImproveResultEnvelope {
   [key: string]: unknown;
 }
 
-export function resolveImproveRunDir(stashRoot: string, ref: string): { runId: string; dir: string } {
-  const runsRoot = resolveImproveRunsRoot(stashRoot);
-  if (!fs.existsSync(runsRoot)) {
-    throw new Error(`improve runs root not found: ${runsRoot}`);
+interface ImproveRunRow {
+  id: string;
+  result_json: string;
+}
+
+/**
+ * List the N most-recent improve run ids in chronological order (oldest
+ * first, matching the legacy "lexicographic readdirSync over .akm/runs/*"
+ * behaviour the runners depend on). Excludes dry-run rows. When `n <= 0`,
+ * returns every non-dry-run row.
+ */
+export function listRecentImproveRunIds(n: number): string[] {
+  const db = new Database(resolveStateDbPath(), { readonly: true });
+  try {
+    const rows = (
+      n > 0
+        ? db
+            .prepare("SELECT id FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT ?")
+            .all(n)
+        : db.prepare("SELECT id FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC").all()
+    ) as Array<{ id: string }>;
+    return rows.map((r) => r.id).reverse(); // oldest first
+  } finally {
+    db.close();
   }
-  if (ref === "latest" || ref === "last") {
-    const entries = fs
-      .readdirSync(runsRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
-    if (entries.length === 0) throw new Error(`no improve runs under ${runsRoot}`);
-    const id = entries[entries.length - 1];
-    return { runId: id, dir: path.join(runsRoot, id) };
+}
+
+/**
+ * Resolve a run identifier ("latest" / "last" or an exact id) to a row id.
+ * Excludes dry-run rows so productivity audits aren't polluted (closes the
+ * dry-run artifact-trap recorded in feedback_akm_dryrun_artifact_trap).
+ */
+export function resolveImproveRunId(_stashRoot: string, ref: string): string {
+  const db = new Database(resolveStateDbPath(), { readonly: true });
+  try {
+    if (ref === "latest" || ref === "last") {
+      const row = db
+        .prepare("SELECT id FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT 1")
+        .get() as { id: string } | undefined;
+      if (!row) throw new Error("no improve_runs rows in state.db (dry_run = 0)");
+      return row.id;
+    }
+    const row = db.prepare("SELECT id FROM improve_runs WHERE id = ?").get(ref) as { id: string } | undefined;
+    if (!row) throw new Error(`improve_runs row not found: ${ref}`);
+    return row.id;
+  } finally {
+    db.close();
   }
-  const dir = path.join(runsRoot, ref);
-  if (!fs.existsSync(dir)) throw new Error(`improve run not found: ${dir}`);
-  return { runId: ref, dir };
 }
 
 export interface LoadImproveResultOptions {
-  /** When set, the file content is recorded for later replay. */
+  /** When set, the resolved row is recorded for later replay. */
   recorder?: ReplayRecorder;
   /**
-   * When set, the file content is dequeued from the player instead of read
-   * from disk. The path is still resolved (so the resolver's "latest"
-   * semantics match) but `fs.readFileSync` is skipped.
+   * When set, the row content is dequeued from the player instead of read
+   * from state.db. The id is still resolved (so "latest" semantics match)
+   * but the DB read for `result_json` is skipped.
    */
   player?: ReplayPlayer;
 }
 
+/**
+ * Load the full improve-run envelope for a given run id (or "latest").
+ *
+ * Returns:
+ *   - runId: the resolved row id
+ *   - source: a symbolic locator `state.db//improve_runs/<id>` — preserved
+ *     in the legacy `dir` field name expected by callers (collect.ts uses
+ *     it for log/report lines only; nothing reads it as a filesystem path).
+ *   - envelope: the parsed AkmImproveResult JSON
+ */
 export function loadImproveResult(
   stashRoot: string,
   ref: string,
@@ -92,21 +130,27 @@ export function loadImproveResult(
   if (opts.recorder && opts.player) {
     throw new Error("loadImproveResult: cannot record and play back simultaneously");
   }
-  const loc = resolveImproveRunDir(stashRoot, ref);
-  const file = path.join(loc.dir, "improve-result.json");
+  const runId = resolveImproveRunId(stashRoot, ref);
+  const locator = `state.db//improve_runs/${runId}`;
   let raw: string;
   if (opts.player) {
-    raw = opts.player.nextImproveResult(file);
+    raw = opts.player.nextImproveResult(locator);
   } else {
-    if (!fs.existsSync(file)) {
-      throw new Error(`improve-result.json missing at ${file}`);
+    const db = new Database(resolveStateDbPath(), { readonly: true });
+    try {
+      const row = db.prepare("SELECT result_json FROM improve_runs WHERE id = ?").get(runId) as
+        | { result_json: string }
+        | undefined;
+      if (!row) throw new Error(`improve_runs result_json missing for ${runId}`);
+      raw = row.result_json;
+    } finally {
+      db.close();
     }
-    raw = fs.readFileSync(file, "utf8");
-    opts.recorder?.recordImproveResult(file, raw);
+    opts.recorder?.recordImproveResult(locator, raw);
   }
   const envelope = JSON.parse(raw) as ImproveResultEnvelope;
   if (envelope.schemaVersion !== 1) {
     throw new Error(`unsupported improve-result schemaVersion: ${envelope.schemaVersion}`);
   }
-  return { runId: loc.runId, dir: loc.dir, envelope };
+  return { runId, dir: locator, envelope };
 }

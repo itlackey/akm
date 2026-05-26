@@ -33,10 +33,6 @@ export function resolveEvalsRoot(stashRoot: string): string {
   return path.join(stashRoot, ".akm", "evals");
 }
 
-export function resolveImproveRunsRoot(stashRoot: string): string {
-  return path.join(stashRoot, ".akm", "runs");
-}
-
 export function resolveProposalsRoot(stashRoot: string): string {
   return path.join(stashRoot, ".akm", "proposals");
 }

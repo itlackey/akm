@@ -57,9 +57,7 @@
  *                             skip-on-no-decisions pattern.
  */
 
-import fs from "node:fs";
-import { loadImproveResult } from "../sources/improve-result";
-import { resolveImproveRunsRoot } from "../sources/paths";
+import { listRecentImproveRunIds, loadImproveResult } from "../sources/improve-result";
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
 
 /**
@@ -220,10 +218,10 @@ export function aggregatePlannerActions(actions: ClassifiedPlannerAction[]): Pla
 }
 
 /**
- * Walk `<stash>/.akm/runs/*` (most recent last), read each
- * improve-result.json, and classify every action in the most recent
- * `windowRuns` runs. Missing / malformed envelopes are silently
- * skipped — the toolkit is read-only and best-effort.
+ * Read the N most-recent improve runs from `improve_runs` in state.db
+ * (chronological, oldest first) and classify every action. Missing /
+ * malformed envelopes are silently skipped — the toolkit is read-only
+ * and best-effort.
  *
  * Returns the set of run ids actually consumed alongside the actions
  * so the runner can report the effective window.
@@ -232,19 +230,8 @@ export function collectPlannerActions(
   stashRoot: string,
   windowRuns: number,
 ): { actions: ClassifiedPlannerAction[]; runIdsRead: string[]; runsRoot: string } {
-  const runsRoot = resolveImproveRunsRoot(stashRoot);
-  if (!fs.existsSync(runsRoot)) {
-    return { actions: [], runIdsRead: [], runsRoot };
-  }
-  const allIds = fs
-    .readdirSync(runsRoot, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .sort();
-  // Newest last (lexicographic sort of ISO-prefixed names is
-  // chronological), so the last `windowRuns` are the most recent.
-  const ids =
-    windowRuns > 0 && allIds.length > windowRuns ? allIds.slice(allIds.length - windowRuns) : allIds;
+  const runsRoot = "state.db//improve_runs";
+  const ids = listRecentImproveRunIds(windowRuns);
 
   const actions: ClassifiedPlannerAction[] = [];
   const runIdsRead: string[] = [];
