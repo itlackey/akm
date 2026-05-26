@@ -709,6 +709,52 @@ describe("akmDistill — queued proposal", () => {
     expect(events.at(-1)?.metadata?.proposalKind).toBe("knowledge");
   });
 
+  test("explicit knowledge mode rejects placeholder `description: ---`", async () => {
+    const stash = makeStashDir();
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "memory:session-checkpoint",
+        proposalKind: "knowledge",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () =>
+          "---\ndescription: ---\nsources:\n  - memory:session-checkpoint\n---\n\n# Some body content\nReal text here.\n",
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(threw?.message).toContain("invalid description");
+    expect(listProposals(stash)).toEqual([]);
+  });
+
+  test("explicit knowledge mode rejects double-frontmatter output", async () => {
+    const stash = makeStashDir();
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "memory:session-checkpoint",
+        proposalKind: "knowledge",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () =>
+          "---\ndescription: Real summary of the session checkpoint\nsources:\n  - memory:session-checkpoint\n---\n\n---\nakm_memory_kind: session_checkpoint\n---\n\n# Body\nText.\n",
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+
+    expect(threw).toBeInstanceOf(Error);
+    expect(threw?.message).toMatch(/double-frontmatter|fence lines/);
+    expect(listProposals(stash)).toEqual([]);
+  });
+
   test.each([
     {
       name: "negative feedback blocks promotion",

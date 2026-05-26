@@ -490,15 +490,45 @@ export function assembleStructuredDistillMarkdown(
 }
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
+  const findings: DistillValidationFinding[] = [];
   const parsed = parseFrontmatter(content);
-  if (parsed.content.trim().length > 0) return [];
-  return [
-    {
+  if (parsed.content.trim().length === 0) {
+    findings.push({
       kind: "missing-body",
       field: "body",
       message: `Distilled knowledge for ${inputRef} must include a non-empty markdown body.`,
-    },
-  ];
+    });
+  }
+  // Knowledge proposals don't strictly require a description, but if one is
+  // present it must be a real summary — not a placeholder like `---` or a
+  // truncated heading. Without this check, distill can land knowledge assets
+  // with `description: ---` (observed in the wild when the LLM has nothing
+  // meaningful to say about a session-checkpoint memory).
+  const fm = (parsed.data ?? {}) as Record<string, unknown>;
+  if (fm.description !== undefined) {
+    // Knowledge can legitimately mention the topic name in its description, so
+    // suppress the ref-restatement heuristic that's tuned for lesson assets.
+    const descCheck = isValidDescription(fm.description, inputRef, { skipRefTailCheck: true });
+    if (!descCheck.ok) {
+      findings.push({
+        kind: "invalid-description",
+        field: "description",
+        message: `Distilled knowledge for ${inputRef} has an invalid description: ${descCheck.reason}.`,
+      });
+    }
+  }
+  // Double-frontmatter pollution shows up in knowledge too — the LLM sometimes
+  // re-emits the source asset's frontmatter inside its own response, leaving
+  // two `---`-delimited blocks back-to-back.
+  const dfm = detectDoubleFrontmatter(content);
+  if (dfm) {
+    findings.push({
+      kind: dfm.kind,
+      field: "body",
+      message: `Distilled knowledge for ${inputRef}: ${dfm.message}`,
+    });
+  }
+  return findings;
 }
 
 interface BuildPromptInput {
@@ -603,10 +633,12 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
     }
   }
   if (input.proposalKind === "knowledge") {
-    lines.push("Produce the knowledge markdown file now. Start your response with `---` on the first line.");
+    lines.push(
+      "Produce the knowledge markdown file now. Start your response with `---` on the first line, followed by a `description:` field whose value is a 1-sentence summary (20–400 chars). Never use placeholder values like `---`, `tbd`, `n/a`, or a single dash. If the source has nothing meaningful to summarize, do NOT produce a proposal — return an empty response instead. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body.",
+    );
   } else {
     lines.push(
-      "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields.",
+      "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields. Both must be real one-sentence summaries (20–400 chars) — never placeholder values like `---`, `tbd`, or `n/a`. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body.",
     );
   }
   return lines.join("\n");

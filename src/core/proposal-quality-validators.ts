@@ -81,7 +81,22 @@ export const HEADING_FRAGMENT_PATTERNS: readonly RegExp[] = [
   /^tips?$/i,
 ];
 
-export function isValidDescription(value: unknown, inputRef: string): { ok: true } | { ok: false; reason: string } {
+export interface DescriptionValidationOptions {
+  /**
+   * Skip the heuristic that flags descriptions which "appear to just name the
+   * input ref" (e.g. a lesson `lesson:deploy-tips` with description "deploy
+   * tips"). Useful for asset types like `knowledge` where a description that
+   * mentions the topic name is perfectly normal — only the placeholder and
+   * shape checks should apply.
+   */
+  skipRefTailCheck?: boolean;
+}
+
+export function isValidDescription(
+  value: unknown,
+  inputRef: string,
+  options: DescriptionValidationOptions = {},
+): { ok: true } | { ok: false; reason: string } {
   if (typeof value !== "string") return { ok: false, reason: "description is not a string" };
   const v = value.trim();
   if (!v) return { ok: false, reason: "description is empty" };
@@ -121,9 +136,11 @@ export function isValidDescription(value: unknown, inputRef: string): { ok: true
     };
   if (/^when\b/i.test(v))
     return { ok: false, reason: "description starts with 'When' — that pattern belongs in when_to_use" };
-  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
-  if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40)
-    return { ok: false, reason: "description appears to just name the input ref" };
+  if (!options.skipRefTailCheck) {
+    const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+    if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40)
+      return { ok: false, reason: "description appears to just name the input ref" };
+  }
   return { ok: true };
 }
 
@@ -146,7 +163,7 @@ export function detectDoubleFrontmatter(content: string): { kind: string; messag
   if (fenceLines.length > 2)
     return {
       kind: "double-frontmatter-fence",
-      message: `Content contains ${fenceLines.length} \`---\` fence lines; lessons must have exactly 2.`,
+      message: `Content contains ${fenceLines.length} \`---\` fence lines; assets with frontmatter must have exactly 2 (one open, one close).`,
     };
   const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
   const pseudoLine = body
