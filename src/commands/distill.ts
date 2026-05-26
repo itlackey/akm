@@ -15,7 +15,8 @@
  * # Architectural seams
  *
  *   - **Single bounded in-tree LLM call.** Wrapped in {@link tryLlmFeature}
- *     under the `feedback_distillation` gate (v1 spec §14). The wrapper
+ *     under the `distill` gate (v1 spec §14; 0.8.0 unified the orchestration
+ *     and LLM-call gates under `processes.distill.enabled`). The wrapper
  *     enforces a hard timeout (default 600s / 10 min — overridable via
  *     `opts.timeoutMs`) and converts disable / throw / timeout
  *     into a `null` return from `fn`, which we treat as a graceful
@@ -1202,7 +1203,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     effectiveProposalKind === "knowledge" ? DISTILL_KNOWLEDGE_JSON_SCHEMA : DISTILL_LESSON_JSON_SCHEMA;
   let fallbackReason: "disabled" | "timeout" | "error" | undefined;
   const raw = await tryLlmFeature(
-    "feedback_distillation",
+    "distill",
     config,
     async () => {
       const distillLlm = getDefaultLlmConfig(config);
@@ -1251,7 +1252,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         lessonRef: effectiveLessonRef,
         proposalRef: effectiveLessonRef,
         proposalKind: effectiveProposalKind,
-        message: "feedback_distillation is disabled in config; enable to activate.",
+        message: "distill is disabled in config; enable processes.distill.enabled to activate.",
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
       };
     }

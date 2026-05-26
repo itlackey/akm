@@ -859,7 +859,8 @@ describe("v2 config shape parsing", () => {
     expect(processes?.reflect?.mode).toBe("llm");
     expect(processes?.reflect?.timeoutMs).toBe(60000);
     expect(processes?.consolidate?.enabled).toBe(false);
-    expect(processes?.feedbackDistillation?.enabled).toBe(true);
+    // 0.8.0: feedback_distillation migrates into the unified distill gate.
+    expect(processes?.distill?.enabled).toBe(true);
   });
 
   test("migrates legacy features.index and features.search into new shape", () => {

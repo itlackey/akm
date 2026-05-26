@@ -31,7 +31,7 @@ import type { AkmConfig } from "../core/config";
 /** Locked v1 feature keys, kept for backward-compat at the call-site API level. */
 export type LlmFeatureKey =
   | "memory_consolidation"
-  | "feedback_distillation"
+  | "distill"
   | "memory_inference"
   | "graph_extraction"
   | "metadata_enhance"
@@ -51,8 +51,11 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
   // Legacy default: false → memory_consolidation only runs when explicitly enabled
   // (either via the user's improve profile or the built-in `default` profile).
   memory_consolidation: (cfg) => cfg.profiles?.improve?.default?.processes?.consolidate?.enabled ?? false,
-  // Legacy default: false
-  feedback_distillation: (cfg) => cfg.profiles?.improve?.default?.processes?.feedbackDistillation?.enabled ?? false,
+  // 0.8.0 unified gate: replaces the legacy `feedback_distillation` key.
+  // The orchestration gate (planner) and the LLM-call gate now share the same
+  // source of truth: `processes.distill.enabled`. Default: true (matches the
+  // built-in `default` profile).
+  distill: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.enabled ?? true,
   // Legacy default: true
   memory_inference: (cfg) => cfg.profiles?.improve?.default?.processes?.memoryInference?.enabled ?? true,
   // Legacy default: true
@@ -194,7 +197,6 @@ export function isProcessEnabled(section: string, processName: string, config: A
       case "consolidate":
       case "memoryInference":
       case "graphExtraction":
-      case "feedbackDistillation":
         return true;
       default:
         return false;

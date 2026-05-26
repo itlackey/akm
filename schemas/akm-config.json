@@ -418,63 +418,6 @@
                     },
                     "additionalProperties": true
                   },
-                  "feedbackDistillation": {
-                    "type": "object",
-                    "properties": {
-                      "enabled": {
-                        "type": "boolean"
-                      },
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "llm",
-                          "agent",
-                          "sdk"
-                        ]
-                      },
-                      "profile": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "allowedTypes": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "qualityGate": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": false
-                      },
-                      "contradictionDetection": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": false
-                      }
-                    },
-                    "additionalProperties": true
-                  },
                   "validation": {
                     "type": "object",
                     "properties": {
@@ -533,7 +476,7 @@
                     "additionalProperties": true
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": true
               },
               "autoAccept": {
                 "type": "number",
@@ -1395,63 +1338,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "feedbackDistillation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "mode": {
-                            "type": "string",
-                            "enum": [
-                              "llm",
-                              "agent",
-                              "sdk"
-                            ]
-                          },
-                          "profile": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "allowedTypes": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "qualityGate": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": false
-                          },
-                          "contradictionDetection": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": false
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "validation": {
                         "type": "object",
                         "properties": {
@@ -1510,7 +1396,7 @@
                         "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "autoAccept": {
                     "type": "number",
@@ -2421,63 +2307,6 @@
               },
               "additionalProperties": true
             },
-            "feedbackDistillation": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "llm",
-                    "agent",
-                    "sdk"
-                  ]
-                },
-                "profile": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "allowedTypes": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "qualityGate": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "contradictionDetection": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": true
-            },
             "validation": {
               "type": "object",
               "properties": {
@@ -2536,7 +2365,7 @@
               "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "autoAccept": {
           "type": "number",

@@ -39,9 +39,8 @@ function makeV2Config(): AkmConfig {
         default: {
           processes: {
             reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
-            distill: { mode: "llm", profile: "openai-judge" },
+            distill: { enabled: true, mode: "llm", profile: "openai-judge" },
             consolidate: { enabled: false },
-            feedbackDistillation: { enabled: true },
             memoryInference: { enabled: true },
             graphExtraction: { enabled: false },
           },
@@ -130,7 +129,7 @@ describe("isProcessEnabled", () => {
     const config = makeV2Config();
     expect(isProcessEnabled("improve", "reflect", config)).toBe(true);
     expect(isProcessEnabled("improve", "consolidate", config)).toBe(false);
-    expect(isProcessEnabled("improve", "feedbackDistillation", config)).toBe(true);
+    expect(isProcessEnabled("improve", "distill", config)).toBe(true);
   });
 
   test("reads metadataEnhance from index.metadataEnhance.enabled", () => {

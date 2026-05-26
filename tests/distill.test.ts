@@ -51,7 +51,7 @@ function makeStashDir(): string {
 }
 
 function configAbsentFeature(stashDir: string): AkmConfig {
-  // No process binding → feedback_distillation defaults to true per 0.8.0.
+  // No process binding → distill defaults to true per 0.8.0.
   return {
     semanticSearchMode: "auto",
     stashDir,
@@ -72,7 +72,7 @@ function configEnabled(stashDir: string): AkmConfig {
     defaultWriteTarget: "stash",
     profiles: {
       llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
+      improve: { default: { processes: { distill: { enabled: true } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;
@@ -86,7 +86,7 @@ function configDisabled(stashDir: string): AkmConfig {
     defaultWriteTarget: "stash",
     profiles: {
       llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { feedbackDistillation: { enabled: false } } } },
+      improve: { default: { processes: { distill: { enabled: false } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;
@@ -289,33 +289,13 @@ describe("buildDistillPrompt", () => {
 // ── Acceptance: gate disabled ───────────────────────────────────────────────
 
 describe("akmDistill — feature gate", () => {
-  test("absent feature flag → outcome 'config_disabled', no proposal, NO event emitted", async () => {
-    const stash = makeStashDir();
-    const result = await akmDistill({
-      ref: "skill:deploy",
-      config: configAbsentFeature(stash),
-      stashDir: stash,
-      chat: async () => {
-        throw new Error("chat must not be called when gate is disabled");
-      },
-      lookupFn: noopLookup,
-      readEventsFn: emptyEvents,
-    });
+  // 0.8.0 unified the `feedback_distillation` gate into the `distill` gate
+  // and flipped the default to `true` (matches the built-in `default` profile).
+  // The "absent feature flag → disabled" test from the legacy gate no longer
+  // applies — see `explicit \`distill: false\` → also config_disabled` below
+  // and the `configDisabled(...)` helper.
 
-    expect(result.ok).toBe(true);
-    expect(result.outcome).toBe("config_disabled");
-    expect(result.message).toContain("feedback_distillation is disabled");
-    expect(result.proposalId).toBeUndefined();
-    expect(listProposals(stash)).toEqual([]);
-
-    // No `distill_invoked` event for the config-gate-off branch: the LLM
-    // was never invoked, so emitting the event would inflate planner counts
-    // with phantom invocations.
-    const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.length).toBe(0);
-  });
-
-  test("explicit `feedback_distillation: false` → also config_disabled, NO event emitted", async () => {
+  test("explicit `distill: false` → also config_disabled, NO event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -382,7 +362,7 @@ describe("akmDistill — LLM error paths", () => {
       chat: async () => {
         // The wrapper only wraps tryLlmFeature's own timer, but the chat seam
         // throwing a timeout-shaped error is observably the same path.
-        throw new LlmFeatureTimeoutError("feedback_distillation", 30_000);
+        throw new LlmFeatureTimeoutError("distill", 30_000);
       },
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
@@ -391,14 +371,15 @@ describe("akmDistill — LLM error paths", () => {
     expect(listProposals(stash)).toEqual([]);
   });
 
-  test("no `llm` block configured at all → gate is closed, outcome config_disabled", async () => {
+  test("no `llm` block configured at all → llm_failed (gate is open, but the LLM call has no profile to dispatch to)", async () => {
     const stash = makeStashDir();
     const config = {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      // Intentionally no `llm` block — gate cannot read `features`, defaults
-      // to false per spec §14.
+      // 0.8.0: the distill gate defaults to true; with no llm profile wired,
+      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which the
+      // tryLlmFeature wrapper folds into llm_failed.
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -410,7 +391,7 @@ describe("akmDistill — LLM error paths", () => {
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
     });
-    expect(result.outcome).toBe("config_disabled");
+    expect(result.outcome).toBe("llm_failed");
     expect(listProposals(stash)).toEqual([]);
   });
 });
@@ -425,14 +406,14 @@ describe("akmDistill — LLM error paths", () => {
 // signal does not regress.
 
 describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () => {
-  test("feedback_distillation undefined → outcome 'config_disabled', NO distill_invoked event emitted", async () => {
+  test("explicit distill:false → outcome 'config_disabled', NO distill_invoked event emitted", async () => {
     const stash = makeStashDir();
-    // configAbsentFeature leaves `llm.features` undefined → gate is closed
+    // configDisabled wires processes.distill.enabled: false → gate is closed
     // → fallbackReason === "disabled" → suppress event, emit config_disabled.
     let chatCalled = false;
     const result = await akmDistill({
       ref: "skill:deploy",
-      config: configAbsentFeature(stash),
+      config: configDisabled(stash),
       stashDir: stash,
       chat: async () => {
         chatCalled = true;
@@ -446,8 +427,8 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
     expect(chatCalled).toBe(false);
     // Outcome must precisely identify the cause (config off, not LLM failure).
     expect(result.outcome).toBe("config_disabled");
-    expect(result.message).toContain("feedback_distillation is disabled in config");
-    expect(result.message).toContain("enable to activate");
+    expect(result.message).toContain("distill is disabled in config");
+    expect(result.message).toContain("enable");
     // CRITICAL: no `distill_invoked` event because no invocation occurred.
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(0);
@@ -455,7 +436,7 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
 
   test("gate enabled + LLM returns null → outcome 'llm_failed', event IS emitted", async () => {
     const stash = makeStashDir();
-    // configEnabled flips feedback_distillation: true. The chat seam throws
+    // configEnabled flips distill: true. The chat seam throws
     // (simulating a transport failure); tryLlmFeature catches it with
     // reason "error" → outcome resolves to llm_failed AND the event fires
     // so the failure is observable on the events stream.
@@ -1068,17 +1049,17 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
     // Construct a config WITH features enabled but WITHOUT the `llm` block.
     // Validation in parseLlmFeatures requires `llm`; we bypass that by
     // assembling the shape directly (this mimics a partial / racy config).
-    // The gate is OPEN (feedback_distillation: true) but the inner LLM call
+    // The gate is OPEN (distill: true) but the inner LLM call
     // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
     // with reason "error" → outcome resolves to `llm_failed`.
-    // Gate is open (feedbackDistillation enabled) but no llm profile is wired.
+    // Gate is open (distill enabled) but no llm profile is wired.
     const config: AkmConfig = {
       semanticSearchMode: "auto",
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
       profiles: {
-        improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
+        improve: { default: { processes: { distill: { enabled: true } } } },
       },
     };
     const result = await akmDistill({
@@ -1125,7 +1106,9 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
-      config: configAbsentFeature(stash),
+      // Explicitly disable distill — 0.8.0 default is enabled, so an absent
+      // flag no longer trips the gate; we have to set processes.distill.enabled: false.
+      config: configDisabled(stash),
       stashDir: stash,
       chat: async () => {
         throw new Error("must not be called");

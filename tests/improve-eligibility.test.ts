@@ -399,6 +399,29 @@ describe("consolidate pool-delta eligibility", () => {
 // ── Schema migration error ──────────────────────────────────────────────────
 
 describe("schema gate: deleted keys raise clear migration errors", () => {
+  test("setting feedbackDistillation in profile config raises a clear schema error", () => {
+    const cfg = {
+      configVersion: "0.8.0",
+      stashDir: "/tmp/stash",
+      profiles: {
+        improve: {
+          default: {
+            processes: {
+              feedbackDistillation: { enabled: true },
+            },
+          },
+        },
+      },
+    };
+    const result = AkmConfigSchema.safeParse(cfg);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.error.issues.map((i) => i.message).join("\n");
+      expect(messages).toContain("feedbackDistillation was removed in 0.8.0");
+      expect(messages).toContain("processes.distill.enabled");
+    }
+  });
+
   test("setting cooldownDays in a process config raises a clear schema error", () => {
     const cfg = {
       configVersion: "0.8.0",

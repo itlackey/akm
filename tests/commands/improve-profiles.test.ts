@@ -232,7 +232,7 @@ describe("resolveProcessEnabled", () => {
     expect(resolveProcessEnabled("consolidate", profile)).toBe(true);
     expect(resolveProcessEnabled("memoryInference", profile)).toBe(true);
     expect(resolveProcessEnabled("graphExtraction", profile)).toBe(true);
-    expect(resolveProcessEnabled("feedbackDistillation", profile)).toBe(true);
+    // 0.8.0: feedbackDistillation was unified into distill (already asserted above).
   });
 
   test("returns false for 'validation' (opt-in only, not in default profile)", () => {

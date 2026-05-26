@@ -249,7 +249,7 @@ describe("§11 event metadata shape (runtime)", () => {
         },
         improve: {
           default: {
-            processes: { feedbackDistillation: { enabled: true } },
+            processes: { distill: { enabled: true } },
           },
         },
       },

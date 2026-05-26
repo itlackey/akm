@@ -27,7 +27,6 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: true },
-      feedbackDistillation: { enabled: true },
       // validation: deliberately undefined — third-tier classifier is opt-in.
     },
   },
@@ -39,7 +38,6 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: false },
       memoryInference: { enabled: false },
       graphExtraction: { enabled: false },
-      feedbackDistillation: { enabled: false },
     },
   },
   thorough: {
@@ -53,7 +51,6 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: true },
-      feedbackDistillation: { enabled: true },
     },
   },
   "memory-focus": {
@@ -64,7 +61,6 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: false },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: false },
-      feedbackDistillation: { enabled: false },
     },
   },
 };
@@ -83,7 +79,6 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   consolidate: true,
   memoryInference: true,
   graphExtraction: true,
-  feedbackDistillation: true,
   validation: false,
   // session-extraction reads native session files from claude-code / opencode
   // and queues durable-insight proposals. Default on — opt out via

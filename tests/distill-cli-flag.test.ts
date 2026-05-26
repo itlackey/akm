@@ -142,7 +142,7 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       defaultWriteTarget: "stash",
       profiles: {
         llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-        improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
+        improve: { default: { processes: { distill: { enabled: true } } } },
       },
       defaults: { llm: "default" },
     } as unknown as AkmConfig;
@@ -167,7 +167,7 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       defaultWriteTarget: "stash",
       profiles: {
         llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-        improve: { default: { processes: { feedbackDistillation: { enabled: true } } } },
+        improve: { default: { processes: { distill: { enabled: true } } } },
       },
       defaults: { llm: "default" },
     } as unknown as AkmConfig;

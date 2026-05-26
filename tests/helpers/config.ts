@@ -71,7 +71,7 @@ export function mkConfig(extra: Partial<AkmConfig> & LegacyShape = {}): AkmConfi
         const enabled =
           typeof v === "boolean" ? v : !!(v && typeof v === "object" && (v as { enabled?: boolean }).enabled !== false);
         const processName =
-          k === "memory_consolidation" ? "consolidate" : k === "feedback_distillation" ? "feedbackDistillation" : k;
+          k === "memory_consolidation" ? "consolidate" : k === "feedback_distillation" ? "distill" : k;
         config = applyProcessFlag(config, processName, enabled);
       }
     }
@@ -109,7 +109,7 @@ function applyLegacyFeatureFlags(config: AkmConfig, flags: Record<string, boolea
   if (typeof flags.memory_consolidation === "boolean")
     cfg = applyProcessFlag(cfg, "consolidate", flags.memory_consolidation);
   if (typeof flags.feedback_distillation === "boolean")
-    cfg = applyProcessFlag(cfg, "feedbackDistillation", flags.feedback_distillation);
+    cfg = applyProcessFlag(cfg, "distill", flags.feedback_distillation);
   if (typeof flags.memory_inference === "boolean")
     cfg = applyProcessFlag(cfg, "memoryInference", flags.memory_inference);
   if (typeof flags.graph_extraction === "boolean")

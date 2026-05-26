@@ -194,10 +194,41 @@ const ImproveProfileProcessesSchema = z
     consolidate: ImproveProcessConfigSchema.optional(),
     memoryInference: ImproveProcessConfigSchema.optional(),
     graphExtraction: ImproveProcessConfigSchema.optional(),
-    feedbackDistillation: ImproveProcessConfigSchema.optional(),
     validation: ImproveProcessConfigSchema.optional(),
   })
-  .strict();
+  .passthrough()
+  .superRefine((val, ctx) => {
+    // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
+    // a thin wrapper around `processes.distill.enabled`. Single source of truth.
+    const raw = val as Record<string, unknown>;
+    if ("feedbackDistillation" in raw) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "feedbackDistillation was removed in 0.8.0 — use processes.distill.enabled instead. " +
+          "It now controls both the orchestration gate and the LLM-call gate.",
+      });
+      return;
+    }
+    const allowed = new Set([
+      "reflect",
+      "distill",
+      "consolidate",
+      "memoryInference",
+      "graphExtraction",
+      "validation",
+      "extract",
+    ]);
+    for (const k of Object.keys(raw)) {
+      if (!allowed.has(k)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.unrecognized_keys,
+          keys: [k],
+          message: `Unrecognized improve process key: "${k}".`,
+        });
+      }
+    }
+  });
 
 export const ImproveProfileConfigSchema = z
   .object({

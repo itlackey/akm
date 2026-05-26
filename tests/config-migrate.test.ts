@@ -59,7 +59,7 @@ describe("migrateConfigShape", () => {
     expect(procs.graphExtraction.enabled).toBe(false);
   });
 
-  test("migrates llm.features.feedback_distillation → profiles.improve.default.processes.feedbackDistillation.enabled", () => {
+  test("migrates llm.features.feedback_distillation → profiles.improve.default.processes.distill.enabled (0.8.0 unification)", () => {
     const input = {
       llm: { endpoint: "http://localhost:11434", model: "qwen3", features: { feedback_distillation: true } },
     };
@@ -68,7 +68,8 @@ describe("migrateConfigShape", () => {
     const processes = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
       .default as Record<string, unknown>;
     const procs = processes.processes as Record<string, { enabled?: boolean }>;
-    expect(procs.feedbackDistillation.enabled).toBe(true);
+    expect(procs.distill.enabled).toBe(true);
+    expect(procs.feedbackDistillation).toBeUndefined();
   });
 
   test("migrates llm.features.curate_rerank → search.curateRerank.enabled", () => {
@@ -127,19 +128,21 @@ describe("migrateConfigShape", () => {
     expect(procs.consolidate.contradictionDetection?.enabled).toBe(true);
   });
 
-  test("migrates improve.reflectCooldownByType → profiles.improve.default.processes.reflect.cooldownByType", () => {
+  test("drops legacy improve.reflectCooldownByType silently (0.8.0 removed time-based reflect cooldowns)", () => {
     const cooldown = { lesson: 7, feedback: 14 };
     const input = { improve: { reflectCooldownByType: cooldown } };
-    const { changed, result } = migrateConfigShape(input);
-    expect(changed).toBe(true);
-    const processes = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
-      .default as Record<string, unknown>;
-    const procs = processes.processes as Record<string, { cooldownByType?: unknown }>;
-    expect(procs.reflect.cooldownByType).toEqual(cooldown);
+    const { result } = migrateConfigShape(input);
+    // No profile entry should be created from the dropped key, and the original
+    // improve block is gone (the only field it carried).
+    const profiles = result.profiles as Record<string, unknown> | undefined;
+    const improveProfiles = profiles?.improve as Record<string, unknown> | undefined;
+    const defaultProfile = improveProfiles?.default as Record<string, unknown> | undefined;
+    const procs = defaultProfile?.processes as Record<string, { cooldownByType?: unknown }> | undefined;
+    expect(procs?.reflect?.cooldownByType).toBeUndefined();
     expect(result.improve).toBeUndefined();
   });
 
-  test("migrates improve.reflectCooldownByType + improve.limit together", () => {
+  test("legacy improve.reflectCooldownByType + improve.limit: cooldown dropped, limit preserved", () => {
     const input = { improve: { reflectCooldownByType: { memory: 5 }, limit: 25 } };
     const { changed, result } = migrateConfigShape(input);
     expect(changed).toBe(true);

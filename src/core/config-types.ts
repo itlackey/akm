@@ -155,8 +155,6 @@ export interface ImproveProfileConfig {
     consolidate?: ImproveProcessConfig;
     memoryInference?: ImproveProcessConfig;
     graphExtraction?: ImproveProcessConfig;
-    /** Gates `akm distill <ref>`. Default: enabled. */
-    feedbackDistillation?: ImproveProcessConfig;
     /** Third-tier classifier runner. Used by staleness/confidence/classification. */
     validation?: ImproveProcessConfig;
     /**

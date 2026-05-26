@@ -62,7 +62,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(procs.processes?.consolidate?.enabled).toBe(true);
   });
 
-  test("migrates feedback_distillation → processes.feedbackDistillation.enabled", () => {
+  test("migrates feedback_distillation → processes.distill.enabled (0.8.0 unification)", () => {
     const input = {
       llm: {
         endpoint: "http://x.com/v1/chat/completions",
@@ -74,7 +74,8 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     const procs = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>).default as {
       processes?: Record<string, { enabled?: boolean }>;
     };
-    expect(procs.processes?.feedbackDistillation?.enabled).toBe(false);
+    expect(procs.processes?.distill?.enabled).toBe(false);
+    expect(procs.processes?.feedbackDistillation).toBeUndefined();
   });
 
   test("migrates curate_rerank → search.curateRerank.enabled", () => {
@@ -200,7 +201,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(procs.processes?.memoryInference?.enabled).toBe(true);
     expect(procs.processes?.graphExtraction?.enabled).toBe(false);
     expect(procs.processes?.consolidate?.enabled).toBe(true);
-    expect(procs.processes?.feedbackDistillation?.enabled).toBe(false);
+    expect(procs.processes?.distill?.enabled).toBe(false);
     expect((result.index as { metadataEnhance?: { enabled?: boolean } }).metadataEnhance?.enabled).toBe(true);
     expect((result.search as { curateRerank?: { enabled?: boolean } }).curateRerank?.enabled).toBe(true);
   });

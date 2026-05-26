@@ -19,13 +19,14 @@ describe("config schema drift pins", () => {
     expect(keys).toContain("contradictionDetection");
   });
 
-  test("ImproveProfileConfig.processes includes feedbackDistillation + validation entries", () => {
+  test("ImproveProfileConfig.processes includes distill + validation entries (0.8.0 unified feedbackDistillation into distill)", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
     const ipfc = defs.ImproveProfileConfig as { properties?: { processes?: { properties?: Record<string, unknown> } } };
     const processes = ipfc.properties?.processes?.properties ?? {};
-    expect(Object.keys(processes)).toContain("feedbackDistillation");
+    expect(Object.keys(processes)).toContain("distill");
     expect(Object.keys(processes)).toContain("validation");
+    expect(Object.keys(processes)).not.toContain("feedbackDistillation");
   });
 
   test("top-level index and search expose the new feature sections", () => {

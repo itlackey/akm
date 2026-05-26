@@ -19,7 +19,7 @@ import { isLlmFeatureEnabled, LlmFeatureTimeoutError, tryLlmFeature } from "../s
 
 type FeatureKey =
   | "memory_consolidation"
-  | "feedback_distillation"
+  | "distill"
   | "memory_inference"
   | "graph_extraction"
   | "metadata_enhance"
@@ -43,8 +43,8 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
       case "memory_consolidation":
         processes.consolidate = { ...(processes.consolidate ?? {}), enabled: val };
         break;
-      case "feedback_distillation":
-        processes.feedbackDistillation = { enabled: val };
+      case "distill":
+        processes.distill = { ...(processes.distill ?? {}), enabled: val };
         break;
       case "memory_inference":
         processes.memoryInference = { enabled: val };
@@ -83,10 +83,10 @@ describe("isLlmFeatureEnabled", () => {
 
   test("returns feature defaults when the process block is missing", () => {
     const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp" };
-    // 0.8.0 preserves legacy defaults: only memory_inference + graph_extraction default to true.
+    // 0.8.0 unified `feedback_distillation` into the `distill` gate (default true).
     expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
-    expect(isLlmFeatureEnabled(cfg, "feedback_distillation")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "distill")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
   });
 
@@ -96,8 +96,8 @@ describe("isLlmFeatureEnabled", () => {
   });
 
   test("returns true only on literal boolean true", () => {
-    expect(isLlmFeatureEnabled(configWith({ feedback_distillation: true }), "feedback_distillation")).toBe(true);
-    expect(isLlmFeatureEnabled(configWith({ feedback_distillation: false }), "feedback_distillation")).toBe(false);
+    expect(isLlmFeatureEnabled(configWith({ distill: true }), "distill")).toBe(true);
+    expect(isLlmFeatureEnabled(configWith({ distill: false }), "distill")).toBe(false);
   });
 });
 
@@ -180,12 +180,9 @@ describe("tryLlmFeature", () => {
   });
 
   test("returns fn's result when enabled and successful", async () => {
-    const result = await tryLlmFeature(
-      "feedback_distillation",
-      configWith({ feedback_distillation: true }),
-      async () => ({ ok: true }),
-      { ok: false },
-    );
+    const result = await tryLlmFeature("distill", configWith({ distill: true }), async () => ({ ok: true }), {
+      ok: false,
+    });
     expect(result).toEqual({ ok: true });
   });
 });
@@ -234,8 +231,9 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
 // Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`
 // — we restrict this parametrised sweep to the 4 keys that are
 // definitely actually-implemented and used by the current code.
-const STABLE_FEATURE_KEYS = ["feedback_distillation", "memory_inference", "graph_extraction", "curate_rerank"] as const;
-const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "graph_extraction"]);
+const STABLE_FEATURE_KEYS = ["distill", "memory_inference", "graph_extraction", "curate_rerank"] as const;
+// 0.8.0: distill unified gate defaults to true (matches the built-in `default` profile).
+const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "graph_extraction", "distill"]);
 
 describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)", () => {
   for (const key of STABLE_FEATURE_KEYS) {

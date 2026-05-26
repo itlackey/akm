@@ -271,7 +271,8 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
         setProcessEnabled("consolidate", llmFeatures.memory_consolidation);
       }
       if ("feedback_distillation" in llmFeatures) {
-        setProcessEnabled("feedbackDistillation", llmFeatures.feedback_distillation);
+        // 0.8.0 unified the feedback_distillation gate into processes.distill.enabled.
+        setProcessEnabled("distill", llmFeatures.feedback_distillation);
       }
       if ("memory_inference" in llmFeatures) {
         setProcessEnabled("memoryInference", llmFeatures.memory_inference);
@@ -340,9 +341,9 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
       if ("memory_consolidation" in fi) {
         migrateProcessEntryToImprove(result, "consolidate", fi.memory_consolidation);
       }
-      // feedback_distillation (bool) → processes.feedbackDistillation
+      // feedback_distillation (bool) → processes.distill (0.8.0 unification).
       if ("feedback_distillation" in fi) {
-        migrateProcessEntryToImprove(result, "feedbackDistillation", fi.feedback_distillation);
+        migrateProcessEntryToImprove(result, "distill", fi.feedback_distillation);
       }
       // validation (ProcessEntry) → processes.validation
       if ("validation" in fi) {
@@ -634,7 +635,8 @@ function mapV1ProcessName(name: string): string | undefined {
       return "graphExtraction";
     case "feedbackDistillation":
     case "feedback_distillation":
-      return "feedbackDistillation";
+      // 0.8.0 unified feedbackDistillation into distill (single source of truth).
+      return "distill";
     default:
       return undefined;
   }
