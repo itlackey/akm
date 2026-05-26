@@ -387,6 +387,17 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      // session_extraction defaults on (a30d7dd, 2026-05-26). When the host
+      // happens to have `~/.claude/projects` or opencode session dirs (typical
+      // for dev machines), getAvailableHarnesses() returns harnesses and the
+      // extract pass runs — fails with "No LLM connection configured for
+      // extract" because this test does not configure an LLM. Disable extract
+      // here so the test's `memoryCleanup?.warnings` assertion is not
+      // contaminated by host-env-dependent extract failures.
+      config: {
+        semanticSearchMode: "off",
+        profiles: { improve: { default: { processes: { extract: { enabled: false } } } } },
+      },
       ensureIndexFn: async () => false,
       reindexFn: async ({ stashDir: reindexStashDir }) => {
         await akmIndex({ stashDir: reindexStashDir, full: true });

@@ -709,7 +709,12 @@ describe("akm improve memory cleanup", () => {
     });
   });
 
-  test("stale consolidate journal error gives actionable improve recovery guidance", async () => {
+  // 0.8.0: this test invokes akmImprove twice end-to-end against a real (empty)
+  // stash; the planner + consolidate journal check together routinely take
+  // 4–6 s, which exceeds Bun's 5 s default per-test timeout under full-suite
+  // load. Give it a comfortable margin so it stays green when the suite is
+  // warm and the system is busy.
+  test("stale consolidate journal error gives actionable improve recovery guidance", { timeout: 30_000 }, async () => {
     const stashDir = makeTempDir("akm-improve-stale-journal-abort-");
     fs.mkdirSync(path.join(stashDir, ".akm"), { recursive: true });
     fs.writeFileSync(
@@ -735,7 +740,7 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           profiles: {
             llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: { default: { processes: { consolidate: { enabled: true } } } },
+            improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
           },
           defaults: { llm: "default" },
         },
@@ -758,7 +763,7 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           profiles: {
             llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: { default: { processes: { consolidate: { enabled: true } } } },
+            improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
           },
           defaults: { llm: "default" },
         },
@@ -801,7 +806,7 @@ describe("akm improve memory cleanup", () => {
         semanticSearchMode: "off",
         profiles: {
           llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: { default: { processes: { consolidate: { enabled: true } } } },
+          improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
         },
         defaults: { llm: "default" },
       },
