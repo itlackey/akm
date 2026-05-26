@@ -1842,18 +1842,25 @@ export function recomputeUtilityScores(db: Database): void {
   const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
   // Single aggregate query instead of N+1 per-entry queries.
-  // Only processes entries that actually have usage events.
+  // Only processes entries that actually have usage events AND still exist
+  // in `entries`. The latter check is critical: usage_events has no FK to
+  // entries, so its entry_id can become stale (entry deleted, re-keyed,
+  // moved between sources). Without the JOIN, writing the derived row to
+  // utility_scores (which DOES have an FK) raises "FOREIGN KEY constraint
+  // failed" and rolls back the whole finalize transaction — failing every
+  // index run.
   const usageRows = db
     .prepare(`
-      SELECT entry_id,
-             SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
-             SUM(CASE WHEN event_type = 'show'   THEN 1 ELSE 0 END) AS show_count,
-             SUM(CASE WHEN event_type = 'feedback' AND signal = 'positive' THEN 1 ELSE 0 END) AS positive_feedback_count,
-             SUM(CASE WHEN event_type = 'feedback' AND signal = 'negative' THEN 1 ELSE 0 END) AS negative_feedback_count,
-             MAX(created_at) AS last_used_at
-      FROM usage_events
-      WHERE entry_id IS NOT NULL
-      GROUP BY entry_id
+      SELECT u.entry_id,
+             SUM(CASE WHEN u.event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
+             SUM(CASE WHEN u.event_type = 'show'   THEN 1 ELSE 0 END) AS show_count,
+             SUM(CASE WHEN u.event_type = 'feedback' AND u.signal = 'positive' THEN 1 ELSE 0 END) AS positive_feedback_count,
+             SUM(CASE WHEN u.event_type = 'feedback' AND u.signal = 'negative' THEN 1 ELSE 0 END) AS negative_feedback_count,
+             MAX(u.created_at) AS last_used_at
+      FROM usage_events u
+      JOIN entries e ON e.id = u.entry_id
+      WHERE u.entry_id IS NOT NULL
+      GROUP BY u.entry_id
     `)
     .all() as Array<{
     entry_id: number;

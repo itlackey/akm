@@ -588,4 +588,42 @@ describe("Production path end-to-end", () => {
       closeDatabase(db);
     }
   });
+
+  // Regression guard: 2026-05-26. usage_events has no FK to entries, so its
+  // entry_id can become stale after consolidation/deletion. recomputeUtilityScores
+  // used to aggregate by stale entry_id, then upsert into utility_scores (which
+  // DOES have an FK), tripping "FOREIGN KEY constraint failed" and rolling back
+  // the entire index finalize transaction.
+  test("recomputeUtilityScores ignores stale usage_events entry_ids (no FK rollback)", async () => {
+    writeFile(path.join(currentStashDir, "skills", "real-skill.md"), "---\nname: real-skill\n---\n\nA real skill.");
+    await buildTestIndex(currentStashDir, {});
+
+    const dbPath = getDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const entries = db.prepare("SELECT id FROM entries LIMIT 1").all() as Array<{ id: number }>;
+      const realId = entries[0]?.id;
+      expect(realId).toBeGreaterThan(0);
+
+      // One legitimate event, one stale event whose entry_id was deleted.
+      db.prepare(
+        "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+      ).run(realId, "skill:real-skill");
+      const staleId = 999999; // not in entries
+      db.prepare(
+        "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+      ).run(staleId, "skill:vaporware");
+
+      // This used to throw FOREIGN KEY constraint failed.
+      expect(() => recomputeUtilityScores(db)).not.toThrow();
+
+      // utility_scores should have the live entry but NOT the stale one.
+      const scores = db.prepare("SELECT entry_id FROM utility_scores").all() as Array<{ entry_id: number }>;
+      const ids = scores.map((s) => s.entry_id);
+      expect(ids).toContain(realId);
+      expect(ids).not.toContain(staleId);
+    } finally {
+      closeDatabase(db);
+    }
+  });
 });

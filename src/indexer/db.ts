@@ -1642,7 +1642,15 @@ export function getUtilityScoresByIds(
 /**
  * Insert or update a utility score for an entry.
  */
-export function upsertUtilityScore(db: Database, entryId: number, data: UtilityScoreData): void {
+export function upsertUtilityScore(db: Database, entryId: number, data: UtilityScoreData): boolean {
+  // Pre-flight FK guard (mirrors `upsertEmbedding`): when an entry is
+  // deleted between when its id is aggregated from usage_events and when
+  // this INSERT runs, the FK constraint fails and rolls back the entire
+  // finalize transaction. A cheap SELECT here turns the race into a
+  // clean skip. Returns false when the entry no longer exists.
+  const exists = db.prepare("SELECT 1 FROM entries WHERE id = ?").get(entryId);
+  if (!exists) return false;
+
   db.prepare(`
     INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
@@ -1654,6 +1662,7 @@ export function upsertUtilityScore(db: Database, entryId: number, data: UtilityS
       last_used_at = excluded.last_used_at,
       updated_at = datetime('now')
   `).run(entryId, data.utility, data.showCount, data.searchCount, data.selectRate, data.lastUsedAt ?? null);
+  return true;
 }
 
 // ── LLM enrichment cache ────────────────────────────────────────────────────
@@ -2120,6 +2129,23 @@ export function applyFeedbackToUtilityScore(
  */
 export function relinkUsageEvents(db: Database): void {
   try {
+    // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
+    // Leaving them in place would let `recomputeUtilityScores` aggregate
+    // by an entry_id that no longer exists in `entries`, then trip the FK
+    // constraint on the utility_scores INSERT and roll back the entire
+    // finalize transaction. Nulled rows can be re-resolved by step 2 below;
+    // events whose entry is permanently gone simply stay null and age out
+    // via the 90-day retention policy.
+    db.exec(`
+      UPDATE usage_events
+      SET entry_id = NULL
+      WHERE entry_id IS NOT NULL
+        AND entry_id NOT IN (SELECT id FROM entries)
+    `);
+
+    // Step 2: re-resolve any null entry_id from entry_ref against the
+    // current entries table. Picks up entries that were re-created with
+    // the same ref (e.g. an asset moved between sources).
     db.exec(`
       UPDATE usage_events SET entry_id = (
         SELECT e.id FROM entries e
