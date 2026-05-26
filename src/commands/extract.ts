@@ -25,6 +25,7 @@
  *     consolidate-writer fix.
  */
 
+import type { Database } from "bun:sqlite";
 import { stringify as yamlStringify } from "yaml";
 import { assembleAssetFromString } from "../core/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../core/common";
@@ -33,6 +34,13 @@ import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../core/proposals";
+import {
+  type ExtractedSessionRow,
+  getExtractedSessionsMap,
+  openStateDatabase,
+  shouldSkipAlreadyExtractedSession,
+  upsertExtractedSession,
+} from "../core/state-db";
 import { warn } from "../core/warn";
 import { getAvailableHarnesses } from "../integrations/session-logs";
 import { preFilterSession } from "../integrations/session-logs/pre-filter";
@@ -78,6 +86,23 @@ export interface AkmExtractOptions {
   sourceRun?: string;
   /** Hard timeout for each LLM call (ms). Default 60s per session. */
   timeoutMs?: number;
+  /**
+   * Re-process sessions even if state.db says they were already extracted
+   * (and no new events have arrived since). Default `false` — the discovery
+   * pass skips already-seen sessions to avoid duplicate LLM calls.
+   */
+  force?: boolean;
+  /**
+   * Disable state.db tracking entirely for this run. Test seam — production
+   * paths always track. Also useful for one-shot debugging when you want a
+   * fresh LLM call without touching the seen-table.
+   */
+  skipTracking?: boolean;
+  /**
+   * Override the state.db connection (test seam). When absent the production
+   * code opens the real state.db via {@link openStateDatabase}.
+   */
+  stateDb?: Database;
 }
 
 export interface ExtractedSessionResult {
@@ -91,7 +116,7 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?: string;
+  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted";
 }
 
 export interface AkmExtractResult {
@@ -464,7 +489,52 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const topLevelWarnings: string[] = [];
   const chat = options.chat ?? chatCompletion;
 
+  // Open state.db once for the run and bulk-load seen-rows for the candidate
+  // set so we can decide skip/process in O(1) per session. Tracking is opt-out
+  // via options.skipTracking (used by tests + one-shot debug calls).
+  const trackingEnabled = options.skipTracking !== true;
+  let stateDb: Database | undefined;
+  let seenMap = new Map<string, ExtractedSessionRow>();
+  if (trackingEnabled && candidates.length > 0) {
+    try {
+      stateDb = options.stateDb ?? openStateDatabase();
+      seenMap = getExtractedSessionsMap(
+        stateDb,
+        harness.name,
+        candidates.map((c) => c.sessionId),
+      );
+    } catch (err) {
+      // state.db open is best-effort — log and proceed without skip-tracking
+      // so a transient sqlite error never blocks the actual extraction.
+      const msg = err instanceof Error ? err.message : String(err);
+      warn(`[extract] state.db unavailable, processing without skip-tracking: ${msg}`);
+      topLevelWarnings.push(`state.db unavailable: ${msg}`);
+      stateDb = undefined;
+    }
+  }
+
   for (const summary of candidates) {
+    // Skip-tracking: if this session was already processed AND no new events
+    // have arrived since (live endedAt <= recorded endedAt), don't burn an LLM
+    // call. --force or single-session mode (explicit sessionId) bypasses.
+    const prior = seenMap.get(summary.sessionId);
+    if (!options.force && !options.sessionId && shouldSkipAlreadyExtractedSession(prior, summary.endedAt)) {
+      sessions.push({
+        sessionId: summary.sessionId,
+        harness: harness.name,
+        candidateCount: 0,
+        proposalIds: [],
+        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+        warnings: [
+          `already extracted at ${prior?.processed_at}; pass --force to re-process or wait until the session has new content`,
+        ],
+        skipped: true,
+        skipReason: "already_extracted",
+      });
+      skippedCount += 1;
+      continue;
+    }
+
     try {
       const result = await processSession(
         harness,
@@ -482,6 +552,42 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       if (result.skipped) skippedCount += 1;
       else processedCount += 1;
       allProposalIds.push(...result.proposalIds);
+
+      // Persist outcome so the next run skips this session unless new events
+      // arrive. We only track non-dry-run paths — dry-run is for inspection
+      // and should never poison the seen-table.
+      if (trackingEnabled && stateDb && !dryRun) {
+        try {
+          const outcome: ExtractedSessionRow["outcome"] = result.skipped
+            ? result.skipReason === "read_failed" || result.skipReason === "exception"
+              ? "failed"
+              : "skipped"
+            : result.candidateCount === 0
+              ? "no_candidates"
+              : "candidates_queued";
+          upsertExtractedSession(stateDb, {
+            harness: harness.name,
+            sessionId: summary.sessionId,
+            processedAt: new Date().toISOString(),
+            sessionEndedAt: summary.endedAt ?? null,
+            outcome,
+            candidateCount: result.candidateCount,
+            proposalCount: result.proposalIds.length,
+            rationale: result.rationaleIfEmpty ?? null,
+            sourceRun,
+            metadata: {
+              preFilterInputCount: result.preFilter.inputCount,
+              preFilterOutputCount: result.preFilter.outputCount,
+              preFilterTruncatedCount: result.preFilter.truncatedCount,
+              ...(result.skipReason ? { skipReason: result.skipReason } : {}),
+            },
+          });
+        } catch (err) {
+          // Tracking failure must not abort the run — log + continue.
+          const msg = err instanceof Error ? err.message : String(err);
+          warn(`[extract] failed to record session ${summary.sessionId} in state.db: ${msg}`);
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       warn(`[extract] session ${summary.sessionId} threw: ${msg}`);
@@ -497,6 +603,16 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         skipReason: "exception",
       });
       skippedCount += 1;
+    }
+  }
+
+  // Close the state.db connection we opened. Callers that injected stateDb
+  // via the test seam own its lifecycle.
+  if (stateDb && !options.stateDb) {
+    try {
+      stateDb.close();
+    } catch {
+      // best-effort close
     }
   }
 

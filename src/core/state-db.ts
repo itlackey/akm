@@ -422,6 +422,68 @@ const MIGRATIONS: Migration[] = [
         ON improve_runs(stash_dir, scope_mode);
     `,
   },
+
+  // ── Migration 004 — extract_sessions_seen ───────────────────────────────────
+  //
+  // Tracks which platform sessions the extractor has processed, so the discovery
+  // pass in `akm extract --since <window>` skips sessions whose content hasn't
+  // changed since the last successful run. Replaces the akm-plugin
+  // session-checkpoint hook's implicit "write-once" memory of what's been
+  // captured — but persistent and queryable.
+  //
+  // Indexed (query) columns:
+  //   harness          TEXT     — harness name (claude-code, opencode, ...).
+  //   session_id       TEXT     — platform-native session identifier.
+  //   processed_at     TEXT     — ISO-8601 UTC; when extract last ran on this session.
+  //   session_ended_at TEXT     — session.endedAt at processing time. When a
+  //                                later listSessions reports a *newer* endedAt
+  //                                for the same session_id, the extractor
+  //                                re-processes the appended events.
+  //   outcome          TEXT     — "candidates_queued" | "no_candidates" |
+  //                                "skipped" | "failed".
+  //
+  // Non-indexed columns:
+  //   candidate_count  INTEGER  — number of candidates the LLM produced.
+  //   proposal_count   INTEGER  — number of proposals actually queued
+  //                                (candidates may fail downstream validation).
+  //   rationale        TEXT     — for "no_candidates", the LLM's explanation.
+  //   source_run       TEXT     — sourceRun id for PROV-DM traceability.
+  //   metadata_json    TEXT     — future-proofing (pre-filter stats, LLM
+  //                                model+version, prompt token count, etc.).
+  //
+  // PK: (harness, session_id) — one row per session per harness. A re-extract
+  // updates the row in place via INSERT OR REPLACE.
+  //
+  // TTL: no automatic deletion. Sessions stay tracked as long as the source
+  // session files exist on disk. Operator can `DELETE FROM extract_sessions_seen
+  // WHERE processed_at < ?` for cleanup if desired.
+  {
+    id: "004-extract-sessions-seen",
+    up: `
+      CREATE TABLE IF NOT EXISTS extract_sessions_seen (
+        harness          TEXT    NOT NULL,
+        session_id       TEXT    NOT NULL,
+        processed_at     TEXT    NOT NULL,
+        session_ended_at TEXT,
+        outcome          TEXT    NOT NULL,
+        candidate_count  INTEGER NOT NULL DEFAULT 0,
+        proposal_count   INTEGER NOT NULL DEFAULT 0,
+        rationale        TEXT,
+        source_run       TEXT,
+        metadata_json    TEXT    NOT NULL DEFAULT '{}',
+        PRIMARY KEY (harness, session_id)
+      );
+
+      -- Query patterns:
+      --   SELECT … WHERE harness = ?                       → idx_extract_sessions_harness
+      --   SELECT … WHERE processed_at >= ?                 → idx_extract_sessions_processed
+      --   SELECT … WHERE harness = ? AND session_id = ?    → PK
+      CREATE INDEX IF NOT EXISTS idx_extract_sessions_harness
+        ON extract_sessions_seen(harness);
+      CREATE INDEX IF NOT EXISTS idx_extract_sessions_processed
+        ON extract_sessions_seen(processed_at);
+    `,
+  },
 ];
 
 /**
@@ -1149,6 +1211,144 @@ export function purgeOldImproveRuns(db: Database, retentionDays = 90): number {
   const result = db.prepare("DELETE FROM improve_runs WHERE started_at < ?").run(cutoff);
   const changes = (result as { changes?: number | bigint }).changes ?? 0;
   return typeof changes === "bigint" ? Number(changes) : changes;
+}
+
+// ── extract_sessions_seen ───────────────────────────────────────────────────
+
+/**
+ * One row of the {@link extract_sessions_seen} table. Mirrors the SQL schema
+ * documented in migration 004.
+ */
+export interface ExtractedSessionRow {
+  harness: string;
+  session_id: string;
+  /** ISO-8601 UTC — when extract last processed this session. */
+  processed_at: string;
+  /** ISO-8601 — session.endedAt at processing time. Null when unknown. */
+  session_ended_at: string | null;
+  /** Outcome of the extract pass. */
+  outcome: "candidates_queued" | "no_candidates" | "skipped" | "failed";
+  candidate_count: number;
+  proposal_count: number;
+  /** For "no_candidates", the LLM's explanation. */
+  rationale: string | null;
+  /** sourceRun id for PROV-DM traceability. */
+  source_run: string | null;
+  metadata_json: string;
+}
+
+/**
+ * Record (or update) one session's extract outcome. INSERT-OR-REPLACE so the
+ * row reflects the most recent run; downstream skip-logic compares
+ * `session_ended_at` against the live session metadata to decide if anything
+ * new arrived since `processed_at`.
+ */
+export function upsertExtractedSession(
+  db: Database,
+  input: {
+    harness: string;
+    sessionId: string;
+    processedAt: string;
+    sessionEndedAt?: number | null;
+    outcome: ExtractedSessionRow["outcome"];
+    candidateCount: number;
+    proposalCount: number;
+    rationale?: string | null;
+    sourceRun?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): void {
+  const endedAtIso =
+    typeof input.sessionEndedAt === "number" && Number.isFinite(input.sessionEndedAt)
+      ? new Date(input.sessionEndedAt).toISOString()
+      : null;
+  db.prepare(`
+    INSERT OR REPLACE INTO extract_sessions_seen
+      (harness, session_id, processed_at, session_ended_at, outcome,
+       candidate_count, proposal_count, rationale, source_run, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.harness,
+    input.sessionId,
+    input.processedAt,
+    endedAtIso,
+    input.outcome,
+    input.candidateCount,
+    input.proposalCount,
+    input.rationale ?? null,
+    input.sourceRun ?? null,
+    JSON.stringify(input.metadata ?? {}),
+  );
+}
+
+/**
+ * Fetch a single session's last extract record, or `undefined` when the
+ * session has never been processed.
+ */
+export function getExtractedSession(db: Database, harness: string, sessionId: string): ExtractedSessionRow | undefined {
+  // bun:sqlite returns null (not undefined) when no row matches — normalize so
+  // callers can rely on `if (!row)` and `toBeUndefined()` equivalently.
+  const row = db
+    .prepare("SELECT * FROM extract_sessions_seen WHERE harness = ? AND session_id = ?")
+    .get(harness, sessionId) as ExtractedSessionRow | null;
+  return row ?? undefined;
+}
+
+/**
+ * Bulk-fetch session-extract status for a list of sessionIds in one harness.
+ * Returns a Map keyed by sessionId so callers can do O(1) lookups while
+ * iterating the discovery list.
+ */
+export function getExtractedSessionsMap(
+  db: Database,
+  harness: string,
+  sessionIds: readonly string[],
+): Map<string, ExtractedSessionRow> {
+  const out = new Map<string, ExtractedSessionRow>();
+  if (sessionIds.length === 0) return out;
+  // SQLite has a ~999 param ceiling; chunk if a caller ever exceeds that.
+  const CHUNK = 500;
+  for (let i = 0; i < sessionIds.length; i += CHUNK) {
+    const chunk = sessionIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT * FROM extract_sessions_seen
+         WHERE harness = ? AND session_id IN (${placeholders})`,
+      )
+      .all(harness, ...chunk) as ExtractedSessionRow[];
+    for (const row of rows) out.set(row.session_id, row);
+  }
+  return out;
+}
+
+/**
+ * Decide whether a session should be skipped because the extractor has
+ * already processed it AND nothing has changed since. The "anything new since
+ * last extract?" rule is: the live `sessionEndedAtMs` is strictly later than
+ * the recorded `session_ended_at`. Same-or-earlier endedAt means we'd be
+ * re-processing the exact same content for no gain.
+ *
+ * Returns:
+ *   - `false` — no prior row, or session has new content since last extract.
+ *     The caller should process it.
+ *   - `true`  — the session was already processed and hasn't been updated.
+ *     The caller should skip.
+ */
+export function shouldSkipAlreadyExtractedSession(
+  prior: ExtractedSessionRow | undefined,
+  liveSessionEndedAtMs: number | undefined,
+): boolean {
+  if (!prior) return false;
+  // No live timestamp → can't tell if anything's new. Be conservative and
+  // skip — the operator can pass --force later if we add it.
+  if (typeof liveSessionEndedAtMs !== "number" || !Number.isFinite(liveSessionEndedAtMs)) {
+    return true;
+  }
+  const priorMs = prior.session_ended_at ? Date.parse(prior.session_ended_at) : Number.NaN;
+  if (!Number.isFinite(priorMs)) return false;
+  // Re-process when there's new content; skip when the session is unchanged.
+  return liveSessionEndedAtMs <= priorMs;
 }
 
 // ── registry_index_cache (goes in index.db, not state.db) ───────────────────

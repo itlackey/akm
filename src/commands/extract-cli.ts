@@ -55,6 +55,12 @@ export const extractCommand = defineCommand({
       description: "Show candidates without queuing proposals.",
       default: false,
     },
+    force: {
+      type: "boolean",
+      description:
+        "Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions.",
+      default: false,
+    },
     "timeout-ms": {
       type: "string",
       description: "Per-session LLM timeout in ms (default 60000).",
@@ -68,6 +74,7 @@ export const extractCommand = defineCommand({
       const since = typeof args.since === "string" ? args.since.trim() : "";
       const auto = args.auto === true;
       const dryRun = args["dry-run"] === true;
+      const force = args.force === true;
       const timeoutMs =
         typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
           ? Number.parseInt(args["timeout-ms"], 10)
@@ -94,6 +101,7 @@ export const extractCommand = defineCommand({
         ...(location ? { location } : {}),
         ...(since ? { since } : {}),
         dryRun,
+        force,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       };
 
