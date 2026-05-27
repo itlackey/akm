@@ -25,8 +25,23 @@ describe("parseSchedule", () => {
     expect(() => parseSchedule("0 25 * * *", "cron")).toThrow(UsageError);
   });
 
-  test("rejects unsupported list/range syntax", () => {
-    expect(() => parseSchedule("0,15 * * * *", "cron")).toThrow(UsageError);
+  test("accepts comma list in any field", () => {
+    // 2026-05-27: list support added so `7,37 * * * *` (twice/hour) works.
+    const spec = parseSchedule("7,37 * * * *", "cron");
+    expect(spec.fields.minute).toEqual({ kind: "list", values: [7, 37] });
+    expect(spec.fields.hour).toEqual({ kind: "star" });
+  });
+
+  test("dedupes and sorts list values into ascending order", () => {
+    const spec = parseSchedule("37,7,7 * * * *", "cron");
+    expect(spec.fields.minute).toEqual({ kind: "list", values: [7, 37] });
+  });
+
+  test("rejects out-of-range list element", () => {
+    expect(() => parseSchedule("7,99 * * * *", "cron")).toThrow(UsageError);
+  });
+
+  test("still rejects range syntax", () => {
     expect(() => parseSchedule("0-30 * * * *", "cron")).toThrow(UsageError);
   });
 });
@@ -61,6 +76,10 @@ describe("translateToLaunchd", () => {
   test("rejects step in non-minute/hour position", () => {
     // No realistic path produces this from cron syntax we accept; force the shape.
     expect(() => parseSchedule("*/5 */5 * * *", "launchd")).toThrow(UsageError);
+  });
+
+  test("rejects comma list — launchd has no single multi-trigger primitive", () => {
+    expect(() => translateToLaunchd(parseSchedule("7,37 * * * *", "launchd"))).toThrow(UsageError);
   });
 });
 

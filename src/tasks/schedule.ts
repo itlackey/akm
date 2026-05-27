@@ -57,7 +57,16 @@ export interface ScheduleFields {
  *   • single value  `5`
  *   • step on star  `*\/15`
  */
-export type ScheduleField = { kind: "star" } | { kind: "value"; value: number } | { kind: "step"; step: number };
+export type ScheduleField =
+  | { kind: "star" }
+  | { kind: "value"; value: number }
+  | { kind: "step"; step: number }
+  // 2026-05-27: cron-style comma list, e.g. `7,37 * * * *` (twice per hour).
+  // `values` is the deduped, ascending list of valid integers within
+  // `[limit.min, limit.max]`. translateToCron emits the field verbatim;
+  // launchd / schtasks reject this kind with a clear error (no native
+  // multi-trigger primitive on those backends).
+  | { kind: "list"; values: number[] };
 
 const ALIAS_TO_CRON: Record<string, string> = {
   "@hourly": "0 * * * *",
@@ -76,7 +85,7 @@ const FIELD_LIMITS = {
 } as const;
 
 const SUPPORTED_HINT =
-  "Supported subset: `*`, single integers (`5`), and step-on-star (`*/N`). " +
+  "Supported subset: `*`, single integers (`5`), step-on-star (`*/N`), and comma lists (`7,37`). " +
   "Aliases: `@hourly`, `@daily`, `@weekly`, `@monthly`. " +
   "Lists, ranges, and named days/months are not supported.";
 
@@ -151,6 +160,23 @@ function parseField(raw: string, name: string, limit: { min: number; max: number
       );
     }
     return { kind: "value", value };
+  }
+
+  // Comma-separated list: `7,37` or `0,15,30,45`. Each element must be an
+  // integer within [limit.min, limit.max]. Duplicates and unsorted input
+  // are accepted but the parsed form is deduped + ascending so downstream
+  // consumers can rely on a canonical shape.
+  if (/^\d+(,\d+)+$/.test(raw)) {
+    const values = [...new Set(raw.split(",").map((s) => Number(s)))].sort((a, b) => a - b);
+    for (const v of values) {
+      if (!Number.isInteger(v) || v < limit.min || v > limit.max) {
+        throw new UsageError(
+          `Invalid ${name} list value "${v}" in schedule "${original}" (allowed ${limit.min}-${limit.max}).`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+    }
+    return { kind: "list", values };
   }
 
   throw new UsageError(
@@ -244,6 +270,13 @@ function rejectStepInsideCalendar(field: ScheduleField, name: string, spec: Sche
       `Schedule "${spec.raw}" uses step (${name} = */N) in a position macOS launchd cannot express. ${SUPPORTED_HINT}`,
       "INVALID_FLAG_VALUE",
       "Either restrict the step to the minute or hour field only, or rewrite the schedule with concrete values.",
+    );
+  }
+  if (field.kind === "list") {
+    throw new UsageError(
+      `Schedule "${spec.raw}" uses comma list (${name} = a,b,...) which macOS launchd cannot express as a single trigger. ${SUPPORTED_HINT}`,
+      "INVALID_FLAG_VALUE",
+      "Either install one task per list element, or rewrite the schedule with a step (`*/N`) or single value.",
     );
   }
 }
