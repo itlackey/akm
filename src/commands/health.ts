@@ -40,6 +40,14 @@ export interface ImproveHealthMetrics {
   skipped: number;
   skipReasons: Record<string, number>;
   plannedRefs: number;
+  /**
+   * Refs the planner dropped up-front because no enabled pass on the active
+   * profile would accept them (e.g. `script:*` for reflect+distill). Sourced
+   * from `improve_runs.result_json.profileFilteredRefs[]`. Wired 2026-05-27
+   * after the planner pre-filter at improve.ts:collectEligibleRefs landed
+   * in commit 0e9f283 but the metric reader was missed.
+   */
+  profileFilteredRefs: number;
   actions: {
     /**
      * Reflect action outcomes split by mode. Sourced from improve_runs.result_json
@@ -456,6 +464,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     skipped: 0,
     skipReasons: {},
     plannedRefs: 0,
+    profileFilteredRefs: 0,
     actions: {
       reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0, skippedByReason: {} },
       distill: {
@@ -583,6 +592,12 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   // plannedRefs (array of {ref, reason})
   const plannedRefs = result.plannedRefs;
   if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
+
+  // profileFilteredRefs (array of {ref, reason}) — 2026-05-27: pre-filter
+  // bucket from `collectEligibleRefs` so the metric reflects work the
+  // planner dropped before signal-delta / per-pass dispatch.
+  const profileFilteredRefs = result.profileFilteredRefs;
+  if (Array.isArray(profileFilteredRefs)) metrics.profileFilteredRefs += profileFilteredRefs.length;
 
   // actions: split reflect / distill by outcome, count others.
   const actions = result.actions;
@@ -830,6 +845,7 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
  */
 function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetrics): void {
   dst.plannedRefs += src.plannedRefs;
+  dst.profileFilteredRefs += src.profileFilteredRefs;
   dst.actions.reflect.ok += src.actions.reflect.ok;
   dst.actions.reflect.failed += src.actions.reflect.failed;
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;

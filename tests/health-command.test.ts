@@ -237,6 +237,13 @@ describe("akmHealth", () => {
     // Dry-run was excluded — plannedRefs is 3 + 1, not 999+.
     expect(result.improve.plannedRefs).toBe(4);
 
+    // 2026-05-27: profileFilteredRefs aggregation. Fixtures above don't
+    // populate this field, so the metric stays at 0 — but it must exist
+    // on the result so consumers can read it. Regression for the planner
+    // pre-filter (0e9f283) whose envelope field was written but never
+    // surfaced through the metric (audit found 774/24h invisible).
+    expect(result.improve.profileFilteredRefs).toBe(0);
+
     // Reflect outcome split.
     expect(result.improve.actions.reflect.ok).toBe(1);
     expect(result.improve.actions.reflect.failed).toBe(1);
