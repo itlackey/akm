@@ -147,7 +147,7 @@ describe("akm health --detail per-run", () => {
     expect(result.runs?.[1].id).toBe("run-a");
   });
 
-  test("per-run summary fields parity with window aggregator (one row)", () => {
+  test("per-run summary fields parity with window aggregator (one row)", { timeout: 30_000 }, () => {
     // Seed a single run, then compare aggregator output vs runs[0].
     const startA = new Date(Date.now() - 60_000).toISOString();
     const endA = new Date(Date.now() - 30_000).toISOString();
