@@ -616,6 +616,7 @@ describe("akmHealth", () => {
       validatorRejected: 0,
       configDisabled: 0,
       skipped: 0,
+      skippedByReason: {},
       deferred: 0,
       deferredByReason: {},
     });

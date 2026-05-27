@@ -105,6 +105,27 @@ export interface ImproveHealthMetrics {
       configDisabled: number;
       skipped: number;
       /**
+       * Breakdown of `skipped` distill actions by sub-reason. Sourced from
+       * `actions[].result.reason` for `mode === "distill-skipped"` entries.
+       * Mirrors {@link reflect.skippedByReason} (commit `b3c2328`) so per-
+       * reason tuning is possible. Reasons observed in production:
+       * `no new signal since last proposal`, `distill signal-delta`,
+       * `derived-memory-reflect-skipped`, `type-filter`, `raw-wiki`,
+       * `process-disabled`, `pending proposal exists`,
+       * `distill reject grace window`, `memory requires recent feedback signal`.
+       * Totals here should match `skipped`. Pre-2026-05-27 these 7+ reasons
+       * collapsed into a single counter; 62 539 events/7d on `release/0.8.0`
+       * had no sub-reason visibility — see
+       * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md` §3.
+       *
+       * TODO(naming): `distill.skipped` is the SYNTHETIC pre-loop skip
+       * counter; the REAL "LLM was called and returned skipped" counter is
+       * `distill.deferred`. The names are swapped from intuition. The deep
+       * analysis report (P2 follow-up) flagged the rename as a separate,
+       * out-of-scope cleanup.
+       */
+      skippedByReason: Record<string, number>;
+      /**
        * Distill actions where the planner produced a result with
        * `outcome: "skipped"` — i.e. the LLM was either bypassed by an
        * input-type guard (`recursive_lesson_input`), resolved a destination
@@ -445,6 +466,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
         validatorRejected: 0,
         configDisabled: 0,
         skipped: 0,
+        skippedByReason: {},
         deferred: 0,
         deferredByReason: {},
       },
@@ -637,9 +659,13 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
           }
           break;
         }
-        case "distill-skipped":
+        case "distill-skipped": {
           metrics.actions.distill.skipped += 1;
+          const r = action.result as Record<string, unknown> | undefined;
+          const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
+          metrics.actions.distill.skippedByReason[reason] = (metrics.actions.distill.skippedByReason[reason] ?? 0) + 1;
           break;
+        }
         case "memory-prune":
           metrics.actions.memoryPrune += 1;
           break;
@@ -819,6 +845,9 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.distill.validatorRejected += src.actions.distill.validatorRejected;
   dst.actions.distill.configDisabled += src.actions.distill.configDisabled;
   dst.actions.distill.skipped += src.actions.distill.skipped;
+  for (const [reason, count] of Object.entries(src.actions.distill.skippedByReason)) {
+    dst.actions.distill.skippedByReason[reason] = (dst.actions.distill.skippedByReason[reason] ?? 0) + count;
+  }
   dst.actions.distill.deferred += src.actions.distill.deferred;
   for (const [reason, count] of Object.entries(src.actions.distill.deferredByReason)) {
     dst.actions.distill.deferredByReason[reason] = (dst.actions.distill.deferredByReason[reason] ?? 0) + count;

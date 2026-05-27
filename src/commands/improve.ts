@@ -65,7 +65,8 @@ import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInp
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { type AkmExtractResult, akmExtract } from "./extract";
-import { resolveImproveProfile, shouldSkipRef } from "./improve-profiles";
+import type { ImproveProfileConfig } from "./improve-profiles";
+import { isProfileFilteredForAllPasses, resolveImproveProfile, shouldSkipRef } from "./improve-profiles";
 import { akmLint } from "./lint/index";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
@@ -165,7 +166,7 @@ export interface AkmImproveOptions {
 
 export interface ImproveEligibleRef {
   ref: string;
-  reason: "scope-ref" | "scope-type" | "memory-cleanup";
+  reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
 }
 
 export interface ImproveActionResult {
@@ -220,6 +221,19 @@ export interface AkmImproveResult {
   };
   memoryCleanup?: ImproveMemoryCleanupResult;
   plannedRefs: ImproveEligibleRef[];
+  /**
+   * Refs the planner considered but excluded because every per-ref pass on
+   * the active profile (reflect + distill) would refuse them. Additive
+   * field — pre-2026-05-27 these refs went into `plannedRefs` and produced
+   * 2× synthetic skip actions per run. See
+   * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
+   *
+   * Each ref has its `reason` set to `"profile_filtered_all_passes"`. The
+   * audit trail is also emitted as one `improve_skipped` event per ref.
+   * Omitted entirely when no refs were filtered (keeps the envelope tidy
+   * for stashes whose profile accepts every indexed type).
+   */
+  profileFilteredRefs?: ImproveEligibleRef[];
   actions?: ImproveActionResult[];
   validationFailures?: Array<{ ref: string; reason: string }>;
   schemaRepairs?: Array<{
@@ -386,9 +400,29 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
 async function collectEligibleRefs(
   scope: { mode: "all" | "type" | "ref"; value?: string },
   stashDir?: string,
+  improveProfile?: ImproveProfileConfig,
 ): Promise<{
   plannedRefs: ImproveEligibleRef[];
   memorySummary: { eligible: number; derived: number };
+  /**
+   * Refs that were considered for planning but excluded because EVERY per-ref
+   * pass on the active profile (reflect + distill) would refuse them.
+   *
+   * Mirrors the 2026-05-21 `.derived` precedent (improve.ts:447–467) which
+   * pre-filters churn-only refs. The 2026-05-27 deep analysis
+   * (`/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`)
+   * showed 18 refs/run × 24 runs/day × 2 synthetic actions each were
+   * dominating the metric stream (62 539 `distill-skipped` events in 7d;
+   * 99.07% of `actions[]`). Excluding them at the planner moves the audit
+   * trail to a single `improve_skipped` event per ref with reason
+   * `profile_filtered_all_passes`, emitted by the caller once `eventsCtx` is
+   * available.
+   *
+   * Empty when scope.mode === "ref" (user explicitly named the ref — intent
+   * overrides profile-eligibility) or when no profile was passed (legacy
+   * callers).
+   */
+  profileFilteredRefs: ImproveEligibleRef[];
 }> {
   if (scope.mode === "ref" && scope.value) {
     const parsed = parseAssetRef(scope.value);
@@ -398,6 +432,7 @@ async function collectEligibleRefs(
       return {
         plannedRefs: [],
         memorySummary: { eligible: 0, derived: 0 },
+        profileFilteredRefs: [],
       };
     }
     return {
@@ -406,6 +441,7 @@ async function collectEligibleRefs(
         eligible: parsed.type === "memory" ? 1 : 0,
         derived: parsed.type === "memory" && parsed.name.endsWith(".derived") ? 1 : 0,
       },
+      profileFilteredRefs: [],
     };
   }
 
@@ -413,10 +449,10 @@ async function collectEligibleRefs(
   try {
     sources = resolveSourceEntries(stashDir);
   } catch {
-    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
+    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
   }
   if (sources.length === 0) {
-    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
+    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
   }
 
   // Only operate on writable sources — never mutate read-only registry caches
@@ -439,6 +475,7 @@ async function collectEligibleRefs(
       return isEntryInWritableSource(indexed.stashDir, indexed.filePath, writableDirSet);
     });
     const planned = new Map<string, ImproveEligibleRef>();
+    const profileFiltered = new Map<string, ImproveEligibleRef>();
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
@@ -451,12 +488,26 @@ async function collectEligibleRefs(
       // 2026-05-21: 11 derived refs re-planned every hour during idle periods.
       // The cleanup phase (analyzeMemoryCleanup) inspects derived memories
       // independently of `plannedRefs`, so dropping them here loses nothing.
-      if (!isDerived && !planned.has(ref)) {
-        planned.set(ref, {
-          ref,
-          reason:
-            scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
-        });
+      if (!isDerived && !planned.has(ref) && !profileFiltered.has(ref)) {
+        // 2026-05-27: extend the .derived precedent to profile-incompatible
+        // refs. If every per-ref pass (reflect + distill) on the active
+        // profile would refuse this ref, drop it from `plannedRefs`. The
+        // caller emits `improve_skipped { reason: profile_filtered_all_passes }`
+        // once `eventsCtx` is available so the audit trail is preserved in a
+        // single event per ref instead of 2× synthetic actions per run.
+        // Background: see /tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md
+        if (improveProfile && isProfileFilteredForAllPasses(ref, improveProfile)) {
+          profileFiltered.set(ref, {
+            ref,
+            reason: "profile_filtered_all_passes",
+          });
+        } else {
+          planned.set(ref, {
+            ref,
+            reason:
+              scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
+          });
+        }
       }
       if (indexed.entry.type === "memory") {
         memoryEligible += 1;
@@ -466,12 +517,13 @@ async function collectEligibleRefs(
     return {
       plannedRefs: [...planned.values()],
       memorySummary: { eligible: memoryEligible, derived: memoryDerived },
+      profileFilteredRefs: [...profileFiltered.values()],
     };
   } catch (error) {
     // The bun-test isolation guard must never be downgraded to "empty plan".
     rethrowIfTestIsolationError(error);
     if (error instanceof NotFoundError || error instanceof Error) {
-      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
+      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
     }
     throw error;
   } finally {
@@ -756,7 +808,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }
   }
 
-  const { plannedRefs, memorySummary } = await collectEligibleRefs(scope, options.stashDir);
+  const { plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefs(
+    scope,
+    options.stashDir,
+    improveProfile,
+  );
   const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
 
   // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
@@ -790,6 +846,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memorySummary,
       ...(memoryCleanupPlan ? { memoryCleanup: shapeMemoryCleanup(memoryCleanupPlan) } : {}),
       plannedRefs,
+      ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
     };
     return result;
   }
@@ -874,6 +931,23 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     rethrowIfTestIsolationError(err);
     // If we cannot open state.db up-front, fall back to per-call opens.
     eventsCtx = {};
+  }
+
+  // 2026-05-27: emit `improve_skipped` audit events for refs the planner
+  // pre-filtered (reflect AND distill both refuse them under the active
+  // profile). One event per ref so the existing improve_skipped histogram in
+  // `health.ts#improveSummary.skipReasons` accumulates the right count under
+  // the new `profile_filtered_all_passes` reason code. See
+  // `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
+  for (const filtered of profileFilteredRefs) {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: filtered.ref,
+        metadata: { reason: "profile_filtered_all_passes" },
+      },
+      eventsCtx,
+    );
   }
 
   try {
@@ -986,6 +1060,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         : {}),
       plannedRefs: preparation.actionableRefs,
+      ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
       actions: finalActions,
       ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),
       ...(preparation.schemaRepairs.length > 0 ? { schemaRepairs: preparation.schemaRepairs } : {}),

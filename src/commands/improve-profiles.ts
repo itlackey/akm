@@ -167,3 +167,25 @@ export function shouldSkipRef(
 
   return { skip: false, reason: "" };
 }
+
+/**
+ * Planner-level pre-filter: return `true` when every per-ref improve pass that
+ * participates in the in-loop dispatch (today: `reflect` and `distill`) would
+ * refuse this ref under the active profile. Such refs cannot produce any work
+ * downstream — they only generate synthetic skip actions and inflate
+ * `plannedRefs` by a constant factor per cron run.
+ *
+ * Companion to `shouldSkipRef`. The 2026-05-27 planner/profile/metrics deep
+ * analysis (`/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`)
+ * documents the 99.07% synthetic-skip emission rate this pre-filter eliminates.
+ *
+ * NOTE: passes that operate on their own candidate set (consolidate,
+ * memoryInference, graphExtraction) are deliberately excluded — they do not
+ * iterate `plannedRefs` per-ref, so a ref being profile-incompatible at the
+ * reflect+distill layer says nothing about their work.
+ */
+export function isProfileFilteredForAllPasses(ref: string, profile: ImproveProfileConfig): boolean {
+  const reflectSkip = shouldSkipRef(ref, "reflect", profile);
+  const distillSkip = shouldSkipRef(ref, "distill", profile);
+  return reflectSkip.skip && distillSkip.skip;
+}

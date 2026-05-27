@@ -185,18 +185,22 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     const reflectedRefs = reflectCalls.map((c) => c.ref ?? "");
     expect(reflectedRefs.filter((r) => r.startsWith("script:"))).toEqual([]);
 
-    // Core assertion 2: the script ref action is recorded as reflect-skipped.
+    // Core assertion 2: 2026-05-27 planner pre-filter — script:* refs are
+    // refused by BOTH reflect and distill on the default profile, so the
+    // planner drops them before queueing. They MUST NOT appear in
+    // `plannedRefs` and they MUST NOT produce any per-ref action (no
+    // reflect-skipped, no distill-skipped). Previously each such ref produced
+    // 2× synthetic skip actions per cron run; that audit trail is now a
+    // single `improve_skipped` event with reason `profile_filtered_all_passes`
+    // plus an envelope entry under `profileFilteredRefs`.
+    const scriptRefsInPlan = (result.plannedRefs ?? []).filter((p) => p.ref === "script:deploy.sh");
+    expect(scriptRefsInPlan).toEqual([]);
     const scriptActions = (result.actions ?? []).filter((a) => a.ref === "script:deploy.sh");
-    expect(scriptActions.length).toBeGreaterThan(0);
-    const reflectFailedActions = scriptActions.filter((a) => a.mode === "reflect-failed");
-    expect(reflectFailedActions).toEqual([]);
-    const reflectSkippedActions = scriptActions.filter((a) => a.mode === "reflect-skipped");
-    expect(reflectSkippedActions.length).toBeGreaterThan(0);
-    // Reason must be "type-filter" (profile-driven) — not a generic failure.
-    // (Previously "unsupported-type" — unified to "type-filter" with the profile system.)
-    for (const action of reflectSkippedActions) {
-      expect((action.result as { reason?: string }).reason).toBe("type-filter");
-    }
+    expect(scriptActions).toEqual([]);
+    const profileFiltered = result.profileFilteredRefs ?? [];
+    const scriptFiltered = profileFiltered.filter((p) => p.ref === "script:deploy.sh");
+    expect(scriptFiltered.length).toBe(1);
+    expect(scriptFiltered[0]?.reason).toBe("profile_filtered_all_passes");
 
     // Core assertion 3: the allowed-type skill ref IS reflected normally (type
     // guard must not block allowed types).
