@@ -339,6 +339,9 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           skippedRateLimited: 0,
           skippedBudget: 0,
           unaccounted: 0,
+          cacheHits: 0,
+          skippedChildExists: 0,
+          skippedAborted: 0,
           warnings: [],
         };
       },
@@ -346,18 +349,25 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
         await new Promise((r) => setTimeout(r, 5));
         return {
           schemaVersion: 1 as const,
+          considered: 0,
+          extracted: 0,
+          totalEntities: 0,
+          totalRelations: 0,
+          written: false,
           quality: {
+            consideredFiles: 0,
             extractedFiles: 0,
             emptyFiles: 0,
             failedFiles: 0,
             extractionCoverage: 0,
             density: 0,
             entityCount: 0,
+            relationCount: 0,
             genericEntityRatio: 0,
             lowConfidenceRatio: 0,
           },
           files: [],
-          telemetry: { failureCount: 0, failuresByReason: {} },
+          telemetry: { failureCount: 0, failuresByReason: {}, cacheHits: 0, cacheMisses: 0, truncationCount: 0 },
         };
       },
     });

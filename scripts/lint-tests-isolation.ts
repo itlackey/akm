@@ -41,6 +41,7 @@ const ALLOWED_FILES = new Set<string>([
   // deferred — the env vars are set via per-subprocess env objects, not
   // process.env mutation in the caller process.
   "tests/e2e.test.ts",
+  "tests/integration/e2e.test.ts",
 
   // workflow-path-escape.test.ts: sets AKM_STASH_DIR per-test for symlink
   // path testing; each test creates a specific stash/symlink pair and the
@@ -176,6 +177,19 @@ const ALLOWED_FILES = new Set<string>([
   "tests/state-db/improve-runs.test.ts",
   "tests/tasks-legacy-md-warning.test.ts",
   "tests/test-isolation-no-swallow.test.ts",
+
+  // The following files were not yet migrated (grandfathered alongside the
+  // QW3 batch above). Each uses mkdtempSync + direct process.env assignment;
+  // migration is deferred to a follow-up PR.
+  "tests/commands/improve-memory-cleanup2.test.ts",
+  "tests/commands/improve-memory-misc.test.ts",
+  "tests/commands/improve-planner-profile-prefilter.test.ts",
+  "tests/commands/health-distill-skipped-by-reason.test.ts",
+  "tests/extract-command.test.ts",
+  "tests/extract-session-tracking.test.ts",
+  "tests/health-command-window.test.ts",
+  "tests/improve-eligibility.test.ts",
+  "tests/integration/indexer.test.ts",
 ]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -90,7 +90,7 @@ describe("akmHealth: distill.skippedByReason histogram", () => {
   test("collects sub-reasons from distill-skipped actions and totals match the scalar", () => {
     // Seed an improve_completed event so the run window is non-empty.
     const tsIso = new Date(Date.now() - 60_000).toISOString();
-    appendEvent({ eventType: "improve_completed", ts: tsIso, metadata: {} });
+    appendEvent({ eventType: "improve_completed", metadata: {} });
 
     insertImproveRun(
       {
@@ -133,7 +133,7 @@ describe("akmHealth: distill.skippedByReason histogram", () => {
 
   test("scalar `distill.skipped` is preserved (backwards-compat)", () => {
     const tsIso = new Date(Date.now() - 60_000).toISOString();
-    appendEvent({ eventType: "improve_completed", ts: tsIso, metadata: {} });
+    appendEvent({ eventType: "improve_completed", metadata: {} });
     insertImproveRun(
       {
         schemaVersion: 1,

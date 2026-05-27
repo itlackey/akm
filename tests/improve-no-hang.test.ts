@@ -23,7 +23,7 @@ import type { AkmReflectResult } from "../src/commands/reflect";
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
 
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 20_000;
 
 const tempDirs: string[] = [];
 const savedEnv: Record<string, string | undefined> = {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../src/core/config";
+import { setQuiet } from "../src/core/warn";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 mock.module("@huggingface/transformers", () => ({
@@ -200,6 +201,9 @@ describe("dimension consistency on model change", () => {
     // Simulate a 384-dim vector (old model) vs 768-dim vector (new model)
     const vec384 = Array(384).fill(1 / Math.sqrt(384));
     const vec768 = Array(768).fill(1 / Math.sqrt(768));
+    // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
+    // warn() calls from cosineSimilarity reach the patched console.warn.
+    setQuiet(false);
     try {
       console.warn = (...args: unknown[]) => {
         warnings.push(args.map(String).join(" "));
@@ -209,6 +213,7 @@ describe("dimension consistency on model change", () => {
       expect(warnings.some((warning) => warning.includes("vector dimension mismatch"))).toBe(true);
     } finally {
       console.warn = originalWarn;
+      setQuiet(true); // restore harness default
     }
   });
 

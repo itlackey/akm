@@ -150,12 +150,7 @@ describe("runAutoAcceptGate — threshold decisions", () => {
   test("mixed batch: each candidate routed independently", async () => {
     const promoteFn = mock(async (_stash, _cfg, id: string) => makePromotion(id));
     const result = await runAutoAcceptGate(
-      [
-        candidate("low", 0.7),
-        candidate("missing", undefined),
-        candidate("high", 0.95),
-        candidate("exact", 0.9),
-      ],
+      [candidate("low", 0.7), candidate("missing", undefined), candidate("high", 0.95), candidate("exact", 0.9)],
       baseConfig({ globalThreshold: 90 }),
       promoteFn as never,
     );
@@ -220,9 +215,7 @@ describe("resolveExtractConfidence", () => {
   });
 
   test("frontmatter takes precedence over top-level", () => {
-    expect(
-      resolveExtractConfidence({ payload: { frontmatter: { confidence: 0.91 } }, confidence: 0.5 }),
-    ).toBe(0.91);
+    expect(resolveExtractConfidence({ payload: { frontmatter: { confidence: 0.91 } }, confidence: 0.5 })).toBe(0.91);
   });
 });
 

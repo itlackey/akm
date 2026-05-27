@@ -64,7 +64,7 @@ describe("output-shape registry exhaustiveness", () => {
       // "output shape not registered" — actual shape transformation is
       // covered by other tests.
       const probe: Record<string, unknown> = { ok: true };
-      expect(() => shapeForCommand(name, probe, "default")).not.toThrow(/output shape not registered/);
+      expect(() => shapeForCommand(name, probe, "brief")).not.toThrow(/output shape not registered/);
     });
   }
 });

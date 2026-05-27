@@ -147,7 +147,7 @@ describe("akm health --detail per-run", () => {
     expect(result.runs?.[1].id).toBe("run-a");
   });
 
-  test("per-run summary fields parity with window aggregator (one row)", { timeout: 30_000 }, () => {
+  test("per-run summary fields parity with window aggregator (one row)", () => {
     // Seed a single run, then compare aggregator output vs runs[0].
     const startA = new Date(Date.now() - 60_000).toISOString();
     const endA = new Date(Date.now() - 30_000).toISOString();
@@ -233,7 +233,7 @@ describe("akm health --detail per-run", () => {
     expect(row.memoryInference.yieldRate).toBe(aggregate.improve.memoryInference.yieldRate);
     expect(row.graphExtraction.entities).toBe(aggregate.improve.graphExtraction.entities);
     expect(row.graphExtraction.cacheHitRate).toBe(aggregate.improve.graphExtraction.cacheHitRate);
-  });
+  }, 30_000);
 
   test("invalid --detail value raises UsageError", () => {
     expect(() => akmHealth({ since: "7d", detail: "bogus" as unknown as "brief" })).toThrow(

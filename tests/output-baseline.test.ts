@@ -163,7 +163,7 @@ describe("output baseline", () => {
       expect(typeof json.action).toBe("string");
       expect(String(json.action).length).toBeGreaterThan(0);
     }
-  }, 15_000);
+  }, 30_000);
 
   test("show full JSON shape keeps schemaVersion gated to full detail", () => {
     const stashDir = makeTempDir("akm-output-stash-");

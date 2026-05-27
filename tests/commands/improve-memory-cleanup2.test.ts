@@ -8,20 +8,13 @@ import type { AkmReflectResult } from "../../src/commands/reflect";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
+import { setQuiet } from "../../src/core/warn";
 import type { GraphExtractionResult } from "../../src/indexer/graph-extraction";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../src/indexer/memory-inference";
 
+// Temp dirs created per-test; cleaned up in afterEach.
 const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  AKM_DATA_DIR: process.env.AKM_DATA_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  AKM_STATE_DIR: process.env.AKM_STATE_DIR,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -79,20 +72,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.AKM_DATA_DIR === undefined) delete process.env.AKM_DATA_DIR;
-  else process.env.AKM_DATA_DIR = savedEnv.AKM_DATA_DIR;
-  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
-  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-  if (savedEnv.AKM_STATE_DIR === undefined) delete process.env.AKM_STATE_DIR;
-  else process.env.AKM_STATE_DIR = savedEnv.AKM_STATE_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  // Env-var restoration is handled by the global harness (_preload.ts).
+  // Only clean up temp dirs created in this test.
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -186,7 +167,7 @@ describe("akm improve memory cleanup", () => {
     });
     expect(withSignal.plannedRefs).toEqual([{ ref: "memory:alpha", reason: "scope-type" }]);
     expect(reflectedWithSignal).toEqual(["memory:alpha"]);
-  });
+  }, 60_000);
 
   test("derived memories never enter plannedRefs (skip-the-skip churn fix)", async () => {
     // Regression: prior to 2026-05-21, `.derived` memories were enqueued in
@@ -553,6 +534,10 @@ describe("akm improve memory cleanup", () => {
 
     appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
 
+    // setQuiet(false): the harness sets quiet=true by default; opt back into
+    // noisy mode so that info()/warn() calls from production code reach the
+    // warnSpy and the progress-line assertions below can see them.
+    setQuiet(false);
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     try {
       await akmImprove({
@@ -628,6 +613,7 @@ describe("akm improve memory cleanup", () => {
       expect(lines.some((line) => line.includes("3/3") && line.includes("release.md"))).toBe(true);
     } finally {
       warnSpy.mockRestore();
+      setQuiet(true); // restore harness default before tripwire check
     }
   });
 
@@ -714,7 +700,7 @@ describe("akm improve memory cleanup", () => {
   // 4–6 s, which exceeds Bun's 5 s default per-test timeout under full-suite
   // load. Give it a comfortable margin so it stays green when the suite is
   // warm and the system is busy.
-  test("stale consolidate journal error gives actionable improve recovery guidance", { timeout: 30_000 }, async () => {
+  test("stale consolidate journal error gives actionable improve recovery guidance", async () => {
     const stashDir = makeTempDir("akm-improve-stale-journal-abort-");
     fs.mkdirSync(path.join(stashDir, ".akm"), { recursive: true });
     fs.writeFileSync(
@@ -778,7 +764,7 @@ describe("akm improve memory cleanup", () => {
         }),
       }),
     ).rejects.not.toThrow("akm consolidate --clean");
-  });
+  }, 30_000);
 
   test("consolidate recovery clean removes stale journal and allows improve to continue", async () => {
     const stashDir = makeTempDir("akm-improve-stale-journal-clean-");

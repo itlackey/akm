@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/core/config";
+import { setQuiet } from "../src/core/warn";
 import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/llm/embedder";
 
 let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
@@ -327,6 +328,9 @@ describe("local embedder pipeline setup", () => {
 
     pipelineImpl = pipelineMock;
 
+    // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
+    // warn() calls from production code reach the warnSpy.
+    setQuiet(false);
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 
     try {
@@ -340,6 +344,7 @@ describe("local embedder pipeline setup", () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
       warnSpy.mockRestore();
+      setQuiet(true); // restore harness default
     }
   });
 
@@ -356,6 +361,9 @@ describe("local embedder pipeline setup", () => {
 
     pipelineImpl = pipelineMock;
 
+    // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
+    // warn() calls from production code reach the warnSpy.
+    setQuiet(false);
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 
     try {
@@ -369,6 +377,7 @@ describe("local embedder pipeline setup", () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
       warnSpy.mockRestore();
+      setQuiet(true); // restore harness default
     }
   });
 });

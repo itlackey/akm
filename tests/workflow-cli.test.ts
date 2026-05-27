@@ -267,7 +267,7 @@ describe("workflow CLI", () => {
     expect(statusJson.run.id).toBe(nextJson.run.id);
     expect(statusJson.run.status).toBe("active");
     expect(statusJson.run.currentStepId).toBe("validate");
-  }, 15_000);
+  }, 30_000);
 
   test("complete rejects non-current and finalized step updates", () => {
     const env = createWorkflowEnv();

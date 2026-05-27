@@ -103,11 +103,9 @@ export async function runAutoAcceptGate(
     return result;
   }
 
-  const effectiveThreshold =
-    Math.max(cfg.globalThreshold, cfg.minimumThreshold ?? 0) / 100;
+  const effectiveThreshold = Math.max(cfg.globalThreshold, cfg.minimumThreshold ?? 0) / 100;
 
-  const resolvedConfig: AkmConfig =
-    typeof cfg.config === "function" ? cfg.config() : cfg.config;
+  const resolvedConfig: AkmConfig = typeof cfg.config === "function" ? cfg.config() : cfg.config;
 
   for (const candidate of candidates) {
     const { proposalId, confidence } = candidate;
@@ -126,9 +124,7 @@ export async function runAutoAcceptGate(
           metadata: {
             proposalId: promotion.proposal.id,
             source: promotion.proposal.source,
-            ...(promotion.proposal.sourceRun !== undefined
-              ? { sourceRun: promotion.proposal.sourceRun }
-              : {}),
+            ...(promotion.proposal.sourceRun !== undefined ? { sourceRun: promotion.proposal.sourceRun } : {}),
             assetPath: promotion.assetPath,
             autoAccept: true,
             confidence,
@@ -162,9 +158,10 @@ export async function runAutoAcceptGate(
  * Extract stores confidence at `payload.frontmatter.confidence` (set by
  * extract.ts when the LLM response is parsed), not at the top-level field.
  */
-export function resolveExtractConfidence(
-  proposal: { payload: { frontmatter?: unknown }; confidence?: number },
-): number | undefined {
+export function resolveExtractConfidence(proposal: {
+  payload: { frontmatter?: unknown };
+  confidence?: number;
+}): number | undefined {
   const fm = proposal.payload.frontmatter as Record<string, unknown> | undefined;
   const fmConf = fm?.confidence;
   if (typeof fmConf === "number") return fmConf;

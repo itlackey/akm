@@ -14,6 +14,7 @@ import {
 } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
+import { setQuiet } from "../src/core/warn";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -297,6 +298,9 @@ describe("loadConfig", () => {
 
       const messages: string[] = [];
       const originalWarn = console.warn;
+      // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
+      // warn() inside warnIfProjectConfigPresent reaches the patched console.warn.
+      setQuiet(false);
       console.warn = (...args: unknown[]) => {
         messages.push(args.map(String).join(" "));
       };
@@ -305,6 +309,7 @@ describe("loadConfig", () => {
         loadConfig();
       } finally {
         console.warn = originalWarn;
+        setQuiet(true); // restore harness default
       }
       // Warning mentions deprecation + project-level + that the file is ignored.
       expect(messages.some((m) => m.includes("DEPRECATED") && m.includes("project-level"))).toBe(true);

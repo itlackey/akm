@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { migrateConfigShape } from "../../src/cli/config-migrate";
+import { setQuiet } from "../../src/core/warn";
 
 describe("migrateConfigShape (CLI wrapper)", () => {
   test("is idempotent on already-migrated configs", () => {
@@ -225,12 +226,16 @@ describe("migrateConfigShape (CLI wrapper)", () => {
       console.error = (...args: unknown[]) => {
         messages.push(args.map((a) => String(a)).join(" "));
       };
+      // The harness sets quiet=true by default; opt into noisy mode so that
+      // warn() calls inside migrateConfigShape reach the patched console.warn.
+      setQuiet(false);
       try {
         const result = fn();
         return { result, messages };
       } finally {
         console.warn = originalWarn;
         console.error = originalError;
+        setQuiet(true); // restore harness default
       }
     }
 

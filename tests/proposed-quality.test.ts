@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
+import { setQuiet } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { _resetUnknownQualityWarnings, isProposedQuality, validateStashEntry } from "../src/indexer/metadata";
 import type { SourceSearchHit } from "../src/sources/types";
@@ -178,6 +179,9 @@ describe("Issue #224: unknown quality values warn once and remain searchable", (
     console.warn = (...args: unknown[]) => {
       calls.push(args.map(String).join(" "));
     };
+    // setQuiet(false): harness sets quiet=true by default; opt into noisy mode
+    // so warn() calls from production code reach the patched console.warn.
+    setQuiet(false);
     try {
       _resetUnknownQualityWarnings();
 
@@ -206,6 +210,7 @@ describe("Issue #224: unknown quality values warn once and remain searchable", (
       expect(stillTwo).toBe(2);
     } finally {
       console.warn = originalWarn;
+      setQuiet(true); // restore harness default
     }
   });
 

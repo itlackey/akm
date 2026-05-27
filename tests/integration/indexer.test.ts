@@ -5,6 +5,7 @@ import path from "node:path";
 import type { EmbeddingConnectionConfig } from "../../src/core/config";
 import { saveConfig } from "../../src/core/config";
 import { getDbPath } from "../../src/core/paths";
+import { setQuiet } from "../../src/core/warn";
 import {
   closeDatabase,
   DB_VERSION,
@@ -632,6 +633,9 @@ test("akmIndex reports progress events and semantic-search verification details"
   globalThis.fetch = (async () => {
     throw new Error("TEST_EMBEDDING_ERROR");
   }) as unknown as typeof fetch;
+  // setQuiet(false): harness sets quiet=true by default; opt into noisy mode
+  // so warn() calls from production code reach the warnSpy.
+  setQuiet(false);
   const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 
   try {
@@ -672,6 +676,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     expect(result.verification.guidance).toContain("akm index --full --verbose");
   } finally {
     warnSpy.mockRestore();
+    setQuiet(true); // restore harness default
     globalThis.fetch = originalFetch;
   }
 });
