@@ -513,28 +513,56 @@ export function buildChunkPrompt(
 ): string {
   const start = memories[0] ? `memory:${memories[0].name}` : "";
   const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
-  const lines: string[] = [
-    `Source: ${sourceName}`,
-    `Chunk ${chunkIndex + 1} of ${totalChunks}, memories ${start}–${end}:`,
-    "",
-  ];
-  for (let i = 0; i < memories.length; i++) {
-    const m = memories[i];
+
+  // First pass: classify each memory's annotations + collect hot refs so a
+  // prominent top-of-prompt list can be emitted. 2026-05-27 controlled
+  // diagnostic (/tmp/akm-health-investigations/ministral-prompt-annotation-diagnostic.md)
+  // measured ministral-3-3b compliance:
+  //   - inline `(captureMode: hot)` only → 40% honored
+  //   - inline parens + top-of-prompt explicit list → 100% honored
+  // The `(already queued)` annotation tops out at ~60% regardless of
+  // format, so it stays inline-only here — a separate chunk-filter is
+  // the right approach for queued refs (deferred per user direction).
+  type MemoryAnnotation = { isHot: boolean; isAlreadyQueued: boolean; body: string };
+  const annotationsByIndex: MemoryAnnotation[] = [];
+  const hotRefs: string[] = [];
+  for (const m of memories) {
     let body = "";
     try {
       body = fs.readFileSync(m.filePath, "utf8");
     } catch {
       body = "(unreadable)";
     }
-
-    // Parse frontmatter once for both annotations.
     const parsed = parseFrontmatter(body);
     const isHot = parsed.data.captureMode === "hot";
-
-    // Body hash matches the deterministic dedup at line ~1510 — same
-    // body-only sha256 over post-frontmatter content.
     const bodyHash = createHash("sha256").update(parsed.content.trim(), "utf8").digest("hex");
     const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
+    annotationsByIndex.push({ isHot, isAlreadyQueued, body });
+    if (isHot) hotRefs.push(`memory:${m.name}`);
+  }
+
+  const lines: string[] = [
+    `Source: ${sourceName}`,
+    `Chunk ${chunkIndex + 1} of ${totalChunks}, memories ${start}–${end}:`,
+    "",
+  ];
+
+  // Top-of-prompt protection block for hot refs. Neutral phrasing — avoid
+  // op-words like "promote", "merge", "contradict" so the model doesn't
+  // accidentally treat the warning as a hint to use that op elsewhere
+  // (variant B leaked the word "contradict" into the control sample
+  // during the diagnostic).
+  if (hotRefs.length > 0) {
+    lines.push(
+      "⛔ DO NOT propose any `delete` operation for these refs — they are user-explicit (captureMode: hot) and the downstream guard refuses them regardless. Proposing delete for any of these only wastes tokens.",
+    );
+    for (const ref of hotRefs) lines.push(`  - ${ref}`);
+    lines.push("");
+  }
+
+  for (let i = 0; i < memories.length; i++) {
+    const m = memories[i];
+    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i];
 
     const annotations: string[] = [];
     if (isHot) annotations.push("captureMode: hot");

@@ -185,6 +185,63 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     expect(prompt).toContain("memory:hot-dup (captureMode: hot; already queued)");
   });
 
+  it("emits a top-of-prompt protection block listing hot refs (2026-05-27 diagnostic)", () => {
+    // Diagnostic at /tmp/akm-health-investigations/ministral-prompt-annotation-diagnostic.md
+    // measured ministral-3-3b's compliance with inline parens at 40% for
+    // captureMode:hot. Adding a prominent top-block jumps it to 100% in
+    // controlled tests. Block uses neutral phrasing (no op-words like
+    // "promote"/"merge"/"contradict") so the model doesn't accidentally
+    // treat the warning as a hint to use those ops on other memories.
+    const f1 = path.join(tempDir, "hot-1.md");
+    const f2 = path.join(tempDir, "hot-2.md");
+    const f3 = path.join(tempDir, "plain.md");
+    fs.writeFileSync(f1, "---\ncaptureMode: hot\n---\nBody 1.", "utf8");
+    fs.writeFileSync(f2, "---\ncaptureMode: hot\n---\nBody 2.", "utf8");
+    fs.writeFileSync(f3, "Plain body.", "utf8");
+
+    const prompt = buildChunkPrompt(
+      "/test/stash",
+      [
+        { name: "hot-1", filePath: f1, description: "", tags: [], stashDir: tempDir },
+        { name: "hot-2", filePath: f2, description: "", tags: [], stashDir: tempDir },
+        { name: "plain", filePath: f3, description: "", tags: [], stashDir: tempDir },
+      ],
+      0,
+      1,
+      500,
+    );
+
+    // Block exists, mentions delete (the targeted op), and lists both hot refs.
+    expect(prompt).toMatch(/⛔ DO NOT propose any `delete` operation for these refs/);
+    expect(prompt).toContain("  - memory:hot-1");
+    expect(prompt).toContain("  - memory:hot-2");
+    // Inline annotation is preserved — the top-block is additive, not a
+    // replacement.
+    expect(prompt).toContain("memory:hot-1 (captureMode: hot)");
+    // Block must precede the per-memory section so the model encounters
+    // the warning first.
+    expect(prompt.indexOf("⛔")).toBeLessThan(prompt.indexOf("[1] memory:hot-1"));
+    // Neutral phrasing: block must NOT contain op-words that could leak
+    // into the model's op-selection for control memories.
+    const block = prompt.slice(prompt.indexOf("⛔"), prompt.indexOf("[1]"));
+    expect(block).not.toMatch(/\bpromote\b/i);
+    expect(block).not.toMatch(/\bmerge\b/i);
+    expect(block).not.toMatch(/\bcontradict\b/i);
+  });
+
+  it("omits the top-of-prompt block when no hot refs are present", () => {
+    const f = path.join(tempDir, "plain.md");
+    fs.writeFileSync(f, "Plain body, no flags.", "utf8");
+    const prompt = buildChunkPrompt(
+      "/test/stash",
+      [{ name: "plain", filePath: f, description: "", tags: [], stashDir: tempDir }],
+      0,
+      1,
+      500,
+    );
+    expect(prompt).not.toContain("⛔");
+  });
+
   it("emits no annotation suffix when neither flag applies (regression — must not break existing prompt shape)", () => {
     const filePath = path.join(tempDir, "vanilla.md");
     fs.writeFileSync(filePath, "Vanilla memory.", "utf8");

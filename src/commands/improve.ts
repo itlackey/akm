@@ -29,6 +29,7 @@ import { getDbPath } from "../core/paths";
 import {
   createProposal,
   expireStaleProposals,
+  getProposal,
   isProposalSkipped,
   listProposals,
   promoteProposal,
@@ -1350,6 +1351,56 @@ async function runImprovePreparationStage(args: {
             dryRun: options.dryRun ?? false,
           });
           extractResults.push(result);
+
+          // 2026-05-27 auto-accept parity fix: the reflect branch at
+          // ~line 2160-2202 promotes proposals whose self-reported
+          // confidence >= autoAccept/100. The same gate was missing for
+          // extract — 286 extract proposals/day were being created with
+          // confidence and never auto-promoted, accumulating in the
+          // proposal queue at ~+286/day net growth. Extract stores
+          // confidence at `payload.frontmatter.confidence` (set at
+          // extract.ts:327), so we fetch each freshly-created proposal
+          // and apply the same threshold. Failures are non-fatal —
+          // surface a warning and leave the proposal pending so the
+          // reviewer can deal with it manually.
+          if (options.autoAccept !== undefined && primaryStashDir && !options.dryRun) {
+            const threshold = options.autoAccept / 100;
+            for (const proposalId of result.proposals) {
+              try {
+                const proposal = getProposal(primaryStashDir, proposalId);
+                const fm = proposal.payload.frontmatter as Record<string, unknown> | undefined;
+                const confidence = typeof fm?.confidence === "number" ? fm.confidence : undefined;
+                if (confidence === undefined || confidence < threshold) continue;
+                const cfg = options.config ?? loadConfig();
+                const promotion = await promoteProposal(primaryStashDir, cfg, proposal.id, {}, undefined);
+                appendEvent(
+                  {
+                    eventType: "promoted",
+                    ref: promotion.ref,
+                    metadata: {
+                      proposalId: promotion.proposal.id,
+                      source: promotion.proposal.source,
+                      ...(promotion.proposal.sourceRun !== undefined
+                        ? { sourceRun: promotion.proposal.sourceRun }
+                        : {}),
+                      assetPath: promotion.assetPath,
+                      autoAccept: true,
+                      confidence,
+                      threshold,
+                    },
+                  },
+                  eventsCtx,
+                );
+                info(
+                  `[improve] auto-accepted ${promotion.ref} (extract; confidence=${confidence.toFixed(2)} >= threshold=${threshold.toFixed(2)})`,
+                );
+              } catch (err) {
+                warn(
+                  `[improve] extract auto-accept failed for ${proposalId}: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            }
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           cleanupWarnings.push(`extract(${h.name}) failed: ${msg}`);
