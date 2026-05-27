@@ -44,12 +44,16 @@ export interface ConsolidateMergeOp {
   primary: string;
   secondaries: string[];
   mergeStrategy: string;
+  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
+  confidence?: number;
 }
 
 export interface ConsolidateDeleteOp {
   op: "delete";
   ref: string;
   reason: string;
+  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
+  confidence?: number;
 }
 
 export interface ConsolidatePromoteOp {
@@ -59,6 +63,8 @@ export interface ConsolidatePromoteOp {
   reason: string;
   /** One-sentence description for the new knowledge asset's frontmatter. */
   description?: string;
+  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
+  confidence?: number;
 }
 
 /**
@@ -74,6 +80,8 @@ export interface ConsolidateContradictOp {
   /** The memory that contradicts it. */
   contradictedByRef: string;
   reason: string;
+  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
+  confidence?: number;
 }
 
 export type ConsolidateOperation =
@@ -188,13 +196,15 @@ Rules:
 Return ONLY JSON (no prose, no code fences):
 {
   "operations": [
-    { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize" },
-    { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>" },
-    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>", "description": "<one sentence describing the new knowledge asset>" },
-    { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>" }
+    { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize", "confidence": 0.95 },
+    { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>", "confidence": 0.90 },
+    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>", "description": "<one sentence describing the new knowledge asset>", "confidence": 0.92 },
+    { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>", "confidence": 0.88 }
   ],
   "warnings": ["<optional concerns>"]
 }
+
+For every operation, emit a \`confidence\` field in [0, 1] expressing your certainty that the operation is correct and safe. Use 0.95+ only when evidence is unambiguous. Omit the field rather than guessing if you are uncertain.
 
 When the merged content includes an \`updated\` frontmatter field, the value MUST be a real ISO date string (e.g. \`updated: 2026-05-20\`). NEVER emit \`updated: today\`, \`updated: {today}\`, \`updated: {today: null}\`, \`updated: now\`, or any other literal placeholder/template-variable. If you do not have a real source-of-truth date, OMIT the \`updated\` field entirely — the post-processor will not invent one for you.`;
 
@@ -1215,10 +1225,11 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // -- HTTP path: warn about quality and confirm unless auto-accepted --------
   if (isHttpPath) {
     warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
-    // TODO(confidence-scoring): once proposals expose a per-operation
-    // confidence score, compare it against `opts.autoAccept` instead of
-    // treating any defined threshold as a whole-batch accept. Until then,
-    // any non-undefined threshold behaves like the legacy `"safe"` mode.
+    // Per-proposal confidence gating is handled by the caller (improve.ts)
+    // via runAutoAcceptGate after this function returns. The gate reads
+    // proposal.confidence (forwarded from op.confidence above) and applies
+    // a minimumThreshold floor of 95 for consolidate's destructive ops.
+    // Here we only gate the interactive-confirm path for manual/HTTP invocations.
     if (opts.autoAccept === undefined && allOps.length > 0) {
       const n = allOps.length;
       // Non-interactive contexts (CI / test runners / piped stdin) must not
@@ -1684,6 +1695,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
             content: proposalContent,
             frontmatter: { description },
           },
+          ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
         });
         if (isProposalSkipped(proposalResult)) {
           warnings.push(

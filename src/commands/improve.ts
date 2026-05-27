@@ -32,7 +32,6 @@ import {
   getProposal,
   isProposalSkipped,
   listProposals,
-  promoteProposal,
   purgeOrphanProposals,
 } from "../core/proposals";
 import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../core/state-db";
@@ -66,6 +65,7 @@ import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInp
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { type AkmExtractResult, akmExtract } from "./extract";
+import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ImproveProfileConfig } from "./improve-profiles";
 import { isProfileFilteredForAllPasses, resolveImproveProfile, shouldSkipRef } from "./improve-profiles";
 import { akmLint } from "./lint/index";
@@ -1338,6 +1338,13 @@ async function runImprovePreparationStage(args: {
   // The extract envelope's own `warnings` field surfaces what went wrong.
   let extractResults: AkmExtractResult[] | undefined;
   const extractConfig = options.config ?? loadConfig();
+  const extractGateCfg = makeGateConfig("extract", {
+    globalThreshold: options.autoAccept,
+    dryRun: options.dryRun ?? false,
+    stashDir: primaryStashDir,
+    config: extractConfig,
+    eventsCtx,
+  });
   if (isLlmFeatureEnabled(extractConfig, "session_extraction")) {
     const availableHarnesses = getAvailableHarnesses();
     if (availableHarnesses.length > 0) {
@@ -1352,55 +1359,15 @@ async function runImprovePreparationStage(args: {
           });
           extractResults.push(result);
 
-          // 2026-05-27 auto-accept parity fix: the reflect branch at
-          // ~line 2160-2202 promotes proposals whose self-reported
-          // confidence >= autoAccept/100. The same gate was missing for
-          // extract — 286 extract proposals/day were being created with
-          // confidence and never auto-promoted, accumulating in the
-          // proposal queue at ~+286/day net growth. Extract stores
-          // confidence at `payload.frontmatter.confidence` (set at
-          // extract.ts:327), so we fetch each freshly-created proposal
-          // and apply the same threshold. Failures are non-fatal —
-          // surface a warning and leave the proposal pending so the
-          // reviewer can deal with it manually.
-          if (options.autoAccept !== undefined && primaryStashDir && !options.dryRun) {
-            const threshold = options.autoAccept / 100;
-            for (const proposalId of result.proposals) {
-              try {
-                const proposal = getProposal(primaryStashDir, proposalId);
-                const fm = proposal.payload.frontmatter as Record<string, unknown> | undefined;
-                const confidence = typeof fm?.confidence === "number" ? fm.confidence : undefined;
-                if (confidence === undefined || confidence < threshold) continue;
-                const cfg = options.config ?? loadConfig();
-                const promotion = await promoteProposal(primaryStashDir, cfg, proposal.id, {}, undefined);
-                appendEvent(
-                  {
-                    eventType: "promoted",
-                    ref: promotion.ref,
-                    metadata: {
-                      proposalId: promotion.proposal.id,
-                      source: promotion.proposal.source,
-                      ...(promotion.proposal.sourceRun !== undefined
-                        ? { sourceRun: promotion.proposal.sourceRun }
-                        : {}),
-                      assetPath: promotion.assetPath,
-                      autoAccept: true,
-                      confidence,
-                      threshold,
-                    },
-                  },
-                  eventsCtx,
-                );
-                info(
-                  `[improve] auto-accepted ${promotion.ref} (extract; confidence=${confidence.toFixed(2)} >= threshold=${threshold.toFixed(2)})`,
-                );
-              } catch (err) {
-                warn(
-                  `[improve] extract auto-accept failed for ${proposalId}: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }
-            }
-          }
+          await runAutoAcceptGate(
+            primaryStashDir
+              ? result.proposals.map((proposalId) => {
+                  const proposal = getProposal(primaryStashDir, proposalId);
+                  return { proposalId, confidence: resolveExtractConfidence(proposal) };
+                })
+              : [],
+            extractGateCfg,
+          );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           cleanupWarnings.push(`extract(${h.name}) failed: ${msg}`);
@@ -2018,6 +1985,22 @@ async function runImproveLoopStage(args: {
       : [],
   );
 
+  const reflectGateCfg = makeGateConfig("reflect", {
+    globalThreshold: options.autoAccept,
+    dryRun: options.dryRun ?? false,
+    stashDir: primaryStashDir,
+    config: options.config ?? loadConfig(),
+    eventsCtx,
+  });
+
+  const distillGateCfg = makeGateConfig("distill", {
+    globalThreshold: options.autoAccept,
+    dryRun: options.dryRun ?? false,
+    stashDir: primaryStashDir,
+    config: options.config ?? loadConfig(),
+    eventsCtx,
+  });
+
   for (const planned of loopRefs) {
     if (Date.now() - startMs >= budgetMs) {
       const remaining = loopRefs.length - completedCount;
@@ -2192,64 +2175,11 @@ async function runImproveLoopStage(args: {
             eventsCtx,
           );
 
-          // Phase 6A (Advantage D6a): Confidence-driven auto-accept.
-          //
-          // The existing `--auto-accept` flag (commit 0c5eaa1) is a 0-100 integer
-          // threshold; `undefined` means auto-accept is disabled. Until this
-          // wave, the consolidate path treated any non-undefined value as a
-          // whole-batch "safe" accept (see TODO in consolidate.ts). Now that
-          // reflect proposals carry a self-reported `confidence` score in
-          // [0, 1], we can compare per-proposal: confidence >= threshold/100
-          // auto-accepts via the standard `promoteProposal` path; otherwise the
-          // proposal waits in the pending queue for human review.
-          //
-          // Plan default is 0.8 (per `self-improvement-enhancements-plan.md`
-          // line 184). We honour the existing CLI default (90 → 0.9) because
-          // that is what users have been seeing since 0c5eaa1; the plan and the
-          // existing default agree directionally that high-confidence-only is
-          // the right policy. The CLI flag is the single knob.
-          if (
-            reflectResult.ok &&
-            options.autoAccept !== undefined &&
-            typeof reflectResult.proposal.confidence === "number" &&
-            primaryStashDir
-          ) {
-            const threshold = options.autoAccept / 100;
-            const confidence = reflectResult.proposal.confidence;
-            if (confidence >= threshold) {
-              try {
-                const cfg = options.config ?? loadConfig();
-                const promotion = await promoteProposal(primaryStashDir, cfg, reflectResult.proposal.id, {}, undefined);
-                appendEvent(
-                  {
-                    eventType: "promoted",
-                    ref: promotion.ref,
-                    metadata: {
-                      proposalId: promotion.proposal.id,
-                      source: promotion.proposal.source,
-                      ...(promotion.proposal.sourceRun !== undefined
-                        ? { sourceRun: promotion.proposal.sourceRun }
-                        : {}),
-                      assetPath: promotion.assetPath,
-                      autoAccept: true,
-                      confidence,
-                      threshold,
-                    },
-                  },
-                  eventsCtx,
-                );
-                info(
-                  `[improve] auto-accepted ${promotion.ref} (confidence=${confidence.toFixed(2)} >= threshold=${threshold.toFixed(2)})`,
-                );
-              } catch (err) {
-                // Auto-accept failures (validation, write error, etc.) must not
-                // poison the loop — surface a warning and leave the proposal
-                // pending so the reviewer can deal with it manually.
-                warn(
-                  `[improve] auto-accept failed for ${reflectResult.proposal.ref}: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }
-            }
+          if (reflectResult.ok) {
+            await runAutoAcceptGate(
+              [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
+              reflectGateCfg,
+            );
           }
         } // end else (reflect type/profile check)
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
@@ -2374,6 +2304,12 @@ async function runImproveLoopStage(args: {
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
         });
         actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
+        if (distillResult.outcome === "queued" && distillResult.proposal) {
+          await runAutoAcceptGate(
+            [{ proposalId: distillResult.proposal.id, confidence: distillResult.proposal.confidence }],
+            distillGateCfg,
+          );
+        }
         if (parsedPlannedRef.type === "memory") {
           const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
           if (!promotedToKnowledge) memoryRefsForInference.add(planned.ref);
@@ -2569,6 +2505,18 @@ async function runImprovePostLoopStage(args: {
     warnings: [],
     durationMs: 0,
   };
+  const consolidateGateCfg = makeGateConfig(
+    "consolidate",
+    {
+      globalThreshold: options.autoAccept,
+      dryRun: options.dryRun ?? false,
+      stashDir: primaryStashDir,
+      config: consolidationConfig,
+      eventsCtx,
+    },
+    { minimumThreshold: 95 },
+  );
+
   if (consolidateDisabledByProfile) {
     info("[improve] consolidation skipped (disabled by improve profile)");
   } else if (!consolidationOnCooldown) {
@@ -2585,6 +2533,18 @@ async function runImprovePostLoopStage(args: {
       // still wins because the spread above runs first.
       autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
     });
+    await runAutoAcceptGate(
+      consolidation.promoted.map((proposalId) => {
+        try {
+          if (!primaryStashDir) return { proposalId, confidence: undefined };
+          const proposal = getProposal(primaryStashDir, proposalId);
+          return { proposalId, confidence: proposal.confidence };
+        } catch {
+          return { proposalId, confidence: undefined };
+        }
+      }),
+      consolidateGateCfg,
+    );
     if (consolidation.processed > 0) {
       appendEvent(
         {

@@ -1064,6 +1064,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     // Apply quality gate to fast-path knowledge promotion (Risk 4 fix).
     // D-5 / #388: Three-band system — review_needed band queues to proposal
     // queue with review_needed outcome rather than auto-rejecting.
+    let knowledgeJudgeConfidence: number | undefined;
     if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
       // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
       const similarLessons = await fetchSimilarLessonsFn(resolvedPromotionContent.slice(0, 500), 3);
@@ -1096,6 +1097,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           judgeResult.reason,
         );
       }
+      // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
+      // (no LLM / timeout / parse failure) — leave confidence undefined so
+      // the auto-accept gate treats the proposal as unscored and skips it.
+      if (judgeResult.score > 0) knowledgeJudgeConfidence = judgeResult.score / 5;
     }
     const knowledgeParsed = parseFrontmatter(resolvedPromotionContent);
     const proposalResult = createProposal(
@@ -1108,6 +1113,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           content: resolvedPromotionContent,
           ...(Object.keys(knowledgeParsed.data).length > 0 ? { frontmatter: knowledgeParsed.data } : {}),
         },
+        ...(knowledgeJudgeConfidence !== undefined ? { confidence: knowledgeJudgeConfidence } : {}),
       },
       options.ctx,
     );
@@ -1504,6 +1510,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // explicitly enabled. Fail-open: judge failures always pass through.
   // D-5 / #388: Three-band system — review_needed band queues a proposal
   // with review_needed outcome rather than auto-rejecting.
+  let lessonJudgeConfidence: number | undefined;
   if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
@@ -1539,6 +1546,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
       );
     }
+    // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
+    // (no LLM / timeout / parse failure) — leave confidence undefined so
+    // the auto-accept gate treats the proposal as unscored and skips it.
+    if (judgeResult.score > 0) lessonJudgeConfidence = judgeResult.score / 5;
   }
 
   // Round-trip the parsed frontmatter so the proposal carries it as a
@@ -1564,6 +1575,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         content,
         frontmatter: frontmatterWithSources,
       },
+      ...(lessonJudgeConfidence !== undefined ? { confidence: lessonJudgeConfidence } : {}),
     },
     options.ctx,
   );
