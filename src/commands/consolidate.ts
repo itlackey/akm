@@ -1350,25 +1350,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
-      const mergedContent = await generateMergedContent(
-        config,
-        op.primary,
-        primaryBody,
-        op.secondaries,
-        memoryByRef,
-        warnings,
-      );
+      const mergeResult = await generateMergedContent(config, op.primary, primaryBody, op.secondaries, memoryByRef);
 
-      if (mergedContent === null) {
-        // generateMergedContent returns null on: LLM transport failure,
-        // sanitization rejection (UNBALANCED_CODE_FENCE etc.), or content-
-        // preservation lint failure. The specific cause is already in the
-        // warning stream; bucket all three as merge_sanitization_failed for
-        // the histogram. (Splitting further would require the helper to
-        // return a discriminant; tracked as a follow-up if needed.)
-        emitMergeFailureSkips("merge_sanitization_failed");
+      if ("error" in mergeResult) {
+        warnings.push(`Merge: ${mergeResult.error} for ${mergeResult.detail}.`);
+        emitMergeFailureSkips(mergeResult.error);
         continue;
       }
+      const mergedContent = mergeResult.content;
 
       // Validate frontmatter of merged content — must have a `---` block
       // with at minimum a `description` field. We parse via the hand-rolled
@@ -2080,25 +2069,33 @@ function loadMemoriesForSource(source: string | undefined, stashDir: string, war
   return memories;
 }
 
+type MergeFailureReason =
+  | "merge_read_failed"
+  | "merge_transport_failed"
+  | "merge_fence_rejected"
+  | "merge_yaml_invalid"
+  | "merge_content_too_short"
+  | "merge_frontmatter_keys_lost";
+
+type MergeResult = { content: string } | { error: MergeFailureReason; detail: string };
+
 async function generateMergedContent(
   config: AkmConfig,
   primaryRef: string,
   primaryBody: string,
   secondaryRefs: string[],
   memoryByRef: Map<string, MemoryEntry>,
-  warnings: string[],
-): Promise<string | null> {
+): Promise<MergeResult> {
   // Only handle single-secondary merges per design (one call per merge op)
   const secRef = secondaryRefs[0];
   const secEntry = memoryByRef.get(secRef);
-  if (!secEntry) return null;
+  if (!secEntry) return { error: "merge_read_failed", detail: `secondary ${secRef} not in memoryByRef` };
 
   let secBody = "";
   try {
     secBody = fs.readFileSync(secEntry.filePath, "utf8");
   } catch {
-    warnings.push(`Merge: could not read secondary ${secRef} — skipping.`);
-    return null;
+    return { error: "merge_read_failed", detail: `could not read secondary ${secRef}` };
   }
 
   const prompt = [
@@ -2140,8 +2137,10 @@ async function generateMergedContent(
   );
 
   if (!result.ok) {
-    warnings.push(result.error ?? `merge content generation failed for ${primaryRef}`);
-    return null;
+    return {
+      error: "merge_transport_failed",
+      detail: result.error ?? `merge content generation failed for ${primaryRef}`,
+    };
   }
 
   // Sanitize LLM output: strip outer code fences (defends against the
@@ -2150,8 +2149,14 @@ async function generateMergedContent(
   // or fence-only responses.
   const sanitized = sanitizeMergedContent(result.content ?? "");
   if (!sanitized.ok) {
-    warnings.push(`Merge: rejected LLM output for ${primaryRef} — ${sanitized.reason}.`);
-    return null;
+    const reason = sanitized.reason;
+    const isFenceError =
+      reason === "UNBALANCED_CODE_FENCE" ||
+      reason === "MISSING_FRONTMATTER_SENTINEL" ||
+      reason === "MALFORMED_FRONTMATTER_BLOCK" ||
+      reason === "FRONTMATTER_NOT_OBJECT";
+    const mergeReason: MergeFailureReason = isFenceError ? "merge_fence_rejected" : "merge_yaml_invalid";
+    return { error: mergeReason, detail: `${primaryRef} — ${reason}` };
   }
   const mergedRaw = sanitized.result.content;
 
@@ -2161,8 +2166,8 @@ async function generateMergedContent(
   //   1. Body size: merged body must be >= 50% of the larger source body.
   //   2. Frontmatter superset: merged frontmatter must contain all keys present
   //      in both source frontmatters.
-  // Failures emit a warning and return null so the merge op is skipped rather
-  // than writing degraded content.
+  // Failures return a discriminated error so the call site can emit a specific
+  // skip-reason key in the histogram.
   try {
     const primaryFm = parseFrontmatter(primaryBody);
     const secFm = parseFrontmatter(secBody);
@@ -2174,12 +2179,10 @@ async function generateMergedContent(
     const mergedBodyLen = (mergedFm.content ?? "").trim().length;
     const largerBodyLen = Math.max(primaryBodyLen, secBodyLen);
     if (largerBodyLen > 0 && mergedBodyLen < largerBodyLen * 0.5) {
-      warnings.push(
-        `Merge: content-preservation lint failed for ${primaryRef} — ` +
-          `merged body (${mergedBodyLen} chars) is less than 50% of larger source (${largerBodyLen} chars). ` +
-          `Skipping merge to prevent data loss.`,
-      );
-      return null;
+      return {
+        error: "merge_content_too_short",
+        detail: `${primaryRef} — merged body (${mergedBodyLen} chars) is less than 50% of larger source (${largerBodyLen} chars)`,
+      };
     }
 
     // Check frontmatter superset
@@ -2188,18 +2191,16 @@ async function generateMergedContent(
     const mergedKeys = new Set(Object.keys(mergedFm.data ?? {}));
     const missingKeys = [...primaryKeys, ...secKeys].filter((k) => !mergedKeys.has(k));
     if (missingKeys.length > 0) {
-      warnings.push(
-        `Merge: content-preservation lint failed for ${primaryRef} — ` +
-          `merged frontmatter missing keys from sources: ${missingKeys.join(", ")}. ` +
-          `Skipping merge to prevent data loss.`,
-      );
-      return null;
+      return {
+        error: "merge_frontmatter_keys_lost",
+        detail: `${primaryRef} — merged frontmatter missing keys from sources: ${missingKeys.join(", ")}`,
+      };
     }
   } catch {
     // parseFrontmatter failures are non-fatal — allow the merge to proceed.
   }
 
-  return mergedRaw;
+  return { content: mergedRaw };
 }
 
 async function promptConfirm(message: string): Promise<boolean> {
