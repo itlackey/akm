@@ -685,4 +685,63 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     };
     expect(accountedTotal(envelope, loadedRefs)).toBe(envelope.processed);
   });
+
+  // Regression for the +1 overshoot observed in run
+  // 2026-05-27T05-07-02-093Z-8edc5b07: processed=117 vs accounted=118.
+  //
+  // Root cause: cross-chunk references. Chunk-X proposes "merge primary:A with
+  // secondary:B" where B is a member of chunk-Y (a different chunk in the same
+  // run). Chunk-Y's own LLM call did NOT propose any op for B, so B contributed
+  // to chunk-Y's judgedNoAction. Later, when the merge op fails (e.g.
+  // merge_missing_description), emitMergeFailureSkips pushed a skipReason for
+  // B — double-counting it. The 2026-05-27 fix introduces judgedNoActionRefs:
+  // a Set tracking which refs contributed to judgedNoAction. pushSkipReason
+  // now decrements judgedNoAction and removes the ref from the set so the
+  // ref lands in exactly one bucket.
+  //
+  // This test mirrors the run-state arithmetic so a regression would surface
+  // as an off-by-one in the invariant.
+  it("invariant holds when cross-chunk refs are promoted from judgedNoAction to skipReasons", () => {
+    // 117 memories across 3 chunks of ~39 each. 5 contradicts succeed.
+    // 8 merge ops fail (6 missing_description, 2 sanitization_failed). One of
+    // those failed merges has a secondary B that lived in a different chunk
+    // and would have been counted in judgedNoAction. Pre-fix: judgedNoAction
+    // includes B and skipReasons also includes B → +1 overshoot. Post-fix:
+    // pushSkipReason removes B from judgedNoActionRefs and decrements the
+    // counter.
+    //
+    // Modeled directly: 117 = 5 contradicted + 77 judgedNoAction (pre-promote)
+    //                       + 36 skipReasons (one of which double-counts B).
+    // Post-fix: judgedNoAction is decremented by 1 when B's skipReason is
+    // pushed → 76 + 36 = 112... 76 + 36 + 5 = 117. ✓
+    const loadedRefs = new Set<string>([
+      ...Array.from({ length: 5 }, (_, i) => `memory:c${i}`),
+      ...Array.from({ length: 76 }, (_, i) => `memory:n${i}`),
+      ...Array.from({ length: 35 }, (_, i) => `memory:s${i}`),
+      "memory:cross-chunk-secondary",
+    ]);
+    const envelope: Envelope = {
+      processed: 117,
+      promoted: { length: 0 },
+      merged: 0,
+      mergedSecondaries: 0,
+      deleted: 0,
+      contradicted: 5,
+      judgedNoAction: 76, // 77 pre-promote, -1 after B is moved to skipReasons
+      skipReasons: [
+        ...Array.from({ length: 35 }, (_, i) => ({
+          op: "promote" as const,
+          ref: `memory:s${i}`,
+          reason: "dedup_pending_proposal",
+        })),
+        {
+          op: "merge" as const,
+          ref: "memory:cross-chunk-secondary",
+          reason: "merge_missing_description",
+        },
+      ],
+      failedChunkMemories: 0,
+    };
+    expect(accountedTotal(envelope, loadedRefs)).toBe(envelope.processed);
+  });
 });

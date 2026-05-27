@@ -917,11 +917,24 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // strings. See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
   const skipReasons: Array<{ op: ConsolidateOpKind | "unknown"; ref: string; reason: string }> = [];
   const pushSkipReason = (op: ConsolidateOpKind | "unknown", ref: string, reason: string): void => {
+    // 2026-05-27 cross-chunk double-count fix: if `ref` already contributed
+    // to judgedNoAction in its own chunk (a different chunk proposed an op
+    // for it that is now being rejected here), promote it from the
+    // judgedNoAction bucket into the more specific skipReason bucket.
+    // Preserves the invariant: processed == actioned + judgedNoAction +
+    // Σ(skipReasons) + failedChunkMemories.
+    if (judgedNoActionRefs.delete(ref)) judgedNoAction--;
     skipReasons.push({ op, ref, reason });
   };
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
   // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
   let judgedNoAction = 0;
+  // 2026-05-27 cross-chunk double-count fix: refs that contributed to
+  // judgedNoAction in their own chunk. When a different chunk's op references
+  // one of these as a secondary and that op later fails, the ref would land
+  // in BOTH judgedNoAction and skipReasons (delta +1 per occurrence). Track
+  // the set so the merge-failure path can decrement and re-bucket.
+  const judgedNoActionRefs = new Set<string>();
   // 2026-05-26 accounting-leak fix: memories that belong to a chunk whose
   // LLM call failed before any per-chunk noAction calculation runs. They
   // would otherwise vanish from the envelope's accounting (no judgedNoAction
@@ -1053,7 +1066,11 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
     let chunkNoAction = 0;
     for (const m of chunk) {
-      if (!targetRefs.has(`memory:${m.name}`)) chunkNoAction++;
+      const memRef = `memory:${m.name}`;
+      if (!targetRefs.has(memRef)) {
+        chunkNoAction++;
+        judgedNoActionRefs.add(memRef);
+      }
     }
     judgedNoAction += chunkNoAction;
 
