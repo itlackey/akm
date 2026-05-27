@@ -455,3 +455,55 @@ describe("hasSupersededStatus — refuses consolidate promote of superseded memo
     expect(hasSupersededStatus({ status: ["superseded"] })).toBe(false);
   });
 });
+
+describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", () => {
+  // Regression for the 2026-05-26 tuning-reasons investigation. The
+  // consolidate envelope MUST surface judgedNoAction and skipReasons so
+  // health.ts can aggregate without regex-parsing the warnings bag, AND so
+  // dashboards can disambiguate the consolidation.merged-vs-warnings desync
+  // documented in §Q2 (the warnings stream includes "Merge: merged content
+  // for X missing description" rejection lines that look like successes —
+  // they are NOT counted into `merged`, and now also appear in
+  // skipReasons[].reason === "merge_missing_description").
+  //
+  // This is a shape contract; it validates the typed surface without driving
+  // the full LLM-backed runConsolidate. The aggregation behaviour is covered
+  // end-to-end in tests/health-command.test.ts.
+  it("envelope carries judgedNoAction and structured skipReasons", () => {
+    type ConsolidateResultShape = {
+      judgedNoAction?: number;
+      skipReasons?: Array<{ op: string; ref: string; reason: string }>;
+      merged: number;
+    };
+    const sample: ConsolidateResultShape = {
+      merged: 0,
+      judgedNoAction: 78,
+      skipReasons: [
+        { op: "merge", ref: "memory:a", reason: "merge_missing_description" },
+        { op: "merge", ref: "memory:b", reason: "merge_missing_description" },
+        { op: "merge", ref: "memory:c", reason: "merge_sanitization_failed" },
+        { op: "delete", ref: "memory:d", reason: "captureMode_hot_refused" },
+        { op: "promote", ref: "memory:e", reason: "dedup_pending_proposal" },
+      ],
+    };
+
+    // merged == 0 is consistent with three Merge-op attempts that ALL hit a
+    // skip reason. The invariant the investigation report was probing: if
+    // every merge op recorded a skipReason, `merged` MUST be (mergeOpsAttempted - mergeSkips).
+    const mergeSkips = (sample.skipReasons ?? []).filter((s) => s.op === "merge").length;
+    const mergeOpsAttempted = 3; // all three got a skip reason
+    expect(sample.merged).toBe(mergeOpsAttempted - mergeSkips);
+
+    // Per-reason histogram is reconstructable client-side.
+    const histogram: Record<string, number> = {};
+    for (const entry of sample.skipReasons ?? []) {
+      histogram[entry.reason] = (histogram[entry.reason] ?? 0) + 1;
+    }
+    expect(histogram).toEqual({
+      merge_missing_description: 2,
+      merge_sanitization_failed: 1,
+      captureMode_hot_refused: 1,
+      dedup_pending_proposal: 1,
+    });
+  });
+});

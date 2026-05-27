@@ -111,10 +111,28 @@ export interface ConsolidateResult {
   failedChunks?: number;
   /** Total chunks attempted this run; lets callers compute a failure rate. */
   totalChunks?: number;
+  /**
+   * Memories the LLM saw inside a chunk but proposed no op for. Per chunk:
+   * `chunk.length − unique(ops.targetRefs)`. Pre-2026-05-26 this was a pure
+   * silent drop — 66% of consolidate memories had no warning, event, or
+   * counter. Without it, no consolidate prompt tuning is possible.
+   * See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
+   */
+  judgedNoAction?: number;
+  /**
+   * Structured per-op skip reasons emitted at every deterministic post-LLM
+   * rejection site. Replaces the regex-on-`warnings[]` smell with a typed
+   * histogram input. Codes intentionally use snake_case; see
+   * `ConsolidateSkipReason` in health.ts for the vocabulary.
+   */
+  skipReasons?: Array<{ op: ConsolidateOpKind | "unknown"; ref: string; reason: string }>;
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
 }
+
+/** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
+export type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
 
 export interface AkmConsolidateOptions {
   target?: string; // which source to target; defaults to primary writable stash
@@ -870,6 +888,17 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   warn(`[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}`);
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
+  // Structured skip-reason histogram (2026-05-26): every deterministic
+  // post-LLM op rejection site below also calls `pushSkipReason` so the
+  // health rollup can aggregate without regex-parsing English warning
+  // strings. See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
+  const skipReasons: Array<{ op: ConsolidateOpKind | "unknown"; ref: string; reason: string }> = [];
+  const pushSkipReason = (op: ConsolidateOpKind | "unknown", ref: string, reason: string): void => {
+    skipReasons.push({ op, ref, reason });
+  };
+  // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
+  // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
+  let judgedNoAction = 0;
   // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
   // Consecutive-count policies are brittle against transient LM Studio reloads:
   // two transient failures abort the run even though the next chunk would succeed.
@@ -964,6 +993,26 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
     }
 
+    // Per-chunk judgedNoAction: count memories the LLM saw but proposed no
+    // op for. Membership is by `memory:<name>` ref against the targets of
+    // each op (primary + secondaries for merge; ref otherwise). 2026-05-26:
+    // pre-fix this was a 78/119 (66%) silent drop in the cron run — no
+    // warning, event, or counter. See tuning investigation §Q2.
+    const targetRefs = new Set<string>();
+    for (const op of ops) {
+      if (op.op === "merge") {
+        targetRefs.add(op.primary);
+        for (const s of op.secondaries) targetRefs.add(s);
+      } else {
+        targetRefs.add(op.ref);
+      }
+    }
+    let chunkNoAction = 0;
+    for (const m of chunk) {
+      if (!targetRefs.has(`memory:${m.name}`)) chunkNoAction++;
+    }
+    judgedNoAction += chunkNoAction;
+
     chunkOpsArrays.push(ops);
   }
 
@@ -986,6 +1035,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       contradicted: 0,
       failedChunks: totalChunksFailed,
       totalChunks: chunks.length,
+      judgedNoAction,
+      skipReasons,
       planned: allOps,
       warnings,
       durationMs: Date.now() - startMs,
@@ -1025,6 +1076,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           contradicted: 0,
           failedChunks: totalChunksFailed,
           totalChunks: chunks.length,
+          judgedNoAction,
+          skipReasons,
           planned: allOps,
           warnings: [...warnings, nonInteractive ? "Non-interactive context: skipped apply." : "Aborted by user."],
           durationMs: Date.now() - startMs,
@@ -1100,7 +1153,16 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings,
       );
 
-      if (mergedContent === null) continue;
+      if (mergedContent === null) {
+        // generateMergedContent returns null on: LLM transport failure,
+        // sanitization rejection (UNBALANCED_CODE_FENCE etc.), or content-
+        // preservation lint failure. The specific cause is already in the
+        // warning stream; bucket all three as merge_sanitization_failed for
+        // the histogram. (Splitting further would require the helper to
+        // return a discriminant; tracked as a follow-up if needed.)
+        pushSkipReason("merge", op.primary, "merge_sanitization_failed");
+        continue;
+      }
 
       // Validate frontmatter of merged content — must have a `---` block
       // with at minimum a `description` field. We parse via the hand-rolled
@@ -1112,20 +1174,24 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         parsedMerged = parseFrontmatter(mergedContent);
       } catch {
         warnings.push(`Merge: merged content for ${op.primary} has invalid frontmatter — skipping.`);
+        pushSkipReason("merge", op.primary, "merge_invalid_frontmatter");
         continue;
       }
       if (parsedMerged.frontmatter === null) {
         warnings.push(`Merge: merged content for ${op.primary} has no frontmatter block — skipping.`);
+        pushSkipReason("merge", op.primary, "merge_invalid_frontmatter");
         continue;
       }
       const mergedDesc = parsedMerged.data.description;
       if (typeof mergedDesc !== "string" || mergedDesc.trim().length === 0) {
         warnings.push(`Merge: merged content for ${op.primary} missing description — skipping.`);
+        pushSkipReason("merge", op.primary, "merge_missing_description");
         continue;
       }
       const truncReason = detectTruncatedDescription(mergedDesc);
       if (truncReason) {
         warnings.push(`Merge: merged content for ${op.primary} has truncated description (${truncReason}) — skipping.`);
+        pushSkipReason("merge", op.primary, "merge_truncated_description");
         continue;
       }
 
@@ -1150,6 +1216,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Merge: refused for ${op.primary} — ${blockedParticipants.length} participant(s) blocked by hot/unparseable frontmatter guard: ${detail}`,
         );
+        pushSkipReason("merge", op.primary, "merge_participant_blocked");
         continue;
       }
 
@@ -1206,6 +1273,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Delete: refused for ${op.ref} — ${guard === "hot" ? "captureMode:hot (user-explicit; never auto-delete)" : "frontmatter unparseable (cannot verify hot flag absent)"}. Reason from LLM: "${op.reason ?? "n/a"}"`,
         );
+        pushSkipReason("delete", op.ref, "captureMode_hot_refused");
         continue;
       }
 
@@ -1236,6 +1304,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       // catches any future code paths that bypass mergePlans).
       if (promotedSourceRefs.has(op.ref)) {
         warnings.push(`Skipping promote: ${op.ref} already promoted in this run`);
+        pushSkipReason("promote", op.ref, "promote_already_promoted_this_run");
         continue;
       }
 
@@ -1255,6 +1324,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const existingProposals = listProposals(stashDir, { ref: knowledgeRef });
       if (existingProposals.some((p) => p.status === "pending")) {
         warnings.push(`Skipping promote: pending proposal already exists for ${knowledgeRef}`);
+        pushSkipReason("promote", op.ref, "promote_pending_proposal_exists");
         continue;
       }
 
@@ -1263,6 +1333,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const destPath = path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`);
       if (fs.existsSync(destPath)) {
         warnings.push(`Skipping promote: ${knowledgeRef} already exists in source`);
+        pushSkipReason("promote", op.ref, "promote_already_exists");
         continue;
       }
 
@@ -1280,6 +1351,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const promoteSanitized = sanitizeMergedContent(memoryContent);
       if (!promoteSanitized.ok) {
         warnings.push(`Promote: rejected ${op.ref} — source memory failed sanitization (${promoteSanitized.reason}).`);
+        pushSkipReason("promote", op.ref, "promote_sanitization_failed");
         continue;
       }
       memoryContent = promoteSanitized.result.content;
@@ -1291,6 +1363,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Promote: refused for ${op.ref} → ${knowledgeRef} — source memory has status:superseded; superseded memories are not promotable knowledge.`,
         );
+        pushSkipReason("promote", op.ref, "promote_superseded");
         continue;
       }
 
@@ -1310,6 +1383,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Promote: rejected ${op.ref} → ${knowledgeRef} — source memory body is too small (${sourceBody.length} chars; need ≥${PROMOTE_BODY_MIN_CHARS}) to make useful knowledge.`,
         );
+        pushSkipReason("promote", op.ref, "promote_source_too_small");
         continue;
       }
 
@@ -1334,6 +1408,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Skipping promote: identical body already pending as proposal ${contentDupProposal.id} (ref: ${contentDupProposal.ref}); skipping duplicate for ${op.ref} → ${knowledgeRef}`,
         );
+        pushSkipReason("promote", op.ref, "dedup_pending_proposal");
         continue;
       }
 
@@ -1353,6 +1428,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         const fmCheck = validateProposalFrontmatter({ description });
         if (!fmCheck.ok) {
           warnings.push(`Promote: rejected ${op.ref} → ${knowledgeRef} — ${fmCheck.reason}.`);
+          pushSkipReason("promote", op.ref, "promote_invalid_frontmatter");
           continue;
         }
 
@@ -1386,6 +1462,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         });
         if (dedup.duplicate) {
           warnings.push(`Promote: skipped ${op.ref} → ${knowledgeRef} — ${dedup.reason}.`);
+          pushSkipReason("promote", op.ref, "promote_dedup_window");
           continue;
         }
 
@@ -1422,6 +1499,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       }
       if (!contradictorEntry) {
         warnings.push(`Contradict: ${op.contradictedByRef} not found — skipping.`);
+        pushSkipReason("contradict", op.ref, "contradict_target_missing");
         continue;
       }
 
@@ -1483,6 +1561,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     contradicted,
     failedChunks: totalChunksFailed,
     totalChunks: chunks.length,
+    judgedNoAction,
+    skipReasons,
     warnings,
     durationMs: Date.now() - startMs,
   };

@@ -60,6 +60,18 @@ export interface ImproveHealthMetrics {
        * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
        */
       guardRejected: number;
+      /**
+       * Breakdown of `skipped` reflects by sub-reason. Sourced from
+       * `actions[].result.reason` for `mode === "reflect-skipped"` entries.
+       * Mirrors {@link distill.deferredByReason} (commit `d1273d0`). Values
+       * observed today: `type-filter`, `raw-wiki`, `process-disabled`,
+       * `unsupported_type`, `derived-memory-reflect-skipped`. Totals here
+       * should match `skipped`. Pre-2026-05-26 this was discarded by the
+       * rollup — the 18/18 reflect-skipped runs in `release/0.8.0` could not
+       * be tuned because no operator could see WHY they were skipped. See
+       * `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q1.
+       */
+      skippedByReason: Record<string, number>;
     };
     /**
      * Distill outcomes split by `AkmDistillResult.outcome`. `skipped` here is
@@ -69,7 +81,27 @@ export interface ImproveHealthMetrics {
     distill: {
       queued: number;
       llmFailed: number;
+      /**
+       * Sum of `judgeRejected + validatorRejected`. Retained for
+       * backward-compatibility with pre-2026-05-26 consumers; new dashboards
+       * should prefer the split fields below.
+       */
       qualityRejected: number;
+      /**
+       * LLM-judge rejection (outcomes `quality_rejected` and `review_needed`).
+       * Tuning lever: prompt/temperature/model — the judge said the output
+       * was substantively low quality. Pre-2026-05-26 lumped with
+       * deterministic lint failures under `qualityRejected`. See review §1b.
+       */
+      judgeRejected: number;
+      /**
+       * Deterministic lint/schema validator rejection (outcome
+       * `validation_failed`). Tuning lever: validator config / prompt schema
+       * — the LLM is fine, our post-LLM validators rejected the artifact.
+       * In live 7d data, 29/29 of the legacy `qualityRejected` bucket were
+       * actually this case.
+       */
+      validatorRejected: number;
       configDisabled: number;
       skipped: number;
       /**
@@ -115,6 +147,33 @@ export interface ImproveHealthMetrics {
     merged: number;
     deleted: number;
     contradicted: number;
+    /**
+     * Memories the LLM "saw" inside a chunk but proposed no op for. Computed
+     * per chunk as `chunk.length − unique(ops.targetRefs)` and accumulated
+     * across all chunks in a run. Pre-2026-05-26 this was completely
+     * invisible: 78/119 (66%) of memories in the 23:07 UTC cron run had no
+     * warning, event, or counter — they were a pure silent drop. Without
+     * this metric no consolidate prompt tuning is empirically possible. See
+     * `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
+     */
+    judgedNoAction: number;
+    /**
+     * Histogram of structured per-op skip reasons emitted by `consolidate.ts`
+     * when a deterministic post-LLM guard rejects an operation the LLM
+     * proposed. Codes observed in production: `dedup_pending_proposal`,
+     * `captureMode_hot_refused`, `merge_missing_description`,
+     * `merge_sanitization_failed`, `merge_invalid_frontmatter`,
+     * `merge_truncated_description`, `merge_content_preservation_failed`,
+     * `merge_participant_blocked`, `promote_source_too_small`,
+     * `promote_dedup_window`, `promote_already_promoted_this_run`,
+     * `promote_already_exists`, `promote_superseded`,
+     * `promote_sanitization_failed`, `promote_invalid_frontmatter`,
+     * `contradict_target_missing`. Each bucket is a separate tuning knob
+     * (queue cleanup, memory recategorization, prompt fix, etc.). Pre-fix
+     * these were buried in `warnings: string[]` as freeform English. See
+     * review §1e and tuning investigation §Q2.
+     */
+    skipReasons: Record<string, number>;
     /**
      * Aggregated count of chunks that failed (HTTP error / empty response /
      * invalid plan) across runs in the window. Pre-2026-05-26 this was
@@ -359,11 +418,13 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     skipReasons: {},
     plannedRefs: 0,
     actions: {
-      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0 },
+      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0, skippedByReason: {} },
       distill: {
         queued: 0,
         llmFailed: 0,
         qualityRejected: 0,
+        judgeRejected: 0,
+        validatorRejected: 0,
         configDisabled: 0,
         skipped: 0,
         deferred: 0,
@@ -395,6 +456,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       merged: 0,
       deleted: 0,
       contradicted: 0,
+      judgedNoAction: 0,
+      skipReasons: {},
       failedChunks: 0,
       totalChunks: 0,
       durationMs: 0,
@@ -494,9 +557,13 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
         case "reflect-cooldown":
           metrics.actions.reflect.cooldown += 1;
           break;
-        case "reflect-skipped":
+        case "reflect-skipped": {
           metrics.actions.reflect.skipped += 1;
+          const r = action.result as Record<string, unknown> | undefined;
+          const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
+          metrics.actions.reflect.skippedByReason[reason] = (metrics.actions.reflect.skippedByReason[reason] ?? 0) + 1;
           break;
+        }
         case "reflect-guard-rejected":
           metrics.actions.reflect.guardRejected += 1;
           break;
@@ -512,8 +579,12 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
               break;
             case "quality_rejected":
             case "review_needed":
+              metrics.actions.distill.qualityRejected += 1;
+              metrics.actions.distill.judgeRejected += 1;
+              break;
             case "validation_failed":
               metrics.actions.distill.qualityRejected += 1;
+              metrics.actions.distill.validatorRejected += 1;
               break;
             case "config_disabled":
               metrics.actions.distill.configDisabled += 1;
@@ -602,6 +673,20 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     metrics.consolidation.failedChunks += toFiniteNumber(consolidation.failedChunks);
     metrics.consolidation.totalChunks += toFiniteNumber(consolidation.totalChunks);
     metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
+    metrics.consolidation.judgedNoAction += toFiniteNumber(consolidation.judgedNoAction);
+    // Structured emitter (new on this branch): consolidate.ts now pushes
+    // `{op, ref, reason}` entries to `skipReasons` for every deterministic
+    // post-LLM rejection. Pre-fix envelopes have neither field, so be
+    // defensive.
+    const skipReasons = consolidation.skipReasons;
+    if (Array.isArray(skipReasons)) {
+      for (const entry of skipReasons) {
+        if (!entry || typeof entry !== "object") continue;
+        const reason = (entry as Record<string, unknown>).reason;
+        if (typeof reason !== "string" || !reason.trim()) continue;
+        metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
+      }
+    }
   }
 
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
@@ -702,9 +787,14 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
   dst.actions.reflect.skipped += src.actions.reflect.skipped;
   dst.actions.reflect.guardRejected += src.actions.reflect.guardRejected;
+  for (const [reason, count] of Object.entries(src.actions.reflect.skippedByReason)) {
+    dst.actions.reflect.skippedByReason[reason] = (dst.actions.reflect.skippedByReason[reason] ?? 0) + count;
+  }
   dst.actions.distill.queued += src.actions.distill.queued;
   dst.actions.distill.llmFailed += src.actions.distill.llmFailed;
   dst.actions.distill.qualityRejected += src.actions.distill.qualityRejected;
+  dst.actions.distill.judgeRejected += src.actions.distill.judgeRejected;
+  dst.actions.distill.validatorRejected += src.actions.distill.validatorRejected;
   dst.actions.distill.configDisabled += src.actions.distill.configDisabled;
   dst.actions.distill.skipped += src.actions.distill.skipped;
   dst.actions.distill.deferred += src.actions.distill.deferred;
@@ -736,6 +826,10 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.failedChunks += src.consolidation.failedChunks;
   dst.consolidation.totalChunks += src.consolidation.totalChunks;
   dst.consolidation.durationMs += src.consolidation.durationMs;
+  dst.consolidation.judgedNoAction += src.consolidation.judgedNoAction;
+  for (const [reason, count] of Object.entries(src.consolidation.skipReasons)) {
+    dst.consolidation.skipReasons[reason] = (dst.consolidation.skipReasons[reason] ?? 0) + count;
+  }
   dst.memoryInference.considered += src.memoryInference.considered;
   dst.memoryInference.cacheHits += src.memoryInference.cacheHits;
   dst.memoryInference.splitParents += src.memoryInference.splitParents;

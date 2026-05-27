@@ -429,13 +429,191 @@ describe("akmHealth", () => {
     });
   });
 
+  test("reflect-skipped actions are aggregated by sub-reason", () => {
+    // Tuning-reasons investigation §Q1: pre-fix the rollup discarded
+    // result.reason for reflect-skipped, so 18/18 type-filter+raw-wiki skips
+    // were a single opaque scalar in `akm health`. Mirror the
+    // `distill.deferredByReason` shape (commit d1273d0).
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-reflect-skipped",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: [],
+          actions: [
+            { ref: "script:a", mode: "reflect-skipped", result: { ok: true, reason: "type-filter" } },
+            { ref: "script:b", mode: "reflect-skipped", result: { ok: true, reason: "type-filter" } },
+            { ref: "wiki:articles/raw/x", mode: "reflect-skipped", result: { ok: true, reason: "raw-wiki" } },
+            {
+              ref: "memory:foo.derived",
+              mode: "reflect-skipped",
+              result: { ok: true, reason: "derived-memory-reflect-skipped" },
+            },
+            { ref: "memory:bar", mode: "reflect-skipped", result: { ok: true, reason: "unsupported_type" } },
+          ],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    expect(result.improve.actions.reflect.skipped).toBe(5);
+    expect(result.improve.actions.reflect.skippedByReason).toEqual({
+      "type-filter": 2,
+      "raw-wiki": 1,
+      "derived-memory-reflect-skipped": 1,
+      unsupported_type: 1,
+    });
+    // Totals must match scalar.
+    const total = Object.values(result.improve.actions.reflect.skippedByReason).reduce((a, b) => a + b, 0);
+    expect(total).toBe(result.improve.actions.reflect.skipped);
+  });
+
+  test("distill.qualityRejected splits into judgeRejected + validatorRejected", () => {
+    // Metrics-taxonomy review §1b: in live 7d data 29/29 of qualityRejected
+    // were validation_failed (deterministic lint), not LLM-judge rejections.
+    // The split lets dashboards distinguish prompt-tuning levers from
+    // validator-config levers. Legacy `qualityRejected` is preserved as the
+    // sum for back-compat.
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-distill-split",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: [],
+          actions: [
+            { ref: "knowledge:a", mode: "distill", result: { outcome: "quality_rejected" } },
+            { ref: "knowledge:b", mode: "distill", result: { outcome: "review_needed" } },
+            { ref: "knowledge:c", mode: "distill", result: { outcome: "validation_failed" } },
+            { ref: "knowledge:d", mode: "distill", result: { outcome: "validation_failed" } },
+            { ref: "knowledge:e", mode: "distill", result: { outcome: "validation_failed" } },
+          ],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    expect(result.improve.actions.distill.judgeRejected).toBe(2);
+    expect(result.improve.actions.distill.validatorRejected).toBe(3);
+    // Sum invariant: legacy qualityRejected == judge + validator.
+    expect(result.improve.actions.distill.qualityRejected).toBe(
+      result.improve.actions.distill.judgeRejected + result.improve.actions.distill.validatorRejected,
+    );
+    expect(result.improve.actions.distill.qualityRejected).toBe(5);
+  });
+
+  test("consolidation.judgedNoAction and skipReasons are aggregated", () => {
+    // Tuning-reasons investigation §Q2: 78/119 (66%) of consolidate memories
+    // had no LLM verdict and were a pure silent drop. The new
+    // `judgedNoAction` counter surfaces them; `skipReasons` turns the
+    // free-text warnings bag into a typed histogram.
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-consolidate-tuning",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: [],
+          actions: [],
+          consolidation: {
+            processed: 119,
+            merged: 0,
+            deleted: 2,
+            promoted: [],
+            contradicted: 0,
+            failedChunks: 0,
+            totalChunks: 3,
+            judgedNoAction: 78,
+            skipReasons: [
+              { op: "promote", ref: "memory:a", reason: "dedup_pending_proposal" },
+              { op: "promote", ref: "memory:b", reason: "dedup_pending_proposal" },
+              { op: "delete", ref: "memory:c", reason: "captureMode_hot_refused" },
+              { op: "delete", ref: "memory:d", reason: "captureMode_hot_refused" },
+              { op: "merge", ref: "memory:e", reason: "merge_missing_description" },
+              { op: "merge", ref: "memory:f", reason: "merge_sanitization_failed" },
+            ],
+            warnings: [],
+            durationMs: 37771,
+          },
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    expect(result.improve.consolidation.judgedNoAction).toBe(78);
+    expect(result.improve.consolidation.skipReasons).toEqual({
+      dedup_pending_proposal: 2,
+      captureMode_hot_refused: 2,
+      merge_missing_description: 1,
+      merge_sanitization_failed: 1,
+    });
+  });
+
   test("createUnknownImproveMetrics-like shape when nothing recorded", () => {
     const result = akmHealth({ since: "7d" });
-    expect(result.improve.actions.reflect).toEqual({ ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0 });
+    expect(result.improve.actions.reflect).toEqual({
+      ok: 0,
+      failed: 0,
+      cooldown: 0,
+      skipped: 0,
+      guardRejected: 0,
+      skippedByReason: {},
+    });
     expect(result.improve.actions.distill).toEqual({
       queued: 0,
       llmFailed: 0,
       qualityRejected: 0,
+      judgeRejected: 0,
+      validatorRejected: 0,
       configDisabled: 0,
       skipped: 0,
       deferred: 0,
