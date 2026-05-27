@@ -1403,6 +1403,24 @@ async function runImprovePreparationStage(args: {
     }
   }
 
+  // Backlog drain: gate any pending extract proposals that weren't created in
+  // this run (i.e. pre-date the gate or were produced by a run that timed out
+  // before the gate fired). Without this, eligible proposals accumulate
+  // indefinitely — the fresh-gate only covers the current run's output.
+  if (primaryStashDir && !options.dryRun && options.autoAccept !== undefined) {
+    const freshIds = new Set((extractResults ?? []).flatMap((r) => r.proposals));
+    const backlog = listProposals(primaryStashDir, { status: "pending" }).filter(
+      (p) => p.source === "extract" && !freshIds.has(p.id),
+    );
+    if (backlog.length > 0) {
+      const backlogCandidates = backlog.map((p) => ({
+        proposalId: p.id,
+        confidence: resolveExtractConfidence(p),
+      }));
+      gateAutoAcceptedCount += (await runAutoAcceptGate(backlogCandidates, extractGateCfg)).promoted.length;
+    }
+  }
+
   // eligibleCount = raw pre-filter count (before cooldown/signal/cleanup filters).
   // improve_completed.plannedRefs = post-filter count of refs that actually entered the loop.
   appendEvent(
