@@ -1852,17 +1852,41 @@ export interface SanitizedMergedContent {
 export function sanitizeMergedContent(
   raw: string,
 ): { ok: true; result: SanitizedMergedContent } | { ok: false; reason: string } {
-  const fenceResult = stripOuterCodeFence(raw);
-  if (!fenceResult) {
-    return { ok: false, reason: "UNBALANCED_CODE_FENCE" };
+  // Step 1: Strip outer code fence.
+  // Recovery path: if only the leading fence is present, strip it and continue
+  // provided the inner content starts with `---`. Trailing-only fences are NOT
+  // recovered — a trailing ``` is more likely a body code block than a forgotten
+  // wrapper, so recovering would silently corrupt the body.
+  let body: string;
+  {
+    const fenceResult = stripOuterCodeFence(raw);
+    if (fenceResult) {
+      body = fenceResult.content;
+    } else {
+      const trimmed = raw.trim();
+      const leadingMatch = trimmed.match(/^```(?:markdown|md|yaml|yml)?\s*\r?\n([\s\S]*)$/i);
+      const inner = leadingMatch ? leadingMatch[1].trim() : null;
+      if (!inner?.startsWith("---")) {
+        return { ok: false, reason: "UNBALANCED_CODE_FENCE" };
+      }
+      body = inner;
+    }
   }
-  let body = fenceResult.content;
 
   // Strip <think> blocks (some local models still emit them despite system prompts).
   body = body.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
+  // Step 2: Verify frontmatter sentinel.
+  // Recovery path: LLM sometimes emits 1-2 lines of preamble (e.g. "Here is the
+  // merged content:") before the `---`. Accept if `---` appears within 300 chars.
+  // Beyond that it's more likely a body section divider, not a frontmatter start.
   if (!body.startsWith("---")) {
-    return { ok: false, reason: "MISSING_FRONTMATTER_SENTINEL" };
+    const nlIdx = body.indexOf("\n---");
+    if (nlIdx >= 0 && nlIdx < 300) {
+      body = body.slice(nlIdx + 1);
+    } else {
+      return { ok: false, reason: "MISSING_FRONTMATTER_SENTINEL" };
+    }
   }
 
   // Extract frontmatter block.

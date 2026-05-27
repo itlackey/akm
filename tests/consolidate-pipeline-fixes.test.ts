@@ -97,15 +97,56 @@ describe("sanitizeMergedContent — full LLM-output pipeline", () => {
     }
   });
 
-  it("rejects unbalanced fences (UNBALANCED_CODE_FENCE)", () => {
+  it("recovers from leading-only unbalanced fence when inner content is valid", () => {
+    // LLM emits ```markdown but forgets the closing ```. Recovery: strip the
+    // opening line and proceed — the inner content is valid.
     const raw = "```markdown\n---\ndescription: foo\n---\nbody no closer";
+    const result = sanitizeMergedContent(raw);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.frontmatter.description).toBe("foo");
+      expect(result.result.content).toContain("body no closer");
+    }
+  });
+
+  it("still rejects trailing-only unbalanced fence (UNBALANCED_CODE_FENCE)", () => {
+    // A trailing ``` with no opening is likely a body code block, not a wrapper.
+    const raw = "---\ndescription: foo\n---\nbody content\n```";
     const result = sanitizeMergedContent(raw);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("UNBALANCED_CODE_FENCE");
   });
 
-  it("rejects content without frontmatter sentinel", () => {
+  it("still rejects leading-only fence when inner content has no frontmatter sentinel", () => {
+    const raw = "```markdown\njust prose, no frontmatter";
+    const result = sanitizeMergedContent(raw);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("UNBALANCED_CODE_FENCE");
+  });
+
+  it("recovers from preamble before frontmatter sentinel", () => {
+    // LLM emits a lead-in line before the `---`. Recovery: find `---` within
+    // 300 chars and slice from there.
+    const raw = "Here is the merged content:\n---\ndescription: bar\n---\nbody\n";
+    const result = sanitizeMergedContent(raw);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.frontmatter.description).toBe("bar");
+      expect(result.result.content).toContain("body");
+    }
+  });
+
+  it("rejects content with no frontmatter sentinel anywhere", () => {
     const raw = "no frontmatter, just prose";
+    const result = sanitizeMergedContent(raw);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("MISSING_FRONTMATTER_SENTINEL");
+  });
+
+  it("rejects preamble where --- appears beyond 300 chars", () => {
+    // A `---` that appears too late is treated as a body divider, not frontmatter.
+    const preamble = "x".repeat(301);
+    const raw = `${preamble}\n---\ndescription: foo\n---\nbody\n`;
     const result = sanitizeMergedContent(raw);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("MISSING_FRONTMATTER_SENTINEL");
