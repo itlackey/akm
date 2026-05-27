@@ -30,11 +30,10 @@
  *   - cwd changes that escaped the test boundary.
  *   - `globalThis.fetch` swaps that were not restored.
  *
- * The tripwire is in **warn-only mode** in Phase 1 of the rollout
- * (see knowledge:projects/akm/test-harness-redesign). It calls
- * `console.warn` so we can inventory leaks across the suite without
- * breaking the build. Phase 2 flips this to `throw` once known offenders
- * are cleaned up.
+ * The tripwire throws on any detected leak. If a future investigation needs
+ * to inventory leaks without failing the build, temporarily replace `throw`
+ * with `console.warn` in the `afterEach` handler below
+ * (see knowledge:projects/akm/test-harness-redesign for context).
  *
  * Tests that legitimately need to mutate cwd or fetch within a test should
  * use `tests/_helpers/sandbox.ts` (`withMockedFetch`, etc.) — the helpers
@@ -47,7 +46,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resetConfigCache } from "../src/core/config";
-import { clearLogFile, resetQuiet, resetVerbose } from "../src/core/warn";
+import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { resetGraphBoostCache } from "../src/indexer/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 
@@ -135,7 +134,11 @@ function resetSingletons(): void {
   clearEmbeddingCache();
   resetLocalEmbedder();
   resetGraphBoostCache();
-  resetQuiet();
+  // Enable quiet mode by default in tests so production [improve]/warn/info
+  // lines do not flood stderr and bury bun's "(fail) <test name>" output.
+  // Individual tests that need to assert on log output can call setQuiet(false)
+  // and restore it; the harness will reset to true before the next test.
+  setQuiet(true);
   resetVerbose();
   clearLogFile();
 }
@@ -172,8 +175,8 @@ afterEach(() => {
     leakReasons.push(`leaked env vars: ${leakedEnv.join(", ")}`);
   }
 
-  // Tripwire 2: cwd changes. Restore even in warn-only mode so the next
-  // test starts from the expected directory.
+  // Tripwire 2: cwd changes. Always restore so the next test starts from
+  // the expected directory, regardless of whether the tripwire throws.
   if (snapshot && process.cwd() !== snapshot.cwd) {
     leakReasons.push(`cwd left at ${process.cwd()} (expected ${snapshot.cwd})`);
     try {
