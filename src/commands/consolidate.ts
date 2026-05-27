@@ -180,8 +180,8 @@ const CONSOLIDATE_SYSTEM_PROMPT = `You are the akm consolidate assistant analyzi
 
 Rules:
 1. MERGE: Two or more memories are substantially duplicated or closely related → propose merging. Return the primary ref to keep and secondary refs to delete. Do NOT include mergedContent — the merge will be executed in a separate step.
-2. DELETE: Memory is clearly outdated, contradicted, or redundant → propose deletion.
-3. PROMOTE: Memory expresses a stable, reusable fact suitable as a \`knowledge:\` asset → propose promotion. Do NOT delete the source memory.
+2. DELETE: Memory is clearly outdated, contradicted, or redundant → propose deletion. NEVER propose delete for memories annotated \`(captureMode: hot)\` — they are user-explicit and only the user can retire them. The downstream guard will refuse these regardless, so proposing them just wastes tokens.
+3. PROMOTE: Memory expresses a stable, reusable fact suitable as a \`knowledge:\` asset → propose promotion. Do NOT delete the source memory. NEVER propose promote / merge / contradict for memories annotated \`(already queued)\` — they have a pending proposal whose body matches; a duplicate will be deterministically dropped, so proposing them just wastes tokens.
 4. CONTRADICT: Two memories make mutually exclusive factual claims about the same subject (e.g. "always use VPN" vs "VPN is optional") → mark the older or less authoritative one as contradicted. This writes a contradictedBy edge so the belief-resolution SCC algorithm can resolve the conflict. Do NOT delete contradicted memories — let the belief resolver decide.
 5. KEEP: Memory is unique and current → omit from output.
 
@@ -487,12 +487,29 @@ async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmC
 
 // ── Chunk helpers ────────────────────────────────────────────────────────────
 
+/**
+ * Build the per-chunk user prompt fed to the consolidate LLM.
+ *
+ * Each memory is annotated with two flags that drive the system-prompt
+ * rules at lines 181-186:
+ *   - `(captureMode: hot)` — user-explicit memory; system prompt rule 2
+ *     forbids proposing delete. ~60 wasted LLM verdicts/4h on this user's
+ *     stack before this annotation.
+ *   - `(already queued)` — the memory's body hash matches a pending
+ *     consolidate proposal; system prompt rule 3 forbids proposing
+ *     promote/merge/contradict. ~107/4h before this annotation.
+ *
+ * Both annotations are visible to the LLM. `pendingProposalBodyHashes`
+ * is precomputed once per run by `loadPendingConsolidateProposalHashes`
+ * so the cost stays O(memories) inside the chunk loop.
+ */
 export function buildChunkPrompt(
   sourceName: string,
   memories: MemoryEntry[],
   chunkIndex: number,
   totalChunks: number,
   bodyTruncation: number,
+  pendingProposalBodyHashes: Set<string> = new Set(),
 ): string {
   const start = memories[0] ? `memory:${memories[0].name}` : "";
   const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
@@ -503,20 +520,61 @@ export function buildChunkPrompt(
   ];
   for (let i = 0; i < memories.length; i++) {
     const m = memories[i];
-    lines.push(`[${i + 1}] memory:${m.name}`);
-    lines.push(`Description: ${m.description || "(none)"}`);
-    lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
-    lines.push("---");
     let body = "";
     try {
       body = fs.readFileSync(m.filePath, "utf8");
     } catch {
       body = "(unreadable)";
     }
+
+    // Parse frontmatter once for both annotations.
+    const parsed = parseFrontmatter(body);
+    const isHot = parsed.data.captureMode === "hot";
+
+    // Body hash matches the deterministic dedup at line ~1510 — same
+    // body-only sha256 over post-frontmatter content.
+    const bodyHash = createHash("sha256").update(parsed.content.trim(), "utf8").digest("hex");
+    const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
+
+    const annotations: string[] = [];
+    if (isHot) annotations.push("captureMode: hot");
+    if (isAlreadyQueued) annotations.push("already queued");
+    const annotationSuffix = annotations.length > 0 ? ` (${annotations.join("; ")})` : "";
+
+    lines.push(`[${i + 1}] memory:${m.name}${annotationSuffix}`);
+    lines.push(`Description: ${m.description || "(none)"}`);
+    lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
+    lines.push("---");
     lines.push(body.slice(0, bodyTruncation));
     lines.push("");
   }
   return lines.join("\n");
+}
+
+/**
+ * Precompute body-hashes of all currently-pending consolidate proposals so
+ * the per-chunk prompt can annotate memories whose body would just produce
+ * a deterministic `dedup_pending_proposal` skip. Hash domain matches the
+ * dedup site at ~line 1510 (sha256 over the post-frontmatter content,
+ * trimmed). Empty set on any read/parse error — fail-safe to "annotate
+ * nothing" so the LLM still proposes, just slightly more wastefully.
+ */
+export function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
+  const hashes = new Set<string>();
+  try {
+    const pending = listProposals(stashDir, { status: "pending" }).filter((p) => p.source === "consolidate");
+    for (const p of pending) {
+      try {
+        const body = parseFrontmatter(p.payload.content).content.trim();
+        hashes.add(createHash("sha256").update(body, "utf8").digest("hex"));
+      } catch {
+        // skip malformed payloads — they can't dedup anyway
+      }
+    }
+  } catch {
+    // listProposals throws on missing stash dir during tests — empty set is safe
+  }
+  return hashes;
 }
 
 // ── Plan parsing / merging ───────────────────────────────────────────────────
@@ -908,7 +966,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     chunks.push(clusteredMemories.slice(i, i + chunkSize));
   }
 
-  warn(`[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}`);
+  // 2026-05-27 prompt-context fix: precompute body-hashes of pending
+  // consolidate proposals once, so the per-chunk prompt can annotate
+  // memories whose body would just produce a deterministic
+  // `dedup_pending_proposal` skip. Cuts ~110 wasted LLM proposals per
+  // 4h on this user's stack. See
+  // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
+  const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
+
+  warn(
+    `[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
+      ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
+  );
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
   // Structured skip-reason histogram (2026-05-26): every deterministic
@@ -975,7 +1044,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
     const chunk = chunks[chunkIdx];
     warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
-    const userPrompt = buildChunkPrompt(sourceName, chunk, chunkIdx, chunks.length, bodyTruncation);
+    const userPrompt = buildChunkPrompt(
+      sourceName,
+      chunk,
+      chunkIdx,
+      chunks.length,
+      bodyTruncation,
+      pendingProposalBodyHashes,
+    );
 
     const raw = await tryLlmFeature(
       "memory_consolidation",

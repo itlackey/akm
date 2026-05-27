@@ -97,6 +97,113 @@ afterEach(() => {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+describe("buildChunkPrompt annotations (2026-05-27)", () => {
+  // The annotations drive system-prompt rules 2 and 3. Pre-fix the LLM was
+  // proposing ~110 dedup_pending_proposal skips + ~60 captureMode_hot_refused
+  // skips per 4h on this user's stack — both deterministic post-LLM
+  // rejections of memories the model couldn't know were already off-limits.
+  // See /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
+
+  it("annotates memories with captureMode: hot frontmatter", () => {
+    const filePath = path.join(tempDir, "hot-memory.md");
+    fs.writeFileSync(filePath, "---\ncaptureMode: hot\n---\nHot body.", "utf8");
+    const memory: MemoryEntry = {
+      name: "hot-memory",
+      filePath,
+      description: "user-explicit",
+      tags: [],
+      stashDir: tempDir,
+    };
+
+    const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500);
+
+    expect(prompt).toContain("memory:hot-memory (captureMode: hot)");
+  });
+
+  it("does NOT annotate memories with captureMode: background or absent", () => {
+    const f1 = path.join(tempDir, "bg-memory.md");
+    fs.writeFileSync(f1, "---\ncaptureMode: background\n---\nBackground body.", "utf8");
+    const f2 = path.join(tempDir, "plain-memory.md");
+    fs.writeFileSync(f2, "Plain body — no frontmatter.", "utf8");
+
+    const prompt = buildChunkPrompt(
+      "/test/stash",
+      [
+        { name: "bg-memory", filePath: f1, description: "", tags: [], stashDir: tempDir },
+        { name: "plain-memory", filePath: f2, description: "", tags: [], stashDir: tempDir },
+      ],
+      0,
+      1,
+      500,
+    );
+
+    // Body raw text may contain "captureMode: background" from the
+    // frontmatter being passed through verbatim — check only the
+    // annotation-suffix pattern, not the raw body content.
+    expect(prompt).not.toMatch(/memory:bg-memory \(/);
+    expect(prompt).not.toMatch(/memory:plain-memory \(/);
+  });
+
+  it("annotates memories whose body-hash matches a pending consolidate proposal", async () => {
+    // Match the dedup site's hash domain: sha256 over post-frontmatter
+    // content, trimmed. The proposal-builder pre-trims so we mimic that.
+    const { createHash } = await import("node:crypto");
+    const filePath = path.join(tempDir, "dup-memory.md");
+    fs.writeFileSync(filePath, "---\ndescription: dup\n---\nIdentical body text.", "utf8");
+    const memory: MemoryEntry = {
+      name: "dup-memory",
+      filePath,
+      description: "dup",
+      tags: [],
+      stashDir: tempDir,
+    };
+
+    // Same body content the dedup site would hash.
+    const queuedHash = createHash("sha256").update("Identical body text.", "utf8").digest("hex");
+    const pendingHashes = new Set<string>([queuedHash]);
+
+    const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500, pendingHashes);
+
+    expect(prompt).toContain("memory:dup-memory (already queued)");
+  });
+
+  it("combines both annotations when a memory is hot AND already queued", async () => {
+    const { createHash } = await import("node:crypto");
+    const filePath = path.join(tempDir, "hot-dup.md");
+    fs.writeFileSync(filePath, "---\ncaptureMode: hot\n---\nBoth flags body.", "utf8");
+    const memory: MemoryEntry = {
+      name: "hot-dup",
+      filePath,
+      description: "",
+      tags: [],
+      stashDir: tempDir,
+    };
+
+    const queuedHash = createHash("sha256").update("Both flags body.", "utf8").digest("hex");
+    const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500, new Set([queuedHash]));
+
+    expect(prompt).toContain("memory:hot-dup (captureMode: hot; already queued)");
+  });
+
+  it("emits no annotation suffix when neither flag applies (regression — must not break existing prompt shape)", () => {
+    const filePath = path.join(tempDir, "vanilla.md");
+    fs.writeFileSync(filePath, "Vanilla memory.", "utf8");
+    const memory: MemoryEntry = {
+      name: "vanilla",
+      filePath,
+      description: "",
+      tags: [],
+      stashDir: tempDir,
+    };
+    const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500);
+
+    // The line stays `[1] memory:vanilla` with no parens — preserves the
+    // pre-2026-05-27 shape so other tests that grep for ref names don't break.
+    expect(prompt).toContain("[1] memory:vanilla\n");
+    expect(prompt).not.toMatch(/memory:vanilla \(/);
+  });
+});
+
 describe("buildChunkPrompt size bounds", () => {
   it("prompt for 20 memories with 500-char bodies stays under 15,000 chars", () => {
     // 20 memories × 500-char bodies is the standard chunk in akmConsolidate.
