@@ -158,6 +158,24 @@ export interface ImproveHealthMetrics {
      */
     judgedNoAction: number;
     /**
+     * Secondary memories absorbed into successful merge operations across the
+     * window. 2026-05-26 accounting-leak fix: `merged` is op-level, but each
+     * successful merge actions `1 + secondaries.length` memories — without
+     * this counter the invariant
+     * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
+     *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`
+     * does not hold.
+     */
+    mergedSecondaries: number;
+    /**
+     * Memories in chunks whose LLM call failed (transport / invalid plan /
+     * abort) before any per-chunk noAction calculation could run. 2026-05-26
+     * accounting-leak fix: without this bucket, `failedChunks > 0` runs
+     * silently dropped `Σ(failed_chunk.length)` memories from the envelope's
+     * accounting.
+     */
+    failedChunkMemories: number;
+    /**
      * Histogram of structured per-op skip reasons emitted by `consolidate.ts`
      * when a deterministic post-LLM guard rejects an operation the LLM
      * proposed. Codes observed in production: `dedup_pending_proposal`,
@@ -457,6 +475,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       deleted: 0,
       contradicted: 0,
       judgedNoAction: 0,
+      mergedSecondaries: 0,
+      failedChunkMemories: 0,
       skipReasons: {},
       failedChunks: 0,
       totalChunks: 0,
@@ -674,6 +694,8 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     metrics.consolidation.totalChunks += toFiniteNumber(consolidation.totalChunks);
     metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
     metrics.consolidation.judgedNoAction += toFiniteNumber(consolidation.judgedNoAction);
+    metrics.consolidation.mergedSecondaries += toFiniteNumber(consolidation.mergedSecondaries);
+    metrics.consolidation.failedChunkMemories += toFiniteNumber(consolidation.failedChunkMemories);
     // Structured emitter (new on this branch): consolidate.ts now pushes
     // `{op, ref, reason}` entries to `skipReasons` for every deterministic
     // post-LLM rejection. Pre-fix envelopes have neither field, so be

@@ -126,6 +126,29 @@ export interface ConsolidateResult {
    * `ConsolidateSkipReason` in health.ts for the vocabulary.
    */
   skipReasons?: Array<{ op: ConsolidateOpKind | "unknown"; ref: string; reason: string }>;
+  /**
+   * Secondary memories absorbed into successful merge operations. 2026-05-26
+   * accounting-leak fix: `merged` is an OP-LEVEL counter (1 per merge op), but
+   * each successful merge actions `1 + secondaries.length` memories. Without
+   * `mergedSecondaries`, those secondaries are excluded from `judgedNoAction`
+   * (their refs land in the chunk's `targetRefs`) and never accounted for
+   * elsewhere, producing the small "processed − actioned − noAction − skips
+   * = N missing" gap observed in the 2026-05-27 02:07 run (11 unaccounted)
+   * and prior runs. Required for the invariant
+   * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
+   *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
+   */
+  mergedSecondaries?: number;
+  /**
+   * Memories belonging to chunks whose LLM call failed (HTTP error / empty
+   * response / invalid plan / consolidation-aborted by failure-rate threshold).
+   * 2026-05-26 accounting-leak fix: these memories never reach the per-chunk
+   * `judgedNoAction` computation (it lives after the success-path continue
+   * guards) and never enter `skipReasons` either, so they were a pure silent
+   * drop on every `failedChunks > 0` run. Required for the accounting
+   * invariant.
+   */
+  failedChunkMemories?: number;
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
@@ -899,6 +922,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
   // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
   let judgedNoAction = 0;
+  // 2026-05-26 accounting-leak fix: memories that belong to a chunk whose
+  // LLM call failed before any per-chunk noAction calculation runs. They
+  // would otherwise vanish from the envelope's accounting (no judgedNoAction
+  // bump, no skipReasons entry, no actioned counter).
+  let failedChunkMemories = 0;
+  // 2026-05-26 accounting-leak fix: per-secondary tally so successful merges
+  // account for `1 + secondaries.length` memories instead of 1.
+  let mergedSecondaries = 0;
   // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
   // Consecutive-count policies are brittle against transient LM Studio reloads:
   // two transient failures abort the run even though the next chunk would succeed.
@@ -918,6 +949,13 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`,
         );
+        // Account for memories in chunks we never attempted: they are
+        // neither judgedNoAction (no plan parsed) nor skipReason (no op
+        // rejected). Without this, the accounting invariant fails by
+        // `Σ(unattempted_chunk.length)` whenever the abort fires.
+        for (let i = chunkIdx; i < chunks.length; i++) {
+          failedChunkMemories += chunks[i].length;
+        }
         break;
       }
     }
@@ -957,6 +995,11 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
       totalChunksProcessed++;
       totalChunksFailed++;
+      // Account for the chunk's memories under the failed-chunk bucket.
+      // judgedNoAction does NOT run on this path (it's after the success
+      // guards) so without this the accounting invariant breaks on every
+      // chunk-level transport/parse failure.
+      failedChunkMemories += chunk.length;
       continue;
     }
 
@@ -974,6 +1017,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
       totalChunksProcessed++;
       totalChunksFailed++;
+      failedChunkMemories += chunk.length;
       continue;
     }
 
@@ -1037,6 +1081,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       totalChunks: chunks.length,
       judgedNoAction,
       skipReasons,
+      mergedSecondaries,
+      failedChunkMemories,
       planned: allOps,
       warnings,
       durationMs: Date.now() - startMs,
@@ -1078,6 +1124,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           totalChunks: chunks.length,
           judgedNoAction,
           skipReasons,
+          mergedSecondaries,
+          failedChunkMemories,
           planned: allOps,
           warnings: [...warnings, nonInteractive ? "Non-interactive context: skipped apply." : "Aborted by user."],
           durationMs: Date.now() - startMs,
@@ -1117,9 +1165,23 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       op.op === "merge" ? op.primary : op.op === "contradict" ? `${op.ref} ↔ ${op.contradictedByRef}` : op.ref;
     warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${opDisplayRef}`);
     if (op.op === "merge") {
+      // Accounting helper: emit a per-participant skipReason for failed
+      // merges so primary + every loaded-memory secondary land in the
+      // structured skip histogram. Pre-2026-05-26 only the primary was
+      // counted (1 skipReason per failed merge), leaving N secondaries
+      // unaccounted for in the `processed == actioned + noAction + Σskips`
+      // invariant — the source of the 4–11 silent leaks per run.
+      const emitMergeFailureSkips = (reason: string): void => {
+        if (memoryByRef.has(op.primary)) pushSkipReason("merge", op.primary, reason);
+        for (const secRef of op.secondaries) {
+          if (memoryByRef.has(secRef)) pushSkipReason("merge", secRef, reason);
+        }
+      };
+
       const primaryEntry = memoryByRef.get(op.primary);
       if (!primaryEntry) {
         warnings.push(`Merge: primary ${op.primary} not found in loaded memories — skipping.`);
+        emitMergeFailureSkips("merge_primary_missing");
         continue;
       }
 
@@ -1129,18 +1191,26 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         const secEntry = memoryByRef.get(secRef);
         if (!secEntry) {
           warnings.push(`Merge: secondary ${secRef} not found — skipping merge op.`);
+          // No accounting impact: a missing secondary is a phantom ref and
+          // never contributed to any chunk's targetRefs reduction. We still
+          // continue the loop to gather the remaining valid secondaries.
           continue;
         }
         secondaryBodies.push(secRef);
       }
 
-      if (secondaryBodies.length === 0) continue;
+      if (secondaryBodies.length === 0) {
+        warnings.push(`Merge: ${op.primary} has no valid secondaries — skipping.`);
+        emitMergeFailureSkips("merge_no_valid_secondaries");
+        continue;
+      }
 
       let primaryBody = "";
       try {
         primaryBody = fs.readFileSync(primaryEntry.filePath, "utf8");
       } catch {
         warnings.push(`Merge: could not read primary ${op.primary} — skipping.`);
+        emitMergeFailureSkips("merge_read_failed");
         continue;
       }
 
@@ -1160,7 +1230,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         // warning stream; bucket all three as merge_sanitization_failed for
         // the histogram. (Splitting further would require the helper to
         // return a discriminant; tracked as a follow-up if needed.)
-        pushSkipReason("merge", op.primary, "merge_sanitization_failed");
+        emitMergeFailureSkips("merge_sanitization_failed");
         continue;
       }
 
@@ -1174,24 +1244,24 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         parsedMerged = parseFrontmatter(mergedContent);
       } catch {
         warnings.push(`Merge: merged content for ${op.primary} has invalid frontmatter — skipping.`);
-        pushSkipReason("merge", op.primary, "merge_invalid_frontmatter");
+        emitMergeFailureSkips("merge_invalid_frontmatter");
         continue;
       }
       if (parsedMerged.frontmatter === null) {
         warnings.push(`Merge: merged content for ${op.primary} has no frontmatter block — skipping.`);
-        pushSkipReason("merge", op.primary, "merge_invalid_frontmatter");
+        emitMergeFailureSkips("merge_invalid_frontmatter");
         continue;
       }
       const mergedDesc = parsedMerged.data.description;
       if (typeof mergedDesc !== "string" || mergedDesc.trim().length === 0) {
         warnings.push(`Merge: merged content for ${op.primary} missing description — skipping.`);
-        pushSkipReason("merge", op.primary, "merge_missing_description");
+        emitMergeFailureSkips("merge_missing_description");
         continue;
       }
       const truncReason = detectTruncatedDescription(mergedDesc);
       if (truncReason) {
         warnings.push(`Merge: merged content for ${op.primary} has truncated description (${truncReason}) — skipping.`);
-        pushSkipReason("merge", op.primary, "merge_truncated_description");
+        emitMergeFailureSkips("merge_truncated_description");
         continue;
       }
 
@@ -1216,7 +1286,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         warnings.push(
           `Merge: refused for ${op.primary} — ${blockedParticipants.length} participant(s) blocked by hot/unparseable frontmatter guard: ${detail}`,
         );
-        pushSkipReason("merge", op.primary, "merge_participant_blocked");
+        emitMergeFailureSkips("merge_participant_blocked");
         continue;
       }
 
@@ -1234,6 +1304,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         await writeAssetToSource(target.source, target.config, parsedPrimary, mergedContent);
       } catch (e) {
         warnings.push(`Merge: write failed for ${op.primary}: ${String(e)}`);
+        emitMergeFailureSkips("merge_write_failed");
         continue;
       }
 
@@ -1255,10 +1326,26 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
       markJournalCompleted(stashDir, op.primary);
       merged++;
+      // 2026-05-26 accounting-leak fix: `merged` is op-level, but each
+      // successful merge actions `1 + secondaries.length` memories. Without
+      // this counter the accounting invariant breaks by `secondaries.length`
+      // per successful merge (chunk loop excluded all secondaries from
+      // judgedNoAction via targetRefs, but only the primary is credited to
+      // `merged`). Count only loaded-memory secondaries; phantom secondary
+      // refs never affected any chunk's targetRefs in the first place.
+      for (const secRef of op.secondaries) {
+        if (memoryByRef.has(secRef)) mergedSecondaries++;
+      }
     } else if (op.op === "delete") {
       const entry = memoryByRef.get(op.ref);
       if (!entry) {
         warnings.push(`Delete: ${op.ref} not found in loaded memories — skipping.`);
+        // Accounting impact only if op.ref happens to be a real in-chunk
+        // memory; for phantom refs (the typical case) the chunk's targetRefs
+        // gained the ref but no chunk member matched it, so judgedNoAction
+        // is unaffected and this skipReason is a no-op for the invariant.
+        // Emit unconditionally for visibility.
+        pushSkipReason("delete", op.ref, "delete_ref_missing");
         continue;
       }
 
@@ -1290,11 +1377,13 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         deleted++;
       } catch (e) {
         warnings.push(`Delete: failed for ${op.ref}: ${String(e)}`);
+        pushSkipReason("delete", op.ref, "delete_failed");
       }
     } else if (op.op === "promote") {
       const entry = memoryByRef.get(op.ref);
       if (!entry) {
         warnings.push(`Promote: ${op.ref} not found in loaded memories — skipping.`);
+        pushSkipReason("promote", op.ref, "promote_ref_missing");
         continue;
       }
 
@@ -1342,6 +1431,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         memoryContent = fs.readFileSync(entry.filePath, "utf8");
       } catch (e) {
         warnings.push(`Promote: could not read ${op.ref}: ${String(e)}`);
+        pushSkipReason("promote", op.ref, "promote_read_failed");
         continue;
       }
 
@@ -1478,6 +1568,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           warnings.push(
             `Promote: skipped proposal for ${op.ref} (${proposalResult.reason}): ${proposalResult.message}`,
           );
+          pushSkipReason("promote", op.ref, `promote_proposal_${proposalResult.reason}`);
         } else {
           promoted.push(proposalResult.id);
           promotedSourceRefs.add(op.ref);
@@ -1485,6 +1576,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         }
       } catch (e) {
         warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);
+        pushSkipReason("promote", op.ref, "promote_create_failed");
       }
     } else if (op.op === "contradict") {
       // C-3 / #382: Write contradictedBy edges so resolveFamilyContradictions
@@ -1495,6 +1587,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
       if (!entry) {
         warnings.push(`Contradict: ${op.ref} not found in loaded memories — skipping.`);
+        pushSkipReason("contradict", op.ref, "contradict_ref_missing");
         continue;
       }
       if (!contradictorEntry) {
@@ -1510,6 +1603,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         markJournalCompleted(stashDir, op.ref);
       } catch (e) {
         warnings.push(`Contradict: failed to write edge for ${op.ref}: ${String(e)}`);
+        pushSkipReason("contradict", op.ref, "contradict_write_failed");
       }
     }
   }
@@ -1563,6 +1657,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     totalChunks: chunks.length,
     judgedNoAction,
     skipReasons,
+    mergedSecondaries,
+    failedChunkMemories,
     warnings,
     durationMs: Date.now() - startMs,
   };
