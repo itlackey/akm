@@ -109,6 +109,19 @@ export function parseFrontmatter(raw: string): {
       continue;
     }
 
+    // Plain-style multi-line scalar continuation: a 2-space-indented line that
+    // is not a sequence item or nested key. YAML plain scalars fold newlines
+    // into a single space, so we append with a space. This handles LLM-emitted
+    // descriptions like:
+    //   description: Use 4-colon outer containers when mixing
+    //     nesting depths in markdown-it-container plugins.
+    // Without this, only the first line is captured and the truncation
+    // heuristic wrongly flags it as cut off mid-sentence.
+    if (mode === "scalar" && currentKey !== null && /^ {2}\S/.test(line)) {
+      data[currentKey] = `${String(data[currentKey])} ${line.trim()}`;
+      continue;
+    }
+
     // Indented nested key-value (object under a key with empty value)
     const indented = line.match(/^ {2}(\w[\w-]*):\s*(.+)$/);
     if (indented && currentKey !== null && (mode === "object" || mode === "pending")) {

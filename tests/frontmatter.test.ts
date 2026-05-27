@@ -143,6 +143,25 @@ describe("parseFrontmatter", () => {
     const result = parseFrontmatter(raw);
     expect(result.data.tags).toEqual(["solo"]);
   });
+
+  test("plain-style multi-line scalar folds continuation lines into one string", () => {
+    // YAML plain scalars wrap with 2-space indent; the parser must fold them.
+    const raw =
+      "---\ndescription: Use 4-colon outer containers when mixing\n  nesting depths in markdown-it-container plugins.\ntags:\n- markdown\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe(
+      "Use 4-colon outer containers when mixing nesting depths in markdown-it-container plugins.",
+    );
+    expect(result.data.tags).toEqual(["markdown"]);
+    expect(result.content).toBe("Body\n");
+  });
+
+  test("plain-style scalar continuation: multiple continuation lines all folded", () => {
+    const raw = "---\ndescription: First line\n  second line\n  third line.\ntitle: After\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe("First line second line third line.");
+    expect(result.data.title).toBe("After");
+  });
 });
 
 // ── parseFrontmatterBlock ───────────────────────────────────────────────────
