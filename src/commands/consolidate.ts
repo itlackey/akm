@@ -244,6 +244,7 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
                 items: { type: "string", minLength: 1 },
               },
               mergeStrategy: { type: "string", minLength: 1 },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
             },
           },
           {
@@ -254,6 +255,7 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
               op: { type: "string", enum: ["delete"] },
               ref: { type: "string", minLength: 1 },
               reason: { type: "string", minLength: 1 },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
             },
           },
           {
@@ -266,6 +268,7 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
               knowledgeRef: { type: "string", minLength: 1 },
               reason: { type: "string", minLength: 1 },
               description: { type: "string" },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
             },
           },
           {
@@ -277,6 +280,7 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
               ref: { type: "string", minLength: 1 },
               contradictedByRef: { type: "string", minLength: 1 },
               reason: { type: "string", minLength: 1 },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
             },
           },
         ],
