@@ -296,6 +296,13 @@ export interface AkmImproveResult {
    * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
    */
   reflectGuardRejectedActions?: number;
+  /**
+   * Total proposals auto-promoted by the unified gate across all phases
+   * (reflect, extract, distill, consolidate). Populated by summing the
+   * `.promoted.length` from every `runAutoAcceptGate` call in the run.
+   * Omitted when zero to keep the envelope tidy.
+   */
+  gateAutoAcceptedCount?: number;
 }
 
 type ImproveScope = ReturnType<typeof resolveImproveScope>;
@@ -344,16 +351,19 @@ interface ImprovePreparationResult {
    * "reflect", "distill") maps to its own rolling window of last-N errors.
    */
   recentErrors: Record<string, string[]>;
+  gateAutoAcceptedCount: number;
 }
 
 interface ImproveLoopResult {
   reflectsWithErrorContext: number;
   memoryRefsForInference: Set<string>;
+  gateAutoAcceptedCount: number;
 }
 
 interface ImprovePostLoopResult {
   allWarnings: string[];
   consolidation: ConsolidateResult;
+  gateAutoAcceptedCount: number;
   deadUrls?: DeadUrl[];
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
@@ -979,7 +989,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
-    const { reflectsWithErrorContext, memoryRefsForInference } = await runImproveLoopStage({
+    const {
+      reflectsWithErrorContext,
+      memoryRefsForInference,
+      gateAutoAcceptedCount: loopGateCount,
+    } = await runImproveLoopStage({
       scope,
       options,
       primaryStashDir,
@@ -1011,6 +1025,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       graphExtractionDurationMs,
       orphansPurged,
       proposalsExpired,
+      gateAutoAcceptedCount: postLoopGateCount,
     } = await runImprovePostLoopStage({
       scope,
       options,
@@ -1098,6 +1113,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
       reflectSkippedActions: finalActions.filter((a) => a.mode === "reflect-skipped").length,
       reflectGuardRejectedActions: finalActions.filter((a) => a.mode === "reflect-guard-rejected").length,
+      ...(() => {
+        const t = preparation.gateAutoAcceptedCount + loopGateCount + postLoopGateCount;
+        return t > 0 ? { gateAutoAcceptedCount: t } : {};
+      })(),
     };
     if (!result.dryRun)
       emitImproveCompletedEvent(
@@ -1337,6 +1356,7 @@ async function runImprovePreparationStage(args: {
   // Failures are non-fatal — one harness throwing doesn't abort improve.
   // The extract envelope's own `warnings` field surfaces what went wrong.
   let extractResults: AkmExtractResult[] | undefined;
+  let gateAutoAcceptedCount = 0;
   const extractConfig = options.config ?? loadConfig();
   const extractGateCfg = makeGateConfig("extract", {
     globalThreshold: options.autoAccept,
@@ -1359,15 +1379,17 @@ async function runImprovePreparationStage(args: {
           });
           extractResults.push(result);
 
-          await runAutoAcceptGate(
-            primaryStashDir
-              ? result.proposals.map((proposalId) => {
-                  const proposal = getProposal(primaryStashDir, proposalId);
-                  return { proposalId, confidence: resolveExtractConfidence(proposal) };
-                })
-              : [],
-            extractGateCfg,
-          );
+          gateAutoAcceptedCount += (
+            await runAutoAcceptGate(
+              primaryStashDir
+                ? result.proposals.map((proposalId) => {
+                    const proposal = getProposal(primaryStashDir, proposalId);
+                    return { proposalId, confidence: resolveExtractConfidence(proposal) };
+                  })
+                : [],
+              extractGateCfg,
+            )
+          ).promoted.length;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           cleanupWarnings.push(`extract(${h.name}) failed: ${msg}`);
@@ -1852,6 +1874,7 @@ async function runImprovePreparationStage(args: {
     coverageGaps,
     recentErrors,
     utilityMap,
+    gateAutoAcceptedCount,
   };
 }
 
@@ -1985,6 +2008,7 @@ async function runImproveLoopStage(args: {
       : [],
   );
 
+  let gateAutoAcceptedCount = 0;
   const reflectGateCfg = makeGateConfig("reflect", {
     globalThreshold: options.autoAccept,
     dryRun: options.dryRun ?? false,
@@ -2176,10 +2200,12 @@ async function runImproveLoopStage(args: {
           );
 
           if (reflectResult.ok) {
-            await runAutoAcceptGate(
-              [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
-              reflectGateCfg,
-            );
+            gateAutoAcceptedCount += (
+              await runAutoAcceptGate(
+                [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
+                reflectGateCfg,
+              )
+            ).promoted.length;
           }
         } // end else (reflect type/profile check)
       } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
@@ -2305,10 +2331,12 @@ async function runImproveLoopStage(args: {
         });
         actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
         if (distillResult.outcome === "queued" && distillResult.proposal) {
-          await runAutoAcceptGate(
-            [{ proposalId: distillResult.proposal.id, confidence: distillResult.proposal.confidence }],
-            distillGateCfg,
-          );
+          gateAutoAcceptedCount += (
+            await runAutoAcceptGate(
+              [{ proposalId: distillResult.proposal.id, confidence: distillResult.proposal.confidence }],
+              distillGateCfg,
+            )
+          ).promoted.length;
         }
         if (parsedPlannedRef.type === "memory") {
           const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
@@ -2381,7 +2409,7 @@ async function runImproveLoopStage(args: {
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
   }
 
-  return { reflectsWithErrorContext, memoryRefsForInference };
+  return { reflectsWithErrorContext, memoryRefsForInference, gateAutoAcceptedCount };
 }
 
 async function runImprovePostLoopStage(args: {
@@ -2505,6 +2533,7 @@ async function runImprovePostLoopStage(args: {
     warnings: [],
     durationMs: 0,
   };
+  let gateAutoAcceptedCount = 0;
   const consolidateGateCfg = makeGateConfig(
     "consolidate",
     {
@@ -2533,18 +2562,20 @@ async function runImprovePostLoopStage(args: {
       // still wins because the spread above runs first.
       autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
     });
-    await runAutoAcceptGate(
-      consolidation.promoted.map((proposalId) => {
-        try {
-          if (!primaryStashDir) return { proposalId, confidence: undefined };
-          const proposal = getProposal(primaryStashDir, proposalId);
-          return { proposalId, confidence: proposal.confidence };
-        } catch {
-          return { proposalId, confidence: undefined };
-        }
-      }),
-      consolidateGateCfg,
-    );
+    gateAutoAcceptedCount += (
+      await runAutoAcceptGate(
+        consolidation.promoted.map((proposalId) => {
+          try {
+            if (!primaryStashDir) return { proposalId, confidence: undefined };
+            const proposal = getProposal(primaryStashDir, proposalId);
+            return { proposalId, confidence: proposal.confidence };
+          } catch {
+            return { proposalId, confidence: undefined };
+          }
+        }),
+        consolidateGateCfg,
+      )
+    ).promoted.length;
     if (consolidation.processed > 0) {
       appendEvent(
         {
@@ -2625,6 +2656,7 @@ async function runImprovePostLoopStage(args: {
     graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
     orphansPurged: maintenanceResult.orphansPurged,
     proposalsExpired: maintenanceResult.proposalsExpired,
+    gateAutoAcceptedCount,
   };
 }
 

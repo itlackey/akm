@@ -1134,11 +1134,13 @@ export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMe
         // separately as a no-op for the audit aggregate.
         break;
     }
-    // Some action result variants carry an `autoAccepted` flag (reflect path).
-    // The safe pattern is to read via `Record<string, unknown>` indexing.
+    // Legacy: pre-gate action results may carry autoAccepted: true (reflect path).
     const r = action.result as Record<string, unknown> | undefined;
     if (r && r.autoAccepted === true) autoAcceptedCount++;
   }
+
+  // Add gate-promoted count from the unified PostPhaseAutoAcceptGate (all phases).
+  autoAcceptedCount += result.gateAutoAcceptedCount ?? 0;
 
   return { plannedCount, actionsCount, acceptedCount, rejectedCount, autoAcceptedCount, errorCount };
 }
