@@ -146,6 +146,9 @@ export const ImproveProcessConfigSchema = z
     allowedTypes: z.array(z.string().min(1)).optional(),
     qualityGate: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).strict().optional(),
+    // Extract process config (only meaningful for extract process)
+    defaultSince: z.string().min(1).optional(),
+    maxTotalChars: positiveInt.optional(),
   })
   .strict();
 
