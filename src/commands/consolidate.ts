@@ -20,6 +20,8 @@ import { parseEmbeddedJsonResponse } from "../core/parse";
 import {
   hasHotCaptureMode,
   hasSupersededStatus,
+  MERGE_ABSOLUTE_FLOOR_CHARS,
+  MERGE_SHRINK_RATIO_MIN,
   validateProposalFrontmatter,
 } from "../core/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
@@ -2257,15 +2259,19 @@ async function generateMergedContent(
     const secFm = parseFrontmatter(secBody);
     const mergedFm = parseFrontmatter(mergedRaw);
 
-    // Check body size
+    // Check body size — blended floor: max(ratio × largerLen, absoluteFloor).
+    // Deduplication is expected, so the ratio is lower than the reflect gate
+    // (0.3 vs 0.5). The absolute floor protects very short memory pairs where
+    // the ratio alone would produce a near-zero threshold.
     const primaryBodyLen = (primaryFm.content ?? "").trim().length;
     const secBodyLen = (secFm.content ?? "").trim().length;
     const mergedBodyLen = (mergedFm.content ?? "").trim().length;
     const largerBodyLen = Math.max(primaryBodyLen, secBodyLen);
-    if (largerBodyLen > 0 && mergedBodyLen < largerBodyLen * 0.5) {
+    const mergeFloor = Math.max(MERGE_SHRINK_RATIO_MIN * largerBodyLen, MERGE_ABSOLUTE_FLOOR_CHARS);
+    if (largerBodyLen > 0 && mergedBodyLen < mergeFloor) {
       return {
         error: "merge_content_too_short",
-        detail: `${primaryRef} — merged body (${mergedBodyLen} chars) is less than 50% of larger source (${largerBodyLen} chars)`,
+        detail: `${primaryRef} — merged body (${mergedBodyLen} chars) is less than floor (${Math.round(mergeFloor)} chars; max(${MERGE_SHRINK_RATIO_MIN}×${largerBodyLen}, ${MERGE_ABSOLUTE_FLOOR_CHARS}))`,
       };
     }
 

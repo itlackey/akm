@@ -195,6 +195,23 @@ export function hasHotCaptureMode(frontmatter: Record<string, unknown> | undefin
   return frontmatter?.captureMode === "hot";
 }
 
+// ── Consolidate merge size gate ──────────────────────────────────────────────
+
+/**
+ * Ratio lower-bound for merged body vs. the larger source body.
+ * Lower than reflect (0.5) because deduplication is expected — two memories
+ * with 80-90% overlap legitimately compress to well under 50% of the larger.
+ */
+export const MERGE_SHRINK_RATIO_MIN = 0.3;
+
+/**
+ * Absolute floor (chars) for merged body.  When sources are short (<~333 chars),
+ * `MERGE_SHRINK_RATIO_MIN × largerBodyLen` falls below this and the absolute
+ * floor dominates — prevents false positives on very terse memory pairs.
+ * Matches the existing `promote_source_too_small` floor of 100 chars.
+ */
+export const MERGE_ABSOLUTE_FLOOR_CHARS = 100;
+
 // ── Reflect size gate ────────────────────────────────────────────────────────
 
 /** Ratio lower-bound: proposed body must be at least this fraction of source. */
