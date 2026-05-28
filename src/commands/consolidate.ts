@@ -1949,11 +1949,21 @@ export function sanitizeMergedContent(
 
   // Re-parse via the yaml library so any quote-escaping mistakes either get
   // normalised or surface as a parse error we can reject.
+  // Recovery: if the strict yaml library fails, fall back to the lenient
+  // hand-rolled parseFrontmatter parser, which tolerates common LLM YAML
+  // quirks (unescaped special chars, bare scalars, etc.). If it recovers
+  // at least one key, proceed — yamlStringify below will re-serialize
+  // cleanly. Only reject if both parsers fail to extract any data.
   let parsedFm: unknown;
   try {
     parsedFm = yamlParse(match[1]);
   } catch (e) {
-    return { ok: false, reason: `INVALID_YAML: ${e instanceof Error ? e.message : String(e)}` };
+    const fallback = parseFrontmatter(`---\n${match[1]}\n---\n${match[2]}`);
+    if (fallback.frontmatter !== null && Object.keys(fallback.data).length > 0) {
+      parsedFm = fallback.data;
+    } else {
+      return { ok: false, reason: `INVALID_YAML: ${e instanceof Error ? e.message : String(e)}` };
+    }
   }
   if (parsedFm === null || typeof parsedFm !== "object" || Array.isArray(parsedFm)) {
     return { ok: false, reason: "FRONTMATTER_NOT_OBJECT" };

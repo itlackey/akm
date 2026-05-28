@@ -194,12 +194,13 @@ describe("sanitizeMergedContent — full LLM-output pipeline", () => {
     }
   });
 
-  it("rejects YAML with truly invalid syntax", () => {
-    // Single-quoted scalar with no closing quote — yaml.parse throws.
+  it("recovers from invalid YAML using lenient parseFrontmatter fallback", () => {
+    // Single-quoted scalar with no closing quote — yaml.parse throws, but
+    // parseFrontmatter can extract the key and re-serialize cleanly.
     const raw = "---\ndescription: 'unterminated quote\n---\nbody\n";
     const result = sanitizeMergedContent(raw);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason.startsWith("INVALID_YAML")).toBe(true);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(typeof result.result.frontmatter.description).toBe("string");
   });
 
   it("strips <think> blocks before parsing frontmatter", () => {
