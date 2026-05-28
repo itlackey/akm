@@ -270,7 +270,8 @@ in 0.8.0.
 
 Each entry under `processes` is either absent (use the built-in default
 for the named profile) or an object of the form
-`{ enabled?, mode?, profile?, timeoutMs?, allowedTypes?, cooldownByType?, cooldownDays?, qualityGate?, contradictionDetection? }`.
+`{ enabled?, mode?, profile?, timeoutMs?, allowedTypes?, qualityGate?, contradictionDetection?, defaultSince?, maxTotalChars? }`.
+(Not all fields apply to all processes: `allowedTypes` is for reflect/distill; `qualityGate` and `contradictionDetection` for specific processes; `defaultSince` and `maxTotalChars` only for extract.)
 
 | Process | Default (built-in `default` profile) | Description |
 | --- | --- | --- |
@@ -279,8 +280,32 @@ for the named profile) or an object of the form
 | `consolidate` | enabled, `memory` only | Memory deduplication / promotion. Optional `contradictionDetection.enabled` runs pairwise checks. |
 | `memoryInference` | enabled | Derives structured memories from pending memory files. |
 | `graphExtraction` | enabled | Extracts entities and relations for graph-boosted search. |
-| `feedbackDistillation` | enabled | Whether `akm distill` acts on feedback events. |
+| `extract` | enabled | Reads native session files (Claude Code JSONL, opencode logs) and extracts insight proposals via LLM. Configure `defaultSince` (discovery window, e.g. `"24h"`) and `maxTotalChars` (event-budget, default `80000`) to tune extraction scope. |
 | `validation` | unset → falls back to `defaults.llm` | Lower-tier classifier model used by staleness detection, confidence scoring, and lesson classification. Configure with a smaller/cheaper LLM profile to keep validation cycles cheap. |
+
+#### Configuring the extract process
+
+The `extract` process runs as part of `akm improve` to automatically derive memory, lesson, and knowledge proposals from native session logs (Claude Code JSONL, opencode storage). You can tune its behavior with two optional fields:
+
+```jsonc
+"processes": {
+  "extract": {
+    "enabled": true,                    // default: enabled
+    "defaultSince": "24h",              // session discovery window (default "24h")
+    "maxTotalChars": 80000              // event pre-filter budget (default 80000)
+  }
+}
+```
+
+- **`defaultSince`**: Sets the discovery window for session extraction when no explicit time range is given. Accepts ISO 8601 timestamps (`2026-05-20T00:00:00Z`) or duration strings (`24h`, `7d`, `30m`). Default: `"24h"` (most recent sessions only).
+  - Use `"7d"` to include a broader historical window.
+  - Use `"0"` to disable time-based filtering (extract all available sessions).
+
+- **`maxTotalChars`**: Pre-filter budget for kept events before sending to the extraction LLM. Once kept events exceed this many characters, older events are dropped (recency-bias) to keep the prompt within token limits. Default: `80000` (tuned for 32K-token models).
+  - Increase to `200000` for larger-context models (e.g., Opus with 200K tokens).
+  - Decrease to `30000` for smaller models (e.g., Haiku).
+
+Set `enabled: false` to skip extraction entirely during improve runs.
 
 #### Tuning the forgetting curve
 
