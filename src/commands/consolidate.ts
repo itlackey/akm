@@ -1503,8 +1503,17 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         markJournalCompleted(stashDir, op.ref);
         deleted++;
       } catch (e) {
-        warnings.push(`Delete: failed for ${op.ref}: ${String(e)}`);
-        pushSkipReason("delete", op.ref, "delete_failed");
+        // Distinguish "file already absent" from genuine failures. A prior run
+        // may have deleted the file but the DB was not yet re-indexed, so the
+        // ref still appeared in memoryByRef. The delete goal is already met.
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("not found in source")) {
+          warnings.push(`Delete: ${op.ref} — file already absent (stale DB entry); skipping.`);
+          pushSkipReason("delete", op.ref, "delete_already_gone");
+        } else {
+          warnings.push(`Delete: failed for ${op.ref}: ${String(e)}`);
+          pushSkipReason("delete", op.ref, "delete_failed");
+        }
       }
     } else if (op.op === "promote") {
       const entry = memoryByRef.get(op.ref);
@@ -2122,6 +2131,12 @@ function loadMemoriesForSource(source: string | undefined, stashDir: string, war
         return path.resolve(e.stashDir) === path.resolve(source);
       })
       .filter((e) => isConsolidationEligibleMemoryName(e.entry.name))
+      // Skip stale DB entries whose file was deleted by a prior run but not yet
+      // re-indexed. Without this guard the deleted file's ref appears in chunks
+      // sent to the LLM, which then proposes a second delete → delete_failed
+      // because the file is already gone. Re-indexing runs on a cron cadence so
+      // several successful deletes can accumulate before the DB catches up.
+      .filter((e) => fs.existsSync(e.filePath))
       .map((e) => ({
         name: e.entry.name,
         filePath: e.filePath,
