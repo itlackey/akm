@@ -8,7 +8,7 @@ import {
 
 describe("RESPONSE_CONTRACT_JSON — explicit confidence elicitation", () => {
   test("buildReflectPrompt asks for a self-rated confidence score in [0, 1]", () => {
-    const prompt = buildReflectPrompt({ ref: "lesson:demo", type: "lesson", name: "demo" });
+    const { prompt } = buildReflectPrompt({ ref: "lesson:demo", type: "lesson", name: "demo" });
     expect(prompt).toMatch(/confidence/i);
     expect(prompt).toMatch(/0\.\.1|0\s*[–-]\s*1|\[0,\s*1\]|0\.0-1\.0|0\.0–1\.0/);
     expect(prompt).toMatch(/auto-accept/i);
@@ -31,7 +31,7 @@ describe("RESPONSE_CONTRACT_JSON — explicit confidence elicitation", () => {
   });
 
   test("file-write contract asks the agent to emit `DRAFT_WRITTEN confidence=<n>`", () => {
-    const prompt = buildReflectPrompt({
+    const { prompt } = buildReflectPrompt({
       ref: "lesson:demo",
       type: "lesson",
       name: "demo",
