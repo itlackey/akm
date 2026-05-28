@@ -397,7 +397,7 @@ const reflectSizeGuardValidator: ProposalValidator = {
     const outcome = checkReflectSize(sourceBody, proposedBody);
     if (outcome.ok) return [];
     const pct = (outcome.ratio * 100).toFixed(0);
-    const limit = outcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 200%";
+    const limit = outcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 250%";
     const cause =
       outcome.code === "EXCESSIVE_SHRINKAGE"
         ? "Concrete content was likely deleted."

@@ -622,7 +622,7 @@ function sanitizeReflectPayload(
   const sizeOutcome = checkReflectSize(sourceBody, cleanedBody);
   if (!sizeOutcome.ok) {
     const pct = (sizeOutcome.ratio * 100).toFixed(0);
-    const limit = sizeOutcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 200%";
+    const limit = sizeOutcome.code === "EXCESSIVE_SHRINKAGE" ? "minimum 50%" : "maximum 250%";
     const cause =
       sizeOutcome.code === "EXCESSIVE_SHRINKAGE"
         ? "Concrete content was likely deleted."

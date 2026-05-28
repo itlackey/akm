@@ -338,13 +338,30 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   // asset content into shorter prose, drops concrete structure, or strips
   // load-bearing frontmatter. Loud and explicit so small models follow.
   if (input.ref && input.assetContent?.trim()) {
+    // Strip frontmatter to get source body length — mirrors checkReflectSize which
+    // compares body-only lengths. Inline regex avoids importing parseFrontmatter.
+    const rawContent = input.assetContent.trimEnd();
+    const fmBodyMatch = rawContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
+    const sourceBodyLen = (fmBodyMatch ? fmBodyMatch[1] : rawContent).trim().length;
+    // Compute concrete char bounds matching checkReflectSize constants:
+    //   REFLECT_SIZE_GUARD_MIN_BYTES=200, REFLECT_SHRINK_RATIO_MIN=0.5,
+    //   REFLECT_ABSOLUTE_FLOOR_BYTES=150, REFLECT_EXPAND_RATIO_MAX=2.5,
+    //   REFLECT_ABSOLUTE_CEILING_BYTES=2500, REFLECT_ABSOLUTE_MAX_BYTES=25000.
+    // Embed concrete counts only when the gate will actually fire (source >= 200 chars).
+    const showCharBounds = sourceBodyLen >= 200;
+    const minChars = Math.max(Math.round(0.5 * sourceBodyLen), 150);
+    const maxChars = Math.min(Math.max(Math.round(2.5 * sourceBodyLen), 2500), 25000);
     sections.push(
       [
         "## Content preservation rules (MUST follow)",
         "1. PRESERVE ALL concrete content: code blocks, fenced snippets, CLI commands, numbered/bulleted checklists, tables, YAML/JSON examples, file paths, configuration keys, environment variable names, and CSS/HTML selectors. These are load-bearing — do NOT replace them with prose summaries.",
         "2. PRESERVE the source asset's frontmatter. The post-processor reassembles the final asset from the original frontmatter plus your body. Do NOT emit `---` frontmatter delimiters at the top of `content` — start `content` with the markdown body (e.g. `# Heading` or the first paragraph). If you include frontmatter anyway, identity fields (`name`, `ref`, `id`, `slug`, `type`) will be reset to the original values.",
-        "3. DO NOT shrink the asset dramatically. The improved body must be at least 50% of the source body length. If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. `<!-- removed obsolete section X because ... -->`).",
-        "4. DO NOT pad the asset with speculative material. The improved body must be at most 200% of the source body length unless the feedback explicitly requests added sections.",
+        showCharBounds
+          ? `3. DO NOT shrink the asset. Your body must be at least ${minChars} characters (source body is ${sourceBodyLen} chars; floor is 50%). If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. \`<!-- removed obsolete section X because ... -->\`).`
+          : "3. DO NOT shrink the asset dramatically. The improved body must be at least 50% of the source body length. If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. `<!-- removed obsolete section X because ... -->`).",
+        showCharBounds
+          ? `4. DO NOT pad the asset with speculative material. Your body must be at most ${maxChars} characters (source body is ${sourceBodyLen} chars; ceiling is 250%). Do not add invented sections, hypothetical examples, or padding prose.`
+          : "4. DO NOT pad the asset with speculative material. The improved body must be at most 250% of the source body length unless the feedback explicitly requests added sections.",
         "5. Improve clarity of surrounding prose, fix structural issues, add missing required frontmatter fields. Do NOT rewrite a runbook into an essay.",
       ].join("\n"),
     );
