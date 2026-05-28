@@ -713,6 +713,15 @@ export interface RunReflectViaLlmOptions {
   /** Test seam: override the chat function (avoids real LLM calls in tests). */
   chat?: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
   /**
+   * Hard output-token cap forwarded directly to `chatCompletion` as `max_tokens`.
+   * Derived from the same blended-bound formula used by {@link checkReflectSize}
+   * (via {@link buildReflectPrompt}) so the API layer enforces the same ceiling
+   * that the post-processor would reject anyway. Adds a buffer for JSON structure
+   * and frontmatter overhead (÷3 chars/token, +500 char overhead).
+   * Only set when the source body is ≥ REFLECT_SIZE_GUARD_MIN_BYTES (200 chars).
+   */
+  maxTokens?: number;
+  /**
    * Accepted for type consistency with agent/sdk runners but intentionally NO-OP
    * for the LLM HTTP path: the chat-completion transport has no filesystem access,
    * so it cannot honour a file-write contract. The reflect dispatcher must NEVER
@@ -746,12 +755,12 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
       // Test seam: injected chat function (two-arg signature, no responseSchema).
       stdout = await opts.chat(opts.connection, messages);
     } else {
-      // Production path: full chatCompletion with optional structured-output schema.
-      stdout = await chatCompletion(
-        opts.connection,
-        messages,
-        opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : undefined,
-      );
+      // Production path: full chatCompletion with optional structured-output schema
+      // and optional hard max_tokens cap (derived from source body size).
+      stdout = await chatCompletion(opts.connection, messages, {
+        ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
+        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+      });
     }
     return {
       ok: true,
@@ -1002,7 +1011,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         lastDraftPath = iterDraftPath;
       }
 
-      const prompt = buildReflectPrompt({
+      const { prompt, maxOutputChars } = buildReflectPrompt({
         ...(options.ref ? { ref: options.ref } : {}),
         ...(parsedRef?.type ? { type: parsedRef.type } : {}),
         ...(parsedRef?.name ? { name: parsedRef.name } : {}),
@@ -1021,6 +1030,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         // on long bodies (e.g. knowledge:systems/KOKORO_USAGE_GUIDE 8.4KB).
         ...(iterDraftPath ? { draftFilePath: iterDraftPath } : {}),
       });
+      // Convert char ceiling → token cap for the LLM path: divide by 3 chars/token
+      // (conservative — most models are 3.5–4) and add 500-char overhead for the
+      // JSON wrapper and frontmatter block that surround the body in the response.
+      const maxTokensForLlm = maxOutputChars !== undefined ? Math.ceil((maxOutputChars + 500) / 3) : undefined;
 
       let iterResult: AgentRunResult;
       if (options.runAgentOptions?.spawn) {
@@ -1060,6 +1073,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
               iteration: iter,
               responseSchema: REFLECT_JSON_SCHEMA,
               chat: options.chat,
+              ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
             });
             break;
           case "sdk":
