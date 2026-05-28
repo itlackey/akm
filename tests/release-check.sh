@@ -37,8 +37,8 @@ run_step \
 	"Verify npm bin target" \
 	node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); const bin = pkg.bin?.akm; if (!bin || !fs.existsSync(bin)) { console.error(`Missing npm bin target: ${bin ?? "<undefined>"}`); process.exit(1); } if (fs.existsSync("dist/tests")) { console.error("Publish build should not emit dist/tests"); process.exit(1); }'
 run_step \
-	"Install and Setup Regression Suite" \
-	bun test ./tests/integration/setup-run.integration.ts tests/install-script.test.ts tests/setup-wizard.test.ts tests/setup.test.ts
+  "Install and Setup Regression Suite" \
+  bun test tests/setup.test.ts ./tests/integration/setup-run.integration.ts tests/install-script.test.ts tests/setup-wizard.test.ts
 run_step "Full Test Suite" bun test
 
 if [ "$SKIP_DOCKER" = false ]; then
