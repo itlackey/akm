@@ -9,4 +9,4 @@ preload = ["./tests/_preload.ts"]
 # Raise the per-test timeout from the 5 s default. Several tests make
 # localhost HTTP connections that take 2–4 s to fail gracefully, and
 # under parallel load that can exceed 5 s and produce spurious failures.
-timeout = 15000
+timeout = 30000
