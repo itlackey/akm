@@ -2172,6 +2172,10 @@ async function generateMergedContent(
     return { error: "merge_read_failed", detail: `could not read secondary ${secRef}` };
   }
 
+  const primaryFmKeys = Object.keys(parseFrontmatter(primaryBody).data);
+  const secFmKeys = Object.keys(parseFrontmatter(secBody).data);
+  const requiredFmKeys = [...new Set([...primaryFmKeys, ...secFmKeys])];
+
   const prompt = [
     "Merge these two memory assets into one. Output ONLY the merged markdown (with YAML frontmatter). Do not explain, do not use code fences.",
     "",
@@ -2183,14 +2187,20 @@ async function generateMergedContent(
     'BAD:  "```markdown\\n---\\ndescription: ...\\n---\\nBody content.\\n```"',
     'BAD:  "```yaml\\n---\\ndescription: ...\\n---\\nBody content.\\n```"',
     "",
+    "## FRONTMATTER RULES (MANDATORY)",
     "- The `updated:` field, if present, MUST be a real ISO date (e.g. `updated: 2026-05-20`). NEVER emit `updated: today`, `updated: now`, or `updated: {today: null}`. If you don't have a real date, OMIT the field — the post-processor will not invent one.",
+    requiredFmKeys.length > 0
+      ? `- CRITICAL: The merged frontmatter MUST include ALL of these keys from both source memories: ${requiredFmKeys.join(", ")}. Do NOT drop any of them.`
+      : null,
     "",
     `=== Primary memory (${primaryRef}) ===`,
     primaryBody,
     "",
     `=== Secondary memory (${secRef}) ===`,
     secBody,
-  ].join("\n");
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
 
   // Use the same per-process profile resolution as the chunk-plan call above
   // so the merge generation step doesn't silently revert to the default LLM.
@@ -2259,16 +2269,24 @@ async function generateMergedContent(
       };
     }
 
-    // Check frontmatter superset
+    // Check frontmatter superset — attempt repair before rejecting.
     const primaryKeys = Object.keys(primaryFm.data ?? {});
     const secKeys = Object.keys(secFm.data ?? {});
     const mergedKeys = new Set(Object.keys(mergedFm.data ?? {}));
-    const missingKeys = [...primaryKeys, ...secKeys].filter((k) => !mergedKeys.has(k));
+    const missingKeys = [...new Set([...primaryKeys, ...secKeys])].filter((k) => !mergedKeys.has(k));
     if (missingKeys.length > 0) {
-      return {
-        error: "merge_frontmatter_keys_lost",
-        detail: `${primaryRef} — merged frontmatter missing keys from sources: ${missingKeys.join(", ")}`,
-      };
+      // Inject missing keys from source FMs. Primary value wins on conflict.
+      const repairedFmData = { ...(mergedFm.data as Record<string, unknown>) };
+      for (const key of missingKeys) {
+        repairedFmData[key] =
+          key in (primaryFm.data as Record<string, unknown>)
+            ? (primaryFm.data as Record<string, unknown>)[key]
+            : (secFm.data as Record<string, unknown>)[key];
+      }
+      normalizeUpdatedField(repairedFmData);
+      const repairedYaml = yamlStringify(repairedFmData).trimEnd();
+      const bodyPart = mergedFm.content ?? "";
+      return { content: `---\n${repairedYaml}\n---\n${bodyPart}` };
     }
   } catch {
     // parseFrontmatter failures are non-fatal — allow the merge to proceed.
