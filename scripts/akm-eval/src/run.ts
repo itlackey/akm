@@ -483,6 +483,25 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
 async function runCases(cases: EvalCase[], ctx: EvalContext): Promise<EvalCaseResult[]> {
   const collected: EvalCaseResult[] = [];
   for (const c of cases) {
+    // Check if case requires state.db and skip if it doesn't exist
+    if (c.requires?.requiresStateDb) {
+      const statePath = path.join(ctx.dataDir, "state.db");
+      if (!fs.existsSync(statePath)) {
+        collected.push({
+          caseId: c.id,
+          type: c.type,
+          score: 0,
+          passed: false,
+          skipped: true,
+          skipReason: "state.db not available (skipped in CI environment)",
+          metrics: {},
+          evidence: {},
+          durationMs: 0,
+        });
+        continue;
+      }
+    }
+
     const stepCtx: EvalContext = { ...ctx, currentResults: collected.slice() };
     const result = await runCase(c, stepCtx);
     // Stamp `deterministic` onto the result from the case's `scoring`

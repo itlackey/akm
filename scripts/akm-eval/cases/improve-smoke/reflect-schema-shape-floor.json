@@ -16,7 +16,8 @@
   },
   "requires": {
     "minAkmVersion": "0.8.0",
-    "minLlmTouchedReflects": 10
+    "minLlmTouchedReflects": 10,
+    "requiresStateDb": true
   },
   "tags": ["reflect", "smoke", "quality", "pr3-gate"]
 }

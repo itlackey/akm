@@ -51,6 +51,12 @@ export interface EvalCase {
     features?: string[];
     minAkmVersion?: string;
     /**
+     * When true, this test requires access to state.db. If the database
+     * doesn't exist (e.g., in CI against a fresh example stash), the case
+     * is skipped with skipReason = "state.db not available".
+     */
+    requiresStateDb?: boolean;
+    /**
      * Reflect-quality: minimum LLM-touched reflect sample size before any
      * threshold check is evaluated. When fewer LLM-touched reflects are
      * available across the configured window, the case is skipped (mirrors

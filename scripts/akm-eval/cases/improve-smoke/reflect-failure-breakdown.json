@@ -13,7 +13,8 @@
     "passThreshold": 1.0
   },
   "requires": {
-    "minAkmVersion": "0.8.0"
+    "minAkmVersion": "0.8.0",
+    "requiresStateDb": true
   },
   "tags": ["reflect", "smoke", "metrics-only"]
 }

@@ -16,7 +16,8 @@
   },
   "requires": {
     "minAkmVersion": "0.8.0",
-    "minActions": 50
+    "minActions": 50,
+    "requiresStateDb": true
   },
   "tags": ["planner-waste", "smoke", "quality", "gate"]
 }
