@@ -1,6 +1,6 @@
-# akm -- Agent Kit Manager
+# akm -- Agent Knowledge Management
 
-> **akm** (Agent Kit Manager) -- A package manager for AI agent skills, commands, tools, and knowledge.
+> **akm** (Agent Knowledge Management) -- A package manager for AI agent skills, commands, tools, and knowledge.
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
 [![npm downloads](https://img.shields.io/npm/dm/akm-cli)](https://www.npmjs.com/package/akm-cli)

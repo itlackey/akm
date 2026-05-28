@@ -65,6 +65,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Rebrand**: the full name "Agent Kit Manager" is now **Agent Knowledge Management** — `akm` stands for Agent Knowledge Management going forward. The binary name, npm package (`akm-cli`), and all APIs remain unchanged.
+
 - **Config layer rewrite** — single-source-of-truth Zod schema in
   `src/core/config-schema.ts` replaces the per-field parse switch AND
   the per-shape load-time parser. Adding a new config field is now one

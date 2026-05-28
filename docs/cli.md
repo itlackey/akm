@@ -1,6 +1,6 @@
 # CLI Reference
 
-The CLI is called `akm` (Agent Kit Manager). Commands default to structured
+The CLI is called `akm` (Agent Knowledge Management). Commands default to structured
 JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
 brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.

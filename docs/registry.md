@@ -305,8 +305,8 @@ akm uses a pluggable provider system for registries. Each registry entry can
 specify a `provider` type that determines how it is searched. When omitted,
 the provider defaults to `"static-index"`.
 
-Registries discover *kits* (installable source bundles). They never store
-asset content directly — installing a kit creates a regular `sources[]`
+Registries discover *stashes* (installable source bundles). They never store
+asset content directly — installing a stash creates a regular `sources[]`
 entry that the indexer walks like any other source.
 
 ### Built-in Providers

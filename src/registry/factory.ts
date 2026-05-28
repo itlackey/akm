@@ -8,7 +8,7 @@
  * Maps registry provider type identifiers (e.g. "static-index", "skills-sh")
  * to factory functions that create RegistryProvider instances.
  *
- * "Registry" here refers to the kit discovery registries (static index files,
+ * "Registry" here refers to the stash discovery registries (static index files,
  * skills.sh API) — not to be confused with the source provider factory map in
  * `sources/provider-factory.ts` or the installed-source operations in
  * `installed-stashes.ts`.

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
   "title": "AKM Configuration",
-  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). Auto-generated from src/core/config-schema.ts by scripts/gen-config-schema.ts — do NOT edit by hand.",
+  "description": "Configuration file for the akm CLI (Agent Knowledge Management). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). Auto-generated from src/core/config-schema.ts by scripts/gen-config-schema.ts — do NOT edit by hand.",
   "type": "object",
   "properties": {
     "configVersion": {

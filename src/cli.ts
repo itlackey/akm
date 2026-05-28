@@ -3520,7 +3520,7 @@ const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description: "Agent Kit Manager — search, show, and manage assets from your stash.",
+    description: "Agent Knowledge Management — search, show, and manage assets from your stash.",
   },
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },

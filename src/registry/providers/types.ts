@@ -101,7 +101,7 @@ export interface RegistryProvider {
   /** v1-spec §3.1: optional asset preview. */
   searchAssets?(q: RegistryQuery): Promise<AssetPreview[]>;
 
-  /** v1-spec §3.1: fetch the manifest needed to install a kit. */
+  /** v1-spec §3.1: fetch the manifest needed to install a stash. */
   getKit(id: KitId): Promise<KitManifest | null>;
 
   /**

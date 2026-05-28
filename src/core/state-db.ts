@@ -1363,7 +1363,7 @@ export function shouldSkipAlreadyExtractedSession(
  * created with CREATE TABLE IF NOT EXISTS so it is safe to call inside
  * ensureSchema() or as a standalone migration.
  *
- * Purpose: caches the result of resolving and fetching remote registry kit
+ * Purpose: caches the result of resolving and fetching remote registry stash
  * indexes so `akm search` does not hit the network on every invocation.
  *
  * Indexed (query) columns:

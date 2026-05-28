@@ -95,7 +95,7 @@ class SkillsShProvider implements RegistryProvider {
   /**
    * skills.sh has no `getKit` API — every entry corresponds to a GitHub
    * repository whose metadata we already include in the search result. We
-   * synthesize a manifest from the search hit when the caller knows the kit
+   * synthesize a manifest from the search hit when the caller knows the stash
    * id; if not present in the most recent results, return null.
    */
   async getKit(id: KitId): Promise<KitManifest | null> {
