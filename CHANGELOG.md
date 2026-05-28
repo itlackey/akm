@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Consolidation `delete_failed` on stale index entries** — when consolidation
+  successfully deleted a memory file, the index DB was not re-indexed between
+  runs. Subsequent runs loaded the stale DB entry into their memory map, the LLM
+  re-proposed the deletion, and `deleteAssetFromSource` threw "not found in
+  source" — appearing as `delete_failed` in skipReasons. Fix: `loadMemoriesForSource`
+  now filters entries whose file no longer exists on disk before building chunks,
+  so phantom memories are never sent to the LLM. A secondary catch in the delete
+  handler emits `delete_already_gone` instead of `delete_failed` when the file
+  is confirmed absent.
+
 > **CI / Docker users:** the 0.8.0 storage split moved `akm.lock`, the event
 > database, and the registry cache out of `$XDG_CONFIG_HOME/akm/` into
 > `$XDG_DATA_HOME`, `$XDG_STATE_HOME`, and `$XDG_CACHE_HOME` respectively. If
