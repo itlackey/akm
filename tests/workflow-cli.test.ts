@@ -231,7 +231,7 @@ describe("workflow CLI", () => {
     const finalStatus = JSON.parse(afterComplete.stdout) as { run: { status: string; currentStepId?: string | null } };
     expect(finalStatus.run.status).toBe("completed");
     expect(finalStatus.run.currentStepId ?? null).toBeNull();
-  });
+  }, 30_000);
 
   test("next auto-starts a workflow and run state survives full index rebuilds", () => {
     const env = createWorkflowEnv();

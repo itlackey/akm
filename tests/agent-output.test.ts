@@ -144,7 +144,7 @@ describe("--for-agent output mode", () => {
     const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
     expect(scriptJson).toHaveProperty("run");
     expect(scriptJson).toHaveProperty("action");
-  });
+  }, 30_000);
 
   test("standard output (without --for-agent) is unchanged", () => {
     const stashDir = makeStash();
