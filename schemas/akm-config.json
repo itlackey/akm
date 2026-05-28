@@ -186,6 +186,14 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -243,6 +251,14 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -300,6 +316,14 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -357,6 +381,14 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -414,6 +446,14 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -471,6 +511,14 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -1106,6 +1154,14 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1163,6 +1219,14 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1220,6 +1284,14 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1277,6 +1349,14 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1334,6 +1414,14 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1391,6 +1479,14 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -2008,6 +2104,14 @@
             }
           },
           "additionalProperties": false
+        },
+        "defaultSince": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTotalChars": {
+          "type": "integer",
+          "exclusiveMinimum": 0
         }
       },
       "additionalProperties": false
@@ -2075,6 +2179,14 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": false
@@ -2132,6 +2244,14 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": false
@@ -2189,6 +2309,14 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": false
@@ -2246,6 +2374,14 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": false
@@ -2303,6 +2439,14 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": false
@@ -2360,6 +2504,14 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
                 }
               },
               "additionalProperties": false
