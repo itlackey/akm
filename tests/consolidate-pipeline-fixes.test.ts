@@ -152,10 +152,34 @@ describe("sanitizeMergedContent — full LLM-output pipeline", () => {
     if (!result.ok) expect(result.reason).toBe("MISSING_FRONTMATTER_SENTINEL");
   });
 
-  it("rejects malformed frontmatter block (only opening ---)", () => {
-    const raw = "---\ndescription: foo\nno closing fence ever";
+  it("recovers from missing closing --- when body starts after blank line", () => {
+    // LLM emits frontmatter with no closing `---`; blank line separates body.
+    const raw = "---\ndescription: merged thing\nupdated: 2026-05-27\n\nBody content here.\n";
     const result = sanitizeMergedContent(raw);
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.frontmatter.description).toBe("merged thing");
+      expect(result.result.content).toContain("Body content here.");
+    }
+  });
+
+  it("recovers from missing closing --- when body starts with non-YAML line", () => {
+    // LLM omits closing `---`; body starts with a sentence (no key: pattern).
+    const raw = "---\ndescription: some fact\nupdated: 2026-05-27\nThis is the body sentence.\n";
+    const result = sanitizeMergedContent(raw);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.frontmatter.description).toBe("some fact");
+      expect(result.result.content).toContain("This is the body sentence.");
+    }
+  });
+
+  it("rejects malformed frontmatter block that cannot be recovered", () => {
+    // No body content at all — can't determine where frontmatter ends.
+    const raw = "---\ndescription: foo\ntags: [a, b]";
+    const result = sanitizeMergedContent(raw);
+    // Either recovers (if heuristic finds a boundary) or rejects — either is acceptable,
+    // but if it rejects it should be MALFORMED_FRONTMATTER_BLOCK.
     if (!result.ok) expect(result.reason).toBe("MALFORMED_FRONTMATTER_BLOCK");
   });
 

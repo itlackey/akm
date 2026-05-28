@@ -1815,6 +1815,47 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 // all three at the point where LLM output is consumed.
 
 /**
+ * Attempt to recover a frontmatter block that is missing its closing `---`.
+ *
+ * Scans lines after the opening `---` for the first blank line or the first
+ * line that cannot be a YAML scalar (i.e. not a key-value, indented
+ * continuation, comment, or list item). Injects `---` before that line so
+ * the normal parser can proceed.
+ *
+ * Returns the patched string on success, or `null` if the structure is too
+ * ambiguous to recover safely (e.g. no opening `---`, or no body content
+ * found after the frontmatter key-value lines).
+ */
+function recoverMalformedFrontmatter(raw: string): string | null {
+  if (!raw.startsWith("---")) return null;
+  const lines = raw.split(/\r?\n/);
+  // Skip the opening `---` line (index 0).
+  let insertAt = -1;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    // A blank line marks the end of the frontmatter block in many YAML variants.
+    if (line.trim() === "") {
+      insertAt = i;
+      break;
+    }
+    // A line that is clearly body content: doesn't look like a YAML key, an
+    // indented continuation, a comment, or a sequence item.
+    const isYaml =
+      /^\w[\w-]*\s*:/.test(line) || // key: value
+      /^\s+\S/.test(line) || // indented continuation / nested
+      /^\s*#/.test(line) || // YAML comment
+      /^\s*-\s/.test(line); // sequence item
+    if (!isYaml) {
+      insertAt = i;
+      break;
+    }
+  }
+  if (insertAt < 0) return null;
+  const result = [...lines.slice(0, insertAt), "---", ...lines.slice(insertAt)].join("\n");
+  return result;
+}
+
+/**
  * Outer-fence stripper specific to consolidate. Unlike the shared
  * `stripMarkdownFences` helper (which only handles markdown fences), this
  * variant additionally recognises `yaml` and bare-language fences and refuses
@@ -1890,9 +1931,18 @@ export function sanitizeMergedContent(
   }
 
   // Extract frontmatter block.
-  const match = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
+  // Recovery path: LLM sometimes omits the closing `---` delimiter. Detect this
+  // by scanning lines after the opening `---` for the first blank line or the
+  // first line that isn't a YAML key-value pair, then inject `---` there.
+  let match = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
   if (!match) {
-    return { ok: false, reason: "MALFORMED_FRONTMATTER_BLOCK" };
+    const recovered = recoverMalformedFrontmatter(body);
+    if (recovered) {
+      match = recovered.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
+    }
+    if (!match) {
+      return { ok: false, reason: "MALFORMED_FRONTMATTER_BLOCK" };
+    }
   }
 
   // Re-parse via the yaml library so any quote-escaping mistakes either get
