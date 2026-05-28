@@ -62,7 +62,7 @@ Everything else supports one of those steps.
 
 ```sh
 # Standalone binary (no runtime dependencies)
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
 # Or via Bun
 bun install -g akm-cli
