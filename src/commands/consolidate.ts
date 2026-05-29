@@ -666,7 +666,11 @@ export function mergePlans(chunks: ConsolidateOperation[][]): { ops: Consolidate
         }
         mergeOps.set(op.primary, op);
       } else if (op.op === "delete") {
-        if (!mergeOps.has(op.ref)) {
+        // merge and promote both win over delete. A promote is non-destructive
+        // (creates a proposal) but the source memory is counted in `promoted`;
+        // if a delete also fires, the ref lands in both `promoted` and
+        // `skipReasons`, breaking the invariant by +1.
+        if (!mergeOps.has(op.ref) && !promoteOps.has(op.ref)) {
           deleteOps.set(op.ref, op);
         }
       } else if (op.op === "promote") {
@@ -704,6 +708,12 @@ export function mergePlans(chunks: ConsolidateOperation[][]): { ops: Consolidate
   //    a secondary in another, remove A from the secondary list. Both merges
   //    would otherwise claim A (merged++ for A, then mergedSecondaries++ for A)
   //    breaking the invariant the same way.
+  // Also remove delete ops for any ref claimed by a promote op (handles the
+  // case where the delete chunk appeared before the promote chunk).
+  for (const ref of promoteOps.keys()) {
+    deleteOps.delete(ref);
+  }
+
   const claimedSecondaries = new Set<string>();
   for (const mergeOp of mergeOps.values()) {
     deleteOps.delete(mergeOp.primary);
