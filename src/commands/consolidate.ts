@@ -1075,6 +1075,11 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // health rollup can aggregate without regex-parsing English warning
   // strings. See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
   const skipReasons: Array<{ op: ConsolidateOpKind | "unknown"; ref: string; reason: string }> = [];
+  // Tracks refs already emitted to skipReasons. A ref can only occupy one
+  // accounting bucket; subsequent skip ops for the same ref are recorded as
+  // warnings but must not push a second skipReasons entry (that would inflate
+  // Σ(skipReasons) and break the invariant by +1 per duplicate).
+  const skipReasonEmittedRefs = new Set<string>();
   const pushSkipReason = (op: ConsolidateOpKind | "unknown", ref: string, reason: string): void => {
     // 2026-05-27 cross-chunk double-count fix: if `ref` already contributed
     // to judgedNoAction in its own chunk (a different chunk proposed an op
@@ -1083,6 +1088,13 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     // Preserves the invariant: processed == actioned + judgedNoAction +
     // Σ(skipReasons) + failedChunkMemories.
     if (judgedNoActionRefs.delete(ref)) judgedNoAction--;
+    if (skipReasonEmittedRefs.has(ref)) {
+      // Already counted once. Record the extra skip for observability but
+      // don't push to skipReasons — that would break the accounting invariant.
+      warnings.push(`Skip: ${ref} already in skipReasons (${reason} via ${op}); not re-counted.`);
+      return;
+    }
+    skipReasonEmittedRefs.add(ref);
     skipReasons.push({ op, ref, reason });
   };
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
