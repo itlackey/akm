@@ -894,6 +894,8 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.totalChunks += src.consolidation.totalChunks;
   dst.consolidation.durationMs += src.consolidation.durationMs;
   dst.consolidation.judgedNoAction += src.consolidation.judgedNoAction;
+  dst.consolidation.mergedSecondaries += src.consolidation.mergedSecondaries;
+  dst.consolidation.failedChunkMemories += src.consolidation.failedChunkMemories;
   for (const [reason, count] of Object.entries(src.consolidation.skipReasons)) {
     dst.consolidation.skipReasons[reason] = (dst.consolidation.skipReasons[reason] ?? 0) + count;
   }
@@ -1473,12 +1475,12 @@ function buildWindowMetrics(db: Database, stateDbPath: string, since: string, un
   const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
   improveSummary.skipped = skipSummary.skipped;
   improveSummary.skipReasons = skipSummary.skipReasons;
-  // Preserve the per-phase aggregation computed by summarizeImproveRuns —
-  // computeWallTimeStats only refreshes the top-level wrapper stats.
-  improveSummary.wallTime = computeWallTimeStats(
-    collectImproveWallTimes(db, since, until),
-    improveSummary.wallTime.byPhase,
-  );
+  // Preserve the per-phase aggregation computed by summarizeImproveRuns and
+  // derive top-level wall times from the same improve-runs window so counts
+  // and percentiles stay aligned with per-run reporting.
+  const perRunSummaries = buildPerRunSummaries(db, since, until);
+  const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
+  improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
 
   const metrics: HealthMetrics = {
     taskFailRate: roundRate(taskFailRate),
@@ -1642,7 +1644,9 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
     improveSummary.skipped = skipSummary.skipped;
     improveSummary.skipReasons = skipSummary.skipReasons;
-    improveSummary.wallTime = computeWallTimeStats(collectImproveWallTimes(db, since), improveSummary.wallTime.byPhase);
+    const perRunSummaries = buildPerRunSummaries(db, since);
+    const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
+    improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
