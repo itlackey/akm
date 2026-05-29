@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -33,6 +34,17 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 /** Maximum stale age allowed when refresh fails (7 days). */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function runGit(
+  args: string[],
+  options?: Omit<SpawnSyncOptionsWithStringEncoding, "encoding">,
+): SpawnSyncReturns<string> {
+  return spawnSync("git", args, {
+    encoding: "utf8",
+    ...options,
+    env: { ...process.env, ...options?.env, GIT_TERMINAL_PROMPT: "0" },
+  });
+}
 
 interface ParsedRepoUrl {
   cloneUrl: string;
@@ -268,7 +280,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
     }
     cloneArgs.push(parsed.url, cloneDir);
 
-    const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 });
+    const cloneResult = runGit(cloneArgs, { timeout: 120_000 });
     if (cloneResult.status !== 0) {
       throw new Error(classifyCloneFailure(parsed.url, cloneResult.stderr, cloneResult.error));
     }
@@ -319,7 +331,7 @@ export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string,
   if (ref) args.push("--branch", ref);
   args.push(cloneUrl, tmpDir);
 
-  const result = spawnSync("git", args, { encoding: "utf8", timeout: 120_000 });
+  const result = runGit(args, { timeout: 120_000 });
   if (result.status !== 0) {
     // Clean up the (possibly partial) temp dir but leave destDir untouched.
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -344,8 +356,7 @@ export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string,
 }
 
 function pullRepo(repoDir: string): void {
-  const result = spawnSync("git", ["-C", repoDir, "pull", "--ff-only"], {
-    encoding: "utf8",
+  const result = runGit(["-C", repoDir, "pull", "--ff-only"], {
     timeout: 120_000,
   });
   if (result.status !== 0) {
@@ -497,7 +508,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
   }
 
   // Nothing to commit?
-  const statusResult = spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" });
+  const statusResult = runGit(["-C", repoDir, "status", "--porcelain"]);
   if (statusResult.error || statusResult.status !== 0) {
     throw new Error(
       `git status failed: ${statusResult.error?.message || statusResult.stderr?.trim() || "unknown error"}`,
@@ -528,21 +539,27 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
   // Stage and commit — supply fallback identity so fresh environments without
   // user.name/user.email configured can always commit to the default stash.
   // `add -A` is safe here because nonAkmDirty was just verified empty.
-  const addResult = spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
+  const addResult = runGit(["-C", repoDir, "add", "-A"]);
   if (addResult.status !== 0) {
     throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
   }
-  const commitResult = spawnSync(
-    "git",
-    ["-C", repoDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", commitMessage],
-    { encoding: "utf8" },
-  );
+  const commitResult = runGit([
+    "-C",
+    repoDir,
+    "-c",
+    "user.name=akm",
+    "-c",
+    "user.email=akm@local",
+    "commit",
+    "-m",
+    commitMessage,
+  ]);
   if (commitResult.status !== 0) {
     throw new Error(`git commit failed: ${commitResult.stderr?.trim() || "unknown error"}`);
   }
 
   // Push only when there is a remote AND the stash is marked writable
-  const remoteResult = spawnSync("git", ["-C", repoDir, "remote"], { encoding: "utf8" });
+  const remoteResult = runGit(["-C", repoDir, "remote"]);
   if (remoteResult.status !== 0) {
     throw new Error(`git remote failed: ${remoteResult.stderr?.trim() || "unknown error"}`);
   }
@@ -552,7 +569,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
     return { committed: true, pushed: false, skipped: false, output: commitResult.stdout.trim() };
   }
 
-  const pushResult = spawnSync("git", ["-C", repoDir, "push"], { encoding: "utf8", timeout: 120_000 });
+  const pushResult = runGit(["-C", repoDir, "push"], { timeout: 120_000 });
   if (pushResult.status !== 0) {
     throw new Error(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`);
   }

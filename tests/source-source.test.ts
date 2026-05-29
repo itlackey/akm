@@ -308,8 +308,13 @@ describe("ensureSourceCaches", () => {
         },
       ],
     };
-    // Should resolve (not reject) — failures are warn-only
-    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    try {
+      await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+      expect(gitSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      gitSpy.mockRestore();
+    }
   });
 
   test("reads from sources[] not stashes[] — website entries in sources[] are processed", async () => {
