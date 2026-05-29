@@ -688,6 +688,42 @@ export function mergePlans(chunks: ConsolidateOperation[][]): { ops: Consolidate
     }
   }
 
+  // Second pass: enforce merge-wins-over-delete and deduplicate secondaries.
+  //
+  // 1. Delete/secondary ordering bug: the per-chunk loop removes delete ops
+  //    for secondaries that were already in deleteOps, but misses the case
+  //    where the delete chunk came first. A full sweep here fixes both orders.
+  //
+  // 2. Cross-merge secondary dedup: if ref A is a secondary in two merge ops,
+  //    only the first (insertion-order) retains it. Without this, a successful
+  //    merge credits A to mergedSecondaries and a later merge's emitMerge-
+  //    FailureSkips also charges A to skipReasons — double-counting A while
+  //    processed has it only once.
+  //
+  // 3. Primary-as-secondary dedup: if ref A is a primary in one merge op and
+  //    a secondary in another, remove A from the secondary list. Both merges
+  //    would otherwise claim A (merged++ for A, then mergedSecondaries++ for A)
+  //    breaking the invariant the same way.
+  const claimedSecondaries = new Set<string>();
+  for (const mergeOp of mergeOps.values()) {
+    deleteOps.delete(mergeOp.primary);
+    mergeOp.secondaries = mergeOp.secondaries.filter((sec) => {
+      if (mergeOps.has(sec)) {
+        warnings.push(
+          `Merge: secondary ${sec} is also a merge primary — removing from secondary list to avoid double-count.`,
+        );
+        return false;
+      }
+      if (claimedSecondaries.has(sec)) {
+        warnings.push(`Merge: secondary ${sec} appears in multiple merge ops — retaining in first op only.`);
+        return false;
+      }
+      claimedSecondaries.add(sec);
+      deleteOps.delete(sec);
+      return true;
+    });
+  }
+
   // C-2 / #381: promote ops are ordered BEFORE merge ops so that the
   // human-gated proposal queue entry is created before any destructive merge.
   // Phase B processes ops in array order, so promote executes first.
@@ -1467,12 +1503,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const entry = memoryByRef.get(op.ref);
       if (!entry) {
         warnings.push(`Delete: ${op.ref} not found in loaded memories — skipping.`);
-        // Accounting impact only if op.ref happens to be a real in-chunk
-        // memory; for phantom refs (the typical case) the chunk's targetRefs
-        // gained the ref but no chunk member matched it, so judgedNoAction
-        // is unaffected and this skipReason is a no-op for the invariant.
-        // Emit unconditionally for visibility.
-        pushSkipReason("delete", op.ref, "delete_ref_missing");
+        // Phantom ref: not in the batch so not in processed. Pushing to
+        // skipReasons would inflate Σ(skipReasons) without a matching processed
+        // entry, breaking the accounting invariant. Visibility is preserved via
+        // the warnings array above.
         continue;
       }
 
@@ -1519,7 +1553,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const entry = memoryByRef.get(op.ref);
       if (!entry) {
         warnings.push(`Promote: ${op.ref} not found in loaded memories — skipping.`);
-        pushSkipReason("promote", op.ref, "promote_ref_missing");
+        // Phantom ref: not in processed, so no skipReason (same rationale as
+        // delete_ref_missing above).
         continue;
       }
 
@@ -1724,11 +1759,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
       if (!entry) {
         warnings.push(`Contradict: ${op.ref} not found in loaded memories — skipping.`);
-        pushSkipReason("contradict", op.ref, "contradict_ref_missing");
+        // Phantom ref: not in processed, so no skipReason (same rationale as
+        // delete_ref_missing).
         continue;
       }
       if (!contradictorEntry) {
         warnings.push(`Contradict: ${op.contradictedByRef} not found — skipping.`);
+        // op.ref IS in the batch (entry found above) so the skipReason is
+        // correctly charged against a real processed memory.
         pushSkipReason("contradict", op.ref, "contradict_target_missing");
         continue;
       }

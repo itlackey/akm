@@ -1162,6 +1162,14 @@ function computeWallTimeStats(
   };
 }
 
+/**
+ * NOTE: this reads from task_history, which can produce a count that differs
+ * by ±1 from improve_runs (the source for wallTime.byPhase). The discrepancy
+ * occurs when a task_history row has no matching improve_runs record (task
+ * crashed before recordImproveRun wrote) or vice versa (manual run). The
+ * count mismatch is cosmetic — it does not affect median/p95 materially.
+ * A full fix requires joining against improve_runs; tracked as a follow-up.
+ */
 function collectImproveWallTimes(db: Database, since: string, until?: string): number[] {
   const sql = until
     ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL"
