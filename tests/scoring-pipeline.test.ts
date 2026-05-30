@@ -14,7 +14,13 @@ import { saveConfig } from "../src/core/config";
 import { buildDbHit, buildWhyMatched } from "../src/indexer/db-search";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "./_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -73,7 +79,14 @@ let envCleanup: Cleanup = () => {};
 beforeEach(() => {
   const cacheResult = sandboxXdgCacheHome();
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  // Sandbox XDG_DATA_HOME so the index DB (getDbPath() →
+  // $XDG_DATA_HOME/akm/index.db) is isolated per-test. Without this, under
+  // `bun test --parallel` (which runs test files concurrently in the SAME
+  // process, sharing process.env), another file mutating process.env.XDG_DATA_HOME
+  // between this test's akmIndex() and akmSearch() calls would make the search
+  // read a different (empty/wrong) DB than the one just indexed.
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stashResult = sandboxStashDir(dataResult.cleanup);
   envCleanup = stashResult.cleanup;
 });
 
