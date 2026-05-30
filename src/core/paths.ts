@@ -20,12 +20,11 @@ import { ConfigError } from "./errors";
  * `bun test` (either via the BUN_TEST sentinel Bun sets on the test
  * worker, or via the conventional NODE_ENV=test).
  *
- * Used by getDataDir/getStateDir to enforce that every test which
- * resolves a data/state directory ALSO sets XDG_DATA_HOME / XDG_STATE_HOME
- * (or the AKM_*_DIR overrides) to temp directories. Without that
- * pairing, tests silently write SQLite databases, lockfiles, and task
- * history into the developer's real `~/.local/share/akm` /
- * `~/.local/state/akm`.
+ * Used by getDataDir to enforce that every test which resolves a data
+ * directory ALSO sets XDG_DATA_HOME (or the AKM_DATA_DIR override) to a
+ * temp directory. Without that pairing, tests silently write SQLite
+ * databases, lockfiles, and task history into the developer's real
+ * `~/.local/share/akm`.
  */
 function isUnderBunTest(env: NodeJS.ProcessEnv): boolean {
   return env.BUN_TEST === "1" || env.NODE_ENV === "test";
@@ -60,16 +59,14 @@ export function isTransientStashPath(p: string): boolean {
 
 /**
  * Build a TEST_ISOLATION_MISSING ConfigError describing which env var(s)
- * must be set so the data/state path resolves into a temp dir instead of
- * the user's real XDG home.
+ * must be set so the data path resolves into a temp dir instead of the
+ * user's real XDG home.
  */
-function testIsolationError(directoryKind: "data" | "state"): ConfigError {
-  const xdgVar = directoryKind === "data" ? "XDG_DATA_HOME" : "XDG_STATE_HOME";
-  const akmVar = directoryKind === "data" ? "AKM_DATA_DIR" : "AKM_STATE_DIR";
+function testIsolationError(): ConfigError {
   return new ConfigError(
-    `Refusing to resolve ${directoryKind} directory under bun test: neither ${xdgVar} nor ${akmVar} is set. ` +
-      "This guards against tests writing into the developer's real ~/.local/share/akm or ~/.local/state/akm. " +
-      `Set ${xdgVar} (or ${akmVar}) to a mktemp-d directory in this test's env block.`,
+    "Refusing to resolve data directory under bun test: neither XDG_DATA_HOME nor AKM_DATA_DIR is set. " +
+      "This guards against tests writing into the developer's real ~/.local/share/akm. " +
+      "Set XDG_DATA_HOME (or AKM_DATA_DIR) to a mktemp-d directory in this test's env block.",
     "TEST_ISOLATION_MISSING",
   );
 }
@@ -219,7 +216,7 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = proc
   // wrote into ~/.local/share/akm/index.db (observed: 4,183-row
   // registry-cache pollution). Item 5 of the 0.8.x critical-review plan.
   if (isUnderBunTest(env) && !env.XDG_DATA_HOME?.trim()) {
-    throw testIsolationError("data");
+    throw testIsolationError();
   }
 
   if (platform === "win32") {
@@ -248,56 +245,6 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = proc
   return path.join(home, ".local", "share", "akm");
 }
 
-// ── State directory ──────────────────────────────────────────────────────────
-
-/**
- * Returns the XDG state directory for akm (`~/.local/state/akm` on Linux/macOS,
- * `%LOCALAPPDATA%\akm\state` on Windows).
- *
- * Holds runtime state and log-like files that persist across reboots but are
- * less precious than $DATA: task history JSONL files, akm.lock.lck sentinel.
- *
- * Env overrides (in priority order):
- *   AKM_STATE_DIR   — point to any directory
- *   XDG_STATE_HOME  — (Linux/macOS) override the XDG base; akm subdir is appended
- */
-export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
-  const override = env.AKM_STATE_DIR?.trim();
-  if (override) return override;
-
-  // Defense-in-depth: under `bun test`, refuse to fall through to the
-  // user's real $XDG_STATE_HOME / ~/.local/state/akm under any condition.
-  // See getDataDir above for rationale.
-  if (isUnderBunTest(env) && !env.XDG_STATE_HOME?.trim()) {
-    throw testIsolationError("state");
-  }
-
-  if (platform === "win32") {
-    const localAppData = env.LOCALAPPDATA?.trim();
-    if (localAppData) return path.join(localAppData, "akm", "state");
-
-    const userProfile = env.USERPROFILE?.trim();
-    if (userProfile) return path.join(userProfile, "AppData", "Local", "akm", "state");
-
-    const appData = env.APPDATA?.trim();
-    if (!appData) {
-      throw new ConfigError(
-        "Unable to determine state directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
-        "CONFIG_DIR_UNRESOLVABLE",
-      );
-    }
-    return path.join(appData, "..", "Local", "akm", "state");
-  }
-
-  const xdgStateHome = env.XDG_STATE_HOME?.trim();
-  if (xdgStateHome) return path.join(xdgStateHome, "akm");
-
-  const home = env.HOME?.trim();
-  if (!home) return path.join("/tmp", "akm-state");
-
-  return path.join(home, ".local", "state", "akm");
-}
-
 export function getDbPath(): string {
   return path.join(getDataDir(), "index.db");
 }
@@ -311,9 +258,9 @@ export function getStateDbPathInDataDir(): string {
   return path.join(getDataDir(), "state.db");
 }
 
-/** Path for the task history directory in $STATE (v2 location). */
+/** Path for the task history directory in $DATA. */
 export function getTaskHistoryStateDir(): string {
-  return path.join(getStateDir(), "tasks", "history");
+  return path.join(getDataDir(), "tasks", "history");
 }
 
 /** Path to the akm.lock file in $DATA. */

@@ -34,7 +34,7 @@ beforeEach(() => {
   process.env.AKM_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "akm-proposal-validation-data-"));
   tempDirs.push(process.env.AKM_DATA_DIR);
   // Pair AKM_STASH_DIR with AKM_STATE_DIR so the test-isolation guard in
-  // src/core/paths.ts stays inert for getStateDir.
+  // src/core/paths.ts stays inert for getDataDir.
   process.env.AKM_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "akm-proposal-validation-state-"));
   tempDirs.push(process.env.AKM_STATE_DIR);
 });

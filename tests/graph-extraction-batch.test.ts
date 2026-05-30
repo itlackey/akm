@@ -111,7 +111,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(tmpStash, "knowledge"), { recursive: true });
   // Pair tmpStash with XDG_DATA_HOME / XDG_STATE_HOME so that any
   // production helper inside graph-db / graph-extraction that incidentally
-  // calls getDbPath()/getStateDir() does not fire the test-isolation guard
+  // calls getDbPath()/getTaskHistoryStateDir() does not fire the test-isolation guard
   // when a prior leaky test left process.env.AKM_STASH_DIR set.
   tmpDataHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-batch-pass-data-"));
   tmpStateHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-batch-pass-state-"));

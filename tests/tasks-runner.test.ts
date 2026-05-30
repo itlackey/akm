@@ -51,7 +51,7 @@ beforeEach(() => {
   // Point state.db to an isolated data dir so tests don't share history.
   process.env.AKM_DATA_DIR = dataDir;
   // Pair AKM_STASH_DIR with AKM_STATE_DIR so the test-isolation guard in
-  // src/core/paths.ts (getStateDir) stays inert.
+  // src/core/paths.ts (getDataDir) stays inert.
   process.env.AKM_STATE_DIR = stateDir;
 });
 

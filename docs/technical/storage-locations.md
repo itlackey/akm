@@ -564,4 +564,4 @@ akm search  (ranking phase)
 
 ---
 
-Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getStateDir`, `getDbPath`, `getWorkflowDbPath`, `getStateDbPath`, `getEventsPath`, `getSemanticStatusPath`).
+Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getWorkflowDbPath`, `getStateDbPath`, `getEventsPath`, `getSemanticStatusPath`).
