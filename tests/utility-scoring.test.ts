@@ -17,7 +17,7 @@ import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from
 import { akmIndex, recomputeUtilityScores } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
-import { recordUsageEvent } from "./helpers/usage-events";
+import { recordUsageEvent } from "./_helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 

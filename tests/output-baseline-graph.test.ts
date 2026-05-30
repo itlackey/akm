@@ -5,7 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { formatSearchPlain } from "../src/output/text";
-import { seedStoredGraph } from "./helpers/graph-store";
+import { seedStoredGraph } from "./_helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
