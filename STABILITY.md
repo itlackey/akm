@@ -73,7 +73,7 @@ around them.
 - **0.9.0 — Bun/Node cross-runtime support** (issue #465) — 0.8 hard-
   requires Bun (or the prebuilt binary). 0.9 will support Node ≥ 22 as
   well. The CLI surface will not change; the install instructions will.
-- **Storage layout consolidation** (`.plans/0.8.0/storage-consolidation-evaluation.md`)
+- **Storage layout consolidation**
   — under user review. Will be announced before any move happens.
 
 ## Reporting stability regressions
