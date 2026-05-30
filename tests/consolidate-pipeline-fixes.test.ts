@@ -17,7 +17,7 @@
  * These tests cover the validation gates and dedup approach added in
  * `src/commands/consolidate.ts`.
  */
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,7 +29,9 @@ import {
   stripOuterCodeFence,
   validateProposalFrontmatter,
 } from "../src/commands/consolidate";
+import type { AkmConfig } from "../src/core/config";
 import { detectTruncatedDescription } from "../src/core/text-truncation";
+import { resolveImproveProcessRunnerFromProfile } from "../src/integrations/agent/runner";
 
 // ── stripOuterCodeFence ─────────────────────────────────────────────────────
 
@@ -809,5 +811,52 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
       failedChunkMemories: 0,
     };
     expect(accountedTotal(envelope, loadedRefs)).toBe(envelope.processed);
+  });
+});
+
+// Folded from tests/consolidate-profile-resolution.test.ts (2026-05-26
+// regression guard): the consolidate pass must honor
+// profiles.improve.default.processes.consolidate.profile instead of silently
+// using the default LLM. These are unit tests over the resolver — no real LLM.
+const CONSOLIDATE_PRIMARY = { endpoint: "http://localhost:11434/v1/chat/completions", model: "gemma-default" };
+const CONSOLIDATE_MINISTRAL = { endpoint: "http://localhost:11434/v1/chat/completions", model: "ministral-3b" };
+
+describe("consolidate honors processes.consolidate.profile", () => {
+  test("resolves to the per-process profile when configured", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
+      profiles: {
+        llm: { default: { ...CONSOLIDATE_PRIMARY }, ministral: { ...CONSOLIDATE_MINISTRAL } },
+        improve: {
+          default: {
+            processes: { consolidate: { mode: "llm", profile: "ministral" } },
+          },
+        },
+      },
+      defaults: { llm: "default" },
+    };
+
+    const consolidateProcess = config.profiles?.improve?.default?.processes?.consolidate;
+    const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
+    expect(runnerSpec).not.toBeNull();
+    expect(runnerSpec?.kind).toBe("llm");
+    if (runnerSpec?.kind === "llm") {
+      expect(runnerSpec.connection.model).toBe("ministral-3b");
+    }
+  });
+
+  test("returns null when no per-process override is set, so the resolver falls back to default", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
+      profiles: {
+        llm: { default: { ...CONSOLIDATE_PRIMARY } },
+      },
+      defaults: { llm: "default" },
+    };
+    const consolidateProcess = config.profiles?.improve?.default?.processes?.consolidate;
+    const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
+    // No override → null. The fallback to default LLM is the caller's
+    // responsibility (resolveConsolidateLlmConfig handles it).
+    expect(runnerSpec).toBeNull();
   });
 });

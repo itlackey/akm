@@ -178,7 +178,6 @@ const ALLOWED_FILES = new Set<string>([
   // The following files were not yet migrated (grandfathered alongside the
   // QW3 batch above). Each uses mkdtempSync + direct process.env assignment;
   // migration is deferred to a follow-up PR.
-  "tests/commands/improve-memory-cleanup2.test.ts",
   "tests/commands/improve-memory-misc.test.ts",
   "tests/commands/improve-planner-profile-prefilter.test.ts",
   "tests/commands/health-distill-skipped-by-reason.test.ts",

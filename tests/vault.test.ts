@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +32,57 @@ afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── CLI helpers (shared by the folded "vault CLI — *" describe blocks) ────────
+//
+// These blocks spawn `bun src/cli.ts vault ...` as a subprocess to exercise the
+// command surface (folded from the former vault-qa-fixes.test.ts and
+// vault-set-legacy-form.test.ts). They use a single isolated HOME + XDG sandbox
+// and pass per-test AKM_STASH_DIR via the runCli env argument.
+
+function makeTempDir(prefix = "vqa"): string {
+  // Reuse tmpDir's tracked-cleanup list; the cosmetic prefix is preserved.
+  return tmpDir(prefix);
+}
+
+const cliXdgCache = makeTempDir("vqa-cache");
+const cliXdgConfig = makeTempDir("vqa-config");
+const cliXdgData = makeTempDir("vqa-data");
+const cliXdgState = makeTempDir("vqa-state");
+const cliHome = makeTempDir("vqa-home");
+// Alias kept so folded test bodies that reference `xdgConfig` resolve correctly.
+const xdgConfig = cliXdgConfig;
+
+const cliRepoRoot = path.resolve(import.meta.dir, "..");
+const cliPath = path.join(cliRepoRoot, "src", "cli.ts");
+
+function runCli(
+  args: string[],
+  extraEnv: Record<string, string | undefined> = {},
+  stdinInput?: string,
+): { stdout: string; stderr: string; status: number } {
+  const result = spawnSync("bun", [cliPath, ...args], {
+    encoding: "utf8",
+    timeout: 30_000,
+    cwd: cliRepoRoot,
+    input: stdinInput,
+    env: {
+      ...process.env,
+      HOME: cliHome,
+      XDG_CACHE_HOME: cliXdgCache,
+      XDG_CONFIG_HOME: cliXdgConfig,
+      XDG_DATA_HOME: cliXdgData,
+      XDG_STATE_HOME: cliXdgState,
+      AKM_STASH_DIR: undefined,
+      ...extraEnv,
+    },
+  });
+  return {
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    status: result.status ?? 1,
+  };
+}
 
 // ── listKeys ────────────────────────────────────────────────────────────────
 
@@ -482,5 +534,222 @@ describe("vault indexer safety", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+});
+
+describe("vault CLI — qa fixes", () => {
+  test("1. writes a new key with a leading comment line when comment provided", () => {
+    const dir = makeTempDir();
+    const fp = path.join(dir, "v.env");
+    setKey(fp, "DB_URL", "postgres://localhost/mydb", "database connection string");
+    const text = fs.readFileSync(fp, "utf8");
+    const lines = text.split("\n").filter((l) => l.length > 0);
+    const commentIdx = lines.indexOf("# database connection string");
+    const keyIdx = lines.findIndex((l) => l.startsWith("DB_URL="));
+    expect(commentIdx).toBeGreaterThanOrEqual(0);
+    expect(keyIdx).toBe(commentIdx + 1);
+    expect(loadEnv(fp).DB_URL).toBe("postgres://localhost/mydb");
+  });
+
+  test("2. updates an existing comment line in-place when the key is overwritten with a new comment", () => {
+    const dir = makeTempDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "# old comment\nDB_URL=postgres://old\n");
+    setKey(fp, "DB_URL", "postgres://new", "new comment");
+    const text = fs.readFileSync(fp, "utf8");
+    expect(text).toContain("# new comment");
+    expect(text).not.toContain("# old comment");
+    expect(loadEnv(fp).DB_URL).toBe("postgres://new");
+    // Comment line should immediately precede the key line
+    const lines = text.split("\n").filter((l) => l.length > 0);
+    const commentIdx = lines.indexOf("# new comment");
+    const keyIdx = lines.findIndex((l) => l.startsWith("DB_URL="));
+    expect(keyIdx).toBe(commentIdx + 1);
+  });
+
+  test("3. inserts a new comment before an existing key that lacks one", () => {
+    const dir = makeTempDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "FOO=bar\nDB_URL=postgres://old\nBAZ=qux\n");
+    setKey(fp, "DB_URL", "postgres://new", "injected comment");
+    const text = fs.readFileSync(fp, "utf8");
+    expect(text).toContain("# injected comment");
+    const lines = text.split("\n").filter((l) => l.length > 0);
+    const commentIdx = lines.indexOf("# injected comment");
+    const keyIdx = lines.findIndex((l) => l.startsWith("DB_URL="));
+    expect(keyIdx).toBe(commentIdx + 1);
+    // Other keys preserved
+    expect(loadEnv(fp).FOO).toBe("bar");
+    expect(loadEnv(fp).BAZ).toBe("qux");
+  });
+
+  test("4. without comment does not modify surrounding comments", () => {
+    const dir = makeTempDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "# original comment\nDB_URL=old\n");
+    setKey(fp, "DB_URL", "new");
+    const text = fs.readFileSync(fp, "utf8");
+    expect(text).toContain("# original comment");
+    expect(loadEnv(fp).DB_URL).toBe("new");
+  });
+});
+
+describe("vault list", () => {
+  test("5. vault list --format json returns all vaults with key names", () => {
+    const stashDir = makeTempDir("akm-vqa-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
+
+    const result = runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: stashDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("Vault not found: vault:json");
+
+    const parsed = JSON.parse(result.stdout.trim());
+    expect(parsed.vaults).toEqual([
+      expect.objectContaining({
+        ref: "vault:prod",
+        keys: ["API_KEY"],
+      }),
+    ]);
+    // path must not leak into structured JSON output (security fix M3)
+    expect(parsed.vaults[0]).not.toHaveProperty("path");
+  });
+
+  test("6. vault list aggregates vaults across configured stashes", () => {
+    const primaryStash = makeTempDir("akm-vqa-stash-primary-");
+    const teamStash = makeTempDir("akm-vqa-stash-team-");
+    fs.mkdirSync(path.join(primaryStash, "vaults"), { recursive: true });
+    fs.mkdirSync(path.join(teamStash, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(primaryStash, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
+    fs.writeFileSync(path.join(teamStash, "vaults", "shared.env"), "TOKEN=hidden\n", "utf8");
+    fs.mkdirSync(path.join(xdgConfig, "akm"), { recursive: true });
+    fs.writeFileSync(
+      path.join(xdgConfig, "akm", "config.json"),
+      JSON.stringify({
+        stashDir: primaryStash,
+        sources: [{ type: "filesystem", path: teamStash, name: "team" }],
+      }),
+      "utf8",
+    );
+
+    const result = runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: primaryStash });
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout.trim());
+    expect(parsed.vaults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ref: "vault:prod", keys: ["API_KEY"] }),
+        expect.objectContaining({ ref: "team//vault:shared", keys: ["TOKEN"] }),
+      ]),
+    );
+  });
+
+  test("7. vault list text output uses markdown headings and bullets", () => {
+    const stashDir = makeTempDir("akm-vqa-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "json.env"), "# json vault\nAPI_KEY=secret\nSECOND=value\n", "utf8");
+
+    const result = runCli(["vault", "list", "--format", "text"], { AKM_STASH_DIR: stashDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("## vault:json");
+    expect(result.stdout).toContain("- API_KEY");
+    expect(result.stdout).toContain("- SECOND");
+  });
+});
+
+// ── vault set --comment flag (CLI tests) ─────────────────────────────────────
+
+describe("vault set: --comment flag", () => {
+  test("11. vault set prod KEY val --comment writes a comment line above the key", () => {
+    const stashDir = makeTempDir("akm-vqa-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
+
+    const result = runCli(
+      ["vault", "set", "prod", "AUTH_TOKEN", "--comment", "auth secret"],
+      {
+        AKM_STASH_DIR: stashDir,
+      },
+      "tok123",
+    );
+    expect(result.status).toBe(0);
+
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    const text = fs.readFileSync(vaultPath, "utf8");
+    expect(text).toContain("# auth secret");
+    const lines = text.split("\n").filter((l) => l.length > 0);
+    const commentIdx = lines.indexOf("# auth secret");
+    const keyIdx = lines.findIndex((l) => l.startsWith("AUTH_TOKEN="));
+    expect(commentIdx).toBeGreaterThanOrEqual(0);
+    expect(keyIdx).toBe(commentIdx + 1);
+    expect(loadEnv(vaultPath).AUTH_TOKEN).toBe("tok123");
+  });
+});
+
+describe("vault CLI — set legacy positional form", () => {
+  test("rejects 3-positional form `vault set <ref> <KEY> <VALUE>` with exit 2 and migration hint", () => {
+    const stashDir = makeTempDir("akm-vault-legacy-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    // Pre-existing secret — must NOT be clobbered by the rejected call.
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    const originalContent = "API_KEY=preexisting-secret\n";
+    fs.writeFileSync(vaultPath, originalContent, "utf8");
+
+    const result = runCli(
+      ["vault", "set", "prod", "API_KEY", "newvalue"],
+      { AKM_STASH_DIR: stashDir },
+      // No stdin — simulates cron/CI invocation.
+      "",
+    );
+
+    expect(result.status).toBe(2);
+    // Migration hint must mention the supported alternatives.
+    expect(result.stderr).toContain("no longer accepts the value via argv");
+    expect(result.stderr).toContain("--from-env");
+    // Vault file must be byte-identical to before the call.
+    expect(fs.readFileSync(vaultPath, "utf8")).toBe(originalContent);
+  });
+
+  test("rejects KEY=VALUE form `vault set <ref> KEY=VALUE` with exit 2 and migration hint", () => {
+    const stashDir = makeTempDir("akm-vault-legacy-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    const vaultPath = path.join(stashDir, "vaults", "prod.env");
+    const originalContent = "API_KEY=preexisting-secret\n";
+    fs.writeFileSync(vaultPath, originalContent, "utf8");
+
+    const result = runCli(["vault", "set", "prod", "API_KEY=newvalue"], { AKM_STASH_DIR: stashDir }, "");
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("no longer accepts the value via argv");
+    expect(result.stderr).toContain("--from-env");
+    // Vault file unchanged — the rejected call must not write through stdin.
+    expect(fs.readFileSync(vaultPath, "utf8")).toBe(originalContent);
+  });
+
+  test("supported --from-env form still succeeds", () => {
+    const stashDir = makeTempDir("akm-vault-legacy-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
+
+    const result = runCli(["vault", "set", "prod", "API_KEY", "--from-env", "AKM_TEST_VALUE"], {
+      AKM_STASH_DIR: stashDir,
+      AKM_TEST_VALUE: "supplied-via-env",
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(path.join(stashDir, "vaults", "prod.env"), "utf8")).toContain("API_KEY=supplied-via-env");
+  });
+
+  test("supported stdin form still succeeds", () => {
+    const stashDir = makeTempDir("akm-vault-legacy-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
+
+    const result = runCli(["vault", "set", "prod", "API_KEY"], { AKM_STASH_DIR: stashDir }, "supplied-via-stdin");
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(path.join(stashDir, "vaults", "prod.env"), "utf8")).toContain("API_KEY=supplied-via-stdin");
   });
 });
