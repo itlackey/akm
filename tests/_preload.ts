@@ -102,6 +102,15 @@ function installSuiteWideSandbox(): void {
   process.env.XDG_CACHE_HOME = path.join(suiteSandboxRoot, "xdg-cache");
   process.env.XDG_DATA_HOME = path.join(suiteSandboxRoot, "xdg-data");
   process.env.XDG_STATE_HOME = path.join(suiteSandboxRoot, "xdg-state");
+  // The AKM_*_DIR overrides take precedence over XDG in src/core/paths.ts.
+  // If a developer's shell exports any of them, they would defeat the XDG
+  // sandbox above and leak production paths into the suite. Delete them at
+  // startup so the XDG sandbox always wins; tests that need a specific
+  // AKM_*_DIR set it explicitly (and the afterEach tripwire restores it).
+  delete process.env.AKM_CONFIG_DIR;
+  delete process.env.AKM_DATA_DIR;
+  delete process.env.AKM_CACHE_DIR;
+  delete process.env.AKM_STATE_DIR;
   // Diagnostic / secret env vars must start unset so production code paths
   // see a clean default. Tests that need them set should do so explicitly.
   delete process.env.AKM_VERBOSE;

@@ -109,6 +109,13 @@ export function sandboxXdgCacheHome(chain?: Cleanup): { dir: string; cleanup: Cl
   return sandboxEnvDir("akm-sb-cache-", "XDG_CACHE_HOME", chain);
 }
 
+/**
+ * Sandbox `XDG_STATE_HOME`.  Returns `{ dir, cleanup }`.
+ */
+export function sandboxXdgStateHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
+  return sandboxEnvDir("akm-sb-state-", "XDG_STATE_HOME", chain);
+}
+
 // ── Config writer ────────────────────────────────────────────────────────────
 
 /**

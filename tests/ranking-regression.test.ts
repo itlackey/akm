@@ -11,12 +11,12 @@
  * indexer so all tests share the same index.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 import { loadFixtureStash } from "./fixtures/stashes/load";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
@@ -38,6 +38,15 @@ function mergeStashHits(
 let FIXTURE_STASH: string;
 let fixtureCleanup: (() => void) | undefined;
 
+// Stable per-file XDG_DATA_HOME so the index DB (getDbPath() →
+// $XDG_DATA_HOME/akm/index.db) built once in beforeAll persists across all
+// read-only tests in this file. We deliberately do NOT rebuild the (large)
+// fixture index per test; instead the env vars this file depends on are
+// re-asserted in beforeEach so another concurrently-interleaved test file
+// (the suite runs all files in ONE process sharing process.env) can't clobber
+// XDG_DATA_HOME/AKM_STASH_DIR mid-run and point our searches at the wrong DB.
+let fileDataHome = "";
+
 // ── Environment isolation ───────────────────────────────────────────────────
 
 let envCleanup: Cleanup = () => {};
@@ -45,7 +54,12 @@ let envCleanup: Cleanup = () => {};
 beforeAll(async () => {
   const cacheResult = sandboxXdgCacheHome();
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-  envCleanup = cfgResult.cleanup;
+  // Isolate XDG_DATA_HOME to this file so the index DB never collides with
+  // the suite-wide DB or another file's DB. Capture the dir so beforeEach can
+  // re-point at the same stable location for every test.
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  fileDataHome = dataResult.dir;
+  envCleanup = dataResult.cleanup;
 
   // Materialise the shared ranking-baseline fixture into a tmp dir.
   // The suite indexes it in-process against isolated XDG dirs so the
@@ -64,6 +78,18 @@ beforeAll(async () => {
   });
 
   await akmIndex({ stashDir: FIXTURE_STASH, full: true });
+});
+
+beforeEach(() => {
+  // Re-establish the env vars this file's pre-built index depends on. Under
+  // the shared-process suite, another file's beforeEach/afterEach can leave
+  // XDG_DATA_HOME / AKM_STASH_DIR pointing elsewhere between our tests; the
+  // preload snapshots/restores in afterEach but a concurrently-scheduled
+  // file could still have mutated them. Pointing back at the SAME stable
+  // fixture dir + data home (not a fresh one) reuses the index built once in
+  // beforeAll while guaranteeing correctness.
+  process.env.XDG_DATA_HOME = fileDataHome;
+  process.env.AKM_STASH_DIR = FIXTURE_STASH;
 });
 
 afterAll(() => {

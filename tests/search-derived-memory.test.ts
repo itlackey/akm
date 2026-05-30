@@ -11,9 +11,8 @@
  * unaffected — no `expandTo`, no description/tags rewrite.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { resetConfigCache, saveConfig } from "../src/core/config";
@@ -21,38 +20,44 @@ import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  sandboxXdgStateHome,
+} from "./_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────
+//
+// The fixture corpus is built ONCE in beforeAll and every test only searches
+// it (read-only). Because the suite runs all test files in ONE process sharing
+// process.env, the env vars this file's index DB depends on must be re-asserted
+// before EACH test (the index DB resolves at call time from
+// $XDG_DATA_HOME/akm/index.db). We sandbox to STABLE per-file dirs created once
+// in beforeAll and re-point at them in beforeEach so the prebuilt index is
+// reused while a concurrently-interleaved file can't clobber our paths mid-run.
 
 let stashDir = "";
-let originalXdgCacheHome: string | undefined;
-let originalXdgConfigHome: string | undefined;
-let originalXdgDataHome: string | undefined;
-let originalXdgStateHome: string | undefined;
-let originalAkmStashDir: string | undefined;
-let testCacheDir = "";
-let testConfigDir = "";
-let testDataDir = "";
-let testStateDir = "";
+let fileCacheHome = "";
+let fileConfigHome = "";
+let fileDataHome = "";
+let fileStateHome = "";
+let envCleanup: Cleanup = () => {};
 
 beforeAll(() => {
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  originalXdgDataHome = process.env.XDG_DATA_HOME;
-  originalXdgStateHome = process.env.XDG_STATE_HOME;
-  originalAkmStashDir = process.env.AKM_STASH_DIR;
-
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-derived-cache-"));
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-derived-config-"));
-  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-derived-data-"));
-  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-derived-state-"));
-  stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-derived-stash-"));
-
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
-  process.env.AKM_STASH_DIR = stashDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stateResult = sandboxXdgStateHome(dataResult.cleanup);
+  const stashResult = sandboxStashDir(stateResult.cleanup);
+  fileCacheHome = cacheResult.dir;
+  fileConfigHome = cfgResult.dir;
+  fileDataHome = dataResult.dir;
+  fileStateHome = stateResult.dir;
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 
   resetConfigCache();
   saveConfig({
@@ -64,21 +69,22 @@ beforeAll(() => {
   buildFixture();
 });
 
-afterAll(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+beforeEach(() => {
+  // Re-establish the env vars this file's pre-built index depends on, pointing
+  // back at the SAME stable per-file dirs (not fresh ones) so the index built
+  // in beforeAll is reused.
+  process.env.XDG_CACHE_HOME = fileCacheHome;
+  process.env.XDG_CONFIG_HOME = fileConfigHome;
+  process.env.XDG_DATA_HOME = fileDataHome;
+  process.env.XDG_STATE_HOME = fileStateHome;
+  process.env.AKM_STASH_DIR = stashDir;
   resetConfigCache();
-  for (const dir of [testCacheDir, testConfigDir, testDataDir, testStateDir, stashDir]) {
-    if (dir) fs.rmSync(dir, { recursive: true, force: true });
-  }
+});
+
+afterAll(() => {
+  envCleanup();
+  envCleanup = () => {};
+  resetConfigCache();
 });
 
 function buildFixture(): void {

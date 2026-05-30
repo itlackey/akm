@@ -22,9 +22,8 @@
  *      next `loadGraphBoostContext` result.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
@@ -33,57 +32,48 @@ import { loadGraphBoostContext, resetGraphBoostCache } from "../src/indexer/grap
 import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph-extraction";
 import { buildSearchText } from "../src/indexer/search-fields";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  sandboxXdgStateHome,
+} from "./_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────
+//
+// Each test builds its own graph DB state, so we give every test a fresh,
+// fully isolated sandbox (XDG cache/config/data/state + stash). This is
+// mandatory under the shared-process suite: the index DB resolves at call time
+// from $XDG_DATA_HOME/akm/index.db, so without a per-test XDG_DATA_HOME sandbox
+// a concurrently-interleaved file would share — and clobber — this file's DB.
 
 let stashDir = "";
-let originalXdgCacheHome: string | undefined;
-let originalXdgConfigHome: string | undefined;
-let originalXdgDataHome: string | undefined;
-let originalXdgStateHome: string | undefined;
-let originalAkmStashDir: string | undefined;
-let testCacheDir = "";
-let testConfigDir = "";
-let testDataDir = "";
-let testStateDir = "";
+let envCleanup: Cleanup = () => {};
 
-beforeAll(() => {
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  originalXdgDataHome = process.env.XDG_DATA_HOME;
-  originalXdgStateHome = process.env.XDG_STATE_HOME;
-  originalAkmStashDir = process.env.AKM_STASH_DIR;
-
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-cache-reset-cache-"));
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-cache-reset-config-"));
-  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-cache-reset-data-"));
-  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-cache-reset-state-"));
-  stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-cache-reset-stash-"));
-
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_DATA_HOME = testDataDir;
-  process.env.XDG_STATE_HOME = testStateDir;
-  process.env.AKM_STASH_DIR = stashDir;
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stateResult = sandboxXdgStateHome(dataResult.cleanup);
+  const stashResult = sandboxStashDir(stateResult.cleanup);
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 
   resetConfigCache();
+  // The graph-boost module caches the parsed graph keyed by (stashPath,
+  // generatedAt); this file's tests deliberately reuse a stable generatedAt
+  // and reset the cache themselves, but clear it up front so each test starts
+  // from a guaranteed-empty cache regardless of cross-file interleaving.
+  resetGraphBoostCache();
 });
 
-afterAll(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = originalXdgDataHome;
-  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = originalXdgStateHome;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
   resetConfigCache();
-  for (const dir of [testCacheDir, testConfigDir, testDataDir, testStateDir, stashDir]) {
-    if (dir) fs.rmSync(dir, { recursive: true, force: true });
-  }
+  resetGraphBoostCache();
 });
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
