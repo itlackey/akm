@@ -126,7 +126,10 @@ describe("chatCompletion error redaction", () => {
     const server = Bun.serve({
       port: 0,
       async fetch(_req) {
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        // Server sleeps 150ms but we only assert elapsed >= 80ms: the 70ms
+        // margin is deliberate so timer coalescing/early-wake can't lose the
+        // wall-clock race. 150ms is still well under the 250ms timeoutMs.
+        await new Promise((resolve) => setTimeout(resolve, 150));
         return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
           headers: { "Content-Type": "application/json" },
         });

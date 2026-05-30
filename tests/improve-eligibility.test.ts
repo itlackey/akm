@@ -23,6 +23,17 @@ import { saveConfig } from "../src/core/config";
 import { appendEvent, readEvents } from "../src/core/events";
 import { akmIndex } from "../src/indexer/indexer";
 
+// Deterministic, strictly-ordered timestamps for signal-delta ordering.
+// These replace `await sleep(10)` between two appendEvent() calls: instead of
+// relying on the wall clock to advance between writes (flaky on a coarse
+// clock), we inject explicit ts values via `appendEvent(input, { now })`.
+// They must stay within the 30-day FEEDBACK_SIGNAL_WINDOW_DAYS so feedback
+// events still count as "current signal", so they are anchored near now().
+// NEWER_MS > OLDER_MS guarantees the lexicographic ISO comparison in
+// improve.ts (`fb > lp`) resolves the intended ordering deterministically.
+const OLDER_MS = Date.now() - 60_000;
+const NEWER_MS = Date.now() - 30_000;
+
 const tempDirs: string[] = [];
 const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
@@ -104,15 +115,16 @@ describe("reflect signal-delta eligibility", () => {
     await buildIndex(stash);
 
     // Older reflect proposal recorded as reflect_invoked event.
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" });
-    // Sleep a tick so the next event has a strictly greater ts.
-    await new Promise((r) => setTimeout(r, 10));
-    // Newer feedback event arrived after the reflect.
-    appendEvent({
-      eventType: "feedback",
-      ref: "memory:auth-tips",
-      metadata: { signal: "negative" },
-    });
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" }, { now: () => OLDER_MS });
+    // Newer feedback event arrived after the reflect (injected ts strictly > reflect).
+    appendEvent(
+      {
+        eventType: "feedback",
+        ref: "memory:auth-tips",
+        metadata: { signal: "negative" },
+      },
+      { now: () => NEWER_MS },
+    );
 
     const reflected: string[] = [];
     await akmImprove({
@@ -137,13 +149,15 @@ describe("reflect signal-delta eligibility", () => {
     await buildIndex(stash);
 
     // Old feedback event THEN a reflect_invoked event (reflect is newer).
-    appendEvent({
-      eventType: "feedback",
-      ref: "memory:stale",
-      metadata: { signal: "negative" },
-    });
-    await new Promise((r) => setTimeout(r, 10));
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:stale" });
+    appendEvent(
+      {
+        eventType: "feedback",
+        ref: "memory:stale",
+        metadata: { signal: "negative" },
+      },
+      { now: () => OLDER_MS },
+    );
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:stale" }, { now: () => NEWER_MS });
 
     const reflected: string[] = [];
     await akmImprove({
@@ -220,17 +234,22 @@ describe("distill signal-delta eligibility", () => {
     writeMemory(stash, "auth-tips", "VPN required.");
     await buildIndex(stash);
 
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: "memory:auth-tips",
-      metadata: { outcome: "queued" },
-    });
-    await new Promise((r) => setTimeout(r, 10));
-    appendEvent({
-      eventType: "feedback",
-      ref: "memory:auth-tips",
-      metadata: { signal: "negative" },
-    });
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        ref: "memory:auth-tips",
+        metadata: { outcome: "queued" },
+      },
+      { now: () => OLDER_MS },
+    );
+    appendEvent(
+      {
+        eventType: "feedback",
+        ref: "memory:auth-tips",
+        metadata: { signal: "negative" },
+      },
+      { now: () => NEWER_MS },
+    );
 
     const distilled: string[] = [];
     await akmImprove({
@@ -254,17 +273,22 @@ describe("distill signal-delta eligibility", () => {
     writeMemory(stash, "old-memory", "Stable content.");
     await buildIndex(stash);
 
-    appendEvent({
-      eventType: "feedback",
-      ref: "memory:old-memory",
-      metadata: { signal: "negative" },
-    });
-    await new Promise((r) => setTimeout(r, 10));
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: "memory:old-memory",
-      metadata: { outcome: "queued" },
-    });
+    appendEvent(
+      {
+        eventType: "feedback",
+        ref: "memory:old-memory",
+        metadata: { signal: "negative" },
+      },
+      { now: () => OLDER_MS },
+    );
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        ref: "memory:old-memory",
+        metadata: { outcome: "queued" },
+      },
+      { now: () => NEWER_MS },
+    );
 
     const distilled: string[] = [];
     await akmImprove({
@@ -370,13 +394,16 @@ describe("consolidate pool-delta eligibility", () => {
 
   test("memory mtime > last consolidate_completed → consolidation skip event NOT emitted", async () => {
     const stash = makeTempDir("akm-elig-consolidate-runs-");
-    // Old completion event, then a freshly-written memory.
-    appendEvent({
-      eventType: "consolidate_completed",
-      ref: "memory:_consolidation",
-      metadata: { processed: 1 },
-    });
-    await new Promise((r) => setTimeout(r, 20));
+    // Old completion event (injected ts in the past), then a freshly-written
+    // memory whose natural mtime is strictly newer than the completion event.
+    appendEvent(
+      {
+        eventType: "consolidate_completed",
+        ref: "memory:_consolidation",
+        metadata: { processed: 1 },
+      },
+      { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
+    );
     writeMemory(stash, "fresh-mem", "Recent edit.");
     await buildIndex(stash);
 
