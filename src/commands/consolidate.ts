@@ -33,7 +33,14 @@ export { hasSupersededStatus, validateProposalFrontmatter };
 import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
-import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
+import {
+  closeDatabase,
+  findEntryIdByRef,
+  getAllEntries,
+  getEntryById,
+  getNeighborsByEntryId,
+  openExistingDatabase,
+} from "../indexer/db";
 import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { chatCompletion } from "../llm/client";
 import { cosineSimilarity, embedBatch } from "../llm/embedder";
@@ -182,6 +189,18 @@ export interface AkmConsolidateOptions {
   autoTriggered?: boolean;
   /** How to handle stale/incomplete consolidate journals from prior interrupted runs. */
   recoveryMode?: "abort" | "clean";
+  /**
+   * Incremental gate (ISO timestamp). When set, consolidation considers only
+   * memories modified after this time PLUS their top-k semantic neighbours from
+   * the persisted vector index ({changed ∪ neighbours}) — capturing every new
+   * merge/dedup/contradict opportunity (all of which require something to have
+   * changed) while skipping the unchanged bulk a prior run already judged. This
+   * converts cost from O(pool) to O(changed clusters). Unset (standalone
+   * `akm consolidate`, bootstrap, volume-triggered) → full pool. Falls back to
+   * the full pool when the index/embeddings are unavailable, preserving merge
+   * correctness at the cost of speed.
+   */
+  incrementalSince?: string;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -997,7 +1016,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const warnings: string[] = [];
   checkForIncompleteJournal(stashDir, opts.recoveryMode ?? "abort", warnings);
 
-  const memories = loadMemoriesForSource(opts.target, stashDir, warnings);
+  let memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
   if (memories.length === 0) {
     return {
@@ -1015,6 +1034,27 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       warnings,
       durationMs: Date.now() - startMs,
     };
+  }
+
+  if (opts.incrementalSince) {
+    memories = narrowToIncrementalCandidates(memories, opts.incrementalSince, warnings);
+    if (memories.length === 0) {
+      return {
+        schemaVersion: 1 as const,
+        ok: true,
+        shape: "consolidate-result",
+        dryRun: opts.dryRun ?? false,
+        previewOnly: false,
+        target: opts.target ?? stashDir,
+        processed: 0,
+        merged: 0,
+        deleted: 0,
+        promoted: [],
+        contradicted: 0,
+        warnings,
+        durationMs: Date.now() - startMs,
+      };
+    }
   }
 
   // Consolidation always uses the HTTP LLM client directly — never the agent
@@ -2176,6 +2216,60 @@ export async function checkPreEmitDedup(opts: {
   }
 
   return { duplicate: false };
+}
+
+/**
+ * Incremental candidate set: {changed} ∪ {top-k persisted-vector neighbours of
+ * each changed memory}, intersected with the loaded pool. Returns [] when
+ * nothing changed (caller emits a no-op envelope), the full pool when
+ * everything changed or the index can't answer (fail-open to preserve merge
+ * correctness). `since` is an ISO timestamp.
+ */
+export function narrowToIncrementalCandidates(
+  memories: MemoryEntry[],
+  since: string,
+  warnings: string[],
+): MemoryEntry[] {
+  const isChanged = (m: MemoryEntry): boolean => {
+    try {
+      return fs.statSync(m.filePath).mtime.toISOString() > since;
+    } catch {
+      return true; // never silently drop a memory we cannot stat
+    }
+  };
+  const changed = memories.filter(isChanged);
+  if (changed.length === 0) return [];
+  if (changed.length === memories.length) return memories;
+
+  const NEIGHBORS_PER_CHANGED = 5;
+  const byName = new Map(memories.map((m) => [m.name, m]));
+  const keep = new Set<string>(changed.map((m) => m.name));
+  let db: ReturnType<typeof openExistingDatabase> | undefined;
+  try {
+    db = openExistingDatabase();
+    for (const m of changed) {
+      const id = findEntryIdByRef(db, `memory:${m.name}`);
+      if (id === undefined) continue;
+      for (const hit of getNeighborsByEntryId(db, id, NEIGHBORS_PER_CHANGED + 1)) {
+        if (hit.id === id) continue;
+        const entry = getEntryById(db, hit.id);
+        if (!entry) continue;
+        const name = entry.entry.name;
+        if (byName.has(name)) keep.add(name); // only neighbours present in the loaded pool
+      }
+    }
+  } catch {
+    warnings.push("Incremental consolidation: index unavailable — processing full pool.");
+    return memories;
+  } finally {
+    if (db) closeDatabase(db);
+  }
+
+  const candidates = memories.filter((m) => keep.has(m.name));
+  warnings.push(
+    `Incremental consolidation: ${changed.length} changed + neighbours → ${candidates.length}/${memories.length} memories considered (since ${since}).`,
+  );
+  return candidates;
 }
 
 function loadMemoriesForSource(source: string | undefined, stashDir: string, warnings: string[]): MemoryEntry[] {
