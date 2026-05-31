@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError, NotFoundError, UsageError } from "../src/core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ const xdgConfig = makeTempDir();
 const xdgData = makeTempDir();
 const xdgState = makeTempDir();
 const isolatedHome = makeTempDir();
-const repoRoot = path.resolve(import.meta.dir, "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 function runCliWithOptions(
@@ -97,7 +97,7 @@ describe("CLI error handling", () => {
     const result = spawnSync("bun", ["./src/cli.ts", "search", "test", "--detail", "invalid"], {
       encoding: "utf8",
       timeout: 10_000,
-      cwd: path.resolve(import.meta.dir, ".."),
+      cwd: path.resolve(import.meta.dir, "..", ".."),
       env: {
         ...process.env,
         AKM_STASH_DIR: stashDir,

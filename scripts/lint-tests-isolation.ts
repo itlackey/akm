@@ -165,7 +165,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/reflect-completed-on-failure.test.ts",
   "tests/reflect-pipeline-fixes.test.ts",
   "tests/registry-cli.test.ts",
-  "tests/registry-install.test.ts",
+  "tests/integration/registry-install.test.ts",
   "tests/search-source-filter.test.ts",
   "tests/setup-tmp-stash-guard.test.ts",
   "tests/source-qa-fixes.test.ts",

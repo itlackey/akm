@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const PROJECT_ROOT = path.resolve(import.meta.dirname, "..");
+const PROJECT_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const INSTALL_SCRIPT = path.join(PROJECT_ROOT, "install.sh");
 const BASH_PATH = resolveCommand("bash");
 const CHMOD_PATH = resolveCommand("chmod");

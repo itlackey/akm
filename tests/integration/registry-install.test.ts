@@ -5,9 +5,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/core/config";
-import { syncFromRef } from "../src/sources/providers/sync-from-ref";
-import { validateTarEntries } from "../src/sources/providers/tar-utils";
+import { loadConfig, saveConfig } from "../../src/core/config";
+import { syncFromRef } from "../../src/sources/providers/sync-from-ref";
+import { validateTarEntries } from "../../src/sources/providers/tar-utils";
 
 /**
  * Test helper: provider sync that returns the legacy `stashRoot` field used
@@ -23,10 +23,10 @@ async function installRegistryRef(ref: string, options?: { cacheRootDir?: string
   };
 }
 
-import { akmShowUnified as akmShow } from "../src/commands/show";
-import { akmAdd, registerWikiSource } from "../src/commands/source-add";
-import { parseRegistryRef } from "../src/registry/resolve";
-import { listPages, listWikis, showWiki } from "../src/wiki/wiki";
+import { akmShowUnified as akmShow } from "../../src/commands/show";
+import { akmAdd, registerWikiSource } from "../../src/commands/source-add";
+import { parseRegistryRef } from "../../src/registry/resolve";
+import { listPages, listWikis, showWiki } from "../../src/wiki/wiki";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
