@@ -3516,7 +3516,7 @@ const tasksCommand = defineCommand({
   },
 });
 
-const main = defineCommand({
+export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
@@ -3616,63 +3616,70 @@ const EXIT_GENERAL = 1;
  *  (1) and USAGE (2). CI monitors can map: 0=pass, 4=warn, 1=fail. */
 const EXIT_HEALTH_WARN = 4;
 
-// citty reads process.argv directly and does not accept a custom argv array,
-// so we must replace process.argv with the normalized version before runMain.
-process.argv = normalizeShowArgv(process.argv);
-// Resolve output mode once at startup from the (normalized) argv and persisted
-// config. All subsequent output() calls read from this in-memory singleton.
-// `initOutputMode` can throw a UsageError when --format/--detail values are
-// invalid; surface it through the same JSON-error path the rest of the CLI uses
-// rather than letting the raw exception escape with a stack trace.
-try {
-  applyEarlyStderrFlags(process.argv);
-  initOutputMode(process.argv, loadConfig().output ?? {});
-} catch (error: unknown) {
-  emitJsonError(error);
-}
-
-// One-time cleanup of stale 0.7.x index file at the old cache location.
-// 0.8.0 moved the index to $XDG_DATA_HOME/akm/index.db (getDataDir()).
-// If the old file exists at $XDG_CACHE_HOME/akm/index.db, remove it so the
-// user isn't confused by a phantom DB. Best-effort; never fatal.
-try {
-  const oldIndexPath = path.join(getCacheDir(), "index.db");
-  if (fs.existsSync(oldIndexPath)) {
-    fs.rmSync(oldIndexPath, { force: true });
-    fs.rmSync(`${oldIndexPath}-shm`, { force: true });
-    fs.rmSync(`${oldIndexPath}-wal`, { force: true });
-    warn(`Cleaned up stale 0.7.x index from ${oldIndexPath}. Canonical path is now ${getDbPath()}.`);
-  }
-} catch {
-  // Non-fatal; one-time warning only.
-}
-
-// First-time-user breadcrumb: when run with no subcommand AND no config
-// exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`
-// above citty's auto-generated usage block. Triggers only when stdin/stderr
-// are interactive (so JSON-output users / CI consumers see nothing extra)
-// and stays silent for any flag-only invocation citty would handle itself
-// (--help, --version).
-(function maybePrintFirstTimeBanner(): void {
-  const argv = process.argv.slice(2);
-  // Fire only on completely bare `akm` invocation. Any explicit flag or
-  // subcommand means the user knows what they want.
-  if (argv.length > 0) return;
-  if (!process.stderr.isTTY) return;
+// Only run the CLI when this module is the direct entry point. When it is
+// imported (e.g. by the in-process test harness in tests/_helpers/cli.ts),
+// `import.meta.main` is false and we skip all startup side effects (argv
+// mutation, output-mode init, index cleanup, banner, runMain) so importers
+// can drive the `main` command themselves without the process exiting.
+if (import.meta.main) {
+  // citty reads process.argv directly and does not accept a custom argv array,
+  // so we must replace process.argv with the normalized version before runMain.
+  process.argv = normalizeShowArgv(process.argv);
+  // Resolve output mode once at startup from the (normalized) argv and persisted
+  // config. All subsequent output() calls read from this in-memory singleton.
+  // `initOutputMode` can throw a UsageError when --format/--detail values are
+  // invalid; surface it through the same JSON-error path the rest of the CLI uses
+  // rather than letting the raw exception escape with a stack trace.
   try {
-    if (fs.existsSync(getConfigPath())) return;
-  } catch {
-    // If we can't resolve the config path, assume non-fresh and stay silent.
-    return;
+    applyEarlyStderrFlags(process.argv);
+    initOutputMode(process.argv, loadConfig().output ?? {});
+  } catch (error: unknown) {
+    emitJsonError(error);
   }
-  console.error(
-    plainize(
-      "👋 First time with akm? Run `akm setup` to get started.\n   Docs: https://github.com/itlackey/akm#readme\n",
-    ),
-  );
-})();
 
-runMain(main);
+  // One-time cleanup of stale 0.7.x index file at the old cache location.
+  // 0.8.0 moved the index to $XDG_DATA_HOME/akm/index.db (getDataDir()).
+  // If the old file exists at $XDG_CACHE_HOME/akm/index.db, remove it so the
+  // user isn't confused by a phantom DB. Best-effort; never fatal.
+  try {
+    const oldIndexPath = path.join(getCacheDir(), "index.db");
+    if (fs.existsSync(oldIndexPath)) {
+      fs.rmSync(oldIndexPath, { force: true });
+      fs.rmSync(`${oldIndexPath}-shm`, { force: true });
+      fs.rmSync(`${oldIndexPath}-wal`, { force: true });
+      warn(`Cleaned up stale 0.7.x index from ${oldIndexPath}. Canonical path is now ${getDbPath()}.`);
+    }
+  } catch {
+    // Non-fatal; one-time warning only.
+  }
+
+  // First-time-user breadcrumb: when run with no subcommand AND no config
+  // exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`
+  // above citty's auto-generated usage block. Triggers only when stdin/stderr
+  // are interactive (so JSON-output users / CI consumers see nothing extra)
+  // and stays silent for any flag-only invocation citty would handle itself
+  // (--help, --version).
+  (function maybePrintFirstTimeBanner(): void {
+    const argv = process.argv.slice(2);
+    // Fire only on completely bare `akm` invocation. Any explicit flag or
+    // subcommand means the user knows what they want.
+    if (argv.length > 0) return;
+    if (!process.stderr.isTTY) return;
+    try {
+      if (fs.existsSync(getConfigPath())) return;
+    } catch {
+      // If we can't resolve the config path, assume non-fresh and stay silent.
+      return;
+    }
+    console.error(
+      plainize(
+        "👋 First time with akm? Run `akm setup` to get started.\n   Docs: https://github.com/itlackey/akm#readme\n",
+      ),
+    );
+  })();
+
+  runMain(main);
+}
 
 // ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────
 

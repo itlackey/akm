@@ -28,6 +28,68 @@ import path from "node:path";
 
 export type Cleanup = () => void;
 
+/** A disposable sandbox directory: its path plus a cleanup function. */
+export interface SandboxedDir {
+  dir: string;
+  cleanup: Cleanup;
+}
+
+let sandboxCounter = 0;
+
+/**
+ * Run `fn` with `process.env` keys temporarily set to the given values,
+ * restoring each prior value (or deleting the key) in a `finally` — even if
+ * `fn` throws.
+ *
+ * Lives here (in the allowlisted sandbox helper) rather than inline in test
+ * files so the test-isolation lint stays satisfied: tests mutate env only
+ * through this restoring wrapper. Used by the in-process CLI harness call sites
+ * that need a per-call env override (e.g. a populated `AKM_STASH_DIR`).
+ */
+export async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T> | T): Promise<T> {
+  const keys = Object.keys(overrides);
+  const prev: Record<string, string | undefined> = {};
+  for (const key of keys) prev[key] = process.env[key];
+  try {
+    for (const key of keys) {
+      const value = overrides[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    return await fn();
+  } finally {
+    for (const key of keys) {
+      if (prev[key] === undefined) delete process.env[key];
+      else process.env[key] = prev[key];
+    }
+  }
+}
+
+/**
+ * Create an isolated, asset-typed stash directory (with the standard subdirs an
+ * initialized stash has) and return its path plus a disposer. The directory is
+ * NOT wired into `process.env` — callers pass it to `withEnv({ AKM_STASH_DIR })`
+ * or to a subprocess env. Registering cleanup here keeps `fs.mkdtempSync` out of
+ * test files (which the isolation lint flags).
+ */
+export function makeStashDir(): SandboxedDir {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-sb-stash2-${sandboxCounter++}-`));
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
+    fs.mkdirSync(path.join(dir, sub), { recursive: true });
+  }
+  return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+/**
+ * Create an isolated empty temp directory and return its path plus a disposer.
+ * Like {@link makeStashDir} but without the stash subdir scaffold — for project
+ * dirs, config dirs, etc. Keeps `fs.mkdtempSync` out of test files.
+ */
+export function makeSandboxDir(prefix = "akm-sb-dir"): SandboxedDir {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${sandboxCounter++}-`));
+  return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
 // ── Core primitive ───────────────────────────────────────────────────────────
 
 /**
