@@ -10,10 +10,8 @@
  *   - Legacy memories without scope keys still match unfiltered queries.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/search";
@@ -23,17 +21,14 @@ import { NotFoundError, UsageError } from "../../src/core/errors";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
+import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
-
-const createdTmpDirs: string[] = [];
-
-function createTmpDir(prefix = "akm-scope-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
-}
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts). The preload (tests/_preload.ts) sandboxes HOME / XDG
+// dirs per test, and beforeEach re-sandboxes the stash/config/cache through the
+// allowlisted sandbox helpers. Both former spawns are pure read/write against
+// the sandboxed stash/config, so they migrate cleanly.
 
 function writeFile(filePath: string, content = "") {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -43,12 +38,6 @@ function writeFile(filePath: string, content = "") {
 function tmpStash(): string {
   return currentStashDir;
 }
-
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 let currentStashDir = "";
 let envCleanup: Cleanup = () => {};
@@ -109,7 +98,7 @@ describe("parseScopeFilterFlags", () => {
     expect(filters).toEqual({ user: "alice", channel: "ops" });
   });
 
-  test("rejects unknown keys with UsageError", () => {
+  test("rejects unknown keys with UsageError", async () => {
     let captured: unknown;
     try {
       parseScopeFilterFlags(["foo=bar"], "--filter");
@@ -119,17 +108,8 @@ describe("parseScopeFilterFlags", () => {
     expect(captured).toBeInstanceOf(UsageError);
     expect((captured as UsageError).message).toMatch(/Unknown scope key/);
     // Spec: UsageError → exit 2 and {ok:false, error, code} envelope on stderr.
-    const result = spawnSync("bun", [CLI, "search", "foo", "--filter", "foo=bar"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      env: {
-        ...process.env,
-        AKM_STASH_DIR: tmpStash(),
-        AKM_CONFIG_DIR: path.join(createTmpDir("akm-scope-config-"), "akm"),
-        XDG_CACHE_HOME: createTmpDir("akm-scope-cache-"),
-      },
-    });
-    expect(result.status).toBe(2); // EXIT_USAGE
+    const result = await runCliCapture(["search", "foo", "--filter", "foo=bar"]);
+    expect(result.code).toBe(2); // EXIT_USAGE
     const envelope = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(envelope.ok).toBe(false);
     expect(typeof envelope.error).toBe("string");
@@ -310,39 +290,21 @@ describe("akm show --scope narrows resolution", () => {
 // ── CLI smoke test ────────────────────────────────────────────────────────
 
 describe("akm remember --user / --agent / --run / --channel (CLI)", () => {
-  test("persists all four scope_* keys to frontmatter", () => {
-    const stashDir = tmpStash();
-    const configDir = createTmpDir("akm-scope-config-");
-    const xdgCache = createTmpDir("akm-scope-cache-");
+  test("persists all four scope_* keys to frontmatter", async () => {
+    const result = await runCliCapture([
+      "remember",
+      "Multi-tenant memory",
+      "--user",
+      "alice",
+      "--agent",
+      "claude",
+      "--run",
+      "run-42",
+      "--channel",
+      "#ops",
+    ]);
 
-    const result = spawnSync(
-      "bun",
-      [
-        CLI,
-        "remember",
-        "Multi-tenant memory",
-        "--user",
-        "alice",
-        "--agent",
-        "claude",
-        "--run",
-        "run-42",
-        "--channel",
-        "#ops",
-      ],
-      {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          AKM_STASH_DIR: stashDir,
-          AKM_CONFIG_DIR: path.join(configDir, "akm"),
-          XDG_CACHE_HOME: xdgCache,
-        },
-      },
-    );
-
-    expect(result.status).toBe(0);
+    expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as { ok: boolean; path: string };
     expect(parsed.ok).toBe(true);
 

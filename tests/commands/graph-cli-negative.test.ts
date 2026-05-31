@@ -1,83 +1,51 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
+import { runCliCapture } from "../_helpers/cli";
+import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 
-const tempDirs: string[] = [];
+// Migrated from per-test spawnSync("bun", [cliPath, ...]) to the in-process
+// harness (tests/_helpers/cli.ts). The preload (tests/_preload.ts) sandboxes
+// HOME / XDG dirs / AKM_STASH_DIR per test; makeStashDir() re-sandboxes the
+// stash via the allowlisted helper and adds the `.akm` subdir these graph tests
+// write into. Index-DB seeding now runs in-process against the same sandboxed
+// XDG_DATA_HOME the CLI resolves (no env-swap needed), so the empty getDbPath()
+// database is shared between the seeder and the in-process verb.
 
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+let stashCleanup: Cleanup = () => {};
 
 function makeStashDir(): string {
-  const stash = makeTempDir("akm-graph-cli-neg-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts", "memories", ".akm"]) {
-    fs.mkdirSync(path.join(stash, sub), { recursive: true });
-  }
-  return stash;
+  // Re-sandbox the stash for this test and add the `.akm` subdir the graph
+  // tests write into (sandboxStashDir creates the asset subdirs but not .akm).
+  const stash = sandboxStashDir();
+  stashCleanup = stash.cleanup;
+  fs.mkdirSync(path.join(stash.dir, ".akm"), { recursive: true });
+  return stash.dir;
 }
 
-function runCli(
-  args: string[],
-  stashDir: string,
-  envDirs?: { xdgCache?: string; xdgConfig?: string; xdgData?: string; xdgState?: string },
-): { status: number; stdout: string; stderr: string } {
-  const xdgCache = envDirs?.xdgCache ?? makeTempDir("akm-graph-cli-neg-cache-");
-  const xdgConfig = envDirs?.xdgConfig ?? makeTempDir("akm-graph-cli-neg-config-");
-  const xdgData = envDirs?.xdgData ?? makeTempDir("akm-graph-cli-neg-data-");
-  const xdgState = envDirs?.xdgState ?? makeTempDir("akm-graph-cli-neg-state-");
-  const cliPath = path.join(path.resolve(import.meta.dir, "..", ".."), "src", "cli.ts");
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-  });
-  return {
-    status: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+async function runCli(args: string[], _stashDir: string): Promise<{ status: number; stdout: string; stderr: string }> {
+  const { code, stdout, stderr } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
 }
 
-function seedEmptyIndexDb(xdgData: string, xdgState: string): void {
-  const prevData = process.env.XDG_DATA_HOME;
-  const prevState = process.env.XDG_STATE_HOME;
-  try {
-    process.env.XDG_DATA_HOME = xdgData;
-    process.env.XDG_STATE_HOME = xdgState;
-    const db = openDatabase(getDbPath());
-    closeDatabase(db);
-  } finally {
-    if (prevData === undefined) delete process.env.XDG_DATA_HOME;
-    else process.env.XDG_DATA_HOME = prevData;
-    if (prevState === undefined) delete process.env.XDG_STATE_HOME;
-    else process.env.XDG_STATE_HOME = prevState;
-  }
+/** Initialize an empty index DB at the sandboxed `getDbPath()` location. */
+function seedEmptyIndexDb(): void {
+  const db = openDatabase(getDbPath());
+  closeDatabase(db);
 }
 
-afterAll(() => {
-  for (const dir of tempDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+afterEach(() => {
+  stashCleanup();
+  stashCleanup = () => {};
 });
 
 describe("graph CLI negative paths", () => {
-  test("export rejects invalid --format value", () => {
+  test("export rejects invalid --format value", async () => {
     const stash = makeStashDir();
     const outPath = path.join(stash, "graph-export.json");
-    const result = runCli(["graph", "export", "--out", outPath, "--format", "yaml"], stash);
+    const result = await runCli(["graph", "export", "--out", outPath, "--format", "yaml"], stash);
     expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
@@ -85,9 +53,9 @@ describe("graph CLI negative paths", () => {
     expect(parsed.error).toContain("--format");
   });
 
-  test("export requires --out", () => {
+  test("export requires --out", async () => {
     const stash = makeStashDir();
-    const result = runCli(["graph", "export"], stash);
+    const result = await runCli(["graph", "export"], stash);
     expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
@@ -95,57 +63,45 @@ describe("graph CLI negative paths", () => {
     expect(parsed.error).toContain("requires --out");
   });
 
-  test("summary fails when graph artifact is missing", () => {
+  test("summary fails when graph artifact is missing", async () => {
     const stash = makeStashDir();
-    const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
-    const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
-    const xdgData = makeTempDir("akm-graph-cli-neg-data-");
-    const xdgState = makeTempDir("akm-graph-cli-neg-state-");
-    seedEmptyIndexDb(xdgData, xdgState);
-    const result = runCli(["graph", "summary"], stash, { xdgCache, xdgConfig, xdgData, xdgState });
+    seedEmptyIndexDb();
+    const result = await runCli(["graph", "summary"], stash);
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("Graph data not found");
   });
 
-  test("summary ignores graph.json when no SQLite graph data exists", () => {
+  test("summary ignores graph.json when no SQLite graph data exists", async () => {
     const stash = makeStashDir();
     fs.writeFileSync(path.join(stash, ".akm", "graph.json"), "not-json\n", "utf8");
-    const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
-    const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
-    const xdgData = makeTempDir("akm-graph-cli-neg-data-");
-    const xdgState = makeTempDir("akm-graph-cli-neg-state-");
-    seedEmptyIndexDb(xdgData, xdgState);
-    const result = runCli(["graph", "summary"], stash, { xdgCache, xdgConfig, xdgData, xdgState });
+    seedEmptyIndexDb();
+    const result = await runCli(["graph", "summary"], stash);
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("Graph data not found");
   });
 
-  test("summary ignores invalid graph.json schema when no SQLite graph data exists", () => {
+  test("summary ignores invalid graph.json schema when no SQLite graph data exists", async () => {
     const stash = makeStashDir();
     fs.writeFileSync(
       path.join(stash, ".akm", "graph.json"),
       `${JSON.stringify({ schemaVersion: 999, generatedAt: "2026-01-01T00:00:00.000Z", stashRoot: stash, files: [] })}\n`,
       "utf8",
     );
-    const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
-    const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
-    const xdgData = makeTempDir("akm-graph-cli-neg-data-");
-    const xdgState = makeTempDir("akm-graph-cli-neg-state-");
-    seedEmptyIndexDb(xdgData, xdgState);
-    const result = runCli(["graph", "summary"], stash, { xdgCache, xdgConfig, xdgData, xdgState });
+    seedEmptyIndexDb();
+    const result = await runCli(["graph", "summary"], stash);
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("Graph data not found");
   });
 
-  test("entities rejects non-positive --limit", () => {
+  test("entities rejects non-positive --limit", async () => {
     const stash = makeStashDir();
-    const result = runCli(["graph", "entities", "--limit", "0"], stash);
+    const result = await runCli(["graph", "entities", "--limit", "0"], stash);
     expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);

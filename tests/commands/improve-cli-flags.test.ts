@@ -1,54 +1,59 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+// The two flag-rejection tests were migrated to the in-process harness
+// (tests/_helpers/cli.ts): they fail during arg parsing before any DB access,
+// so they need no stash and carry no subprocess cost.
+//
+// HARNESS GAP — KEPT AS A SUBPROCESS: the `improve --dry-run` happy path still
+// runs `improve` for real, which opens and writes the state.db (improve_runs).
+// In-process, a SQLite write lock on state.db is already held within the test
+// process (the suite keeps DB handles open across the run), so the in-process
+// improve aborts with "state DB busy/locked after retries" — a genuine
+// process-level contention that a fresh subprocess does not have. Until the
+// harness grows a way to release/clear all state.db handles before an
+// improve-executing call, this test spawns a real `bun src/cli.ts` so it gets a
+// clean, uncontended DB. The local helper passes env to spawnSync rather than
+// mutating process.env, so it does not affect the in-process tests.
+//
+// (The runCli import for the in-process tests stays inline below.)
+import { runCliCapture } from "../_helpers/cli";
+import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../_helpers/sandbox";
 
-const tempDirs: string[] = [];
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+const disposers: SandboxedDir[] = [];
 
 function makeStashDir(): string {
-  const stash = makeTempDir("akm-improve-flags-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts", "memories", "lessons"]) {
-    fs.mkdirSync(path.join(stash, sub), { recursive: true });
-  }
-  return stash;
+  const stash = sandboxMakeStashDir();
+  disposers.push(stash);
+  return stash.dir;
 }
 
-function runCli(args: string[], stashDir?: string): { status: number; stdout: string; stderr: string } {
-  const xdgCache = makeTempDir("akm-improve-flags-cache-");
-  const xdgConfig = makeTempDir("akm-improve-flags-config-");
-  const xdgData = makeTempDir("akm-improve-flags-data-");
-  const xdgState = makeTempDir("akm-improve-flags-state-");
-  const cliPath = path.join(path.resolve(import.meta.dir, "..", ".."), "src", "cli.ts");
+async function runCli(args: string[]): Promise<{ status: number; stdout: string; stderr: string }> {
+  const { code, stdout, stderr } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
+}
+
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const cliPath = path.join(repoRoot, "src", "cli.ts");
+
+/** Subprocess runner for the improve-executing test (see HARNESS GAP above). */
+function spawnImprove(args: string[], stashDir: string): { status: number; stdout: string; stderr: string } {
+  const data = sandboxMakeStashDir();
+  disposers.push(data);
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     env: {
       ...process.env,
       AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
+      XDG_DATA_HOME: data.dir,
     },
   });
-  return {
-    status: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
-afterAll(() => {
-  for (const dir of tempDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
 });
 
 describe("improve CLI flags (0.8.0)", () => {
@@ -59,8 +64,8 @@ describe("improve CLI flags (0.8.0)", () => {
   // so we cannot pin rejection here — the flag-rejection tests were
   // dropped along with the flags.
 
-  test("rejects negative min retrieval count", () => {
-    const result = runCli(["improve", "--min-retrieval-count", "-1", "--dry-run"]);
+  test("rejects negative min retrieval count", async () => {
+    const result = await runCli(["improve", "--min-retrieval-count", "-1", "--dry-run"]);
     expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
@@ -69,8 +74,8 @@ describe("improve CLI flags (0.8.0)", () => {
     expect(parsed.error).toContain("non-negative integer");
   });
 
-  test("rejects invalid consolidate recovery mode", () => {
-    const result = runCli(["improve", "--consolidate-recovery", "resume", "--dry-run"]);
+  test("rejects invalid consolidate recovery mode", async () => {
+    const result = await runCli(["improve", "--consolidate-recovery", "resume", "--dry-run"]);
     expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
@@ -82,7 +87,7 @@ describe("improve CLI flags (0.8.0)", () => {
 
   test("improve dry-run completes successfully (no cooldown flags needed)", () => {
     const stash = makeStashDir();
-    const result = runCli(
+    const result = spawnImprove(
       [
         "improve",
         "--dry-run",

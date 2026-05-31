@@ -1,55 +1,68 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { runCliCapture } from "./_helpers/cli";
+import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+
+// Helpers.
+//
+// Migrated from per-test spawnSync("bun", ["./src/cli.ts", ...]) to the shared
+// in-process harness (tests/_helpers/cli.ts). `completions` emits a pure bash
+// script on stdout / exit code, so the script-content and unsupported-shell
+// tests are ideal in-process candidates. Env/temp-dir mutation goes through the
+// allowlisted sandbox helpers (withEnv / makeSandboxDir).
+//
+// KEPT SPAWNING (real-process behavior): the `--install` test asserts the
+// install-path message that `akm completions --install` emits via `warn()`
+// (src/core/warn.ts → console.error). Under the suite-wide test preload that
+// path does not surface to the harness's captured stderr, so to faithfully
+// exercise the user-visible stderr message the test runs a real subprocess.
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const tempDirs: string[] = [];
+const disposers: SandboxedDir[] = [];
 
 function makeTempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-completions-"));
-  tempDirs.push(dir);
-  return dir;
+  const d = makeSandboxDir("akm-completions-");
+  disposers.push(d);
+  return d.dir;
 }
 
 afterAll(() => {
-  for (const dir of tempDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  for (const d of disposers) d.cleanup();
+  disposers.length = 0;
 });
 
 const xdgCache = makeTempDir();
 const xdgConfig = makeTempDir();
 const isolatedHome = makeTempDir();
 
-function runCli(...args: string[]): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", ["./src/cli.ts", ...args], {
-    encoding: "utf8",
-    timeout: 10_000,
-    cwd: path.resolve(import.meta.dir, ".."),
-    env: {
-      ...process.env,
+async function runCli(...args: string[]): Promise<{ stdout: string; stderr: string; status: number }> {
+  const { stdout, stderr, code } = await withEnv(
+    {
       AKM_STASH_DIR: undefined,
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
       XDG_DATA_HOME: undefined,
     },
-  });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status ?? 1,
-  };
+    () => runCliCapture(args),
+  );
+  return { stdout, stderr, status: code };
 }
 
 // ── Unit tests (generated script content) ────────────────────────────────────
 
 describe("completions command", () => {
-  const { stdout, status } = runCli("completions");
-  const script = stdout;
+  let script = "";
+  let status = 1;
+
+  beforeAll(async () => {
+    const result = await runCli("completions");
+    script = result.stdout;
+    status = result.status;
+  });
 
   test("exits 0 and outputs a bash script", () => {
     expect(status).toBe(0);
@@ -127,6 +140,9 @@ describe("completions command", () => {
 // ── Integration: --install ───────────────────────────────────────────────────
 
 describe("completions --install", () => {
+  // KEPT AS A SUBPROCESS: this asserts the install-path message emitted via
+  // warn() → stderr, which the in-process harness does not surface under the
+  // suite-wide test preload. A real subprocess exercises the user-visible stderr.
   test("writes completion file to XDG_DATA_HOME path", () => {
     const xdgData = makeTempDir();
     const result = spawnSync("bun", ["./src/cli.ts", "completions", "--install"], {
@@ -157,8 +173,8 @@ describe("completions --install", () => {
 // ── Unsupported shell ────────────────────────────────────────────────────────
 
 describe("completions unsupported shell", () => {
-  test("rejects unsupported shell type", () => {
-    const { stderr, status } = runCli("completions", "--shell", "zsh");
+  test("rejects unsupported shell type", async () => {
+    const { stderr, status } = await runCli("completions", "--shell", "zsh");
     expect(status).not.toBe(0);
     expect(stderr).toContain("Unsupported shell");
   });

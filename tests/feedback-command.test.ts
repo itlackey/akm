@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
@@ -8,26 +7,24 @@ import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
+import { runCliCapture } from "./_helpers/cli";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
+// Migrated from spawnSync("bun", [CLI, ...]) to the shared in-process harness
+// (tests/_helpers/cli.ts). beforeEach already sandboxes AKM_STASH_DIR and the
+// XDG dirs on process.env via the allowlisted sandbox helpers; the harness
+// re-reads config from that env per call, so feedback events land in the same
+// sandboxed stash/DB the test then asserts on. `feedback` is not
+// process.cwd()-dependent.
 
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
 }
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env },
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+async function runCli(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const { stdout, stderr, code } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
 }
 
 function parseJsonOutput(result: { stdout: string; stderr: string }): Record<string, unknown> {
@@ -71,7 +68,7 @@ describe("akm feedback", () => {
 
     await buildIndex();
 
-    const memoryResult = runCli(["feedback", "memory:deployment-notes", "--positive", "--format=json"]);
+    const memoryResult = await runCli(["feedback", "memory:deployment-notes", "--positive", "--format=json"]);
     expect(memoryResult.status).toBe(0);
     expect(parseJsonOutput(memoryResult)).toMatchObject({
       ok: true,
@@ -79,7 +76,7 @@ describe("akm feedback", () => {
       signal: "positive",
     });
 
-    const vaultResult = runCli(["feedback", "vault:prod", "--positive", "--format=json"]);
+    const vaultResult = await runCli(["feedback", "vault:prod", "--positive", "--format=json"]);
     expect(vaultResult.status).toBe(0);
     expect(parseJsonOutput(vaultResult)).toMatchObject({
       ok: true,
@@ -116,7 +113,7 @@ describe("akm feedback", () => {
 
     await buildIndex();
 
-    const result = runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
     expect(result.status).toBe(0);
     expect(parseJsonOutput(result)).toMatchObject({
       ok: true,
@@ -129,7 +126,7 @@ describe("akm feedback", () => {
     writeFile(path.join(stashDir, "memories", "known.md"), "---\ndescription: known memory\n---\nKnown.\n");
     await buildIndex();
 
-    const result = runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
     expect(result.status).not.toBe(0);
     const output = parseJsonOutput(result);
     expect(output.ok).toBe(false);
@@ -145,7 +142,7 @@ describe("akm feedback", () => {
     );
     await buildIndex();
 
-    const result = runCli([
+    const result = await runCli([
       "feedback",
       "memory:deployment-notes",
       "--positive",
@@ -188,7 +185,7 @@ describe("akm feedback", () => {
     expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memory:alpha", "memory:omega"]);
     expect(beforeMemories[0]?.score).toBe(beforeMemories[1]?.score);
 
-    const feedback = runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     await buildIndex();

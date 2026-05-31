@@ -1,17 +1,26 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { createProposal, isProposalSkipped } from "../../src/core/proposals";
+import { runCliCapture } from "../_helpers/cli";
+import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
-const tempDirs: string[] = [];
+// Migrated from per-test spawnSync("bun", [cliPath, ...]) to the in-process
+// harness (tests/_helpers/cli.ts). Proposals are seeded in-process via
+// createProposal() against an isolated stash dir; the CLI then reads that stash
+// back through AKM_STASH_DIR. The preload (tests/_preload.ts) sandboxes
+// HOME / XDG dirs per test, so runCli only needs to point AKM_STASH_DIR at the
+// seeded stash for the duration of the call (via the allowlisted withEnv
+// wrapper). The spawn version set cwd: repoRoot, which is already the in-process
+// cwd — no chdir needed — so every test migrates cleanly.
+
+const disposers: SandboxedDir[] = [];
 
 function makeTempDir(prefix = "akm-proposal-cli-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
+  const d = makeSandboxDir(prefix);
+  disposers.push(d);
+  return d.dir;
 }
 
 function makeStashDir(): string {
@@ -22,44 +31,18 @@ function makeStashDir(): string {
   return stash;
 }
 
-afterAll(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
 });
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
-const cliPath = path.join(repoRoot, "src", "cli.ts");
-
-function runCli(
+async function runCli(
   args: string[],
   options: { stashDir: string; env?: Record<string, string | undefined> } = { stashDir: "" },
-): { stdout: string; stderr: string; status: number } {
-  const xdgCache = makeTempDir("akm-proposal-cli-cache-");
-  const xdgConfig = makeTempDir("akm-proposal-cli-config-");
-  const xdgData = makeTempDir("akm-proposal-cli-data-");
-  const xdgState = makeTempDir("akm-proposal-cli-state-");
-  const home = makeTempDir("akm-proposal-cli-home-");
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 20_000,
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: options.stashDir || undefined,
-      HOME: home,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-      ...options.env,
-    },
-  });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status ?? -1,
-  };
+): Promise<{ stdout: string; stderr: string; status: number }> {
+  const { code, stdout, stderr } = await withEnv({ AKM_STASH_DIR: options.stashDir || undefined, ...options.env }, () =>
+    runCliCapture(args),
+  );
+  return { stdout, stderr, status: code };
 }
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n`;
@@ -76,10 +59,10 @@ function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
 }
 
 describe("akm proposals (CLI)", () => {
-  test("happy path: lists pending proposal as JSON with totalCount", () => {
+  test("happy path: lists pending proposal as JSON with totalCount", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["proposals", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposals", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.totalCount).toBe(1);
@@ -87,32 +70,32 @@ describe("akm proposals (CLI)", () => {
     expect(parsed.proposals[0].id).toBe(created.id);
   });
 
-  test("supports --ref filtering", () => {
+  test("supports --ref filtering", async () => {
     const stash = makeStashDir();
     seedProposal(stash, "lesson:rg-over-grep");
     seedProposal(stash, "lesson:docker-cleanup");
-    const result = runCli(["proposals", "--ref", "lesson:docker-cleanup", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposals", "--ref", "lesson:docker-cleanup", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.totalCount).toBe(1);
     expect(parsed.proposals[0].ref).toBe("lesson:docker-cleanup");
   });
 
-  test("error path: invalid --status value → UsageError exit 2 with code", () => {
+  test("error path: invalid --status value → UsageError exit 2 with code", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = runCli(["proposals", "--status=bogus", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposals", "--status=bogus", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
   });
 
-  test("accepts --status=reverted (parser allows reverted status)", () => {
+  test("accepts --status=reverted (parser allows reverted status)", async () => {
     // Regression: parseProposalStatus must accept "reverted" so that
     // `akm proposal list --status reverted` works for archived/reverted proposals.
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = runCli(["proposals", "--status=reverted", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposals", "--status=reverted", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     // No proposals have been reverted in this fixture, so the list is empty.
@@ -122,10 +105,10 @@ describe("akm proposals (CLI)", () => {
 });
 
 describe("akm show proposal (CLI)", () => {
-  test("happy path: returns proposal + validation report", () => {
+  test("happy path: returns proposal + validation report", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
+    const result = await runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.proposal.id).toBe(created.id);
@@ -134,43 +117,43 @@ describe("akm show proposal (CLI)", () => {
 });
 
 describe("akm accept / reject / diff proposal (CLI)", () => {
-  test("accept materialises asset on disk and exits 0", () => {
+  test("accept materialises asset on disk and exits 0", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["accept", created.id, "--format=json"], { stashDir: stash });
+    const result = await runCli(["accept", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.ok).toBe(true);
     expect(fs.existsSync(parsed.assetPath as string)).toBe(true);
   });
 
-  test("reject requires --reason", () => {
+  test("reject requires --reason", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["reject", created.id, "--format=json"], { stashDir: stash });
+    const result = await runCli(["reject", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("MISSING_REQUIRED_ARGUMENT");
   });
 
-  test("reject archives proposal with reason", () => {
+  test("reject archives proposal with reason", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    // --yes is required in non-interactive (subprocess) mode since WS-6 added confirmation prompts.
-    const result = runCli(["reject", created.id, "--reason", "duplicate", "--yes", "--format=json"], {
+    // --yes is required in non-interactive mode since WS-6 added confirmation prompts.
+    const result = await runCli(["reject", created.id, "--reason", "duplicate", "--yes", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.reason).toBe("duplicate");
-    const list = runCli(["proposals", "--format=json"], { stashDir: stash });
+    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
     expect(JSON.parse(list.stdout).totalCount).toBe(0);
   });
 
-  test("diff proposal shows a unified diff", () => {
+  test("diff proposal shows a unified diff", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["diff", created.id, "--format=json"], { stashDir: stash });
+    const result = await runCli(["diff", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.id).toBe(created.id);
@@ -179,11 +162,11 @@ describe("akm accept / reject / diff proposal (CLI)", () => {
 });
 
 describe("akm propose (CLI)", () => {
-  test("--task and --file are mutually exclusive", () => {
+  test("--task and --file are mutually exclusive", async () => {
     const stash = makeStashDir();
     const promptFile = path.join(makeTempDir("akm-proposal-prompt-"), "prompt.md");
     fs.writeFileSync(promptFile, "author a lesson", "utf8");
-    const result = runCli(
+    const result = await runCli(
       ["propose", "lesson", "rg-over-grep", "--task", "inline", "--file", promptFile, "--format=json"],
       { stashDir: stash },
     );

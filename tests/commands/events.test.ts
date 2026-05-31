@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,17 +6,29 @@ import path from "node:path";
 import { akmEventsList, akmEventsTail } from "../../src/commands/events";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent, readEvents, tailEvents } from "../../src/core/events";
+import { getDbPath } from "../../src/core/paths";
+import { runCliCapture } from "../_helpers/cli";
+import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
+
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts) where faithful. The pure appendEvent/readEvents/
+// tailEvents/akmEventsList/akmEventsTail tests use an explicit dbPath ctx and
+// are untouched. The "akm CLI mutation events" and "events tail (streaming
+// trailer)" tests now drive the CLI in-process: they seed state.db at the
+// sandboxed getDbPath() and the harness captures the streamed stdout/stderr
+// trailer.
+//
+// KEPT AS A SUBPROCESS: "events list --since @offset resumes across a real
+// process boundary". Its entire contract is a real exec boundary — a producer
+// persists a cursor, appends MORE events, then a SEPARATE process reads from the
+// cursor. In-process there is no second process, so it stays spawning via the
+// local spawnCli helper (which passes env to spawnSync rather than mutating
+// process.env, so it does not affect the in-process tests).
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 
 const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
+let stashCleanup: Cleanup = () => {};
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -24,42 +36,42 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+function sandboxStash(): string {
+  const stash = sandboxStashDir();
+  stashCleanup = stash.cleanup;
+  return stash.dir;
+}
+
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
 }
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
+async function runCli(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const { code, stdout, stderr } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
+}
+
+/**
+ * Subprocess runner, retained only for the cross-process @offset durability
+ * test. It passes env to spawnSync rather than mutating process.env, so it does
+ * not affect the in-process tests.
+ */
+function spawnCli(
+  args: string[],
+  env: Record<string, string | undefined>,
+): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
-    env: { ...process.env },
+    env: { ...process.env, ...env },
   });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
-beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-events-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-events-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-events-data-");
-  process.env.XDG_STATE_HOME = makeTempDir("akm-events-state-");
-});
-
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
+  stashCleanup();
+  stashCleanup = () => {};
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -133,7 +145,6 @@ describe("appendEvent / readEvents", () => {
     // Drive both processes through the same XDG_DATA_HOME so they share
     // the same state.db path (events now live in state.db, not events.jsonl).
     const childEnv = {
-      ...process.env,
       XDG_DATA_HOME: dataDir,
       XDG_CACHE_HOME: cacheDir,
       XDG_CONFIG_HOME: configDir,
@@ -162,11 +173,7 @@ describe("appendEvent / readEvents", () => {
     //    and asks the CLI for events with `--since @offset:<cursor>`. This
     //    exercises a real exec boundary, not just in-process arithmetic.
     const persisted = fs.readFileSync(cursorFile, "utf8").trim();
-    const child = spawnSync("bun", [CLI, "events", "list", "--since", `@offset:${persisted}`, "--format=json"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      env: childEnv,
-    });
+    const child = spawnCli(["events", "list", "--since", `@offset:${persisted}`, "--format=json"], childEnv);
     expect(child.status).toBe(0);
     const parsed = JSON.parse(child.stdout) as {
       events: Array<{ ref: string }>;
@@ -288,30 +295,29 @@ describe("tailEvents", () => {
 
 describe("akm CLI mutation events", () => {
   test("remember, feedback, and add each emit an event to state.db", async () => {
-    const stashDir = makeTempDir("akm-events-stash-");
-    process.env.AKM_STASH_DIR = stashDir;
+    sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
     // ─ remember ──────────────────────────────────────────────────────────
-    const remember = runCli(["remember", "first event captured", "--name", "alpha", "--format=json"]);
+    const remember = await runCli(["remember", "first event captured", "--name", "alpha", "--format=json"]);
     expect(remember.status).toBe(0);
 
     // index so feedback can find the ref
-    const indexResult = runCli(["index", "--full", "--format=json"]);
+    const indexResult = await runCli(["index", "--full", "--format=json"]);
     expect(indexResult.status).toBe(0);
 
     // ─ feedback ──────────────────────────────────────────────────────────
-    const feedback = runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     // ─ add (local directory source) ──────────────────────────────────────
     const localSource = makeTempDir("akm-events-local-");
     writeFile(path.join(localSource, "skills", "demo.md"), "# demo\n\nA demo skill.\n");
-    const add = runCli(["add", localSource, "--format=json"]);
+    const add = await runCli(["add", localSource, "--format=json"]);
     expect(add.status).toBe(0);
 
     // Confirm events are in state.db by querying through the CLI.
-    const list = runCli(["events", "list", "--format=json"]);
+    const list = await runCli(["events", "list", "--format=json"]);
     expect(list.status).toBe(0);
     const parsed = JSON.parse(list.stdout) as { events: Array<{ eventType: string }> };
     const types = parsed.events.map((e) => e.eventType);
@@ -321,15 +327,14 @@ describe("akm CLI mutation events", () => {
   });
 
   test("`akm events list` returns the captured events in JSON envelope shape", async () => {
-    const stashDir = makeTempDir("akm-events-stash-");
-    process.env.AKM_STASH_DIR = stashDir;
+    sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
     // Create a remember event via the CLI so state.db gets populated.
-    const remember = runCli(["remember", "another event captured", "--name", "beta", "--format=json"]);
+    const remember = await runCli(["remember", "another event captured", "--name", "beta", "--format=json"]);
     expect(remember.status).toBe(0);
 
-    const list = runCli(["events", "list", "--format=json"]);
+    const list = await runCli(["events", "list", "--format=json"]);
     expect(list.status).toBe(0);
     const parsed = JSON.parse(list.stdout) as Record<string, unknown>;
     expect(parsed.totalCount).toBeGreaterThanOrEqual(1);
@@ -339,16 +344,15 @@ describe("akm CLI mutation events", () => {
   });
 
   test("`akm events list --type feedback` filters by event type", async () => {
-    const stashDir = makeTempDir("akm-events-stash-");
-    process.env.AKM_STASH_DIR = stashDir;
+    sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
-    const remember = runCli(["remember", "filter test", "--name", "gamma", "--format=json"]);
+    const remember = await runCli(["remember", "filter test", "--name", "gamma", "--format=json"]);
     expect(remember.status).toBe(0);
-    runCli(["index", "--full", "--format=json"]);
-    runCli(["feedback", "memory:gamma", "--positive", "--format=json"]);
+    await runCli(["index", "--full", "--format=json"]);
+    await runCli(["feedback", "memory:gamma", "--positive", "--format=json"]);
 
-    const filtered = runCli(["events", "list", "--type", "feedback", "--format=json"]);
+    const filtered = await runCli(["events", "list", "--type", "feedback", "--format=json"]);
     expect(filtered.status).toBe(0);
     const parsed = JSON.parse(filtered.stdout) as Record<string, unknown>;
     const events = parsed.events as Array<Record<string, unknown>>;
@@ -385,42 +389,26 @@ describe("akm events tail (streaming trailer)", () => {
   // cursor entirely. After the streaming loop ends we must emit a single
   // trailer line so callers can resume from `nextOffset`.
 
-  test("--format jsonl writes a discriminated trailer row to stdout", () => {
-    const dataDir = makeTempDir("akm-events-trailer-jsonl-data-");
-    const cacheDir = makeTempDir("akm-events-trailer-jsonl-cache-");
-    const configDir = makeTempDir("akm-events-trailer-jsonl-config-");
-    // Write events into the same state.db the CLI child will read from.
-    const dbPath = path.join(dataDir, "akm", "state.db");
+  test("--format jsonl writes a discriminated trailer row to stdout", async () => {
+    // Seed events into the same state.db the in-process CLI will read from
+    // (getDbPath() resolves to <sandboxed XDG_DATA_HOME>/akm/state.db).
+    const dbPath = getDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:t1" }, ctx);
     appendEvent({ eventType: "remember", ref: "memory:t2" }, ctx);
 
-    const child = spawnSync(
-      "bun",
-      [
-        CLI,
-        "events",
-        "tail",
-        "--format=jsonl",
-        "--max-events",
-        "2",
-        "--max-duration-ms",
-        "2000",
-        "--interval-ms",
-        "20",
-      ],
-      {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          XDG_DATA_HOME: dataDir,
-          XDG_CACHE_HOME: cacheDir,
-          XDG_CONFIG_HOME: configDir,
-          XDG_STATE_HOME: makeTempDir("akm-events-trailer-jsonl-state-"),
-        },
-      },
-    );
+    const child = await runCli([
+      "events",
+      "tail",
+      "--format=jsonl",
+      "--max-events",
+      "2",
+      "--max-duration-ms",
+      "2000",
+      "--interval-ms",
+      "20",
+    ]);
     expect(child.status).toBe(0);
     const lines = child.stdout.trim().split("\n").filter(Boolean);
     expect(lines.length).toBeGreaterThanOrEqual(3); // 2 events + trailer
@@ -432,30 +420,24 @@ describe("akm events tail (streaming trailer)", () => {
     expect(["maxEvents", "signal", "maxDuration"]).toContain(last.reason as string);
   });
 
-  test("--format text writes a trailer line to stderr (stdout stays pristine)", () => {
-    const dataDir = makeTempDir("akm-events-trailer-text-data-");
-    const cacheDir = makeTempDir("akm-events-trailer-text-cache-");
-    const configDir = makeTempDir("akm-events-trailer-text-config-");
-    // Write events into the same state.db the CLI child will read from.
-    const dbPath = path.join(dataDir, "akm", "state.db");
+  test("--format text writes a trailer line to stderr (stdout stays pristine)", async () => {
+    // Seed events into the same state.db the in-process CLI will read from.
+    const dbPath = getDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:tx1" }, ctx);
 
-    const child = spawnSync(
-      "bun",
-      [CLI, "events", "tail", "--format=text", "--max-events", "1", "--max-duration-ms", "2000", "--interval-ms", "20"],
-      {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          XDG_DATA_HOME: dataDir,
-          XDG_CACHE_HOME: cacheDir,
-          XDG_CONFIG_HOME: configDir,
-          XDG_STATE_HOME: makeTempDir("akm-events-trailer-text-state-"),
-        },
-      },
-    );
+    const child = await runCli([
+      "events",
+      "tail",
+      "--format=text",
+      "--max-events",
+      "1",
+      "--max-duration-ms",
+      "2000",
+      "--interval-ms",
+      "20",
+    ]);
     expect(child.status).toBe(0);
     // stdout: pristine event lines, no trailer mixed in.
     expect(child.stdout).not.toContain("[events-tail]");

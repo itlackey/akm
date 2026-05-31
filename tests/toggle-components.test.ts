@@ -1,43 +1,44 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { runCliCapture } from "./_helpers/cli";
+import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
-const tempDirs: string[] = [];
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the shared in-process
+// harness (tests/_helpers/cli.ts). `enable`/`disable` persist registry toggles
+// to XDG_CONFIG_HOME/akm/config.json, resolved from env not process.cwd(), so
+// these run faithfully in-process against a sandboxed XDG triple. Env/temp-dir
+// mutation goes through the allowlisted sandbox helpers (withEnv / makeSandboxDir).
+
+const disposers: SandboxedDir[] = [];
 
 function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
+  const d = makeSandboxDir(prefix);
+  disposers.push(d);
+  return d.dir;
 }
 
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  for (const d of disposers.splice(0)) d.cleanup();
 });
 
-function runCli(args: string[], env: NodeJS.ProcessEnv): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env,
-  });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+async function runCli(
+  args: string[],
+  env: Record<string, string | undefined>,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const { stdout, stderr, code } = await withEnv(env, () => runCliCapture(args));
+  return { status: code, stdout, stderr };
 }
 
 describe("component toggles", () => {
-  test("akm disable skills.sh marks skills.sh registry as disabled", () => {
+  test("akm disable skills.sh marks skills.sh registry as disabled", async () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const xdgData = makeTempDir("akm-toggle-data-");
     const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
-    const result = runCli(["disable", "skills.sh", "--format=json"], {
-      ...process.env,
+    const result = await runCli(["disable", "skills.sh", "--format=json"], {
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,
@@ -59,15 +60,14 @@ describe("component toggles", () => {
     expect(skillsRegistry?.enabled).toBe(false);
   });
 
-  test("akm enable <unsupported-target> exits with usage error", () => {
+  test("akm enable <unsupported-target> exits with usage error", async () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const xdgData = makeTempDir("akm-toggle-data-");
     const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
-    const result = runCli(["enable", "context-hub", "--format=json"], {
-      ...process.env,
+    const result = await runCli(["enable", "context-hub", "--format=json"], {
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,
@@ -80,15 +80,14 @@ describe("component toggles", () => {
     expect(combined).toContain("Unsupported target");
   });
 
-  test("akm disable <unsupported-target> exits with usage error", () => {
+  test("akm disable <unsupported-target> exits with usage error", async () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const xdgData = makeTempDir("akm-toggle-data-");
     const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
-    const result = runCli(["disable", "context-hub", "--format=json"], {
-      ...process.env,
+    const result = await runCli(["disable", "context-hub", "--format=json"], {
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,

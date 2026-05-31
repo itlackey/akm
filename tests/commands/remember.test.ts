@@ -11,68 +11,75 @@
  *   - errors on non-writable targets (ConfigError)
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { runCliCapture } from "../_helpers/cli";
+import {
+  type Cleanup,
+  makeSandboxDir,
+  type SandboxedDir,
+  sandboxStashDir,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
-const tempDirs: string[] = [];
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts). None of these tests feed stdin, so there is no
+// harness gap. The spawn version wrote config via AKM_CONFIG_DIR and minted its
+// own stash/XDG dirs; in-process we sandbox AKM_STASH_DIR via the allowlisted
+// sandboxStashDir helper in beforeEach and write config through
+// writeSandboxConfig (XDG_CONFIG_HOME/akm/config.json, which getConfigDir
+// resolves once the preload has cleared AKM_CONFIG_DIR). Extra `--target`
+// sources are isolated dirs from makeSandboxDir.
 
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
+const disposers: SandboxedDir[] = [];
+let stashCleanup: Cleanup = () => {};
+let currentStashDir = "";
+
+function makeTargetDir(): string {
+  const d = makeSandboxDir("akm-remember-target-");
+  disposers.push(d);
+  return d.dir;
 }
 
-function writeConfig(configDir: string, body: Record<string, unknown>): void {
-  const akmDir = path.join(configDir, "akm");
-  fs.mkdirSync(akmDir, { recursive: true });
-  fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(body, null, 2), "utf8");
+function writeConfig(body: Record<string, unknown>): void {
+  writeSandboxConfig(body);
 }
 
-function runCli(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
-  const stashDir = options.stashDir ?? makeTempDir("akm-remember-stash-");
-  const xdgCache = makeTempDir("akm-remember-cache-");
-  const xdgConfig = makeTempDir("akm-remember-config-");
-  const xdgData = makeTempDir("akm-remember-data-");
-  const xdgState = makeTempDir("akm-remember-state-");
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    input: options.input,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-  });
-  return { stashDir, result };
+async function runCli(
+  args: string[],
+): Promise<{ stashDir: string; result: { status: number; stdout: string; stderr: string } }> {
+  const { code, stdout, stderr } = await runCliCapture(args);
+  return { stashDir: currentStashDir, result: { status: code, stdout, stderr } };
 }
+
+beforeEach(() => {
+  const stash = sandboxStashDir();
+  currentStashDir = stash.dir;
+  stashCleanup = stash.cleanup;
+});
 
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  stashCleanup();
+  stashCleanup = () => {};
+  currentStashDir = "";
+  for (const d of disposers.splice(0)) d.cleanup();
 });
 
 describe("remember --target", () => {
-  test("--target resolves to a configured filesystem source", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    const targetDir = makeTempDir("akm-remember-target-");
-    writeConfig(configDir, {
+  test("--target resolves to a configured filesystem source", async () => {
+    const targetDir = makeTargetDir();
+    writeConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", name: "writable-target", path: targetDir, writable: true }],
     });
 
-    const { stashDir, result } = runCli(["remember", "Pinned context for the rollout", "--target", "writable-target"], {
-      configDir,
-    });
+    const { stashDir, result } = await runCli([
+      "remember",
+      "Pinned context for the rollout",
+      "--target",
+      "writable-target",
+    ]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -86,15 +93,14 @@ describe("remember --target", () => {
     expect(fs.existsSync(path.join(stashDir, "memories", "pinned-context-for-the-rollout.md"))).toBe(false);
   });
 
-  test("--target with an unknown source name throws a usage error", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    const targetDir = makeTempDir("akm-remember-target-");
-    writeConfig(configDir, {
+  test("--target with an unknown source name throws a usage error", async () => {
+    const targetDir = makeTargetDir();
+    writeConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", name: "real-target", path: targetDir, writable: true }],
     });
 
-    const { result } = runCli(["remember", "won't be written", "--target", "nope"], { configDir });
+    const { result } = await runCli(["remember", "won't be written", "--target", "nope"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
@@ -102,15 +108,14 @@ describe("remember --target", () => {
     expect(json.error).toContain("--target must reference a source name");
   });
 
-  test("--target on a non-writable source throws a config error", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    const targetDir = makeTempDir("akm-remember-target-");
-    writeConfig(configDir, {
+  test("--target on a non-writable source throws a config error", async () => {
+    const targetDir = makeTargetDir();
+    writeConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", name: "read-only", path: targetDir, writable: false }],
     });
 
-    const { result } = runCli(["remember", "won't be written", "--target", "read-only"], { configDir });
+    const { result } = await runCli(["remember", "won't be written", "--target", "read-only"]);
     expect(result.status).not.toBe(0);
 
     const json = JSON.parse(result.stderr) as { error: string };
@@ -119,11 +124,10 @@ describe("remember --target", () => {
 });
 
 describe("remember --target", () => {
-  test("default stash is used when --target is omitted", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    writeConfig(configDir, { semanticSearchMode: "off" });
+  test("default stash is used when --target is omitted", async () => {
+    writeConfig({ semanticSearchMode: "off" });
 
-    const { stashDir, result } = runCli(["remember", "Memory without target flag"], { configDir });
+    const { stashDir, result } = await runCli(["remember", "Memory without target flag"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -131,17 +135,14 @@ describe("remember --target", () => {
     expect(json.path.startsWith(stashDir)).toBe(true);
   });
 
-  test("--target routes memory to the named writable secondary stash", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    const secondaryDir = makeTempDir("akm-remember-secondary-");
-    writeConfig(configDir, {
+  test("--target routes memory to the named writable secondary stash", async () => {
+    const secondaryDir = makeTargetDir();
+    writeConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", name: "secondary", path: secondaryDir, writable: true }],
     });
 
-    const { stashDir, result } = runCli(["remember", "Pinned note for secondary stash", "--target", "secondary"], {
-      configDir,
-    });
+    const { stashDir, result } = await runCli(["remember", "Pinned note for secondary stash", "--target", "secondary"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -155,15 +156,14 @@ describe("remember --target", () => {
     expect(fs.existsSync(path.join(stashDir, "memories", "pinned-note-for-secondary-stash.md"))).toBe(false);
   });
 
-  test("--target with an unknown source name throws a usage error", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    const targetDir = makeTempDir("akm-remember-target-");
-    writeConfig(configDir, {
+  test("--target with an unknown source name throws a usage error", async () => {
+    const targetDir = makeTargetDir();
+    writeConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
     });
 
-    const { result } = runCli(["remember", "won't be written", "--target", "ghost-stash"], { configDir });
+    const { result } = await runCli(["remember", "won't be written", "--target", "ghost-stash"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
@@ -171,15 +171,14 @@ describe("remember --target", () => {
     expect(json.error).toContain("--target must reference a source name");
   });
 
-  test("--target on a non-writable source throws a config error", () => {
-    const configDir = makeTempDir("akm-remember-config-");
-    const targetDir = makeTempDir("akm-remember-target-");
-    writeConfig(configDir, {
+  test("--target on a non-writable source throws a config error", async () => {
+    const targetDir = makeTargetDir();
+    writeConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", name: "frozen-stash", path: targetDir, writable: false }],
     });
 
-    const { result } = runCli(["remember", "won't be written", "--target", "frozen-stash"], { configDir });
+    const { result } = await runCli(["remember", "won't be written", "--target", "frozen-stash"]);
     expect(result.status).not.toBe(0);
 
     const json = JSON.parse(result.stderr) as { error: string };

@@ -14,10 +14,9 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { AkmImproveResult } from "../../src/commands/improve";
 import {
@@ -25,21 +24,39 @@ import {
   relativeImproveResultPath,
   writeImproveResultFile,
 } from "../../src/commands/improve-result-file";
+import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataHome } from "../_helpers/sandbox";
 
-const tempDirs: string[] = [];
+// The pure-function tests (buildImproveRunId, relativeImproveResultPath,
+// writeImproveResultFile) run in-process — writeImproveResultFile isolates
+// state.db via the allowlisted sandboxXdgDataHome helper. The three `akm
+// improve` CLI tests, however, run `improve` for real, which opens and WRITES
+// the state.db improve_runs table.
+//
+// HARNESS GAP — KEPT AS A SUBPROCESS: in-process, a SQLite write lock on
+// state.db is already held within the test process (the suite keeps DB handles
+// open across the run), so an in-process improve aborts with "state DB
+// busy/locked after retries" — a genuine process-level contention a fresh
+// subprocess does not have. Until the harness grows a way to release/clear all
+// state.db handles before an improve-executing call, those three tests spawn a
+// real `bun src/cli.ts` so each gets a clean, uncontended DB. The runCli helper
+// passes env to spawnSync rather than mutating process.env, so it does not
+// affect the in-process tests; it still mints a fresh XDG_DATA_HOME per call
+// (via the allowlisted sandbox helper) and returns that dir so the assertions
+// can read the improve_runs rows back.
 
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+const disposers: Array<{ cleanup: () => void }> = [];
+
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 function makeStashDir(): string {
-  const stash = makeTempDir("akm-improve-rtf-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts", "memories", "lessons"]) {
-    fs.mkdirSync(path.join(stash, sub), { recursive: true });
+  const stash: SandboxedDir = sandboxMakeStashDir();
+  // sandboxMakeStashDir lacks the lessons/memories subdirs improve expects.
+  for (const sub of ["memories", "lessons"]) {
+    fs.mkdirSync(path.join(stash.dir, sub), { recursive: true });
   }
-  return stash;
+  disposers.push(stash);
+  return stash.dir;
 }
 
 interface CliRun {
@@ -50,28 +67,25 @@ interface CliRun {
 }
 
 function runCli(args: string[], stashDir: string): CliRun {
-  const xdgCache = makeTempDir("akm-improve-rtf-cache-");
-  const xdgConfig = makeTempDir("akm-improve-rtf-config-");
-  const xdgData = makeTempDir("akm-improve-rtf-data-");
-  const xdgState = makeTempDir("akm-improve-rtf-state-");
-  const cliPath = path.join(path.resolve(import.meta.dir, "..", ".."), "src", "cli.ts");
+  // Fresh XDG_DATA_HOME per call so each run writes its own state.db. Use the
+  // allowlisted sandbox helper to keep mkdtempSync out of the test file; the
+  // dir is passed to spawnSync's env (not process.env) so it never leaks.
+  const data = sandboxMakeStashDir();
+  disposers.push(data);
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 60_000,
     env: {
       ...process.env,
       AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
+      XDG_DATA_HOME: data.dir,
     },
   });
   return {
     status: result.status ?? 1,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
-    xdgData,
+    xdgData: data.dir,
   };
 }
 
@@ -117,10 +131,8 @@ function readImproveRuns(xdgData: string): Array<{
   }
 }
 
-afterAll(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
 });
 
 describe("buildImproveRunId", () => {
@@ -156,22 +168,12 @@ describe("writeImproveResultFile", () => {
       plannedRefs: [],
     };
 
-    // Isolate state.db to a tmpdir so the test never touches the user's
-    // real data directory.
-    const xdgData = makeTempDir("akm-improve-rtf-data-");
-    const xdgCache = makeTempDir("akm-improve-rtf-cache-");
-    const xdgConfig = makeTempDir("akm-improve-rtf-config-");
-    const xdgState = makeTempDir("akm-improve-rtf-state-");
-    const savedEnv = {
-      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-    };
-    process.env.XDG_DATA_HOME = xdgData;
-    process.env.XDG_CACHE_HOME = xdgCache;
-    process.env.XDG_CONFIG_HOME = xdgConfig;
-    process.env.XDG_STATE_HOME = xdgState;
+    // Isolate state.db to a tmpdir so the test never touches the user's real
+    // data directory. The sandbox helper sets + restores XDG_DATA_HOME so the
+    // test-isolation lint stays satisfied (writeImproveResultFile resolves
+    // state.db from getDataDir() → <XDG_DATA_HOME>/akm/state.db).
+    const dataSb = sandboxXdgDataHome();
+    const xdgData = dataSb.dir;
 
     try {
       const rel = writeImproveResultFile(stash, runId, result);
@@ -190,10 +192,7 @@ describe("writeImproveResultFile", () => {
       const runsDir = path.join(stash, ".akm", "runs");
       expect(fs.existsSync(runsDir)).toBe(false);
     } finally {
-      for (const [key, value] of Object.entries(savedEnv)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
+      dataSb.cleanup();
     }
   });
 });
