@@ -1,20 +1,33 @@
 /**
  * `akm search --include-proposed` CLI integration test (#284 GAP-HIGH 9).
  *
- * Spawns the real CLI against an indexed stash that contains both a
+ * Drives the CLI against an indexed stash that contains both a
  * `quality: stable` and a `quality: proposed` skill, and asserts that:
  *   - default search excludes the proposed entry,
  *   - `--include-proposed` retains it in the hits list.
+ *
+ * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
+ * harness (tests/_helpers/cli.ts). Each runCli call re-pins AKM_STASH_DIR for
+ * the indexed stash and resets the config cache before the in-process run,
+ * restoring env in finally — so the freshly indexed stash is read back without
+ * subprocess startup cost.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { saveConfig } from "../src/core/config";
+import { resetConfigCache, saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { runCliCapture } from "./_helpers/cli";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  withEnv,
+} from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -29,24 +42,12 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content);
 }
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
-
-function runCli(args: string[], stashDir: string): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-    },
+async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
+  return withEnv({ AKM_STASH_DIR: stashDir }, async () => {
+    resetConfigCache();
+    const res = await runCliCapture(args);
+    return { stdout: res.stdout, stderr: res.stderr, status: res.code };
   });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status ?? -1,
-  };
 }
 
 let envCleanup: Cleanup = () => {};
@@ -54,7 +55,8 @@ let envCleanup: Cleanup = () => {};
 beforeEach(() => {
   const cacheResult = sandboxXdgCacheHome();
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stashResult = sandboxStashDir(dataResult.cleanup);
   envCleanup = stashResult.cleanup;
 });
 
@@ -88,14 +90,14 @@ describe("akm search --include-proposed (CLI)", () => {
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
 
-    const baseline = runCli(["search", "deploy", "--format=json"], stash);
+    const baseline = await runCli(["search", "deploy", "--format=json"], stash);
     expect(baseline.status).toBe(0);
     const baselineJson = JSON.parse(baseline.stdout);
     const baselineNames = (baselineJson.hits as Array<{ name: string }>).map((h) => h.name);
     expect(baselineNames).toContain("stable-deploy");
     expect(baselineNames).not.toContain("proposed-deploy");
 
-    const withProposed = runCli(["search", "deploy", "--include-proposed", "--format=json"], stash);
+    const withProposed = await runCli(["search", "deploy", "--include-proposed", "--format=json"], stash);
     expect(withProposed.status).toBe(0);
     const withProposedJson = JSON.parse(withProposed.stdout);
     const withProposedNames = (withProposedJson.hits as Array<{ name: string }>).map((h) => h.name);

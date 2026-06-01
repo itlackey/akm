@@ -4,25 +4,31 @@
  * Reports tags that appear on indexed assets but are NOT yet covered by any
  * lesson-type entry. Used by humans/agents to identify topics where the
  * stash has tacit knowledge worth crystallizing.
+ *
+ * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
+ * harness (tests/_helpers/cli.ts). Each test allocates fresh isolated
+ * XDG/stash dirs through the allowlisted sandbox helpers; buildIndex indexes
+ * the stash and runCli reads it back in-process (resetting the config cache so
+ * the run re-reads the sandboxed env), with no subprocess startup cost.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/core/config";
+import { resetConfigCache, saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
+import { runCliCapture } from "./_helpers/cli";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  sandboxXdgStateHome,
+} from "./_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -35,13 +41,10 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content);
 }
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env },
-  });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+async function runCli(args: string[]): Promise<{ status: number; stdout: string; stderr: string }> {
+  resetConfigCache();
+  const res = await runCliCapture(args);
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
@@ -50,11 +53,20 @@ async function buildIndex(stashDir: string): Promise<void> {
   await akmIndex({ stashDir, full: true });
 }
 
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stateResult = sandboxXdgStateHome(dataResult.cleanup);
+  const stashResult = sandboxStashDir(stateResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
+
 afterEach(() => {
-  for (const [key, val] of Object.entries(savedEnv)) {
-    if (val === undefined) delete process.env[key as keyof NodeJS.ProcessEnv];
-    else process.env[key as keyof NodeJS.ProcessEnv] = val;
-  }
+  envCleanup();
+  envCleanup = () => {};
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -63,10 +75,6 @@ afterEach(() => {
 describe("akm lessons coverage (Phase 7A)", () => {
   test("reports tags present on non-lesson assets that no lesson covers", async () => {
     const stashDir = makeTempDir("akm-lessons-cov-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-lc-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-lc-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-lc-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-lc-state-");
 
     // Non-lesson assets touch four tags: deploy, networking, auth, observability.
     writeFile(
@@ -90,7 +98,7 @@ describe("akm lessons coverage (Phase 7A)", () => {
 
     await buildIndex(stashDir);
 
-    const result = runCli(["lessons", "coverage", "--format=json"]);
+    const result = await runCli(["lessons", "coverage", "--format=json"]);
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
       uncoveredTags: string[];
@@ -104,10 +112,6 @@ describe("akm lessons coverage (Phase 7A)", () => {
 
   test("returns an empty list when every tag is covered by a lesson", async () => {
     const stashDir = makeTempDir("akm-lessons-allcov-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-lcall-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-lcall-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-lcall-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-lcall-state-");
 
     writeFile(
       path.join(stashDir, "skills", "deploy.md"),
@@ -120,7 +124,7 @@ describe("akm lessons coverage (Phase 7A)", () => {
 
     await buildIndex(stashDir);
 
-    const result = runCli(["lessons", "coverage", "--format=json"]);
+    const result = await runCli(["lessons", "coverage", "--format=json"]);
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as { uncoveredTags: string[] };
     expect(parsed.uncoveredTags).toEqual([]);

@@ -10,29 +10,38 @@
  * The fix gates a `restrictToSources` flag on the named-source code path
  * and drops scored items whose filePath does not live under any of the
  * provided sources.
+ *
+ * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
+ * harness (tests/_helpers/cli.ts). Each runCli call re-pins the test's
+ * isolated XDG/stash env and resets the config cache before driving the CLI
+ * in-process, then restores in finally — so the indexed stash written by
+ * akmIndex is read back faithfully without subprocess startup cost.
  */
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
-import { saveConfig } from "../src/core/config";
+import { resetConfigCache, saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
+import { runCliCapture } from "./_helpers/cli";
+import {
+  type Cleanup,
+  makeSandboxDir,
+  type SandboxedDir,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  sandboxXdgStateHome,
+  withEnv,
+} from "./_helpers/sandbox";
 
-const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
+const disposers: SandboxedDir[] = [];
 
 function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
+  const d = makeSandboxDir(prefix);
+  disposers.push(d);
+  return d.dir;
 }
 
 function writeFile(filePath: string, content: string): void {
@@ -40,52 +49,42 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content);
 }
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
+let envCleanup: Cleanup = () => {};
 
-function runCli(args: string[], stashDir: string): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-      XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-    },
-  });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status ?? -1,
-  };
-}
+beforeEach(() => {
+  // Fresh isolated XDG dirs + stash per test so the indexed DB / config live
+  // in tempdirs. Chained so a single cleanup() undoes all of them.
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stateResult = sandboxXdgStateHome(dataResult.cleanup);
+  const stashResult = sandboxStashDir(stateResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
 
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  envCleanup();
+  envCleanup = () => {};
+  for (const d of disposers.splice(0)) d.cleanup();
 });
+
+/**
+ * Drive the CLI in-process against a specific stash dir. Re-pins AKM_STASH_DIR
+ * for the call and resets the config cache so the run re-reads against the
+ * narrowed stash, mirroring what the spawned subprocess got via its env.
+ */
+async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
+  return withEnv({ AKM_STASH_DIR: stashDir }, async () => {
+    resetConfigCache();
+    const res = await runCliCapture(args);
+    return { stdout: res.stdout, stderr: res.stderr, status: res.code };
+  });
+}
 
 describe("akm search --source <name> filters hits to that source", () => {
   test("named --source returns only hits whose files live under that source", async () => {
     const primary = makeTempDir("akm-src-filter-primary-");
     const library = makeTempDir("akm-src-filter-library-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-src-filter-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-src-filter-config-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-src-filter-data-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-src-filter-state-");
     for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
       fs.mkdirSync(path.join(primary, sub), { recursive: true });
       fs.mkdirSync(path.join(library, sub), { recursive: true });
@@ -112,7 +111,7 @@ describe("akm search --source <name> filters hits to that source", () => {
     await akmIndex({ stashDir: primary, full: true });
 
     // Baseline: no --source filter. Both sources should contribute hits.
-    const baseline = runCli(["search", "shared-keyword", "--format=json"], primary);
+    const baseline = await runCli(["search", "shared-keyword", "--format=json"], primary);
     expect(baseline.status).toBe(0);
     const baselineHits = (JSON.parse(baseline.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
     const baselineNames = baselineHits.map((h) => h.name);
@@ -123,7 +122,7 @@ describe("akm search --source <name> filters hits to that source", () => {
     // source. Before this fix, primary-skill would also appear because the
     // FTS index is global across sources and the search command did not
     // post-filter by the narrowed source list.
-    const narrowed = runCli(["search", "shared-keyword", "--source", "library", "--format=json"], primary);
+    const narrowed = await runCli(["search", "shared-keyword", "--source", "library", "--format=json"], primary);
     expect(narrowed.status).toBe(0);
     const narrowedHits = (JSON.parse(narrowed.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
     const narrowedNames = narrowedHits.map((h) => h.name);
@@ -137,7 +136,7 @@ describe("akm search --source <name> filters hits to that source", () => {
     // never received its config name and `--source <primary-name>` matched
     // zero entries. addSource now enriches the existing entry with config
     // metadata when the path is already in the source list.
-    const narrowedPrimary = runCli(["search", "shared-keyword", "--source", "primary", "--format=json"], primary);
+    const narrowedPrimary = await runCli(["search", "shared-keyword", "--source", "primary", "--format=json"], primary);
     expect(narrowedPrimary.status).toBe(0);
     const narrowedPrimaryHits = (JSON.parse(narrowedPrimary.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
     const narrowedPrimaryNames = narrowedPrimaryHits.map((h) => h.name);
