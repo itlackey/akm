@@ -93,8 +93,10 @@ function appendToLogFile(level: "INFO" | "WARN" | "ERROR", args: unknown[]): voi
   const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   try {
     fs.appendFileSync(logFilePath, `[${ts}] [${level}] ${msg}\n`);
-  } catch {
-    // Never throw from a logging function — log failures are silent.
+  } catch (e) {
+    // Log file write failed — emit directly to stderr so the message is not lost.
+    process.stderr.write(`[akm:warn] log-file write failed (${logFilePath}): ${e}\n`);
+    process.stderr.write(`[${ts}] [${level}] ${msg}\n`);
   }
 }
 
