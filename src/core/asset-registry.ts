@@ -28,6 +28,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   memory: "memory-md",
   workflow: "workflow-md",
   vault: "vault-env",
+  secret: "secret-file",
   wiki: "wiki-md",
   task: "task-yaml",
 };
@@ -44,6 +45,8 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   workflow: (ref) => buildWorkflowAction(ref),
   vault: (ref) =>
     `akm show ${ref} -> inspect keys; source "$(akm vault path ${ref})" -> load values; akm vault run ${ref} -- <command> -> run with injected env`,
+  secret: (ref) =>
+    `akm show ${ref} -> name only (value never shown); akm secret path ${ref} -> file path; akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
   wiki: (ref) => `akm show ${ref} -> read the wiki page`,
   task: (ref) =>
     `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`,

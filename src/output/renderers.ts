@@ -467,6 +467,28 @@ const vaultEnvRenderer: AssetRenderer = {
   },
 };
 
+// ── 9. secret-file ─────────────────────────────────────────────────────────────
+
+/**
+ * Secret renderer. The ENTIRE file is the secret value, so this surfaces ONLY
+ * the name + path + a usage hint — never content/template/prompt/keys. There
+ * is no `enrichSearchHit`: secrets are discoverable by name alone.
+ */
+const secretFileRenderer: AssetRenderer = {
+  name: "secret-file",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    return {
+      type: "secret",
+      name,
+      path: ctx.absPath,
+      action:
+        "Secret — name only; the file contents are the value and are never written to akm's stdout. Use `akm secret path <ref>` for the file path, or `akm secret run <ref> <VAR> -- <command>` to run with the value injected into $VAR.",
+    };
+  },
+};
+
 // ── 7. task-md ───────────────────────────────────────────────────────────────
 
 const TASK_PAGE_ACTION =
@@ -582,6 +604,14 @@ function applyVaultMetadata(entry: StashEntry, ctx: RenderContext): void {
   entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
 }
 
+/**
+ * Secret metadata: tags only. Must NEVER read the file body — the whole file
+ * is the value, so the entry is built from the filename alone (name-only).
+ */
+function applySecretMetadata(entry: StashEntry, _ctx: RenderContext): void {
+  entry.tags = Array.from(new Set([...(entry.tags ?? []), "secret", "sensitive"]));
+}
+
 function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
@@ -628,6 +658,12 @@ registerMetadataContributor({
 });
 
 registerMetadataContributor({
+  name: "secret-file-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "secret-file",
+  contribute: (entry, ctx) => applySecretMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
   name: "task-yaml-metadata",
   appliesTo: ({ rendererName }) => rendererName === "task-yaml",
   contribute: (entry, ctx) => applyTaskMetadata(entry, ctx.renderContext),
@@ -647,6 +683,7 @@ const builtinRenderers: AssetRenderer[] = [
   workflowMdRenderer,
   scriptSourceRenderer,
   vaultEnvRenderer,
+  secretFileRenderer,
   taskMdRenderer,
 ];
 
@@ -671,6 +708,7 @@ export {
   memoryMdRenderer,
   SETUP_SIGNALS,
   scriptSourceRenderer,
+  secretFileRenderer,
   skillMdRenderer,
   vaultEnvRenderer,
   wikiMdRenderer,

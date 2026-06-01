@@ -1413,6 +1413,93 @@ scope env injection to one variable.
 > entire lifetime and are visible to all subprocesses it spawns. Avoid
 > `vault run` for long-lived daemon or server processes.
 
+### secret
+
+Manage **whole-file secrets** — a PEM private key, an API token, a TLS cert, a
+service-account JSON. Where a [vault](#vault) stores `KEY=value` pairs and
+exposes key *names*, a secret's **entire file is the value**, so only the
+secret's *name* is ever surfaced. Each secret is a mode-0600 file under
+`secrets/` in your stash.
+
+This mirrors Docker's secret model (one value per file, mounted at
+`/run/secrets/<name>`, read at runtime, never baked into the image or env at
+build time). The key security property: **secret values never appear in
+structured output** — not in the index, `akm search`, `akm curate`, or
+`akm show`. The supported value-use paths are `secret run` (inject into a child
+env var) and `secret path` (hand the command the file path).
+
+```sh
+akm secret list
+printf '%s' "$TOKEN" | akm secret set secret:deploy-token
+akm secret set secret:deploy-key --from-file ~/.ssh/id_ed25519   # byte-exact
+AKM_VALUE="$TOKEN" akm secret set secret:api --from-env AKM_VALUE
+akm secret path secret:deploy-key                                # absolute path
+akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+akm secret remove secret:deploy-token --yes
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `list` | List all secrets across all stashes by name (contents never shown) |
+| `set <ref>` | Create/overwrite a secret — value from stdin (default), `--from-file`, or `--from-env` |
+| `path <ref>` | Print the absolute secret file path (for the Docker `_FILE` convention) |
+| `run <ref> <VAR> -- <command>` | Run a command with the secret value injected into `$VAR` in the child only |
+| `remove <ref>` | Delete a secret (and its `.sensitive` marker, if any) |
+
+#### secret set
+
+```sh
+# Default: read the value from stdin (never crosses argv)
+printf '%s' "$TOKEN" | akm secret set secret:deploy-token
+
+# Import an existing file byte-exact (multi-line PEM keys, certs, binary)
+akm secret set secret:deploy-key --from-file ~/.ssh/id_ed25519
+
+# From an environment variable
+AKM_VALUE="$TOKEN" akm secret set secret:api --from-env AKM_VALUE
+```
+
+The value is **never accepted via positional arguments**. With stdin, a single
+trailing newline is stripped (so `echo "$TOKEN" | akm secret set …` stores the
+token without the shell-added newline); use `--from-file` for byte-exact storage
+of multi-line material. Writes are atomic (mode 0600) under an exclusive
+`<secret>.lock`. Maximum size is 5 MB.
+
+#### secret path
+
+```sh
+akm secret path secret:deploy-key
+# Docker `_FILE` convention — hand the command the path, not the value:
+MY_SECRET_FILE="$(akm secret path secret:deploy-key)" ./start.sh
+```
+
+Prints the absolute path to the secret file. The file's contents are never
+printed.
+
+#### secret run
+
+```sh
+akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+```
+
+Runs one subprocess with the secret's value set as `$VAR` in the child's
+environment. **The value never appears in akm's structured output** — it is
+passed directly to the child process. The target variable name is validated and
+known process-hijacking names (`LD_PRELOAD`, `PATH`, etc.) are rejected.
+
+> Secrets injected via `secret run` live in the child process environment for
+> its entire lifetime and are visible to all subprocesses it spawns. For
+> long-lived daemons, prefer `secret path` so the process reads the file
+> directly and the value never sits in an environment variable.
+
+#### Sensitive marker
+
+A sibling `<name>.sensitive` marker file excludes a secret from `secret list`
+**and** from indexing entirely (parallel to vaults). The secret remains usable
+via `secret path` / `secret run`.
+
 ### wiki
 
 Manage multiple markdown wikis following the Karpathy LLM-wiki pattern.

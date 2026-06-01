@@ -2579,6 +2579,7 @@ async function runImprovePostLoopStage(args: {
       // where full-pool re-judging produced 5–10 min runs that promoted ~0.
       // undefined → full pass (bootstrap, or volume-triggered large-pool sweep).
       incrementalSince: volumeTriggered ? undefined : lastConsolidateTs,
+      maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
       // Honor profile.autoAccept (already merged into options.autoAccept at the
       // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
       // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false

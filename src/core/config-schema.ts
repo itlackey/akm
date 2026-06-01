@@ -83,6 +83,7 @@ export const LlmConnectionConfigSchema = z
     extraParams: z.record(z.unknown()).optional(),
     contextLength: positiveInt.optional(),
     judgeModel: z.string().min(1).optional(),
+    enableThinking: z.boolean().optional(),
   })
   .strict();
 
@@ -149,6 +150,7 @@ export const ImproveProcessConfigSchema = z
     // Extract process config (only meaningful for extract process)
     defaultSince: z.string().min(1).optional(),
     maxTotalChars: positiveInt.optional(),
+    maxChunkSize: z.number().int().min(1).max(50).optional(),
   })
   .strict();
 

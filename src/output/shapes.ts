@@ -65,6 +65,7 @@ import "./shapes/proposal-diff";
 import "./shapes/proposal-producer";
 import "./shapes/distill";
 import "./shapes/vault-list";
+import "./shapes/secret-list";
 import "./shapes/passthrough";
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────

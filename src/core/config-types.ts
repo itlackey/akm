@@ -94,6 +94,8 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   contextLength?: number;
   /** Optional model name override for the LLM-as-judge quality gate (P2-B). */
   judgeModel?: string;
+  /** Disable thinking mode for models that support it (e.g. qwen3.x). */
+  enableThinking?: boolean;
 }
 
 export interface LlmProfileConfig extends LlmConnectionConfig {
@@ -145,6 +147,12 @@ export interface ImproveProcessConfig {
    * raise it for larger-context models.
    */
   maxTotalChars?: number;
+  /**
+   * Max chunk size for the consolidation pass (1–50).
+   * Overrides the computed value derived from the model context window.
+   * Absent = use computed value (capped at 50).
+   */
+  maxChunkSize?: number;
 }
 
 export interface ImproveProfileConfig {

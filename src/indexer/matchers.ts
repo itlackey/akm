@@ -78,6 +78,14 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),
   },
   {
+    dir: "secrets",
+    type: "secret",
+    // Any regular file under secrets/ is a secret value, except the lock and
+    // sensitive-marker sidecars. The whole file is the value (no extension or
+    // body parsing — see the secret-file renderer + indexer guards).
+    test: (_, fileName) => !fileName.endsWith(".lock") && !fileName.endsWith(".sensitive"),
+  },
+  {
     dir: "tasks",
     type: "task",
     test: (ext) => ext === ".md",
@@ -152,6 +160,12 @@ function classifyByParentDirHint(ctx: FileContext): MatchFact | null {
 
 function classifyBySmartMd(ctx: FileContext): MatchFact | null {
   if (ctx.ext !== ".md") return null;
+
+  // Never read the body of a file under secrets/ — the whole file is the
+  // secret value. The directory matcher classifies it as `secret` without
+  // touching content; bailing here keeps classifyBySmartMd from calling
+  // ctx.content()/frontmatter() on secret material.
+  if (ctx.ancestorDirs.includes("secrets")) return null;
 
   // README.md is documentation, never a workflow/agent/command even when the
   // body shape would otherwise classify (e.g. step-list inside a project

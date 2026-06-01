@@ -114,6 +114,8 @@ export interface ChatCompletionOptions {
    * and callers rely on prompt-contract JSON.
    */
   responseSchema?: Record<string, unknown>;
+  /** Override the config's enableThinking for this call. */
+  enableThinking?: boolean;
 }
 
 export async function chatCompletion(
@@ -150,6 +152,11 @@ export async function chatCompletion(
           temperature: options?.temperature ?? config.temperature ?? 0.3,
           ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
           ...responseFormat,
+          ...(options?.enableThinking !== undefined
+            ? { enable_thinking: options.enableThinking }
+            : config.enableThinking !== undefined
+              ? { enable_thinking: config.enableThinking }
+              : {}),
           ...config.extraParams,
         }),
       },

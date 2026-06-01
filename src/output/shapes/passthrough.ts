@@ -60,6 +60,8 @@ const PASSTHROUGH_COMMANDS = [
   "remember",
   "remove",
   "save",
+  "secret-set",
+  "secret-remove",
   "setup",
   "tasks-add",
   "tasks-doctor",

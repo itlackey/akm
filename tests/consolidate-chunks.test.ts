@@ -413,6 +413,26 @@ describe("computeSafeChunkSize — respects model context window", () => {
     // More chars per body → more tokens per memory → fewer memories fit
     expect(large).toBeLessThanOrEqual(small);
   });
+
+  it("maxChunkSize override lowers the cap below the computed value", () => {
+    // 8K context computes raw 35 (below the default 50 cap); passing 25 lowers it.
+    expect(computeSafeChunkSize(8_000, 500, 25)).toBe(25);
+  });
+
+  it("absent maxChunkSize preserves existing behaviour (default 50 cap)", () => {
+    // Identical to the two-arg call; at 131072 context the default 50 cap binds.
+    expect(computeSafeChunkSize(131_072, 500, undefined)).toBe(computeSafeChunkSize(131_072, 500));
+    expect(computeSafeChunkSize(131_072, 500, undefined)).toBe(50);
+  });
+
+  it("maxChunkSize caps a large-context model (qwen-9b real-world case)", () => {
+    // 131072 context returns raw 773 → clamped to the 25 override.
+    expect(computeSafeChunkSize(131_072, 500, 25)).toBe(25);
+  });
+
+  it("maxChunkSize of 1 enforces the minimum", () => {
+    expect(computeSafeChunkSize(131_072, 500, 1)).toBe(1);
+  });
 });
 
 // ── Empty response handling ───────────────────────────────────────────────────

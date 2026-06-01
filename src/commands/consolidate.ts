@@ -201,6 +201,8 @@ export interface AkmConsolidateOptions {
    * correctness at the cost of speed.
    */
   incrementalSince?: string;
+  /** Override the computed safe chunk size cap (1–50). */
+  maxChunkSize?: number;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -443,12 +445,13 @@ export const DEFAULT_CONTEXT_LENGTH_TOKENS = 4_096;
  *
  * @param contextLength - Model context window in tokens.
  * @param bodyTruncation - Max chars per memory body included in the prompt.
+ * @param maxChunkSize - Optional override for the hardcoded cap of 50 (1–50).
  */
-export function computeSafeChunkSize(contextLength: number, bodyTruncation: number): number {
+export function computeSafeChunkSize(contextLength: number, bodyTruncation: number, maxChunkSize?: number): number {
   const usableTokens = Math.max(contextLength - PROMPT_OVERHEAD_TOKENS, 0);
   const tokensPerMemory = Math.max(Math.ceil(bodyTruncation / CHARS_PER_TOKEN), 1);
   const raw = Math.floor(usableTokens / tokensPerMemory);
-  return Math.max(1, Math.min(50, raw));
+  return Math.max(1, Math.min(maxChunkSize ?? 50, raw));
 }
 
 // ── Similarity clustering (C-1 / #380) ──────────────────────────────────────
@@ -1078,7 +1081,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // per chunk instead.
   const bodyTruncation = 500;
   const modelContextLength = llmConfig?.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS;
-  const chunkSize = computeSafeChunkSize(modelContextLength, bodyTruncation);
+  const chunkSize = computeSafeChunkSize(modelContextLength, bodyTruncation, opts.maxChunkSize);
 
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.target ?? stashDir;
@@ -1170,9 +1173,9 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const failureRate = totalChunksFailed / totalChunksProcessed;
       if (failureRate >= ABORT_FAILURE_RATE) {
         const skipped = chunks.length - chunkIdx;
-        warnings.push(
-          `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`,
-        );
+        const abortMsg = `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`;
+        warn(abortMsg);
+        warnings.push(abortMsg);
         // Account for memories in chunks we never attempted: they are
         // neither judgedNoAction (no plan parsed) nor skipReason (no op
         // rejected). Without this, the accounting invariant fails by
@@ -1212,7 +1215,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
               { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
               { role: "user", content: userPrompt },
             ],
-            { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA },
+            { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA, enableThinking: false },
           );
           return { ok: true as const, content };
         } catch (e) {
@@ -1223,6 +1226,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     );
 
     if (!raw.ok) {
+      warn(raw.error ?? `chunk ${chunkIdx + 1} failed`);
       warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
       totalChunksProcessed++;
       totalChunksFailed++;
@@ -1245,6 +1249,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         raw.content !== undefined && raw.content.trim() === ""
           ? " (empty response — if using a thinking model, disable thinking mode)"
           : "";
+      warn(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
       warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
       totalChunksProcessed++;
       totalChunksFailed++;
@@ -2392,7 +2397,9 @@ async function generateMergedContent(
     async () => {
       if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
       try {
-        const content = await chatCompletion(llmConfig, [{ role: "user", content: prompt }]);
+        const content = await chatCompletion(llmConfig, [{ role: "user", content: prompt }], {
+          enableThinking: false,
+        });
         return { ok: true as const, content };
       } catch (e) {
         return { ok: false as const, error: String(e) };

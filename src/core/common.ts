@@ -20,6 +20,7 @@ export const ASSET_TYPES = [
   "script",
   "memory",
   "vault",
+  "secret",
   "wiki",
   "lesson",
 ] as const;

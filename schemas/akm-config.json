@@ -72,6 +72,9 @@
                 "type": "string",
                 "minLength": 1
               },
+              "enableThinking": {
+                "type": "boolean"
+              },
               "supportsJsonSchema": {
                 "type": "boolean"
               }
@@ -194,6 +197,11 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
                       }
                     },
                     "additionalProperties": false
@@ -259,6 +267,11 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
                       }
                     },
                     "additionalProperties": false
@@ -324,6 +337,11 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
                       }
                     },
                     "additionalProperties": false
@@ -389,6 +407,11 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
                       }
                     },
                     "additionalProperties": false
@@ -454,6 +477,11 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
                       }
                     },
                     "additionalProperties": false
@@ -519,6 +547,11 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
                       }
                     },
                     "additionalProperties": false
@@ -1040,6 +1073,9 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "enableThinking": {
+                    "type": "boolean"
+                  },
                   "supportsJsonSchema": {
                     "type": "boolean"
                   }
@@ -1162,6 +1198,11 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
                           }
                         },
                         "additionalProperties": false
@@ -1227,6 +1268,11 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
                           }
                         },
                         "additionalProperties": false
@@ -1292,6 +1338,11 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
                           }
                         },
                         "additionalProperties": false
@@ -1357,6 +1408,11 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
                           }
                         },
                         "additionalProperties": false
@@ -1422,6 +1478,11 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
                           }
                         },
                         "additionalProperties": false
@@ -1487,6 +1548,11 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
                           }
                         },
                         "additionalProperties": false
@@ -1989,6 +2055,9 @@
           "type": "string",
           "minLength": 1
         },
+        "enableThinking": {
+          "type": "boolean"
+        },
         "supportsJsonSchema": {
           "type": "boolean"
         }
@@ -2112,6 +2181,11 @@
         "maxTotalChars": {
           "type": "integer",
           "exclusiveMinimum": 0
+        },
+        "maxChunkSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
         }
       },
       "additionalProperties": false
@@ -2187,6 +2261,11 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
                 }
               },
               "additionalProperties": false
@@ -2252,6 +2331,11 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
                 }
               },
               "additionalProperties": false
@@ -2317,6 +2401,11 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
                 }
               },
               "additionalProperties": false
@@ -2382,6 +2471,11 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
                 }
               },
               "additionalProperties": false
@@ -2447,6 +2541,11 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
                 }
               },
               "additionalProperties": false
@@ -2512,6 +2611,11 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
                 }
               },
               "additionalProperties": false

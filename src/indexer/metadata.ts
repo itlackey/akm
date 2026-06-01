@@ -630,6 +630,14 @@ export function shouldIndexStashFile(
     if (fs.existsSync(markerPath)) return false;
   }
 
+  // Skip secret files that are themselves a `.sensitive` marker, or that have a
+  // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
+  // only (their bytes are never read — see buildEntryFromFile guards).
+  if (segments[0] === "secrets") {
+    if (file.endsWith(".sensitive") || file.endsWith(".lock")) return false;
+    if (fs.existsSync(`${file}.sensitive`)) return false;
+  }
+
   if (options?.treatStashRootAsWikiRoot) {
     return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
   }
@@ -1006,7 +1014,9 @@ async function buildEntryFromFile(
   }
 
   // Priority 2: Frontmatter (for .md files -- overrides package.json description)
-  if (ext === ".md") {
+  // Secrets are excluded even when the file happens to be `.md`: the whole file
+  // is the secret value and must never be read for frontmatter or any metadata.
+  if (ext === ".md" && assetType !== "secret") {
     const content = ctx.content();
     const parsed = parseFrontmatter(content);
     applyCuratedFrontmatter(entry, parsed.data);
@@ -1025,10 +1035,10 @@ async function buildEntryFromFile(
   }
 
   // Extract @param from script files.
-  // Vault files (.env) are deliberately excluded — their contents are secrets
-  // and must never be parsed for @param or any other metadata that could
-  // embed a value into the entry.
-  if (ext !== ".md" && assetType !== "vault") {
+  // Vault files (.env) and secret files (whole-file secrets) are deliberately
+  // excluded — their contents are secrets and must never be parsed for @param
+  // or any other metadata that could embed a value into the entry.
+  if (ext !== ".md" && assetType !== "vault" && assetType !== "secret") {
     const content = ctx.content();
     const scriptParams = extractScriptParameters(file, content);
     if (scriptParams) entry.parameters = scriptParams;

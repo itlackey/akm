@@ -113,6 +113,22 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     actionBuilder: (ref) =>
       `akm show ${ref} -> inspect keys; source "$(akm vault path ${ref})" -> load values; akm vault run ${ref} -- <command> -> run with injected env`,
   },
+  // Whole-file secrets (PEM keys, tokens, certs). Unlike `vault` (.env
+  // key/value pairs), the ENTIRE file is the secret value — there is no safe
+  // region to parse, so only the filename is ever surfaced as metadata. The
+  // value reaches a command only via `akm secret run` (injected into a child
+  // env var) or `akm secret path` (Docker `_FILE` convention). A secret is any
+  // regular file under `secrets/` except `.lock`/`.sensitive` sidecars; the
+  // canonical name preserves the natural filename (e.g. `id_rsa`, `team/deploy.key`).
+  secret: {
+    stashDir: "secrets",
+    isRelevantFile: (fileName) => !fileName.endsWith(".lock") && !fileName.endsWith(".sensitive"),
+    toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
+    toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
+    rendererName: "secret-file",
+    actionBuilder: (ref) =>
+      `akm show ${ref} -> name only (value never shown); akm secret path ${ref} -> file path; akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
+  },
   wiki: {
     stashDir: "wikis",
     ...markdownSpec,
