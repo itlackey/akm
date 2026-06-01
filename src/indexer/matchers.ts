@@ -73,6 +73,11 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     test: (ext) => ext === ".md",
   },
   {
+    dir: "env",
+    type: "env",
+    test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),
+  },
+  {
     dir: "vaults",
     type: "vault",
     test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),

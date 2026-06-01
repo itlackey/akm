@@ -26,7 +26,7 @@
  *   FP and bypass with `--allow-insecure` after review.
  */
 
-import { listKeys } from "../vault";
+import { listKeys } from "../env";
 import type { LintIssue } from "./types";
 
 // ── Dangerous key set ─────────────────────────────────────────────────────────
@@ -138,10 +138,27 @@ export function checkVaultForDangerousKeys(vaultPath: string, relPath: string, v
     issues.push({
       file: relPath,
       issue: "dangerous-vault-key",
-      detail: `Vault key \`${key}\` can be used to hijack process execution when injected via \`akm vault run\`. Vault ref: ${vaultRef}. Review this vault file before running \`akm vault run\` commands against untrusted stashes.`,
+      detail: `Env key \`${key}\` can be used to hijack process execution when injected via \`akm env run\`. Ref: ${vaultRef}. Review this file before running \`akm env run\` commands against untrusted stashes.`,
       fixed: false,
     });
   }
 
   return issues;
 }
+
+// ── Env-neutral aliases ───────────────────────────────────────────────────────
+//
+// These primitives guard *environment variable injection*, which is shared by
+// the `env` asset type, whole-file `secret` injection, and the `akm add`
+// supply-chain gate. The original `*Vault*` names are retained above for
+// backward compatibility (and stable lint output) through the 0.8.x
+// deprecation window; new call sites should prefer the env-neutral names.
+
+/** Env-neutral alias of {@link DANGEROUS_VAULT_KEYS}. */
+export const DANGEROUS_ENV_KEYS = DANGEROUS_VAULT_KEYS;
+/** Env-neutral alias of {@link DANGEROUS_VAULT_KEY_PATTERNS}. */
+export const DANGEROUS_ENV_KEY_PATTERNS = DANGEROUS_VAULT_KEY_PATTERNS;
+/** Env-neutral alias of {@link isDangerousVaultKey}. */
+export const isDangerousEnvKey = isDangerousVaultKey;
+/** Env-neutral alias of {@link checkVaultForDangerousKeys}. */
+export const checkEnvForDangerousKeys = checkVaultForDangerousKeys;

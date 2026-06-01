@@ -65,8 +65,9 @@ directory name. A `.sh` file is a script whether it lives in `scripts/`,
 `deploy/`, or at the root.
 
 That said, using these directory names as an opt-in convention improves
-indexing confidence. Vaults are the current exception: `.env` vault assets are
-only discovered under `vaults/` paths.
+indexing confidence. Env files are the current exception: `.env` env assets are
+only discovered under `env/` paths (and the deprecated `vaults/` path until a
+stash migrates).
 
 ```text
 my-stash/
@@ -75,7 +76,8 @@ my-stash/
   commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
-  vaults/         # Environment vaults (.env)
+  env/            # Environment files (.env) — whole-file source/inject
+  secrets/        # Whole-file secrets (one opaque value per file)
   workflows/      # Step-by-step workflow documents (.md)
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
    lessons/        # Distilled lessons (.md, see akm improve / proposals)
@@ -84,7 +86,7 @@ my-stash/
 
 ## Asset Types
 
-There are ten asset types:
+There are eleven asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -93,7 +95,8 @@ There are ten asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
-| **vault** | A key/value environment vault | Key names and comments, never secret values. Key names are intentionally discoverable — they appear in `vault list`, `vault show`, search results, and agent context by design. Only values are secret |
+| **env** | A whole `.env` environment file | Key names and comments, never values. Key names are intentionally discoverable — they appear in `env list`, search results, and agent context by design. Only values are secret. Inject via `akm env run <ref> -- <cmd>` (the agent-safe path). (`vault` is the deprecated alias, removed in 0.9.0.) |
+| **secret** | A whole-file secret (one opaque value) | Name only — the entire file is the value and never appears in output. Use `akm secret path` / `akm secret run` |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
 | **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |

@@ -64,7 +64,7 @@ Every command exits with one of the following codes:
 
 On failure, every command emits a JSON error envelope on **stderr** before
 exiting; stdout is left empty (or contains only command-specific side-effect
-output such as a direct path from `vault path`):
+output such as a direct path from `env path`):
 
 ```json
 {"ok": false, "error": "<message>", "hint": "<optional hint>"}
@@ -92,7 +92,7 @@ akm setup --yes                  # Non-interactive, accepts all defaults
 
 Creates one subdirectory per asset type under the stash path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
-`memories/`, `vaults/`, `wikis/`, and `lessons/`. See
+`memories/`, `env/`, `secrets/`, `wikis/`, and `lessons/`. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
 ### setup
@@ -341,7 +341,7 @@ akm search "deploy" --include-proposed
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `wiki`, `lesson`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `env`, `secret`, `wiki`, `lesson`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
@@ -408,7 +408,7 @@ akm curate "learn the release workflow" --source both --format text
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `wiki`, `lesson`, `any` | `any` | Filter curated results by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `env`, `secret`, `wiki`, `lesson`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
@@ -464,7 +464,7 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
-| vault | `keys`, `comments` |
+| env | `keys`, `comments` (vault: deprecated alias) |
 | lesson | `content` plus `when_to_use` surfaced from frontmatter |
 
 Assets from non-writable sources (git clones, npm packages, websites) return
@@ -652,15 +652,15 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | `--writable` | Mark a git source as writable so `akm save` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
-| `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous vault key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) vault keys that can hijack process execution. Use only after reviewing the stash manually |
+| `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous env key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) env keys that can hijack process execution. Use only after reviewing the stash manually |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 
-#### Dangerous vault key audit
+#### Dangerous env key audit
 
-When `akm add` installs a stash that contains vault files, it scans every
-vault file for environment variable names that can be used for
-process-execution hijacking. The flagged key names are: `LD_PRELOAD`,
+When `akm add` installs a stash that contains env files (`env/`, or legacy
+`vaults/`), it scans every file for environment variable names that can be used
+for process-execution hijacking. The flagged key names are: `LD_PRELOAD`,
 `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `DYLD_INSERT_LIBRARIES`,
 `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`, `BASH_ENV`, `ENV`,
 `PROMPT_COMMAND`, `PS1`, `PS2`, `NODE_OPTIONS`, `NODE_PATH`,
@@ -674,14 +674,14 @@ install fails with exit 2 unless `--allow-insecure` is passed.
 
 ```sh
 # Interactive: prompts before continuing
-akm add github:owner/repo-with-sensitive-vault
+akm add github:owner/repo-with-sensitive-env
 
 # Non-interactive: fails unless bypassed
-akm add github:owner/repo-with-sensitive-vault --allow-insecure
+akm add github:owner/repo-with-sensitive-env --allow-insecure
 ```
 
 Stash publishers: see the [Stash Maker's Guide](stash-makers.md#vault-security)
-for guidance on vault files that legitimately need these keys.
+for guidance on env files that legitimately need these keys.
 
 #### Website sources
 
@@ -1270,153 +1270,160 @@ the CLI.
 akm hints
 ```
 
-### vault
+### env vs secret — which do I use?
 
-Manage `.env`-backed secret vaults. Each vault is a mode-0600 file stored
-under `vaults/` in your stash. The key security property: **vault values never
-appear in structured output**. `list` and `show` key metadata only; `path` and
-`run` are the supported value-use paths.
+| | `env` | `secret` |
+| --- | --- | --- |
+| **Unit** | a whole `.env` file — **many** `KEY=value` pairs | **one** opaque value — one file |
+| **Use for** | app/service config loaded together | a single token, PEM key, cert, or service-account JSON |
+| **Injects** | many env vars at once | one env var (`secret run <ref> <VAR>`) |
+| **Discoverable** | key *names* (not values) | name only (the whole file is the value) |
+
+**`env` = a `.env` file of many variables you load together. `secret` = one
+opaque value (a key, token, or cert).** Reach for `env` for app config; reach
+for `secret` when one file *is* the credential.
+
+### env
+
+Manage `.env`-backed **environment files** — many `KEY=value` vars loaded
+together. Each `env` asset is an entire `.env` file stored under `env/` in your
+stash (mode 0600). akm does **not** manage individual entries — you edit the
+`.env` with your own editor (or ingest one with `--from-file`) and akm loads it
+wholesale. The key security property: **env values never appear in structured
+output**. `list` and `show` surface key *names* and comments only; `run` and
+`export` are the supported value-use paths.
 
 ```sh
-akm vault list
-akm vault path vault:prod
-akm vault create prod
-printf '%s' "$SECRET" | akm vault set vault:prod DATABASE_URL
-AKM_VALUE="$SECRET" akm vault set vault:prod API_KEY --from-env AKM_VALUE
-akm vault unset vault:prod DATABASE_URL
-source "$(akm vault path vault:prod)"
-akm vault run vault:prod -- env
-akm vault run vault:prod/API_KEY -- printenv API_KEY
+akm env list
+akm env create prod                          # creates env/prod.env (mode 0600)
+akm env create prod --from-file ./.env        # ingest an existing .env
+$EDITOR "$(akm env path env:prod --quiet)"    # edit the file directly
+akm env run env:prod -- npm test              # run a command with the whole file injected
+akm env run env:prod -- $SHELL                # interactive shell with the env loaded
+akm env run env:prod --only DATABASE_URL -- ./migrate   # inject just one var
+akm env remove env:prod --yes
 ```
 
 Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `list` | List all vaults across all stashes with key names only |
-| `path <ref>` | Print the absolute vault file path for direct shell loading |
-| `run <ref[/KEY]> -- <command>` | Run one command with a whole vault or single key injected into the subprocess env |
-| `create <name>` | Create an empty `.env` vault (mode 0600). No-op if it already exists |
-| `set <ref> <KEY>` | Set a key — reads value from stdin by default, or use `--from-env` |
-| `unset <ref> <KEY>` | Remove a key from the vault |
+| `list` | List all env files across all stashes with key names only |
+| `run <ref> -- <command>` | Run a command with the env injected (the **agent-safe** path — values never reach stdout). `--only` / `--except` filter which keys are injected |
+| `create <name>` | Create an env file. Empty by default; seed with `--from-file <path>` or `--from-stdin` |
+| `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
+| `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
+| `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
 
-#### vault list
+#### env run — the primary (and agent-safe) path
 
 ```sh
-akm vault list
+akm env run env:prod -- <command>
+akm env run env:prod -- $SHELL          # interactive: a shell with the env loaded
+akm env run env:prod --only A,B -- cmd  # inject only A and B
+akm env run env:prod --except DEBUG -- cmd
 ```
 
-`vault list` returns one entry per vault across all configured stashes. The
-structured shape is `vaults: [{ ref, keys }]` and values are never
-included. The absolute `path` field is omitted from JSON output — use
-`akm vault path vault:<name>` when you need the filesystem path.
+Runs the command with the env file's values injected **directly into the child
+process** — never through a shell, and never into akm's stdout. **This is the
+only value path safe for AI agents:** the secrets reach the subprocess without
+ever passing through the agent's captured output/context. `--only` / `--except`
+(comma-separated key names, mutually exclusive) restrict which variables are
+injected. Before spawning, the injected key names are scanned for known
+process-hijacking variables (`LD_PRELOAD`, `PATH`, …): a first-party stash warns
+and proceeds; a third-party-sourced stash is refused.
 
-Text output uses Markdown sections so the result is readable in terminals and
-copy-paste friendly in agent transcripts:
+> The single-key `run <ref>/KEY` form was removed. To inject one value, store it
+> as a [secret](#secret) and use `akm secret run secret:<name> <VAR> -- …`, or
+> use `akm env run <ref> --only <KEY> -- …`.
+
+> Values injected via `env run` live in the child process environment for its
+> entire lifetime and are visible to all subprocesses it spawns. Avoid
+> `env run` for long-lived daemon or server processes.
+
+#### env create
+
+```sh
+akm env create prod                       # empty
+akm env create prod --from-file ./.env    # seed from an existing .env (byte-for-byte)
+printf 'A=1\nB=2\n' | akm env create prod --from-stdin
+```
+
+Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
+exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
+it first). `--sensitive` hides the file from `env list` and the search index.
+
+#### env list
+
+```sh
+akm env list
+```
+
+One entry per env file across all configured stashes. The structured shape is
+`envs: [{ ref, keys }]` — values are never included and the absolute `path` is
+omitted from JSON output. Text output uses Markdown sections:
 
 ```md
-## vault:prod
+## env:prod
 
 - DATABASE_URL
 - API_KEY
 ```
 
-#### vault path
+#### env path
 
 ```sh
-akm vault path vault:prod
+akm env path env:prod            # warns: don't source the raw file
+akm env path env:prod --quiet    # for `_FILE` / `--env-file` use
 ```
 
-Prints the absolute path to the vault file. This is the supported current-shell
-loading path:
+Prints the absolute path to the env file — for the Docker `_FILE` convention
+(`MY_VAR_FILE=$(akm env path env:prod --quiet)`), `docker run --env-file`, or
+editing the file directly. By default a stderr warning steers you away from
+`source`-ing the raw file (its shell substitutions would execute); `--quiet`
+suppresses it for the legitimate file-path uses.
+
+#### env export
 
 ```sh
-source "$(akm vault path vault:prod)"
+akm env export env:prod --out /tmp/prod.sh && source /tmp/prod.sh && rm -f /tmp/prod.sh
 ```
 
-#### vault create
+Writes a safe, sourceable `export KEY='value'` script to `--out <file>` (mode
+0600). Values are re-serialised single-quoted, so a raw `.env` containing shell
+substitutions (e.g. `X=$(rm -rf ~)`) becomes a **literal string** — sourcing the
+generated file can never execute it. `export` **never prints values to stdout**
+(that would leak them into a captured/agent context) and so requires `--out`.
 
-```sh
-akm vault create prod
-```
+> For most uses prefer `akm env run` (no file, no cleanup). `export` exists for
+> the case where a tool must `source` a file or you need a generated env script.
 
-Creates `vaults/prod.env` with mode 0600. If the vault already exists, the
-command exits 0 and reports `created: false` — it never overwrites.
+### vault (deprecated)
 
-| Flag | Description |
-| --- | --- |
-| `--sensitive` | Hide vault from `vault list` output (does not affect direct access via `vault path` or `vault run`) |
+> **Deprecated in 0.8.0, removed in 0.9.0 — use [`env`](#env).** The `akm vault`
+> verb now prints a stderr deprecation warning and delegates `list` / `path` /
+> `export` / `run` / `create` to the `env` handlers. `vault set` and
+> `vault unset` are hard-errors (akm no longer manages individual entries — edit
+> the `.env` directly, or use [`akm secret`](#secret) for a single value), as is
+> the removed single-key `vault run <ref>/KEY` form. Existing `vault:` refs
+> still resolve, and `akm-migrate-storage` copies `vaults/` → `env/` (see the
+> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
 
-#### vault set
+### vault (deprecated)
 
-```sh
-# Default: read value from stdin (never crosses argv — no /proc/cmdline exposure)
-printf '%s' "$SECRET" | akm vault set vault:prod DATABASE_URL
-printf '%s' "$SECRET" | akm vault set vault:prod API_KEY --comment "Rotate every 90 days"
-
-# From an environment variable
-AKM_VALUE="$SECRET" akm vault set vault:prod API_KEY --from-env AKM_VALUE
-```
-
-Values are **never accepted via positional arguments or `KEY=VALUE` form** — both
-were removed to eliminate `/proc/cmdline` secret exposure. The value is always
-read from stdin (default) or from a named environment variable (`--from-env`).
-
-`--comment "<text>"` attaches a `# <text>` comment line immediately above the
-key in the `.env` file. If the key already exists and is being updated, the
-preceding comment is also updated. Existing unrelated comments are preserved.
-
-| Flag | Description |
-| --- | --- |
-| `--comment` | Attach a comment line above the key |
-| `--from-env <VAR>` | Read value from the named environment variable instead of stdin |
-
-> **Stdin cap:** stdin reads are limited to 1 MB. Values larger than 1 MB are
-> rejected with a `UsageError` (exit 2).
-
-> **Write lock:** `vault set` acquires an exclusive lock file (`<vault>.lock`)
-> around the read-modify-write cycle. If two `vault set` processes run
-> concurrently in CI, one waits up to 5 s for the other to finish rather than
-> silently dropping keys. A lock that cannot be acquired within 5 s raises an
-> error.
-
-#### vault unset
-
-```sh
-akm vault unset vault:prod DATABASE_URL
-```
-
-Removes the key and its associated `# comment` line immediately above it from
-the vault. Exits 0 whether or not the key existed. The same write lock used by
-`vault set` is held for the duration of the removal.
-
-#### vault run
-
-```sh
-akm vault run vault:prod -- env
-akm vault run vault:prod/API_KEY -- printenv API_KEY
-```
-
-Runs one subprocess with env injected from the selected vault. When you pass a
-`/KEY` suffix, only that key is injected. **Values never appear in akm's
-structured output**; they are passed directly to the child process environment.
-
-Use `akm vault run vault:<name> -- <command>` when a command needs the full
-vault, or `akm vault run vault:<name>/<KEY> -- <command>` when you want to
-scope env injection to one variable.
-
-> **Prefer single-key injection** when the command only needs one secret:
-> `akm vault run vault:prod/API_KEY -- curl ...`
-> This avoids exposing unrelated secrets to the subprocess environment.
-
-> Secrets injected via `vault run` live in the child process environment for its
-> entire lifetime and are visible to all subprocesses it spawns. Avoid
-> `vault run` for long-lived daemon or server processes.
+> **Deprecated in 0.8.0, removed in 0.9.0 — use [`env`](#env).** The `akm vault`
+> verb now prints a stderr deprecation warning and delegates `list` / `path` /
+> `export` / `run` / `create` to the `env` handlers. `vault set` and
+> `vault unset` are hard-errors (akm no longer manages individual entries — edit
+> the `.env` directly, or use [`akm secret`](#secret) for a single value), as is
+> the removed single-key `vault run <ref>/KEY` form. Existing `vault:` refs
+> still resolve, and `akm migrate` copies `vaults/` → `env/` (see the
+> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
 
 ### secret
 
 Manage **whole-file secrets** — a PEM private key, an API token, a TLS cert, a
-service-account JSON. Where a [vault](#vault) stores `KEY=value` pairs and
+service-account JSON. Where an [env](#env) file stores `KEY=value` pairs and
 exposes key *names*, a secret's **entire file is the value**, so only the
 secret's *name* is ever surfaced. Each secret is a mode-0600 file under
 `secrets/` in your stash.

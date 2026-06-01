@@ -19,7 +19,7 @@ import {
   DANGEROUS_VAULT_KEY_PATTERNS,
   DANGEROUS_VAULT_KEYS,
   isDangerousVaultKey,
-} from "../src/commands/lint/vault-key-rules";
+} from "../src/commands/lint/env-key-rules";
 
 // ── Temp dir helpers ──────────────────────────────────────────────────────────
 
@@ -149,7 +149,7 @@ describe("checkVaultForDangerousKeys", () => {
     expect(findings[0].issue).toBe("dangerous-vault-key");
     expect(findings[0].file).toBe("vaults/.env");
     expect(findings[0].detail).toContain("LD_PRELOAD");
-    expect(findings[0].detail).toContain("akm vault run");
+    expect(findings[0].detail).toContain("akm env run");
     expect(findings[0].fixed).toBe(false);
   });
 
@@ -169,7 +169,7 @@ describe("checkVaultForDangerousKeys", () => {
 
     expect(findings).toHaveLength(3);
     const keys = findings.map((f) => {
-      const m = f.detail.match(/Vault key `([^`]+)`/);
+      const m = f.detail.match(/Env key `([^`]+)`/);
       return m ? m[1] : null;
     });
     expect(keys).toContain("LD_PRELOAD");
@@ -194,7 +194,7 @@ describe("checkVaultForDangerousKeys", () => {
     // The LD_PRELOAD key must be detected even when prefixed with "export "
     expect(findings.length).toBeGreaterThan(0);
     const keys = findings.map((f) => {
-      const m = f.detail.match(/Vault key `([^`]+)`/);
+      const m = f.detail.match(/Env key `([^`]+)`/);
       return m ? m[1] : null;
     });
     expect(keys).toContain("LD_PRELOAD");

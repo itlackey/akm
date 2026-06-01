@@ -19,7 +19,7 @@ my-stash/
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
   agents/         # .md files with model, tools, or toolPolicy frontmatter
   knowledge/      # .md reference documents
-  vaults/         # .env environment vaults (mode-0600 files)
+  env/            # .env environment files (mode-0600; vaults/ is the deprecated alias)
   workflows/      # .md step-by-step workflow documents
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
   lessons/        # .md distilled feedback lessons
@@ -401,16 +401,22 @@ after the working stash.
 
 ## Vault Security
 
-If your stash includes vault files under `vaults/`, be aware of how `akm`
-handles them during install.
+> **`vault` is deprecated (use `env`).** The guidance below applies equally to
+> `env/` files; `vault`/`vaults/` are the deprecated aliases, removed in 0.9.0.
+> See the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md).
 
-**Dangerous key detection.** `akm add` and `akm lint` scan vault files for
+If your stash includes env files under `env/` (or legacy `vaults/`), be aware of
+how `akm` handles them during install.
+
+**Dangerous key detection.** `akm add` and `akm lint` scan env files for
 environment variable names that can be used to hijack process execution when
-the vault is loaded via `akm vault run`. The flagged names include
-`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and 20 others.
-When these keys are found, `akm add` pauses in interactive mode and asks the
-user to confirm before continuing. In non-interactive (CI) mode the install
-fails unless the user passes `--allow-insecure`.
+the file is loaded via `akm env run`. The flagged names include `LD_PRELOAD`,
+`PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and 20 others. When these keys
+are found, `akm add` pauses in interactive mode and asks the user to confirm
+before continuing. In non-interactive (CI) mode the install fails unless the
+user passes `--allow-insecure`. `akm env run` applies the same scan at run time:
+a third-party-sourced stash is refused outright; a first-party stash warns and
+proceeds.
 
 This is not a ban — it is a speed bump. If your stash legitimately needs one
 of these keys (for example, a `PATH` override for a hermetic toolchain), do
@@ -426,14 +432,14 @@ the following before publishing:
    ```
 
 3. Consider whether the value can be set by the user after install rather than
-   shipped in the vault file. Vault files that ship without values — just key
-   names and comments — do not trigger the audit.
+   shipped in the env file. Env files that ship without values — just key names
+   and comments — do not trigger the audit.
 
-**Key names are metadata, not secrets.** Vault key names appear in
-`vault list`, `vault show`, and search results by design. Only values are
-protected. The `--sensitive` flag on `vault create` hides a vault from
-`vault list` but does not prevent key names from appearing in search results
-or agent context when the vault is shown directly.
+**Key names are metadata, not secrets.** Env key names appear in `akm env list`
+and search results by design. Only values are protected. The `--sensitive` flag
+on `akm env create` hides a file from `env list` but does not prevent key names
+from appearing in search results or agent context when the file is shown
+directly.
 
 ## Stash Structure Tips
 

@@ -147,7 +147,7 @@ import {
 } from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
-import { isHttpUrl, isWithin, resolveStashDir } from "./core/common";
+import { isHttpUrl, isWithin, resolveStashDir, writeFileAtomic } from "./core/common";
 import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, saveConfig } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
@@ -1916,16 +1916,19 @@ const disableCommand = defineCommand({
   },
 });
 
-// ── vault ───────────────────────────────────────────────────────────────────
+// ── env ───────────────────────────────────────────────────────────────────
 //
-// `akm vault` manages secrets stored in `.env` files under each stash's
-// vaults/ directory. Values are NEVER written to stdout or structured output.
+// `akm env` manages whole `.env` files under each stash's env/ directory.
+// Values are NEVER written to stdout or structured output — only key NAMES and
+// start-of-line comments are surfaced. akm does not manage individual entries;
+// you edit the `.env` file yourself and akm loads it. Replaces the deprecated
+// `vault` type (see the shim further below; removed in 0.9.0).
 
-function parseVaultRef(ref: string): ReturnType<typeof parseAssetRef> {
-  return parseAssetRef(ref.includes(":") ? ref : `vault:${ref}`);
+function parseEnvRef(ref: string): ReturnType<typeof parseAssetRef> {
+  return parseAssetRef(ref.includes(":") ? ref : `env:${ref}`);
 }
 
-function findVaultSource(origin: string | undefined): IndexSearchSource {
+function findEnvSource(origin: string | undefined): IndexSearchSource {
   const sources = resolveSourceEntries(undefined, loadConfig());
   if (sources.length === 0) {
     throw new UsageError("No stashes configured. Run `akm init` to create your working stash.");
@@ -1938,46 +1941,72 @@ function findVaultSource(origin: string | undefined): IndexSearchSource {
   return named;
 }
 
-function makeVaultRef(name: string, source?: IndexSearchSource): string {
-  return source?.registryId ? `${source.registryId}//vault:${name}` : `vault:${name}`;
+function makeEnvRef(name: string, source?: IndexSearchSource): string {
+  return source?.registryId ? `${source.registryId}//env:${name}` : `env:${name}`;
 }
 
-function resolveVaultPath(ref: string): {
+/**
+ * Resolve an env ref to an absolute `.env` path. Accepts `env:`, `environment:`
+ * (alias), and `vault:` (deprecated) refs as well as bare names. Prefers the
+ * `env/` directory; falls back to the legacy `vaults/` directory when the env
+ * file is absent there (handles an upgraded-but-not-yet-migrated stash). When
+ * neither exists the env path is returned (so `create` writes under `env/`).
+ */
+function resolveEnvPath(ref: string): {
   name: string;
   absPath: string;
   source: IndexSearchSource;
   parsedRef: ReturnType<typeof parseAssetRef>;
+  dir: "env" | "vaults";
 } {
-  const parsed = parseVaultRef(ref);
-  if (parsed.type !== "vault") {
-    throw new UsageError(`Expected a vault ref (vault:<name>); got "${ref}".`);
+  const parsed = parseEnvRef(ref);
+  if (parsed.type !== "env" && parsed.type !== "vault") {
+    throw new UsageError(`Expected an env ref (env:<name>); got "${ref}".`);
   }
-  const source = findVaultSource(parsed.origin);
-  const typeRoot = path.join(source.path, "vaults");
-  const absPath = resolveAssetPathFromName("vault", typeRoot, parsed.name);
-  // Defense-in-depth: ensure the resolved path stays inside the vaults directory.
+  const source = findEnvSource(parsed.origin);
+
+  const envRoot = path.join(source.path, "env");
+  const envPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+  // Defense-in-depth: ensure the resolved path stays inside the env directory.
   // validateName already rejects traversal patterns like "../../foo", but an
   // absolute-path override or symlink-based attack could still escape without
   // this second check.
-  if (!isWithin(absPath, typeRoot)) {
-    throw new UsageError(`Vault name "${parsed.name}" escapes the vault directory.`);
+  if (!isWithin(envPath, envRoot)) {
+    throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
   }
-  return { name: parsed.name, absPath, source, parsedRef: parsed };
+
+  const vaultRoot = path.join(source.path, "vaults");
+  const vaultPath = resolveAssetPathFromName("vault", vaultRoot, parsed.name);
+  if (!isWithin(vaultPath, vaultRoot)) {
+    throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+  }
+
+  // Prefer env/; fall back to the frozen vaults/ copy only when the env file
+  // is absent and the legacy vault file is present.
+  if (!fs.existsSync(envPath) && fs.existsSync(vaultPath)) {
+    return { name: parsed.name, absPath: vaultPath, source, parsedRef: parsed, dir: "vaults" };
+  }
+  return { name: parsed.name, absPath: envPath, source, parsedRef: parsed, dir: "env" };
 }
 
 /**
- * Walk `vaults/` recursively and return one entry per `.env` file, using the
- * vault asset spec's canonical-name logic so listing matches what the
- * matcher/asset-spec actually resolves (e.g. `vaults/team/prod.env` →
- * `vault:team/prod`, `vaults/team/.env` → `vault:team/default`).
+ * Walk each stash's env files and return one entry per `.env` file, using the
+ * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
+ * `env:team/prod`, `env/team/.env` → `env:team/default`). When a stash has not
+ * yet migrated (no `env/` dir) the legacy `vaults/` dir is listed instead, so
+ * `env list` stays continuous across the upgrade.
  */
-function listVaultsRecursive(
-  listKeysFn: (vaultPath: string) => { keys: string[] },
+function listEnvsRecursive(
+  listKeysFn: (envPath: string) => { keys: string[] },
 ): Array<{ ref: string; path: string; keys: string[] }> {
   const result: Array<{ ref: string; path: string; keys: string[] }> = [];
   for (const source of resolveSourceEntries(undefined, loadConfig())) {
-    const vaultsDir = path.join(source.path, "vaults");
-    if (!fs.existsSync(vaultsDir)) continue;
+    const envDir = path.join(source.path, "env");
+    const legacyDir = path.join(source.path, "vaults");
+    // Prefer env/; only fall back to the frozen vaults/ copy when env/ is absent.
+    const scanType: "env" | "vault" = fs.existsSync(envDir) ? "env" : "vault";
+    const root = scanType === "env" ? envDir : legacyDir;
+    if (!fs.existsSync(root)) continue;
 
     const walk = (dir: string): void => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1988,290 +2017,501 @@ function listVaultsRecursive(
         }
         if (!entry.isFile()) continue;
         if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
-        const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
+        const canonical = deriveCanonicalAssetName(scanType, root, full);
         if (!canonical) continue;
-        // Skip sensitive vaults: presence of a sibling .sensitive marker file suppresses listing.
+        // Skip sensitive envs: a sibling .sensitive marker file suppresses listing.
         const markerPath = full.replace(/\.env$/, ".sensitive");
         if (fs.existsSync(markerPath)) continue;
         const { keys } = listKeysFn(full);
-        result.push({ ref: makeVaultRef(canonical, source), path: full, keys });
+        result.push({ ref: makeEnvRef(canonical, source), path: full, keys });
       }
     };
-    walk(vaultsDir);
+    walk(root);
   }
   return result;
 }
 
-function splitVaultRunTarget(target: string): { ref: string; key?: string } {
-  const full = resolveVaultPath(target);
-  if (fs.existsSync(full.absPath)) {
-    return { ref: makeVaultRef(full.name, full.source) };
-  }
-
-  const slashIndex = target.lastIndexOf("/");
-  if (slashIndex <= 0) {
-    throw new NotFoundError(`Vault not found: ${target.includes(":") ? target : `vault:${target}`}`);
-  }
-
-  const refPart = target.slice(0, slashIndex);
-  const key = target.slice(slashIndex + 1).trim();
-  if (!key) {
-    throw new UsageError("Expected vault run target in the form <ref> or <ref/KEY>.");
-  }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-    throw new UsageError(`"${key}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
-  }
-  const resolved = resolveVaultPath(refPart);
-  if (!fs.existsSync(resolved.absPath)) {
-    throw new NotFoundError(`Vault not found: ${makeVaultRef(resolved.name, resolved.source)}`);
-  }
-  return { ref: makeVaultRef(resolved.name, resolved.source), key };
-}
-
-const vaultListCommand = defineCommand({
-  meta: { name: "list", description: "List all vaults across all stashes with their available key names (no values)" },
+const envListCommand = defineCommand({
+  meta: { name: "list", description: "List all env files across all stashes with their key names (no values)" },
   run() {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./commands/vault.js");
-      const vaults = listVaultsRecursive(listKeys);
-      output("vault-list", { vaults });
+      const { listKeys } = await import("./commands/env.js");
+      output("env-list", { envs: listEnvsRecursive(listKeys) });
     });
   },
 });
 
-const vaultCreateCommand = defineCommand({
-  meta: { name: "create", description: "Create an empty vault file (no-op if it already exists)" },
+const envCreateCommand = defineCommand({
+  meta: {
+    name: "create",
+    description:
+      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given.",
+  },
   args: {
-    name: { type: "positional", description: "Vault name (e.g. prod) — file becomes <name>.env", required: true },
+    name: { type: "positional", description: "Env name (e.g. prod) — file becomes <name>.env", required: true },
+    "from-file": { type: "string", description: "Seed the env file from an existing .env at this path" },
+    "from-stdin": { type: "boolean", description: "Seed the env file from stdin", default: false },
     sensitive: {
       type: "boolean",
-      description: "Exclude this vault from vault list output and the search index",
+      description: "Exclude this env file from env list output and the search index",
       default: false,
     },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { createVault } = await import("./commands/vault.js");
-      const { name, absPath, source } = resolveVaultPath(args.name);
-      createVault(absPath);
+      const { createEnv, writeEnv } = await import("./commands/env.js");
+      // `create` always targets env/, never the frozen vaults/ copy.
+      const parsed = parseEnvRef(args.name);
+      const source = findEnvSource(parsed.origin);
+      const envRoot = path.join(source.path, "env");
+      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+      if (!isWithin(absPath, envRoot)) {
+        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+      }
+
+      const fromFile = getHyphenatedArg<string>(args, "from-file");
+      const fromStdin = getHyphenatedArg<boolean>(args, "from-stdin") === true;
+      if (fromFile !== undefined && fromStdin) {
+        throw new UsageError("Pass only one of --from-file or --from-stdin.", "INVALID_FLAG_VALUE");
+      }
+
+      if (fromFile !== undefined || fromStdin) {
+        // Ingest path: never silently clobber an existing env file.
+        if (fs.existsSync(absPath)) {
+          throw new UsageError(
+            `Env "${makeEnvRef(parsed.name, source)}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
+            "RESOURCE_ALREADY_EXISTS",
+          );
+        }
+        let content: string;
+        if (fromFile !== undefined) {
+          if (!fs.existsSync(fromFile)) {
+            throw new NotFoundError(`Source file not found: ${fromFile}`, "FILE_NOT_FOUND");
+          }
+          content = fs.readFileSync(fromFile, "utf8");
+        } else {
+          const MAX_ENV_BYTES = 1024 * 1024; // 1 MB
+          let total = 0;
+          const chunks: Uint8Array[] = [];
+          for await (const chunk of Bun.stdin.stream()) {
+            total += chunk.byteLength;
+            if (total > MAX_ENV_BYTES) {
+              throw new UsageError("Env file exceeds 1 MB limit.", "INVALID_FLAG_VALUE");
+            }
+            chunks.push(chunk);
+          }
+          content = Buffer.concat(chunks).toString("utf8");
+        }
+        writeEnv(absPath, content);
+      } else {
+        createEnv(absPath);
+      }
+
       if (args.sensitive) {
         const markerPath = absPath.replace(/\.env$/, ".sensitive");
         if (!fs.existsSync(markerPath)) {
           fs.writeFileSync(markerPath, "", { mode: 0o600 });
         }
       }
-      output("vault-create", { ref: makeVaultRef(name, source) });
+      output("env-create", { ref: makeEnvRef(parsed.name, source) });
     });
   },
 });
 
-const vaultSetCommand = defineCommand({
-  meta: {
-    name: "set",
-    description:
-      'Set a key in a vault. Value is read from stdin by default (never via argv, avoiding /proc/cmdline exposure). Use --from-env <VAR> to read from an environment variable instead. Optionally attach a comment with --comment "description".',
-  },
-  args: {
-    ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
-    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
-    comment: { type: "string", description: "Optional comment written above the key line", required: false },
-    "from-env": {
-      type: "string",
-      description: "Read value from the named environment variable instead of stdin",
-    },
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      // Trap the legacy 3-positional / KEY=VALUE forms removed in 0.8.0.
-      //
-      // Without this trap, citty silently accepts the extra positional and the
-      // command falls through to read stdin. In cron/CI where stdin is empty,
-      // the existing secret would be silently overwritten with an empty string
-      // (silent data loss). Detect both removed forms and hard-error before
-      // touching the vault file.
-      //
-      // Case 1: `akm vault set <ref> KEY=VALUE` — the second positional
-      //         contains `=`. Argv looks like:
-      //           [..., "vault", "set", "<ref>", "KEY=VALUE", ...]
-      //         citty binds `args.key = "KEY=VALUE"`.
-      // Case 2: `akm vault set <ref> KEY VALUE` — a third positional follows
-      //         the key. citty mirrors every positional (including the
-      //         declared ones) into `args._`, so we detect this by length:
-      //         more than 2 positionals means an extra `<VALUE>` was passed.
-      const allPositionals = Array.isArray(args._) ? (args._ as unknown[]).filter((v) => typeof v === "string") : [];
-      const hasExtraPositional = allPositionals.length > 2;
-      const keyHasEquals = typeof args.key === "string" && args.key.includes("=");
-      if (hasExtraPositional || keyHasEquals) {
-        throw new UsageError(
-          "'akm vault set' no longer accepts the value via argv (removed in 0.8.0 for security).\n" +
-            "       Pass the value via stdin or --from-env <VAR> instead:\n" +
-            "         printf '%s' \"$SECRET\" | akm vault set <ref> <KEY>\n" +
-            '         AKM_VALUE="$SECRET" akm vault set <ref> <KEY> --from-env AKM_VALUE',
-          "INVALID_FLAG_VALUE",
-        );
-      }
-
-      const { setKey } = await import("./commands/vault.js");
-      const { name, absPath, source } = resolveVaultPath(args.ref);
-
-      const fromEnv = getHyphenatedArg<string>(args, "from-env");
-
-      let realValue: string;
-      if (fromEnv !== undefined) {
-        const envVal = process.env[fromEnv];
-        if (envVal === undefined) {
-          throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
-        }
-        realValue = envVal;
-      } else {
-        // Print a prompt when stdin is attached to a terminal so an
-        // interactive invocation doesn't silently hang with no indication
-        // that input is being awaited.
-        if (process.stdin.isTTY) {
-          process.stderr.write(`Enter value for "${args.key}" (Ctrl-D when done):\n`);
-        }
-        const MAX_VAULT_VALUE_BYTES = 1024 * 1024; // 1 MB
-        let totalBytes = 0;
-        const chunks: Uint8Array[] = [];
-        for await (const chunk of Bun.stdin.stream()) {
-          totalBytes += chunk.byteLength;
-          if (totalBytes > MAX_VAULT_VALUE_BYTES) {
-            throw new UsageError("Vault value exceeds 1 MB limit. Values must be provided via stdin.");
-          }
-          chunks.push(chunk);
-        }
-        realValue = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
-      }
-
-      setKey(absPath, args.key, realValue, args.comment);
-      output("vault-set", { ref: makeVaultRef(name, source), key: args.key });
-    });
-  },
-});
-
-const vaultUnsetCommand = defineCommand({
-  meta: { name: "unset", description: "Remove a key from a vault" },
-  args: {
-    ref: { type: "positional", description: "Vault ref", required: true },
-    key: { type: "positional", description: "Key name to remove", required: true },
-    yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      // Validate path first so traversal errors surface before the confirmation prompt.
-      const { name, absPath, source } = resolveVaultPath(args.ref);
-      const { confirmDestructive } = await import("./cli/confirm.js");
-      const confirmed = await confirmDestructive(
-        `Remove key "${args.key}" from vault "${args.ref}"? This cannot be undone.`,
-        { yes: args.yes === true },
-      );
-      if (!confirmed) {
-        process.stderr.write("Aborted.\n");
-        return;
-      }
-      const { unsetKey } = await import("./commands/vault.js");
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
-      }
-      const removed = unsetKey(absPath, args.key);
-      output("vault-unset", { ref: makeVaultRef(name, source), key: args.key, removed });
-    });
-  },
-});
-
-const vaultPathCommand = defineCommand({
+const envPathCommand = defineCommand({
   meta: {
     name: "path",
     description:
-      'Print the absolute vault file path so you can load it directly, e.g. `source "$(akm vault path vault:prod)"`.',
+      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, use `akm env run <ref> -- <cmd>` — do NOT `source` the raw file.",
   },
   args: {
-    ref: { type: "positional", description: "Vault ref", required: true },
+    ref: { type: "positional", description: "Env ref", required: true },
+    quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { name, absPath, source } = resolveVaultPath(args.ref);
+      const { name, absPath, source } = resolveEnvPath(args.ref);
       if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
+        throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+      }
+      // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
+      // Warning goes to stderr (never contaminates the path on stdout) and is
+      // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
+      if (args.quiet !== true) {
+        process.stderr.write(
+          `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
+            `         To inject values run: akm env run ${args.ref} -- <command>\n`,
+        );
       }
       process.stdout.write(`${absPath}\n`);
     });
   },
 });
 
-const vaultRunCommand = defineCommand({
+const envExportCommand = defineCommand({
   meta: {
-    name: "run",
+    name: "export",
     description:
-      "Run a command with env injected from a vault or a single vault key: `akm vault run <ref[/KEY]> -- <command>`",
+      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, prefer `akm env run <ref> -- <command>`.",
   },
   args: {
-    target: { type: "positional", description: "Vault ref or ref/key target", required: true },
+    ref: { type: "positional", description: "Env ref", required: true },
+    out: { type: "string", alias: "o", description: "Destination file (required). Written at mode 0600." },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const dashIndex = process.argv.indexOf("--");
-      if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
-        throw new UsageError("Missing command. Usage: akm vault run <ref[/KEY]> -- <command>");
+      const outPath = getHyphenatedArg<string>(args, "out");
+      if (!outPath) {
+        throw new UsageError(
+          "`akm env export` writes to a file — pass --out <path>.\n" +
+            "       To use values directly, run `akm env run <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
+            "       session). export never prints values to stdout, to avoid leaking them into a captured context.",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
       }
-
-      const command = process.argv.slice(dashIndex + 1);
-      const { loadEnv } = await import("./commands/vault.js");
-      const { ref, key } = splitVaultRunTarget(args.target);
-      const { name, absPath, source } = resolveVaultPath(ref);
+      const { name, absPath, source } = resolveEnvPath(args.ref);
       if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
+        throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
       }
+      const { buildShellExportScript } = await import("./commands/env.js");
+      const resolvedOut = path.resolve(outPath);
+      writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
+      output("env-export", { ref: makeEnvRef(name, source), out: resolvedOut });
+    });
+  },
+});
 
-      const envValues = loadEnv(absPath);
-      const mergedEnv = { ...process.env };
-      if (key) {
-        if (!(key in envValues)) {
-          throw new NotFoundError(`Key not found in ${makeVaultRef(name, source)}: ${key}`);
+/**
+ * Shared implementation for `env run` (and the deprecated `vault run` shim).
+ * Injects an entire env file's values into the child process env — never via a
+ * shell — after scanning the injected keys for process-hijacking variables.
+ */
+async function runEnvInjected(
+  target: string,
+  opts: { viaVault: boolean; only?: string[]; except?: string[] },
+): Promise<void> {
+  const dashIndex = process.argv.indexOf("--");
+  if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
+    throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
+  }
+  const command = process.argv.slice(dashIndex + 1);
+
+  const { name, absPath, source } = resolveEnvPath(target);
+  if (!fs.existsSync(absPath)) {
+    // Help users who reach for the removed single-key `ref/KEY` form.
+    const slash = target.lastIndexOf("/");
+    if (slash > 0) {
+      const maybeKey = target.slice(slash + 1);
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(maybeKey)) {
+        let baseExists = false;
+        try {
+          baseExists = fs.existsSync(resolveEnvPath(target.slice(0, slash)).absPath);
+        } catch {
+          baseExists = false;
         }
-        mergedEnv[key] = envValues[key];
-      } else {
-        for (const [envKey, envValue] of Object.entries(envValues)) {
-          mergedEnv[envKey] = envValue;
-        }
-      }
-
-      // Emit vault access event (keys only, no values) for audit trail.
-      // Best-effort: never block vault run on event write failure.
-      appendEvent({
-        eventType: "vault_access",
-        ref: makeVaultRef(name, source),
-        metadata: {
-          keys: key ? [key] : Object.keys(envValues),
-        },
-      });
-
-      const result = spawnSync(command[0] as string, command.slice(1), {
-        stdio: "inherit",
-        env: mergedEnv,
-      });
-      if (result.error) {
-        // Classify spawn failures (#483). Raw ErrnoException leaks a bare
-        // "spawn ENOENT" with no hint — wrap it so consumers get a usable
-        // code + hint in the standard JSON envelope.
-        const err = result.error as NodeJS.ErrnoException;
-        if (err.code === "ENOENT") {
-          throw new NotFoundError(
-            `Command not found: ${command[0]}`,
-            "FILE_NOT_FOUND",
-            `Install '${command[0]}' or add its directory to PATH before invoking 'akm vault run'.`,
+        if (baseExists) {
+          throw new UsageError(
+            `'akm env run' injects the whole file; the single-key '<ref>/${maybeKey}' form was removed.\n` +
+              `       For one value use a secret: \`akm secret run secret:${maybeKey} ${maybeKey} -- <command>\`.`,
+            "INVALID_FLAG_VALUE",
           );
         }
-        if (err.code === "EACCES") {
-          throw new ConfigError(
-            `Command not executable: ${command[0]}`,
-            "STASH_DIR_UNREADABLE",
-            `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-          );
-        }
-        throw err;
       }
-      process.exit(result.status ?? 0);
+    }
+    throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+  }
+
+  const { loadEnv } = await import("./commands/env.js");
+  const allValues = loadEnv(absPath);
+
+  // Value-safe key filtering (--only / --except operate on key NAMES only).
+  let envValues = allValues;
+  if (opts.only && opts.except) {
+    throw new UsageError("Pass only one of --only or --except.", "INVALID_FLAG_VALUE");
+  }
+  if (opts.only) {
+    const wanted = new Set(opts.only);
+    const missing = opts.only.filter((k) => !(k in allValues));
+    if (missing.length > 0) {
+      process.stderr.write(
+        `warning: --only key(s) not present in ${makeEnvRef(name, source)}: ${missing.join(", ")}\n`,
+      );
+    }
+    envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => wanted.has(k)));
+  } else if (opts.except) {
+    const excluded = new Set(opts.except);
+    envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
+  }
+  const keys = Object.keys(envValues);
+
+  // Scan injected keys for known process-hijacking variables (LD_PRELOAD,
+  // PATH, ...). Block for third-party-sourced stashes (origin has a registryId);
+  // warn for the operator's own first-party stash, where they own the file.
+  const { isDangerousEnvKey } = await import("./commands/lint/env-key-rules.js");
+  const dangerous = keys.filter(isDangerousEnvKey);
+  if (dangerous.length > 0) {
+    const detail = `Env "${makeEnvRef(name, source)}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
+    if (source.registryId) {
+      throw new UsageError(
+        `Refusing to inject env from a third-party stash. ${detail}\n` +
+          `       Review the file, then copy the values into a first-party env if you trust them.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    process.stderr.write(`warning: ${detail} Injecting anyway (first-party stash).\n`);
+  }
+
+  const mergedEnv = { ...process.env };
+  for (const [envKey, envValue] of Object.entries(envValues)) {
+    mergedEnv[envKey] = envValue;
+  }
+
+  // Audit trail: keys only, never values. A single `env_access` event carries a
+  // `deprecatedAlias` marker when reached via the `vault run` shim, so log
+  // consumers see one stable event type without a doubled physical record.
+  appendEvent({
+    eventType: "env_access",
+    ref: makeEnvRef(name, source),
+    metadata: opts.viaVault ? { keys, deprecatedAlias: "vault_access" } : { keys },
+  });
+
+  const result = spawnSync(command[0] as string, command.slice(1), {
+    stdio: "inherit",
+    env: mergedEnv,
+  });
+  if (result.error) {
+    // Classify spawn failures (#483). Raw ErrnoException leaks a bare
+    // "spawn ENOENT" with no hint — wrap it so consumers get a usable
+    // code + hint in the standard JSON envelope.
+    const err = result.error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      throw new NotFoundError(
+        `Command not found: ${command[0]}`,
+        "FILE_NOT_FOUND",
+        `Install '${command[0]}' or add its directory to PATH before invoking 'akm env run'.`,
+      );
+    }
+    if (err.code === "EACCES") {
+      throw new ConfigError(
+        `Command not executable: ${command[0]}`,
+        "STASH_DIR_UNREADABLE",
+        `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
+      );
+    }
+    throw err;
+  }
+  process.exit(result.status ?? 0);
+}
+
+/** Parse a comma/space-separated key list flag into a trimmed, non-empty array. */
+function parseKeyListFlag(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const keys = raw
+    .split(/[,\s]+/)
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return keys.length > 0 ? keys : undefined;
+}
+
+const envRunCommand = defineCommand({
+  meta: {
+    name: "run",
+    description:
+      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except.",
+  },
+  args: {
+    target: { type: "positional", description: "Env ref", required: true },
+    only: {
+      type: "string",
+      description: "Inject ONLY these keys (comma-separated). Mutually exclusive with --except.",
+    },
+    except: { type: "string", description: "Inject all keys EXCEPT these (comma-separated)." },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() =>
+      runEnvInjected(args.target, {
+        viaVault: false,
+        only: parseKeyListFlag(getHyphenatedArg<string>(args, "only")),
+        except: parseKeyListFlag(getHyphenatedArg<string>(args, "except")),
+      }),
+    );
+  },
+});
+
+const envRemoveCommand = defineCommand({
+  meta: { name: "remove", description: "Remove an env file (and its .sensitive marker, if any)" },
+  args: {
+    ref: { type: "positional", description: "Env ref", required: true },
+    yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      // Resolve against env/ specifically — never delete the frozen vaults/ copy.
+      const parsed = parseEnvRef(args.ref);
+      const source = findEnvSource(parsed.origin);
+      const envRoot = path.join(source.path, "env");
+      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+      if (!isWithin(absPath, envRoot)) {
+        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+      }
+      const { confirmDestructive } = await import("./cli/confirm.js");
+      const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
+        yes: args.yes === true,
+      });
+      if (!confirmed) {
+        process.stderr.write("Aborted.\n");
+        return;
+      }
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
+      }
+      const { removeEnv } = await import("./commands/env.js");
+      const removed = removeEnv(absPath);
+      output("env-remove", { ref: makeEnvRef(parsed.name, source), removed });
+    });
+  },
+});
+
+const envCommand = defineCommand({
+  meta: {
+    name: "env",
+    description:
+      "Manage whole `.env` files — many KEY=value vars loaded together. Key names are visible; values stay on disk and never appear in structured output. For a single opaque value (token, key, cert), use `akm secret`.",
+  },
+  subCommands: {
+    list: envListCommand,
+    path: envPathCommand,
+    export: envExportCommand,
+    run: envRunCommand,
+    create: envCreateCommand,
+    remove: envRemoveCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (hasSubcommand(args, ENV_SUBCOMMAND_SET)) return;
+      const { listKeys } = await import("./commands/env.js");
+      output("env-list", { envs: listEnvsRecursive(listKeys) });
+    });
+  },
+});
+
+// ── vault (DEPRECATED) ────────────────────────────────────────────────────────
+//
+// `akm vault` is deprecated in 0.8.0 and removed in 0.9.0. The verb now warns
+// to stderr and delegates to the `env` handlers. Entry management (`set` /
+// `unset`) and the single-key `run <ref>/KEY` form are hard-errors with a
+// signpost to `akm secret` — silent behaviour changes around secret material
+// are unacceptable.
+
+function emitVaultDeprecation(sub: string): void {
+  process.stderr.write(
+    `warning: 'akm vault ${sub}' is deprecated and will be removed in 0.9.0. Use 'akm env ${sub}'.\n` +
+      "         For single-value injection use 'akm secret'.\n",
+  );
+}
+
+const vaultSetCommand = defineCommand({
+  meta: { name: "set", description: "DEPRECATED — removed. Edit the .env file directly, or use `akm secret set`." },
+  args: {
+    ref: { type: "positional", description: "(deprecated)", required: false },
+    key: { type: "positional", description: "(deprecated)", required: false },
+  },
+  run() {
+    return runWithJsonErrors(async () => {
+      throw new UsageError(
+        "'akm vault set' was removed: akm no longer manages individual env entries.\n" +
+          "       Edit the .env file directly (then run with `akm env run <ref> -- <cmd>`),\n" +
+          "       or store a single value as a secret: `akm secret set secret:<name>`.",
+        "INVALID_FLAG_VALUE",
+      );
+    });
+  },
+});
+
+const vaultUnsetCommand = defineCommand({
+  meta: { name: "unset", description: "DEPRECATED — removed. Edit the .env file directly." },
+  args: {
+    ref: { type: "positional", description: "(deprecated)", required: false },
+    key: { type: "positional", description: "(deprecated)", required: false },
+  },
+  run() {
+    return runWithJsonErrors(async () => {
+      throw new UsageError(
+        "'akm vault unset' was removed: akm no longer manages individual env entries.\n" +
+          "       Edit the .env file directly, or remove a secret with `akm secret remove secret:<name>`.",
+        "INVALID_FLAG_VALUE",
+      );
+    });
+  },
+});
+
+const vaultListCommand = defineCommand({
+  meta: { name: "list", description: "DEPRECATED — use `akm env list`." },
+  run() {
+    return runWithJsonErrors(async () => {
+      emitVaultDeprecation("list");
+      const { listKeys } = await import("./commands/env.js");
+      output("env-list", { envs: listEnvsRecursive(listKeys) });
+    });
+  },
+});
+
+const vaultCreateCommand = defineCommand({
+  meta: { name: "create", description: "DEPRECATED — use `akm env create`." },
+  args: {
+    name: { type: "positional", description: "Env name", required: true },
+    sensitive: { type: "boolean", description: "Exclude from list output and the search index", default: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      emitVaultDeprecation("create");
+      const { createEnv } = await import("./commands/env.js");
+      const parsed = parseEnvRef(args.name);
+      const source = findEnvSource(parsed.origin);
+      const envRoot = path.join(source.path, "env");
+      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+      if (!isWithin(absPath, envRoot)) {
+        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+      }
+      createEnv(absPath);
+      if (args.sensitive) {
+        const markerPath = absPath.replace(/\.env$/, ".sensitive");
+        if (!fs.existsSync(markerPath)) fs.writeFileSync(markerPath, "", { mode: 0o600 });
+      }
+      output("env-create", { ref: makeEnvRef(parsed.name, source) });
+    });
+  },
+});
+
+const vaultPathCommand = defineCommand({
+  meta: { name: "path", description: "DEPRECATED — use `akm env path`." },
+  args: {
+    ref: { type: "positional", description: "Env ref", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      emitVaultDeprecation("path");
+      const { name, absPath, source } = resolveEnvPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+      }
+      process.stderr.write(
+        `warning: sourcing the raw file executes shell substitutions it contains. Use: akm env run ${args.ref} -- <command>\n`,
+      );
+      process.stdout.write(`${absPath}\n`);
+    });
+  },
+});
+
+const vaultRunCommand = defineCommand({
+  meta: { name: "run", description: "DEPRECATED — use `akm env run`. The single-key `<ref>/KEY` form was removed." },
+  args: {
+    target: { type: "positional", description: "Env ref", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      emitVaultDeprecation("run");
+      await runEnvInjected(args.target, { viaVault: true });
     });
   },
 });
@@ -2279,8 +2519,7 @@ const vaultRunCommand = defineCommand({
 const vaultCommand = defineCommand({
   meta: {
     name: "vault",
-    description:
-      "Manage secret vaults (.env files). Keys are visible, values stay on disk and never appear in structured output.",
+    description: "DEPRECATED (use `akm env`) — removed in 0.9.0. Manages whole `.env` files; values never printed.",
   },
   subCommands: {
     list: vaultListCommand,
@@ -2293,9 +2532,9 @@ const vaultCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       if (hasSubcommand(args, VAULT_SUBCOMMAND_SET)) return;
-      // Default action: list all vaults
-      const { listKeys } = await import("./commands/vault.js");
-      output("vault-list", { vaults: listVaultsRecursive(listKeys) });
+      emitVaultDeprecation("list");
+      const { listKeys } = await import("./commands/env.js");
+      output("env-list", { envs: listEnvsRecursive(listKeys) });
     });
   },
 });
@@ -2325,8 +2564,8 @@ function resolveSecretPath(ref: string): {
   if (parsed.type !== "secret") {
     throw new UsageError(`Expected a secret ref (secret:<name>); got "${ref}".`);
   }
-  // Source resolution is identical for every asset type; reuse the vault helper.
-  const source = findVaultSource(parsed.origin);
+  // Source resolution is identical for every asset type; reuse the env helper.
+  const source = findEnvSource(parsed.origin);
   const typeRoot = path.join(source.path, "secrets");
   const absPath = resolveAssetPathFromName("secret", typeRoot, parsed.name);
   // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
@@ -2477,8 +2716,8 @@ const secretRunCommand = defineCommand({
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
         throw new UsageError(`"${varName}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
       }
-      const { isDangerousVaultKey } = await import("./commands/lint/vault-key-rules.js");
-      if (isDangerousVaultKey(varName)) {
+      const { isDangerousEnvKey } = await import("./commands/lint/env-key-rules.js");
+      if (isDangerousEnvKey(varName)) {
         throw new UsageError(
           `Refusing to inject a secret into "${varName}": it is a known process-hijacking variable (e.g. LD_PRELOAD, PATH).`,
           "INVALID_FLAG_VALUE",
@@ -2565,7 +2804,7 @@ const secretCommand = defineCommand({
   meta: {
     name: "secret",
     description:
-      "Manage whole-file secrets (PEM keys, tokens, certs). Names are visible; the file contents are the value and never appear in structured output.",
+      "Manage whole-file secrets — one opaque value per file (a PEM key, token, or cert). Names are visible; the file contents are the value and never appear in structured output. For a set of KEY=value config loaded together, use `akm env`.",
   },
   subCommands: {
     list: secretListCommand,
@@ -3871,6 +4110,7 @@ export const main = defineCommand({
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
+    env: envCommand,
     vault: vaultCommand,
     secret: secretCommand,
     wiki: wikiCommand,
@@ -3879,6 +4119,7 @@ export const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset"]);
+const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "remove"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);
 const WIKI_SUBCOMMAND_SET = new Set([

@@ -187,87 +187,63 @@ export const addCommand = defineCommand({
           result.installed?.stashRoot ??
           (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
         if (installedStashRoot) {
-          const { checkVaultForDangerousKeys } = await import("./lint/vault-key-rules.js");
-          const vaultsDir = path.join(installedStashRoot, "vaults");
-          if (fs.existsSync(vaultsDir)) {
-            const envFiles = fs.readdirSync(vaultsDir).filter((f: string) => f.endsWith(".env"));
+          const { checkVaultForDangerousKeys } = await import("./lint/env-key-rules.js");
 
-            // Collect all dangerous-key findings across every vault file.
-            const allFindings: Array<{ vaultRef: string; keyName: string; relPath: string }> = [];
+          // Collect all dangerous-key findings across every env file (env/, and
+          // the deprecated vaults/) in the freshly-installed stash.
+          const allFindings: Array<{ vaultRef: string; keyName: string; relPath: string }> = [];
+          for (const [subdir, prefix] of [
+            ["env", "env"],
+            ["vaults", "vault"],
+          ] as const) {
+            const dir = path.join(installedStashRoot, subdir);
+            if (!fs.existsSync(dir)) continue;
+            const envFiles = fs.readdirSync(dir).filter((f: string) => f.endsWith(".env"));
             for (const envFile of envFiles) {
-              const vaultPath = path.join(vaultsDir, envFile);
+              const envPath = path.join(dir, envFile);
               const baseName = path.basename(envFile, ".env");
-              const vaultRef = baseName === "" ? "vault:default" : `vault:${baseName}`;
-              const relPath = path.join("vaults", envFile);
-              const findings = checkVaultForDangerousKeys(vaultPath, relPath, vaultRef);
+              const vaultRef = baseName === "" ? `${prefix}:default` : `${prefix}:${baseName}`;
+              const relPath = path.join(subdir, envFile);
+              const findings = checkVaultForDangerousKeys(envPath, relPath, vaultRef);
               for (const finding of findings) {
                 // Extract the key name from the detail string for the summary line.
-                const keyMatch = finding.detail.match(/Vault key `([^`]+)`/);
+                const keyMatch = finding.detail.match(/Env key `([^`]+)`/);
                 const keyName = keyMatch ? keyMatch[1] : finding.file;
                 allFindings.push({ vaultRef, keyName, relPath });
               }
             }
-
-            if (allFindings.length > 0) {
-              if (allowDangerousKeys) {
-                // Operator has explicitly accepted the risk — warn and continue.
-                for (const f of allFindings) {
-                  warn(
-                    `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-insecure was set.`,
-                  );
+          }
+          if (allFindings.length > 0) {
+            if (allowDangerousKeys) {
+              // Operator has explicitly accepted the risk — warn and continue.
+              for (const f of allFindings) {
+                warn(
+                  `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-insecure was set.`,
+                );
+              }
+            } else if (process.stdin.isTTY) {
+              // Interactive path: show findings and ask the user to confirm.
+              // Guard on stdin (not stdout) because p.confirm() reads from stdin;
+              // stdout may be a TTY while stdin is piped, which would cause a hang.
+              const stashLabel = ref;
+              const groupedByVault = new Map<string, string[]>();
+              for (const f of allFindings) {
+                const existing = groupedByVault.get(f.vaultRef) ?? [];
+                existing.push(f.keyName);
+                groupedByVault.set(f.vaultRef, existing);
+              }
+              for (const [vaultRef, keys] of groupedByVault) {
+                warn(`[warn] Vault "${vaultRef}" in stash "${stashLabel}" contains potentially dangerous keys:`);
+                for (const key of keys) {
+                  warn(`  - ${key}: can hijack process execution via \`akm vault run\``);
                 }
-              } else if (process.stdin.isTTY) {
-                // Interactive path: show findings and ask the user to confirm.
-                // Guard on stdin (not stdout) because p.confirm() reads from stdin;
-                // stdout may be a TTY while stdin is piped, which would cause a hang.
-                const stashLabel = ref;
-                const groupedByVault = new Map<string, string[]>();
-                for (const f of allFindings) {
-                  const existing = groupedByVault.get(f.vaultRef) ?? [];
-                  existing.push(f.keyName);
-                  groupedByVault.set(f.vaultRef, existing);
-                }
-                for (const [vaultRef, keys] of groupedByVault) {
-                  warn(`[warn] Vault "${vaultRef}" in stash "${stashLabel}" contains potentially dangerous keys:`);
-                  for (const key of keys) {
-                    warn(`  - ${key}: can hijack process execution via \`akm vault run\``);
-                  }
-                }
-                const confirmed = await p.confirm({
-                  message: "Install anyway?",
-                  initialValue: false,
-                });
-                if (p.isCancel(confirmed) || confirmed !== true) {
-                  // Roll back the install before aborting.
-                  // Use the canonical installed id (most reliably resolved by akmRemove) rather
-                  // than the raw user-supplied ref which may not match after URL normalisation.
-                  const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
-                  let rollbackWarning: string | undefined;
-                  try {
-                    await akmRemove({ target: rollbackTarget });
-                  } catch (_rollbackErr) {
-                    rollbackWarning =
-                      `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
-                      `Remove it manually with: akm remove ${rollbackTarget}`;
-                  }
-                  console.error(
-                    JSON.stringify(
-                      {
-                        ok: false,
-                        error:
-                          "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-insecure to bypass.",
-                        code: "DANGEROUS_VAULT_KEY",
-                        ...(rollbackWarning ? { rollbackWarning } : {}),
-                      },
-                      null,
-                      2,
-                    ),
-                  );
-                  process.exit(1);
-                }
-              } else {
-                // Non-interactive path without bypass flag: fail hard.
-                // Roll back the install before exiting.
+              }
+              const confirmed = await p.confirm({
+                message: "Install anyway?",
+                initialValue: false,
+              });
+              if (p.isCancel(confirmed) || confirmed !== true) {
+                // Roll back the install before aborting.
                 // Use the canonical installed id (most reliably resolved by akmRemove) rather
                 // than the raw user-supplied ref which may not match after URL normalisation.
                 const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
@@ -279,12 +255,12 @@ export const addCommand = defineCommand({
                     `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
                     `Remove it manually with: akm remove ${rollbackTarget}`;
                 }
-                const keyList = allFindings.map((f) => `  - ${f.keyName} (${f.vaultRef})`).join("\n");
                 console.error(
                   JSON.stringify(
                     {
                       ok: false,
-                      error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the vault.`,
+                      error:
+                        "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-insecure to bypass.",
                       code: "DANGEROUS_VAULT_KEY",
                       ...(rollbackWarning ? { rollbackWarning } : {}),
                     },
@@ -294,6 +270,34 @@ export const addCommand = defineCommand({
                 );
                 process.exit(1);
               }
+            } else {
+              // Non-interactive path without bypass flag: fail hard.
+              // Roll back the install before exiting.
+              // Use the canonical installed id (most reliably resolved by akmRemove) rather
+              // than the raw user-supplied ref which may not match after URL normalisation.
+              const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
+              let rollbackWarning: string | undefined;
+              try {
+                await akmRemove({ target: rollbackTarget });
+              } catch (_rollbackErr) {
+                rollbackWarning =
+                  `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
+                  `Remove it manually with: akm remove ${rollbackTarget}`;
+              }
+              const keyList = allFindings.map((f) => `  - ${f.keyName} (${f.vaultRef})`).join("\n");
+              console.error(
+                JSON.stringify(
+                  {
+                    ok: false,
+                    error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the vault.`,
+                    code: "DANGEROUS_VAULT_KEY",
+                    ...(rollbackWarning ? { rollbackWarning } : {}),
+                  },
+                  null,
+                  2,
+                ),
+              );
+              process.exit(1);
             }
           }
         }

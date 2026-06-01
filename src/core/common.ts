@@ -19,6 +19,7 @@ export const ASSET_TYPES = [
   "workflow",
   "script",
   "memory",
+  "env",
   "vault",
   "secret",
   "wiki",

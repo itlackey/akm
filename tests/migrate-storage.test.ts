@@ -107,12 +107,17 @@ describe("migrate-storage versioned runner", () => {
     const v08 = reports.find((r) => r.label === "0.8 → 0.9");
     if (!v08) throw new Error("expected 0.8 → 0.9 report");
     expect(v08.ran).toBe(true);
-    expect(v08.results.length).toBe(1);
+    expect(v08.results.length).toBe(2);
     const first = v08.results[0];
     if (!first) throw new Error("expected at least one step result");
     expect(first.name).toBe("Graph snapshot import");
     expect(first.status).toBe("skipped");
     expect(first.detail).toContain("no legacy graph file found");
+    // The vaults/ → env/ step also runs; with no vaults/ under the (isolated)
+    // stash it records a skip.
+    const vaultStep = v08.results.find((r) => r.name === "vaults/ → env/");
+    if (!vaultStep) throw new Error("expected a vaults/ → env/ step result");
+    expect(vaultStep.status).toBe("skipped");
   });
 
   test("0.8→0.9 detects a graph-snapshot.json and reports the dry-run step", async () => {
@@ -159,5 +164,79 @@ describe("migrate-storage versioned runner", () => {
     expect(step2.status).toBe("success");
     expect(step2.detail).toContain("[dry-run]");
     expect(step2.detail).toContain("graph-snapshot.json");
+  });
+
+  describe("vaults/ → env/ migration", () => {
+    function writeStashConfig(stashDir: string): void {
+      fs.writeFileSync(path.join(layout.paths.configDir, "config.json"), JSON.stringify({ stashDir }), "utf8");
+    }
+
+    function vaultStep(reports: Awaited<ReturnType<typeof runMigrations>>) {
+      const v08 = reports.find((r) => r.label === "0.8 → 0.9");
+      if (!v08) throw new Error("expected 0.8 → 0.9 report");
+      const step = v08.results.find((r) => r.name === "vaults/ → env/");
+      if (!step) throw new Error("expected a vaults/ → env/ step");
+      return step;
+    }
+
+    test("copies .env files vaults/ → env/, sets 0600/0700, and writes the .migrated marker", async () => {
+      const stashDir = path.join(layout.tmp, "stash");
+      fs.mkdirSync(path.join(stashDir, "vaults", "team"), { recursive: true });
+      fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", { mode: 0o644 });
+      fs.writeFileSync(path.join(stashDir, "vaults", "team", "dev.env"), "TOKEN=hidden\n", { mode: 0o644 });
+      writeStashConfig(stashDir);
+
+      const step = vaultStep(await runMigrations({ dryRun: false, paths: layout.paths }));
+      expect(step.status).toBe("success");
+
+      // Files copied into env/, preserving subdirs.
+      expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe("API_KEY=secret\n");
+      expect(fs.readFileSync(path.join(stashDir, "env", "team", "dev.env"), "utf8")).toBe("TOKEN=hidden\n");
+
+      // Permissions tightened despite the 0644 source mode.
+      if (process.platform !== "win32") {
+        expect(fs.statSync(path.join(stashDir, "env", "prod.env")).mode & 0o777).toBe(0o600);
+        expect(fs.statSync(path.join(stashDir, "env")).mode & 0o777).toBe(0o700);
+      }
+
+      // vaults/ left intact as a frozen copy + marker written.
+      expect(fs.existsSync(path.join(stashDir, "vaults", "prod.env"))).toBe(true);
+      expect(fs.existsSync(path.join(stashDir, "vaults", ".migrated"))).toBe(true);
+    });
+
+    test("is idempotent — a second run skips on the .migrated marker", async () => {
+      const stashDir = path.join(layout.tmp, "stash");
+      fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+      fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n");
+      writeStashConfig(stashDir);
+
+      expect(vaultStep(await runMigrations({ dryRun: false, paths: layout.paths })).status).toBe("success");
+      const second = vaultStep(await runMigrations({ dryRun: false, paths: layout.paths }));
+      expect(second.status).toBe("skipped");
+      expect(second.detail).toContain(".migrated");
+    });
+
+    test("never clobbers an env file the user already authored", async () => {
+      const stashDir = path.join(layout.tmp, "stash");
+      fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+      fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+      fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=from-vault\n");
+      fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=already-here\n");
+      writeStashConfig(stashDir);
+
+      expect(vaultStep(await runMigrations({ dryRun: false, paths: layout.paths })).status).toBe("success");
+      // The pre-existing env/ file is preserved, not overwritten by vaults/.
+      expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe("API_KEY=already-here\n");
+    });
+
+    test("skips a stash whose vaults/ has no .env files (fresh install)", async () => {
+      const stashDir = path.join(layout.tmp, "stash");
+      fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+      writeStashConfig(stashDir);
+
+      const step = vaultStep(await runMigrations({ dryRun: false, paths: layout.paths }));
+      expect(step.status).toBe("skipped");
+      expect(fs.existsSync(path.join(stashDir, "vaults", ".migrated"))).toBe(false);
+    });
   });
 });

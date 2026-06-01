@@ -64,6 +64,7 @@ import "./shapes/proposal-reject";
 import "./shapes/proposal-diff";
 import "./shapes/proposal-producer";
 import "./shapes/distill";
+import "./shapes/env-list";
 import "./shapes/vault-list";
 import "./shapes/secret-list";
 import "./shapes/passthrough";

@@ -170,6 +170,42 @@ export function formatVaultListPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
+export function formatEnvListPlain(r: Record<string, unknown>): string {
+  // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
+  const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
+  if (envs.length === 0) {
+    return "No env files. Create one with `akm env create <name>`, then edit the .env file directly.";
+  }
+  const lines: string[] = [];
+  for (const v of envs) {
+    const ref = String(v.ref ?? "?");
+    const keys = Array.isArray(v.keys) ? (v.keys as unknown[]).map(String) : [];
+    if (lines.length > 0) lines.push("");
+    lines.push(`## ${ref}`);
+    if (keys.length === 0) {
+      lines.push("- (no keys)");
+      continue;
+    }
+    for (const key of keys) {
+      lines.push(`- ${key}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function formatEnvCreatePlain(r: Record<string, unknown>): string {
+  return `Created env ${String(r.ref ?? "?")}`;
+}
+
+export function formatEnvExportPlain(r: Record<string, unknown>): string {
+  return `Wrote ${String(r.ref ?? "?")} export script → ${String(r.out ?? "?")} (mode 0600; source it, then delete)`;
+}
+
+export function formatEnvRemovePlain(r: Record<string, unknown>): string {
+  const removed = r.removed === true;
+  return removed ? `Removed env ${String(r.ref ?? "?")}` : `Env ${String(r.ref ?? "?")} was not present`;
+}
+
 export function formatWikiRegisterPlain(r: Record<string, unknown>): string {
   const name = String(r.name ?? r.wiki ?? "?");
   const ref = String(r.ref ?? r.path ?? r.url ?? "?");

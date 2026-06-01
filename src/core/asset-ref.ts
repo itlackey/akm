@@ -21,6 +21,11 @@ export interface AssetRef {
   origin?: string;
 }
 
+/** Accepted spelling aliases mapping to a canonical asset type. */
+const TYPE_ALIASES: Record<string, AkmAssetType> = {
+  environment: "env",
+};
+
 // ── Construction ────────────────────────────────────────────────────────────
 
 /**
@@ -74,14 +79,19 @@ export function parseAssetRef(ref: string): AssetRef {
   const rawType = body.slice(0, colon);
   const rawName = body.slice(colon + 1);
 
-  if (!isAssetType(rawType)) {
+  // Type aliases: `environment:` is an accepted spelling of the canonical
+  // `env:` type. (`vault:` remains its own deprecated type so the frozen
+  // `vaults/` copy keeps resolving through the 0.8.x window.)
+  const resolvedType = TYPE_ALIASES[rawType] ?? rawType;
+
+  if (!isAssetType(resolvedType)) {
     throw new UsageError(`Invalid asset type: "${rawType}".`, "MISSING_REQUIRED_ARGUMENT");
   }
 
   validateName(rawName);
   const name = normalizeName(rawName);
 
-  return { type: rawType, name, origin: origin || undefined };
+  return { type: resolvedType, name, origin: origin || undefined };
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────

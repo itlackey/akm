@@ -56,7 +56,8 @@ akm registry search "<query>"                 # Search all registries
 | knowledge | A reference doc (use `toc` or `section "..."` to navigate) |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
-| vault | Key names only; use `akm vault path` or `akm vault run` to use values safely |
+| env | Whole `.env` file (many vars); key names only. Inject with `akm env run <ref> -- <cmd>` (the agent-safe path — values stay on disk). `vault` is the deprecated alias. |
+| secret | Whole-file secret (one value); name only. Use `akm secret path` / `akm secret run`. |
 | wiki | A page in a multi-wiki knowledge base. For any wiki task, start with `akm wiki list`. To ingest sources, run `akm wiki ingest <name>` — it dispatches the configured agent profile to execute the ingest workflow against the wiki's `raw/` directory. Run `akm wiki -h` for the full surface. |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so

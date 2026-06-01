@@ -65,8 +65,9 @@ const TYPE_HINTS: Record<string, string> = {
   workflow:
     "workflow assets are markdown describing a multi-step process. Include `# <Title>` and ordered `## Step N` sections.",
   script: "script assets are executable text files. Include a shebang and minimal usage comment.",
+  env: "env assets are whole `.env` files (many KEY=VALUE pairs, `#` comments). Key names are discoverable; values stay on disk. Inject with `akm env run env:<name> -- <cmd>` (the safe path — values never reach stdout/your context); do NOT run `akm env export` and read its output, as that prints values. For a single opaque value (token, key, cert) use a `secret` instead. Never echo values back to the user.",
   vault:
-    "vault assets store environment variables (KEY=VALUE pairs). Comments use `#`. Never echo secret values back to the user.",
+    "vault assets are DEPRECATED (use env). They store environment variables (KEY=VALUE pairs); comments use `#`. Never echo secret values back to the user.",
   wiki: "wiki assets are markdown reference pages with `# Title` and structured headings.",
 };
 

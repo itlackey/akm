@@ -34,7 +34,7 @@ import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
  * §1a / Pattern A.
  *
  * Note on `unsupported_type`: deterministic type-guard rejection. Reflect
- * refuses to operate on non-markdown asset types (script, vault, task);
+ * refuses to operate on non-markdown asset types (script, env, vault, secret, task);
  * the LLM is never even invoked. Previously emitted as `parse_error` and
  * conflated with true LLM failures — see review §1a, "Reflect refused
  * asset type" row (~9% of reflect-failed events). Routed to the

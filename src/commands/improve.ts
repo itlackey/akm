@@ -399,7 +399,7 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
   } catch {
     if (!isAssetType(trimmed)) {
       throw new UsageError(
-        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, vault, task.\n` +
+        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, env, vault, task.\n` +
           `If you passed --format to akm improve, that flag is not supported — use it with akm search or akm show instead.`,
         "INVALID_FLAG_VALUE",
       );

@@ -13,7 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { listKeys as listVaultKeys } from "../commands/vault";
+import { listKeys as listVaultKeys } from "../commands/env";
 import { asNonEmptyString, hasErrnoCode } from "../core/common";
 import { parseFrontmatter } from "../core/frontmatter";
 import {
@@ -467,6 +467,37 @@ const vaultEnvRenderer: AssetRenderer = {
   },
 };
 
+// ── 8b. env-file ───────────────────────────────────────────────────────────────
+
+/**
+ * Env renderer. Like the (deprecated) vault renderer, returns ONLY key names
+ * and start-of-line comments — never values. Deliberately omits
+ * content/template/prompt so env values cannot leak through `akm show`.
+ */
+const envFileRenderer: AssetRenderer = {
+  name: "env-file",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    const { keys, comments } = listVaultKeys(ctx.absPath);
+    return {
+      type: "env",
+      name,
+      path: ctx.absPath,
+      action:
+        "Environment — keys + comments only. Use `akm env run <ref> -- <command>` to run with the whole .env injected (the safe path — values never reach stdout). `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
+      description: comments.length > 0 ? comments.join("\n") : undefined,
+      keys,
+      comments,
+    };
+  },
+
+  enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
+    const { keys } = listVaultKeys(hit.path);
+    if (keys.length > 0) hit.keys = keys;
+  },
+};
+
 // ── 9. secret-file ─────────────────────────────────────────────────────────────
 
 /**
@@ -604,6 +635,19 @@ function applyVaultMetadata(entry: StashEntry, ctx: RenderContext): void {
   entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
 }
 
+function applyEnvMetadata(entry: StashEntry, ctx: RenderContext): void {
+  const { keys, comments } = listVaultKeys(ctx.absPath);
+  if (comments.length > 0 && !entry.description) {
+    entry.description = comments.join(" ").slice(0, 500);
+    entry.source = "comments";
+    entry.confidence = 0.7;
+  }
+  if (keys.length > 0) {
+    entry.searchHints = keys;
+  }
+  entry.tags = Array.from(new Set([...(entry.tags ?? []), "env", "secrets"]));
+}
+
 /**
  * Secret metadata: tags only. Must NEVER read the file body — the whole file
  * is the value, so the entry is built from the filename alone (name-only).
@@ -658,6 +702,12 @@ registerMetadataContributor({
 });
 
 registerMetadataContributor({
+  name: "env-file-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "env-file",
+  contribute: (entry, ctx) => applyEnvMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
   name: "secret-file-metadata",
   appliesTo: ({ rendererName }) => rendererName === "secret-file",
   contribute: (entry, ctx) => applySecretMetadata(entry, ctx.renderContext),
@@ -682,6 +732,7 @@ const builtinRenderers: AssetRenderer[] = [
   memoryMdRenderer,
   workflowMdRenderer,
   scriptSourceRenderer,
+  envFileRenderer,
   vaultEnvRenderer,
   secretFileRenderer,
   taskMdRenderer,
@@ -702,6 +753,7 @@ export function registerBuiltinRenderers(): void {
 export {
   agentMdRenderer,
   commandMdRenderer,
+  envFileRenderer,
   INTERPRETER_MAP,
   knowledgeMdRenderer,
   lessonMdRenderer,

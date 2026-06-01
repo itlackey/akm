@@ -338,12 +338,16 @@ union. The v1 contract is:
 - **Well-known types**, each with a renderer, a directory under the working
   stash, and frontmatter expectations:
   `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `workflow`,
-  `vault`, `secret`, `wiki`, `task`, and (Planned for v1) `lesson`. See §13. The
-  `task` type stores cron-style scheduled invocations of workflows or
+  `env`, `vault`, `secret`, `wiki`, `task`, and (Planned for v1) `lesson`. See
+  §13. The `task` type stores cron-style scheduled invocations of workflows or
   prompts; `akm tasks` registers them with the OS-native scheduler (cron /
-  launchd / schtasks). The `secret` type stores whole-file secrets (one value
-  per file); like `vault`, the values never appear in structured output and are
-  used only via `akm secret run` / `akm secret path`.
+  launchd / schtasks). The `env` type stores whole `.env` files (sourced or
+  injected wholesale); key names are surfaced but values never appear in
+  structured output and are used only via `akm env run` / `akm env export`.
+  `vault` is the deprecated predecessor of `env` (removed in 0.9.0). The
+  `secret` type stores whole-file secrets (one value per file); like `env`, the
+  values never appear in structured output and are used only via
+  `akm secret run` / `akm secret path`.
 - **Plugin-registered types** are allowed via `registerAssetType()` (see
   `src/core/asset-spec.ts`) and behave like well-known types as long as they
   register a renderer. Unknown types parse, index, and search; they render as

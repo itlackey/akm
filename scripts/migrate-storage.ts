@@ -31,7 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { getCacheDir, getConfigDir } from "../src/core/paths";
+import { getCacheDir, getConfigDir, getDefaultStashDir } from "../src/core/paths";
 
 // ── Argument parsing ─────────────────────────────────────────────────────────
 
@@ -843,6 +843,171 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<void> {
   }
 }
 
+// ── vaults/ → env/ migration (0.8.0) ─────────────────────────────────────────
+
+/** Resolve the primary writable stash dir from config.json (else the default). */
+function resolvePrimaryStashDir(configDirPath: string): string {
+  try {
+    const cfgPath = path.join(configDirPath, "config.json");
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as { stashDir?: unknown };
+      if (typeof cfg.stashDir === "string" && cfg.stashDir.length > 0) return cfg.stashDir;
+    }
+  } catch {
+    // Fall through to the default stash dir.
+  }
+  return getDefaultStashDir();
+}
+
+/** Count `.env` files (the only relevant env assets) under a directory tree. */
+function countEnvFilesRecursive(dir: string): number {
+  let count = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      count += countEnvFilesRecursive(full);
+    } else if (entry.name === ".env" || entry.name.endsWith(".env")) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Copy a directory tree WITHOUT clobbering files that already exist at the
+ * destination. The vault contents are migrated as opaque bytes; any env file
+ * the user already authored under env/ is preserved (never overwritten).
+ */
+function copyDirNoClobber(src: string, dest: string): { copied: number; skipped: number; failed: number } {
+  let copied = 0;
+  let skipped = 0;
+  let failed = 0;
+  ensureDir(dest);
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcEntry = path.join(src, entry.name);
+    const destEntry = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      const sub = copyDirNoClobber(srcEntry, destEntry);
+      copied += sub.copied;
+      skipped += sub.skipped;
+      failed += sub.failed;
+      continue;
+    }
+    if (fs.existsSync(destEntry)) {
+      skipped++;
+      continue;
+    }
+    try {
+      if (copyAndVerify(srcEntry, destEntry)) copied++;
+      else failed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { copied, skipped, failed };
+}
+
+/**
+ * Tighten permissions on the migrated tree: 0700 dirs, 0600 files, then verify.
+ * `copyAndVerify` checks size only and does not preserve mode, so without this
+ * migrated secret material could land at the umask default. Best-effort (and
+ * unverified) on Windows, where POSIX modes are not meaningful.
+ */
+function chmodTreeSecure(dir: string): { ok: boolean; detail?: string } {
+  const isWin = process.platform === "win32";
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch (err) {
+    if (!isWin) return { ok: false, detail: `chmod 0700 ${dir} failed: ${err instanceof Error ? err.message : err}` };
+  }
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const sub = chmodTreeSecure(full);
+      if (!sub.ok) return sub;
+      continue;
+    }
+    try {
+      fs.chmodSync(full, 0o600);
+      if (!isWin && (fs.statSync(full).mode & 0o777) !== 0o600) {
+        return { ok: false, detail: `mode verification failed for ${full}` };
+      }
+    } catch (err) {
+      if (!isWin) return { ok: false, detail: `chmod 0600 ${full} failed: ${err instanceof Error ? err.message : err}` };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Migrate `<stash>/vaults/` → `<stash>/env/` (copy, never move). The legacy
+ * vaults/ tree is left intact as a frozen copy and a `vaults/.migrated` marker
+ * is written so the step is idempotent. Deletion of vaults/ is deferred to the
+ * 0.9.0 removal (behind explicit user approval).
+ */
+async function migrateVaultsToEnv(ctx: MigrationContext): Promise<void> {
+  const name = "vaults/ → env/";
+  const stashDir = resolvePrimaryStashDir(ctx.paths.configDir);
+  const vaultsDir = path.join(stashDir, "vaults");
+  const envDir = path.join(stashDir, "env");
+  const marker = path.join(vaultsDir, ".migrated");
+
+  if (!fs.existsSync(vaultsDir)) {
+    ctx.recordStep({ name, status: "skipped", detail: `no vaults/ directory under ${stashDir}` });
+    return;
+  }
+  if (fs.existsSync(marker)) {
+    ctx.recordStep({ name, status: "skipped", detail: "already migrated (.migrated marker present)" });
+    return;
+  }
+  const vaultEnvCount = countEnvFilesRecursive(vaultsDir);
+  if (vaultEnvCount === 0) {
+    ctx.recordStep({ name, status: "skipped", detail: "vaults/ has no .env files to migrate" });
+    return;
+  }
+
+  if (ctx.dryRun) {
+    ctx.recordStep({
+      name,
+      status: "success",
+      detail: `[dry-run] would copy ${vaultEnvCount} .env file(s) ${vaultsDir} → ${envDir}, chmod 0600/0700, and write ${marker}`,
+    });
+    return;
+  }
+
+  try {
+    const { copied, skipped, failed } = copyDirNoClobber(vaultsDir, envDir);
+    if (failed > 0) {
+      ctx.recordStep({ name, status: "failed", detail: `${failed} file(s) failed to copy; env/ left as-is, no marker written` });
+      return;
+    }
+    const chmodRes = chmodTreeSecure(envDir);
+    if (!chmodRes.ok) {
+      ctx.recordStep({ name, status: "failed", detail: chmodRes.detail ?? "permission tightening failed" });
+      return;
+    }
+    const envEnvCount = countEnvFilesRecursive(envDir);
+    if (envEnvCount < vaultEnvCount) {
+      ctx.recordStep({
+        name,
+        status: "failed",
+        detail: `post-copy count ${envEnvCount} < source ${vaultEnvCount}; no marker written`,
+      });
+      return;
+    }
+    fs.writeFileSync(marker, `migrated vaults/ -> env/ at ${new Date().toISOString()}\n`, { mode: 0o600 });
+    ctx.recordStep({
+      name,
+      status: "success",
+      detail:
+        `copied ${copied} file(s) (${skipped} already present in env/, preserved) ${vaultsDir} → ${envDir}; ` +
+        `vaults/ left intact as a frozen copy. Run \`akm index\` to refresh search.`,
+    });
+  } catch (err) {
+    ctx.recordStep({ name, status: "failed", detail: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 // ── 0.8 → 0.9 migration ──────────────────────────────────────────────────────
 
 const v08To09Migration: MigrationVersion = {
@@ -857,6 +1022,7 @@ const v08To09Migration: MigrationVersion = {
   },
   run: async (ctx) => {
     await migrateGraphFileToDb(ctx);
+    await migrateVaultsToEnv(ctx);
   },
 };
 
