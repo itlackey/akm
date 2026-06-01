@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runCliCapture } from "../_helpers/cli";
 import { seedStoredGraph } from "../_helpers/graph-store";
+import { withEnv } from "../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -14,12 +16,58 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-function runCli(args: string[], options?: { stashDir?: string; input?: string; env?: NodeJS.ProcessEnv }) {
+interface CliRunResult {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+// In-process replacement for the former spawnSync("bun", [CLI, ...]). Each call
+// gets fresh, isolated XDG dirs and a temp stash (unless one is supplied via
+// options.stashDir so a follow-up `show` reads the same stash). Env is set via
+// the allowlisted `withEnv` wrapper and restored after the run, and the harness
+// (runCliCapture) resets the config/output singletons per call. The returned
+// shape mirrors spawnSync's `{ status, stdout, stderr }` so the existing
+// assertions are byte-identical.
+async function runCli(
+  args: string[],
+  options?: { stashDir?: string; env?: NodeJS.ProcessEnv },
+): Promise<{ stashDir: string; result: CliRunResult }> {
   const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
   const xdgCache = makeTempDir("akm-capture-cache-");
   const xdgConfig = makeTempDir("akm-capture-config-");
   // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
-  // test-isolation guard in src/core/paths.ts stays inert in the spawned CLI.
+  // test-isolation guard in src/core/paths.ts stays inert.
+  const xdgData = makeTempDir("akm-capture-data-");
+  const xdgState = makeTempDir("akm-capture-state-");
+  const result = await withEnv(
+    {
+      AKM_STASH_DIR: stashDir,
+      XDG_CACHE_HOME: xdgCache,
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
+      ...(options?.env as Record<string, string | undefined> | undefined),
+    },
+    async (): Promise<CliRunResult> => {
+      const { code, stdout, stderr } = await runCliCapture(args);
+      return { status: code, stdout, stderr };
+    },
+  );
+  return { stashDir, result };
+}
+
+// KEPT AS A SUBPROCESS: the in-process harness has no stdin support, and `import
+// -` reads piped content via fs.readFileSync(0) (real fd 0). Spawning a real
+// subprocess is the faithful way to feed stdin, so the one `import -` test
+// continues to shell out through this helper.
+function spawnCli(
+  args: string[],
+  options?: { stashDir?: string; input?: string; env?: NodeJS.ProcessEnv },
+): { stashDir: string; result: { status: number | null; stdout: string; stderr: string } } {
+  const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
+  const xdgCache = makeTempDir("akm-capture-cache-");
+  const xdgConfig = makeTempDir("akm-capture-config-");
   const xdgData = makeTempDir("akm-capture-data-");
   const xdgState = makeTempDir("akm-capture-state-");
   const result = spawnSync("bun", [CLI, ...args], {
@@ -36,7 +84,7 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string; e
       ...options?.env,
     },
   });
-  return { stashDir, result };
+  return { stashDir, result: { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" } };
 }
 
 afterEach(() => {
@@ -46,13 +94,13 @@ afterEach(() => {
 });
 
 describe("capture commands", () => {
-  function expectInitFlagUsesCustomDir(flag: "--dir" | "--stashDir") {
+  async function expectInitFlagUsesCustomDir(flag: "--dir" | "--stashDir") {
     const parentDir = makeTempDir("akm-init-parent-");
     const customDir = path.join(parentDir, "custom-stash");
     const homeDir = makeTempDir("akm-init-home-");
     // Init's sandbox guard (item 6) refuses explicit --dir /tmp/... under a
     // test runner; this test legitimately exercises that flag, so opt out.
-    const { result } = runCli(["init", flag, customDir], {
+    const { result } = await runCli(["init", flag, customDir], {
       env: { HOME: homeDir, AKM_FORCE_INIT_TMP_STASH: "1" },
     });
     expect(result.status).toBe(0);
@@ -67,16 +115,16 @@ describe("capture commands", () => {
     expect(config.stashDir).toBe(path.resolve(customDir));
   }
 
-  test("init honors --dir for a custom stash path", () => {
-    expectInitFlagUsesCustomDir("--dir");
+  test("init honors --dir for a custom stash path", async () => {
+    await expectInitFlagUsesCustomDir("--dir");
   });
 
-  test("init honors legacy --stashDir as an alias for --dir", () => {
-    expectInitFlagUsesCustomDir("--stashDir");
+  test("init honors legacy --stashDir as an alias for --dir", async () => {
+    await expectInitFlagUsesCustomDir("--stashDir");
   });
 
-  test("remember stores a memory in the stash and returns its ref", () => {
-    const { stashDir, result } = runCli(["remember", "Deployment needs VPN access"]);
+  test("remember stores a memory in the stash and returns its ref", async () => {
+    const { stashDir, result } = await runCli(["remember", "Deployment needs VPN access"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -84,33 +132,33 @@ describe("capture commands", () => {
     expect(json.ref).toBe("memory:deployment-needs-vpn-access");
     expect(fs.existsSync(path.join(stashDir, "memories", "deployment-needs-vpn-access.md"))).toBe(true);
 
-    const show = runCli(["show", json.ref], { stashDir }).result;
+    const show = (await runCli(["show", json.ref], { stashDir })).result;
     expect(show.status).toBe(0);
     expect(show.stdout).toContain("Deployment needs VPN access");
   });
 
-  test("remember prints a helpful error when no content is provided", () => {
-    const { result } = runCli(["remember"]);
+  test("remember prints a helpful error when no content is provided", async () => {
+    const { result } = await runCli(["remember"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("Memory content is required");
   });
 
-  test("remember rejects names with parent-directory traversal", () => {
-    const { result } = runCli(["remember", "Sensitive note", "--name", "../../etc/passwd"]);
+  test("remember rejects names with parent-directory traversal", async () => {
+    const { result } = await runCli(["remember", "Sensitive note", "--name", "../../etc/passwd"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("relative path without '.' or '..' segments");
   });
 
-  test("import stores a knowledge document using the source filename by default", () => {
+  test("import stores a knowledge document using the source filename by default", async () => {
     const sourceDir = makeTempDir("akm-capture-source-");
     const sourcePath = path.join(sourceDir, "release-notes.md");
     fs.writeFileSync(sourcePath, "# Release Notes\n\nShip it.\n", "utf8");
 
-    const { stashDir, result } = runCli(["import", sourcePath]);
+    const { stashDir, result } = await runCli(["import", sourcePath]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -118,13 +166,15 @@ describe("capture commands", () => {
     expect(json.ref).toBe("knowledge:release-notes");
     expect(fs.existsSync(path.join(stashDir, "knowledge", "release-notes.md"))).toBe(true);
 
-    const show = runCli(["show", json.ref], { stashDir }).result;
+    const show = (await runCli(["show", json.ref], { stashDir })).result;
     expect(show.status).toBe(0);
     expect(show.stdout).toContain("# Release Notes");
   });
 
   test("import accepts stdin when source is '-'", () => {
-    const { stashDir, result } = runCli(["import", "-", "--name", "scratch-notes"], {
+    // KEPT AS A SUBPROCESS: `import -` reads stdin via fs.readFileSync(0); the
+    // in-process harness has no stdin shim. spawnCli feeds the piped input.
+    const { stashDir, result } = spawnCli(["import", "-", "--name", "scratch-notes"], {
       input: "# Scratch Notes\n\nRemember the rollout freeze.\n",
     });
     expect(result.status).toBe(0);
@@ -134,19 +184,19 @@ describe("capture commands", () => {
     expect(fs.existsSync(path.join(stashDir, "knowledge", "scratch-notes.md"))).toBe(true);
   });
 
-  test("import rejects an empty normalized knowledge name", () => {
+  test("import rejects an empty normalized knowledge name", async () => {
     const sourceDir = makeTempDir("akm-capture-source-");
     const sourcePath = path.join(sourceDir, "notes.md");
     fs.writeFileSync(sourcePath, "# Notes\n", "utf8");
 
-    const { result } = runCli(["import", sourcePath, "--name", ".md"]);
+    const { result } = await runCli(["import", sourcePath, "--name", ".md"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("Asset name cannot be empty");
   });
 
-  test("graph summary and entities commands return structured output", () => {
+  test("graph summary and entities commands return structured output", async () => {
     const stashDir = makeTempDir("akm-capture-graph-stash-");
     const xdgData = makeTempDir("akm-capture-graph-data-");
     seedStoredGraph(
@@ -176,20 +226,24 @@ describe("capture commands", () => {
       path.join(xdgData, "akm", "index.db"),
     );
 
-    const summary = runCli(["graph", "summary", "--format=json"], {
-      stashDir,
-      env: { XDG_DATA_HOME: xdgData },
-    }).result;
+    const summary = (
+      await runCli(["graph", "summary", "--format=json"], {
+        stashDir,
+        env: { XDG_DATA_HOME: xdgData },
+      })
+    ).result;
     expect(summary.status).toBe(0);
     const summaryJson = JSON.parse(summary.stdout) as { shape: string; entityCount: number; relationCount: number };
     expect(summaryJson.shape).toBe("graph-summary");
     expect(summaryJson.entityCount).toBe(2);
     expect(summaryJson.relationCount).toBe(1);
 
-    const entities = runCli(["graph", "entities", "--limit", "1", "--format=json"], {
-      stashDir,
-      env: { XDG_DATA_HOME: xdgData },
-    }).result;
+    const entities = (
+      await runCli(["graph", "entities", "--limit", "1", "--format=json"], {
+        stashDir,
+        env: { XDG_DATA_HOME: xdgData },
+      })
+    ).result;
     expect(entities.status).toBe(0);
     const entitiesJson = JSON.parse(entities.stdout) as {
       shape: string;

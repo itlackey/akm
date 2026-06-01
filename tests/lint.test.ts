@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmLint } from "../src/commands/lint";
+import { runCliCapture } from "./_helpers/cli";
+import { withEnv } from "./_helpers/sandbox";
 
 // ── Temp dir management ──────────────────────────────────────────────────────
 
@@ -636,20 +637,19 @@ describe("akmLint result.ok semantics", () => {
 
 // ── CLI exit-code semantics ─────────────────────────────────────────────────
 //
-// Real CLI shell-out so we cover the args-to-process.exit wiring in
-// src/cli.ts, not just the akmLint() return value. Each spawnSync runs
-// `bun ./src/cli.ts lint …` against a temp stash so the test is isolated.
-
+// Drive the real CLI in-process (via runCliCapture) so we cover the
+// args-to-process.exit wiring in src/cli.ts, not just the akmLint() return
+// value. Migrated from spawnSync("bun", [cli, ...]): the harness shims
+// process.exit into the returned `code`, so `lint --fail-on-flagged`'s
+// `process.exit(EXIT_GENERAL)` surfaces as code=1 after the JSON envelope is
+// emitted to stdout. Each run targets a temp stash via `--dir` and wraps the
+// call in `withEnv` (the allowlisted env wrapper) to pin HOME/XDG at the stash
+// dir for isolation, matching what the spawned subprocess got, restoring env
+// afterward so the per-test isolation tripwire stays satisfied.
 describe("akm lint CLI exit code", () => {
-  const repoRoot = path.resolve(import.meta.dir, "..");
-
-  function runLintCli(stashDir: string, extraArgs: string[] = []): { status: number | null; stdout: string } {
-    const result = spawnSync("bun", ["./src/cli.ts", "lint", "--dir", stashDir, "--format", "json", ...extraArgs], {
-      encoding: "utf8",
-      timeout: 30_000,
-      cwd: repoRoot,
-      env: {
-        ...process.env,
+  function runLintCli(stashDir: string, extraArgs: string[] = []): Promise<{ status: number; stdout: string }> {
+    return withEnv(
+      {
         HOME: stashDir,
         XDG_CONFIG_HOME: stashDir,
         XDG_DATA_HOME: stashDir,
@@ -657,22 +657,25 @@ describe("akm lint CLI exit code", () => {
         XDG_CACHE_HOME: stashDir,
         AKM_STASH_DIR: undefined,
       },
-    });
-    return { status: result.status, stdout: result.stdout };
+      async () => {
+        const { code, stdout } = await runCliCapture(["lint", "--dir", stashDir, "--format", "json", ...extraArgs]);
+        return { status: code, stdout };
+      },
+    );
   }
 
-  test("exits 0 when findings exist and --fail-on-flagged is not set", () => {
+  test("exits 0 when findings exist and --fail-on-flagged is not set", async () => {
     const stashDir = makeTempStash();
     writeFile(stashDir, "agents", "broken.md", `---\ndescription: Has colon: here\n---\n\nBody.\n`);
 
-    const { status, stdout } = runLintCli(stashDir);
+    const { status, stdout } = await runLintCli(stashDir);
     expect(status).toBe(0);
     const payload = JSON.parse(stdout) as { ok: boolean; summary: { flagged: number } };
     expect(payload.ok).toBe(true);
     expect(payload.summary.flagged).toBeGreaterThan(0);
   });
 
-  test("exits 0 with --fail-on-flagged when there are no findings", () => {
+  test("exits 0 with --fail-on-flagged when there are no findings", async () => {
     const stashDir = makeTempStash();
     writeFile(
       stashDir,
@@ -681,18 +684,18 @@ describe("akm lint CLI exit code", () => {
       `---\nname: clean\ntype: skill\ndescription: "Does X cleanly"\nupdated: 2025-01-01\n---\n\nClean body content without placeholders.\n`,
     );
 
-    const { status, stdout } = runLintCli(stashDir, ["--fail-on-flagged"]);
+    const { status, stdout } = await runLintCli(stashDir, ["--fail-on-flagged"]);
     expect(status).toBe(0);
     const payload = JSON.parse(stdout) as { ok: boolean; summary: { flagged: number } };
     expect(payload.ok).toBe(true);
     expect(payload.summary.flagged).toBe(0);
   });
 
-  test("exits non-zero with --fail-on-flagged when findings exist", () => {
+  test("exits non-zero with --fail-on-flagged when findings exist", async () => {
     const stashDir = makeTempStash();
     writeFile(stashDir, "agents", "broken.md", `---\ndescription: Has colon: here\n---\n\nBody.\n`);
 
-    const { status, stdout } = runLintCli(stashDir, ["--fail-on-flagged"]);
+    const { status, stdout } = await runLintCli(stashDir, ["--fail-on-flagged"]);
     expect(status).not.toBe(0);
     // The result envelope is still written before exit; `ok` stays true
     // because the lint run itself completed without error.

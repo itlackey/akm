@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runCliCapture } from "../_helpers/cli";
+import { withEnv } from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -24,28 +24,34 @@ function writeConfig(configDir: string, config: Record<string, unknown>): void {
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function runCli(stashDir: string, args: string[], config?: Record<string, unknown>): string {
+// In-process replacement for the former spawnSync("bun", [CLI, ...]). Each call
+// gets fresh, isolated XDG dirs (cache/config/data/state) and the test's stash,
+// installed via the allowlisted `withEnv` wrapper so the env is restored after
+// the run and the per-test isolation tripwire stays satisfied. The harness
+// (runCliCapture) resets the config/output singletons per call, matching
+// fresh-subprocess semantics. Throws on a non-zero exit, like the spawn version.
+async function runCli(stashDir: string, args: string[], config?: Record<string, unknown>): Promise<string> {
   const xdgCache = makeTempDir("akm-agent-cache-");
   const xdgConfig = makeTempDir("akm-agent-config-");
   const xdgData = makeTempDir("akm-agent-data-");
   const xdgState = makeTempDir("akm-agent-state-");
   if (config) writeConfig(xdgConfig, config);
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
+  return withEnv(
+    {
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
     },
-  });
-  if (result.status !== 0) {
-    throw new Error(`CLI exited ${result.status}:\n${result.stderr}`);
-  }
-  return result.stdout.trim();
+    async () => {
+      const { code, stdout, stderr } = await runCliCapture(args);
+      if (code !== 0) {
+        throw new Error(`CLI exited ${code}:\n${stderr}`);
+      }
+      return stdout.trim();
+    },
+  );
 }
 
 afterEach(() => {
@@ -69,9 +75,9 @@ describe("--for-agent output mode", () => {
     return stashDir;
   }
 
-  test("--for-agent search output has only: name, ref, type, description, action, score", () => {
+  test("--for-agent search output has only: name, ref, type, description, action, score", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "architect", "--format=json", "--for-agent"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--for-agent"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
     expect(json.hits.length).toBeGreaterThan(0);
@@ -90,9 +96,9 @@ describe("--for-agent output mode", () => {
     }
   });
 
-  test("--for-agent search output does NOT have: schemaVersion, stashDir, path, whyMatched, origin, editable", () => {
+  test("--for-agent search output does NOT have: schemaVersion, stashDir, path, whyMatched, origin, editable", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "architect", "--format=json", "--for-agent"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--for-agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Top-level envelope must not have these
@@ -113,9 +119,9 @@ describe("--for-agent output mode", () => {
     }
   });
 
-  test("--for-agent show output strips non-essential fields", () => {
+  test("--for-agent show output strips non-essential fields", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["show", "command:release.md", "--format=json", "--for-agent"]);
+    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--for-agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Must have essential fields
@@ -130,27 +136,27 @@ describe("--for-agent output mode", () => {
     expect(json).not.toHaveProperty("editHint");
   });
 
-  test("--for-agent show output keeps content/run/action", () => {
+  test("--for-agent show output keeps content/run/action", async () => {
     const stashDir = makeStash();
 
     // Command has template content
-    const cmdOutput = runCli(stashDir, ["show", "command:release.md", "--format=json", "--for-agent"]);
+    const cmdOutput = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--for-agent"]);
     const cmdJson = JSON.parse(cmdOutput) as Record<string, unknown>;
     expect(cmdJson).toHaveProperty("template");
     expect(cmdJson).toHaveProperty("action");
 
     // Script has run field
-    const scriptOutput = runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--for-agent"]);
+    const scriptOutput = await runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--for-agent"]);
     const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
     expect(scriptJson).toHaveProperty("run");
     expect(scriptJson).toHaveProperty("action");
   }, 30_000);
 
-  test("standard output (without --for-agent) is unchanged", () => {
+  test("standard output (without --for-agent) is unchanged", async () => {
     const stashDir = makeStash();
 
     // Default brief search still has same shape
-    const searchOutput = runCli(stashDir, ["search", "architect", "--format=json"]);
+    const searchOutput = await runCli(stashDir, ["search", "architect", "--format=json"]);
     const searchJson = JSON.parse(searchOutput) as { hits: Array<Record<string, unknown>> };
     // hits is always present; warnings may appear when semantic search is pending
     expect(Object.keys(searchJson)).toContain("hits");
@@ -161,7 +167,7 @@ describe("--for-agent output mode", () => {
     expect(hit).toHaveProperty("action");
 
     // Default show still has origin
-    const showOutput = runCli(stashDir, ["show", "command:release.md", "--format=json"]);
+    const showOutput = await runCli(stashDir, ["show", "command:release.md", "--format=json"]);
     const showJson = JSON.parse(showOutput) as Record<string, unknown>;
     expect(showJson).toHaveProperty("origin");
   });
@@ -178,11 +184,11 @@ describe("--format jsonl", () => {
     return stashDir;
   }
 
-  test("JSONL format outputs one JSON object per line for search hits", () => {
+  test("JSONL format outputs one JSON object per line for search hits", async () => {
     const stashDir = makeStash();
     // QA #14: empty query now rejects; use a real keyword that matches stash assets.
     // Use "architect" since architect.md has that word in both name and content.
-    const output = runCli(stashDir, ["search", "architect", "--format=jsonl"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=jsonl"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     // Should have at least 1 hit
@@ -196,9 +202,9 @@ describe("--format jsonl", () => {
     }
   });
 
-  test("each JSONL line is valid parseable JSON", () => {
+  test("each JSONL line is valid parseable JSON", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "deploy", "--format=jsonl"]);
+    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     for (const line of lines) {
@@ -209,9 +215,9 @@ describe("--format jsonl", () => {
     }
   });
 
-  test("JSONL combined with --for-agent uses agent shaping", () => {
+  test("JSONL combined with --for-agent uses agent shaping", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "deploy", "--format=jsonl", "--for-agent"]);
+    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl", "--for-agent"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     for (const line of lines) {

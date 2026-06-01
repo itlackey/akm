@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +7,7 @@ import type { AkmImproveResult } from "../src/commands/improve";
 import { appendEvent } from "../src/core/events";
 import { openStateDatabase, recordImproveRun, upsertTaskHistory } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
+import { runCliCapture } from "./_helpers/cli";
 
 function fixtureResult(partial: Record<string, unknown>): AkmImproveResult {
   return partial as unknown as AkmImproveResult;
@@ -1349,60 +1349,40 @@ describe("health — distill skipReasons", () => {
 // The CHANGELOG advertises `akm health` as a runtime/CI monitoring command:
 // callers chain `akm health && deploy`, which requires non-zero exit on a hard
 // failure (and a parseable JSON envelope on stdout for diagnostics). These
-// tests spawn the real CLI so the exit code is observable to the OS, then
-// assert that (a) stdout is still valid JSON and (b) the exit code matches the
-// `status` discriminant in the envelope.
+// tests drive the real CLI (in-process, via runCliCapture) so the exit code is
+// observable, then assert that (a) stdout is still valid JSON and (b) the exit
+// code matches the `status` discriminant in the envelope.
+//
+// Migrated from spawnSync("bun", [cli, ...]) to the in-process harness. The
+// harness reads state.db from the XDG_* dirs in process.env at call time
+// (state-db opens fresh per call), so the per-test dirs are pinned onto
+// process.env (over the fresh dirs the beforeEach already installs) before both
+// the seeding and the in-process run. afterEach restores the saved env.
 describe("akm health CLI exit code", () => {
-  const repoRoot = path.resolve(import.meta.dir, "..");
-  const cliPath = path.join(repoRoot, "src", "cli.ts");
+  test("exits 0 when health passes (no failing checks)", async () => {
+    process.env.HOME = makeTempDir("akm-health-home-cli-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-health-cache-cli-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-cli-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-cli-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-cli-");
 
-  function spawnAkmHealth(envOverrides: Record<string, string>): { stdout: string; status: number } {
-    const result = spawnSync("bun", [cliPath, "health", "--format", "json"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        AKM_STASH_DIR: undefined,
-        ...envOverrides,
-      },
-    });
-    return { stdout: result.stdout ?? "", status: result.status ?? 1 };
-  }
-
-  test("exits 0 when health passes (no failing checks)", () => {
-    const xdgCache = makeTempDir("akm-health-cache-cli-");
-    const xdgConfig = makeTempDir("akm-health-config-cli-");
-    const xdgData = makeTempDir("akm-health-data-cli-");
-    const xdgState = makeTempDir("akm-health-state-cli-");
-    const home = makeTempDir("akm-health-home-cli-");
-    const { stdout, status } = spawnAkmHealth({
-      HOME: home,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    });
+    const { stdout, code } = await runCliCapture(["health", "--format", "json"]);
     // stdout must be valid JSON regardless of exit code so monitors can parse.
     const parsed = JSON.parse(stdout);
     expect(parsed.status).toBe("pass");
-    expect(status).toBe(0);
+    expect(code).toBe(0);
   });
 
-  test("exits non-zero (1) when status is 'fail' due to missing task log", () => {
-    const xdgCache = makeTempDir("akm-health-cache-cli-fail-");
-    const xdgConfig = makeTempDir("akm-health-config-cli-fail-");
-    const xdgData = makeTempDir("akm-health-data-cli-fail-");
-    const xdgState = makeTempDir("akm-health-state-cli-fail-");
-    const home = makeTempDir("akm-health-home-cli-fail-");
+  test("exits non-zero (1) when status is 'fail' due to missing task log", async () => {
+    process.env.HOME = makeTempDir("akm-health-home-cli-fail-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-health-cache-cli-fail-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-cli-fail-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-cli-fail-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-cli-fail-");
 
     // Seed state.db with a task_history row that references a log_path that
     // does NOT exist on disk. That forces the deterministic `task-log-backing`
     // hardCheck to fail, which sets overall status="fail".
-    process.env.XDG_CACHE_HOME = xdgCache;
-    process.env.XDG_CONFIG_HOME = xdgConfig;
-    process.env.XDG_DATA_HOME = xdgData;
-    process.env.XDG_STATE_HOME = xdgState;
     const db = openStateDatabase();
     try {
       upsertTaskHistory(db, {
@@ -1420,17 +1400,11 @@ describe("akm health CLI exit code", () => {
       db.close();
     }
 
-    const { stdout, status } = spawnAkmHealth({
-      HOME: home,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    });
+    const { stdout, code } = await runCliCapture(["health", "--format", "json"]);
     // Exit code must propagate AFTER JSON is flushed, so stdout is still
     // parseable JSON for monitoring scripts.
     const parsed = JSON.parse(stdout);
     expect(parsed.status).toBe("fail");
-    expect(status).toBe(1);
+    expect(code).toBe(1);
   });
 });
