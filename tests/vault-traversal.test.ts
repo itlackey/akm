@@ -12,41 +12,56 @@
  *            validateName, the resolved absolute path is asserted to stay
  *            inside <stash>/vaults/ before any read/write is attempted.
  *
- * The CLI tests below exercise both guards end-to-end via `bun src/cli.ts`.
+ * Migrated from per-test spawnSync("bun", ["src/cli.ts", ...]) to the shared
+ * in-process harness (tests/_helpers/cli.ts). The traversal-rejection cases all
+ * throw before any stdin read or child spawn, so they run in-process. The one
+ * happy-path case ("legitimate vault name succeeds") still spawns a real
+ * subprocess because `vault set` reads its value from process.stdin, which the
+ * in-process console-capture harness cannot feed.
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
+import { runCliCapture } from "./_helpers/cli";
+import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-const tempDirs: string[] = [];
-
-function makeTempDir(prefix = "akm-vtrav-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+const disposers: SandboxedDir[] = [];
 
 afterAll(() => {
-  for (const dir of tempDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  for (const d of disposers) d.cleanup();
+  disposers.length = 0;
 });
-
-const xdgCache = makeTempDir("akm-vtrav-cache-");
-const xdgConfig = makeTempDir("akm-vtrav-config-");
-const xdgData = makeTempDir("akm-vtrav-data-");
-const xdgState = makeTempDir("akm-vtrav-state-");
-const isolatedHome = makeTempDir("akm-vtrav-home-");
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
 
-function runCli(
+/**
+ * In-process CLI runner. Pins AKM_STASH_DIR to the supplied stash for the
+ * duration of the call (via the allowlisted withEnv helper) and resets the
+ * embedder/graph singletons so the run reads the pinned env, matching what a
+ * fresh subprocess got for free. runCliCapture itself resets the config and
+ * output-mode singletons.
+ */
+async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
+  return withEnv({ AKM_STASH_DIR: stashDir, AKM_CONFIG_DIR: undefined }, async () => {
+    clearEmbeddingCache();
+    resetLocalEmbedder();
+    resetGraphBoostCache();
+    const { stdout, stderr, code } = await runCliCapture(args);
+    return { stdout, stderr, status: code };
+  });
+}
+
+/**
+ * Subprocess runner, retained for the one happy-path test. `vault set` reads
+ * its value from process.stdin; the in-process harness has no stdin, so this
+ * case must spawn a real Bun process to pipe the value in.
+ */
+function spawnCli(
   args: string[],
   stashDir: string,
   stdinInput?: string,
@@ -58,11 +73,6 @@ function runCli(
     input: stdinInput,
     env: {
       ...process.env,
-      HOME: isolatedHome,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: stashDir,
     },
   });
@@ -73,14 +83,28 @@ function runCli(
   };
 }
 
+beforeEach(() => {
+  clearEmbeddingCache();
+  resetLocalEmbedder();
+  resetGraphBoostCache();
+});
+
+afterEach(() => {
+  clearEmbeddingCache();
+  resetLocalEmbedder();
+  resetGraphBoostCache();
+});
+
 // ── Directory traversal rejection tests ──────────────────────────────────────
 
 describe("vault set: directory traversal rejection", () => {
-  test("rejects ../../evil as vault name in vault set", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash-");
+  test("rejects ../../evil as vault name in vault set", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "set", "../../evil", "KEY"], stashDir, "value");
+    const { status, stderr } = await runCli(["vault", "set", "../../evil", "KEY"], stashDir);
 
     // Must fail — never succeed
     expect(status).not.toBe(0);
@@ -94,72 +118,89 @@ describe("vault set: directory traversal rejection", () => {
     expect(fs.existsSync(parentEscapedPath)).toBe(false);
   });
 
-  test("rejects vault:../../evil (with type prefix) in vault set", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash2-");
+  test("rejects vault:../../evil (with type prefix) in vault set", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "set", "vault:../../evil", "KEY"], stashDir, "value");
+    const { status, stderr } = await runCli(["vault", "set", "vault:../../evil", "KEY"], stashDir);
 
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects nested traversal foo/../../evil in vault set", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash3-");
+  test("rejects nested traversal foo/../../evil in vault set", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "set", "foo/../../evil", "KEY"], stashDir, "value");
+    const { status, stderr } = await runCli(["vault", "set", "foo/../../evil", "KEY"], stashDir);
 
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects ../../evil in vault path", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash4-");
+  test("rejects ../../evil in vault path", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "path", "../../evil"], stashDir);
+    const { status, stderr } = await runCli(["vault", "path", "../../evil"], stashDir);
 
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects ../../evil in vault create", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash5-");
+  test("rejects ../../evil in vault create", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "create", "../../evil"], stashDir);
+    const { status, stderr } = await runCli(["vault", "create", "../../evil"], stashDir);
 
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects ../../evil in vault unset", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash7-");
+  test("rejects ../../evil in vault unset", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "unset", "../../evil", "KEY"], stashDir);
+    const { status, stderr } = await runCli(["vault", "unset", "../../evil", "KEY"], stashDir);
 
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects ../../evil in vault run", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash8-");
+  test("rejects ../../evil in vault run", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
 
-    const { status, stderr } = runCli(["vault", "run", "../../evil", "--", "echo", "hi"], stashDir);
+    const { status, stderr } = await runCli(["vault", "run", "../../evil", "--", "echo", "hi"], stashDir);
 
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
+  // KEPT AS A SUBPROCESS: `vault set` reads its value from process.stdin, which
+  // the in-process console-capture harness cannot feed. Spawning a real Bun
+  // process is the faithful way to exercise the happy-path write.
   test("legitimate vault name succeeds", () => {
-    const stashDir = makeTempDir("akm-vtrav-stash6-");
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const stashDir = stash.dir;
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const { status, stderr } = runCli(["vault", "set", "vault:prod", "MY_KEY"], stashDir, "myvalue");
+    const { status, stderr } = spawnCli(["vault", "set", "vault:prod", "MY_KEY"], stashDir, "myvalue");
 
     expect(status).toBe(0);
     expect(stderr.trim()).toBe("");

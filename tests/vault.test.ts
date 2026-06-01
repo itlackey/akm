@@ -14,8 +14,11 @@ import {
 } from "../src/commands/vault";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
+import { resetGraphBoostCache } from "../src/indexer/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
+import { runCliCapture } from "./_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -35,28 +38,56 @@ afterAll(() => {
 
 // ── CLI helpers (shared by the folded "vault CLI — *" describe blocks) ────────
 //
-// These blocks spawn `bun src/cli.ts vault ...` as a subprocess to exercise the
-// command surface (folded from the former vault-qa-fixes.test.ts and
-// vault-set-legacy-form.test.ts). They use a single isolated HOME + XDG sandbox
-// and pass per-test AKM_STASH_DIR via the runCli env argument.
+// These blocks exercise the `akm vault ...` command surface (folded from the
+// former vault-qa-fixes.test.ts and vault-set-legacy-form.test.ts).
+//
+// Most cases were migrated from per-test spawnSync("bun", ["src/cli.ts", ...])
+// to the shared in-process harness (tests/_helpers/cli.ts), which drives the
+// citty command directly with no subprocess startup cost. The cases that pipe a
+// value through process.stdin (`vault set` reading stdin) cannot use the
+// in-process harness — it has no way to feed stdin — so they still spawn a real
+// Bun process via spawnCli. The legacy-form rejection cases throw before any
+// stdin read, so they run in-process.
 
 function makeTempDir(prefix = "vqa"): string {
   // Reuse tmpDir's tracked-cleanup list; the cosmetic prefix is preserved.
   return tmpDir(prefix);
 }
 
-const cliXdgCache = makeTempDir("vqa-cache");
+// Config dir used by the cross-stash aggregation test (test 6), which writes a
+// config.json under <xdgConfig>/akm and points the CLI at it via AKM_CONFIG_DIR.
 const cliXdgConfig = makeTempDir("vqa-config");
-const cliXdgData = makeTempDir("vqa-data");
-const cliXdgState = makeTempDir("vqa-state");
-const cliHome = makeTempDir("vqa-home");
 // Alias kept so folded test bodies that reference `xdgConfig` resolve correctly.
 const xdgConfig = cliXdgConfig;
 
 const cliRepoRoot = path.resolve(import.meta.dir, "..");
 const cliPath = path.join(cliRepoRoot, "src", "cli.ts");
 
-function runCli(
+/**
+ * In-process CLI runner. Pins the AKM env (stash + any extra vars) for the
+ * duration of the call via the allowlisted withEnv helper and resets the
+ * embedder/graph singletons so the run reads the pinned env. runCliCapture
+ * resets the config and output-mode singletons itself.
+ */
+async function runCli(
+  args: string[],
+  extraEnv: Record<string, string | undefined> = {},
+): Promise<{ stdout: string; stderr: string; status: number }> {
+  return withEnv({ AKM_STASH_DIR: undefined, AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
+    clearEmbeddingCache();
+    resetLocalEmbedder();
+    resetGraphBoostCache();
+    const { stdout, stderr, code } = await runCliCapture(args);
+    return { stdout, stderr, status: code };
+  });
+}
+
+/**
+ * Subprocess runner, retained for the `vault set` cases that pipe a value
+ * through process.stdin. Passes env to spawnSync rather than mutating
+ * process.env, so it does not affect the in-process tests.
+ */
+function spawnCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
   stdinInput?: string,
@@ -68,11 +99,6 @@ function runCli(
     input: stdinInput,
     env: {
       ...process.env,
-      HOME: cliHome,
-      XDG_CACHE_HOME: cliXdgCache,
-      XDG_CONFIG_HOME: cliXdgConfig,
-      XDG_DATA_HOME: cliXdgData,
-      XDG_STATE_HOME: cliXdgState,
       AKM_STASH_DIR: undefined,
       ...extraEnv,
     },
@@ -595,12 +621,12 @@ describe("vault CLI — qa fixes", () => {
 });
 
 describe("vault list", () => {
-  test("5. vault list --format json returns all vaults with key names", () => {
+  test("5. vault list --format json returns all vaults with key names", async () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
 
-    const result = runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(0);
     expect(result.stderr).not.toContain("Vault not found: vault:json");
@@ -616,7 +642,7 @@ describe("vault list", () => {
     expect(parsed.vaults[0]).not.toHaveProperty("path");
   });
 
-  test("6. vault list aggregates vaults across configured stashes", () => {
+  test("6. vault list aggregates vaults across configured stashes", async () => {
     const primaryStash = makeTempDir("akm-vqa-stash-primary-");
     const teamStash = makeTempDir("akm-vqa-stash-team-");
     fs.mkdirSync(path.join(primaryStash, "vaults"), { recursive: true });
@@ -633,7 +659,10 @@ describe("vault list", () => {
       "utf8",
     );
 
-    const result = runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: primaryStash });
+    const result = await runCli(["vault", "list", "--format", "json"], {
+      AKM_STASH_DIR: primaryStash,
+      AKM_CONFIG_DIR: path.join(xdgConfig, "akm"),
+    });
 
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout.trim());
@@ -645,12 +674,12 @@ describe("vault list", () => {
     );
   });
 
-  test("7. vault list text output uses markdown headings and bullets", () => {
+  test("7. vault list text output uses markdown headings and bullets", async () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "json.env"), "# json vault\nAPI_KEY=secret\nSECOND=value\n", "utf8");
 
-    const result = runCli(["vault", "list", "--format", "text"], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["vault", "list", "--format", "text"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("## vault:json");
@@ -662,12 +691,14 @@ describe("vault list", () => {
 // ── vault set --comment flag (CLI tests) ─────────────────────────────────────
 
 describe("vault set: --comment flag", () => {
+  // KEPT AS A SUBPROCESS: `vault set` reads its value from process.stdin
+  // ("tok123" piped in here), which the in-process harness cannot feed.
   test("11. vault set prod KEY val --comment writes a comment line above the key", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(
+    const result = spawnCli(
       ["vault", "set", "prod", "AUTH_TOKEN", "--comment", "auth secret"],
       {
         AKM_STASH_DIR: stashDir,
@@ -689,7 +720,7 @@ describe("vault set: --comment flag", () => {
 });
 
 describe("vault CLI — set legacy positional form", () => {
-  test("rejects 3-positional form `vault set <ref> <KEY> <VALUE>` with exit 2 and migration hint", () => {
+  test("rejects 3-positional form `vault set <ref> <KEY> <VALUE>` with exit 2 and migration hint", async () => {
     const stashDir = makeTempDir("akm-vault-legacy-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     // Pre-existing secret — must NOT be clobbered by the rejected call.
@@ -697,12 +728,9 @@ describe("vault CLI — set legacy positional form", () => {
     const originalContent = "API_KEY=preexisting-secret\n";
     fs.writeFileSync(vaultPath, originalContent, "utf8");
 
-    const result = runCli(
-      ["vault", "set", "prod", "API_KEY", "newvalue"],
-      { AKM_STASH_DIR: stashDir },
-      // No stdin — simulates cron/CI invocation.
-      "",
-    );
+    // In-process: the legacy-form guard throws before any stdin read, so the
+    // "no stdin — simulates cron/CI" semantics still hold (no value is read).
+    const result = await runCli(["vault", "set", "prod", "API_KEY", "newvalue"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(2);
     // Migration hint must mention the supported alternatives.
@@ -712,14 +740,15 @@ describe("vault CLI — set legacy positional form", () => {
     expect(fs.readFileSync(vaultPath, "utf8")).toBe(originalContent);
   });
 
-  test("rejects KEY=VALUE form `vault set <ref> KEY=VALUE` with exit 2 and migration hint", () => {
+  test("rejects KEY=VALUE form `vault set <ref> KEY=VALUE` with exit 2 and migration hint", async () => {
     const stashDir = makeTempDir("akm-vault-legacy-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
     const originalContent = "API_KEY=preexisting-secret\n";
     fs.writeFileSync(vaultPath, originalContent, "utf8");
 
-    const result = runCli(["vault", "set", "prod", "API_KEY=newvalue"], { AKM_STASH_DIR: stashDir }, "");
+    // In-process: the legacy-form guard throws before any stdin read.
+    const result = await runCli(["vault", "set", "prod", "API_KEY=newvalue"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("no longer accepts the value via argv");
@@ -728,12 +757,12 @@ describe("vault CLI — set legacy positional form", () => {
     expect(fs.readFileSync(vaultPath, "utf8")).toBe(originalContent);
   });
 
-  test("supported --from-env form still succeeds", () => {
+  test("supported --from-env form still succeeds", async () => {
     const stashDir = makeTempDir("akm-vault-legacy-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "API_KEY", "--from-env", "AKM_TEST_VALUE"], {
+    const result = await runCli(["vault", "set", "prod", "API_KEY", "--from-env", "AKM_TEST_VALUE"], {
       AKM_STASH_DIR: stashDir,
       AKM_TEST_VALUE: "supplied-via-env",
     });
@@ -742,12 +771,13 @@ describe("vault CLI — set legacy positional form", () => {
     expect(fs.readFileSync(path.join(stashDir, "vaults", "prod.env"), "utf8")).toContain("API_KEY=supplied-via-env");
   });
 
+  // KEPT AS A SUBPROCESS: reads the value from process.stdin ("supplied-via-stdin").
   test("supported stdin form still succeeds", () => {
     const stashDir = makeTempDir("akm-vault-legacy-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "API_KEY"], { AKM_STASH_DIR: stashDir }, "supplied-via-stdin");
+    const result = spawnCli(["vault", "set", "prod", "API_KEY"], { AKM_STASH_DIR: stashDir }, "supplied-via-stdin");
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(path.join(stashDir, "vaults", "prod.env"), "utf8")).toContain("API_KEY=supplied-via-stdin");

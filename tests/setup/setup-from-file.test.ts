@@ -15,13 +15,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { ConfigError } from "../../src/core/errors";
+import { resetGraphBoostCache } from "../../src/indexer/graph-boost";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { loadSetupConfigFromFile } from "../../src/setup/setup";
+import { runCliCapture } from "../_helpers/cli";
+import { withEnv } from "../_helpers/sandbox";
 
 let workDir: string;
 
@@ -183,21 +186,30 @@ describe("loadSetupConfigFromFile", () => {
 });
 
 // ── CLI integration ─────────────────────────────────────────────────────────
+//
+// Migrated from per-test spawnSync("bun", ["src/cli.ts", ...]) to the shared
+// in-process harness (tests/_helpers/cli.ts). Both cases error before `setup`
+// reaches any interactive prompt or writes config — the --from/--config
+// mutual-exclusion guard and the loadSetupConfigFromFile "not found" check both
+// throw early — so they run safely in-process with no prompt hang.
 
-const REPO_ROOT = path.resolve(import.meta.dir, "../..");
-const CLI_ENTRY = path.join(REPO_ROOT, "src/cli.ts");
-
-function runCli(argv: string[], env: NodeJS.ProcessEnv = {}) {
-  return spawnSync("bun", [CLI_ENTRY, ...argv], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
-    timeout: 30_000,
+/**
+ * In-process CLI runner. Pins the supplied env for the duration of the call via
+ * the allowlisted withEnv helper and resets the embedder/graph singletons.
+ * runCliCapture resets the config and output-mode singletons itself.
+ */
+async function runCli(argv: string[], env: Record<string, string | undefined> = {}) {
+  return withEnv(env, async () => {
+    clearEmbeddingCache();
+    resetLocalEmbedder();
+    resetGraphBoostCache();
+    const { stdout, stderr, code } = await runCliCapture(argv);
+    return { status: code, stdout, stderr };
   });
 }
 
 describe("akm setup --from <file> CLI integration", () => {
-  test("rejects --from and --config simultaneously with INVALID_FLAG_VALUE", () => {
+  test("rejects --from and --config simultaneously with INVALID_FLAG_VALUE", async () => {
     const configFile = path.join(workDir, "config.json");
     fs.writeFileSync(configFile, JSON.stringify({ stashDir: workDir }), "utf8");
 
@@ -205,7 +217,7 @@ describe("akm setup --from <file> CLI integration", () => {
     const xdgData = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-data-"));
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-state-"));
     try {
-      const result = runCli(["setup", "--from", configFile, "--config", '{"stashDir":"/x"}'], {
+      const result = await runCli(["setup", "--from", configFile, "--config", '{"stashDir":"/x"}'], {
         XDG_CONFIG_HOME: xdgConfig,
         XDG_DATA_HOME: xdgData,
         XDG_STATE_HOME: xdgState,
@@ -222,12 +234,12 @@ describe("akm setup --from <file> CLI integration", () => {
     }
   });
 
-  test("rejects --from <nonexistent-path> with a friendly error", () => {
+  test("rejects --from <nonexistent-path> with a friendly error", async () => {
     const xdgConfig = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-cfg-"));
     const xdgData = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-data-"));
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-state-"));
     try {
-      const result = runCli(["setup", "--from", path.join(workDir, "missing.json")], {
+      const result = await runCli(["setup", "--from", path.join(workDir, "missing.json")], {
         XDG_CONFIG_HOME: xdgConfig,
         XDG_DATA_HOME: xdgData,
         XDG_STATE_HOME: xdgState,
