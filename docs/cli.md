@@ -1272,26 +1272,34 @@ akm hints
 
 ### env vs secret — which do I use?
 
+Both protect their values identically (values never reach akm's stdout, the
+index, or `akm show`). They differ in **purpose**, not in how well they hide
+data:
+
 | | `env` | `secret` |
 | --- | --- | --- |
-| **Unit** | a whole `.env` file — **many** `KEY=value` pairs | **one** opaque value — one file |
-| **Use for** | app/service config loaded together | a single token, PEM key, cert, or service-account JSON |
-| **Injects** | many env vars at once | one env var (`secret run <ref> <VAR>`) |
+| **Purpose** | **configuration** — a group of related settings for an app/service | **authentication** — one sensitive value used on its own |
+| **Holds** | a `.env` file of **many** `KEY=value` pairs (URLs, flags, and any credentials it needs) | **one** value per file (an API token, PEM key, cert, service-account JSON) |
+| **Sensitivity** | values may or may not be sensitive — **all are protected anyway** | the value is always a credential |
+| **Injects** | many env vars at once (`env run`) | one env var (`secret run <ref> <VAR>`) |
 | **Discoverable** | key *names* (not values) | name only (the whole file is the value) |
 
-**`env` = a `.env` file of many variables you load together. `secret` = one
-opaque value (a key, token, or cert).** Reach for `env` for app config; reach
-for `secret` when one file *is* the credential.
+**`env` is primarily for configuration — a group of related values you load
+together, protected whether or not any are sensitive. `secret` is primarily for
+a single sensitive value used for authentication.** Reach for `env` to load a
+service's config; reach for `secret` when one value *is* an auth credential.
 
 ### env
 
-Manage `.env`-backed **environment files** — many `KEY=value` vars loaded
-together. Each `env` asset is an entire `.env` file stored under `env/` in your
-stash (mode 0600). akm does **not** manage individual entries — you edit the
-`.env` with your own editor (or ingest one with `--from-file`) and akm loads it
-wholesale. The key security property: **env values never appear in structured
-output**. `list` and `show` surface key *names* and comments only; `run` and
-`export` are the supported value-use paths.
+Manage `.env`-backed **environment files** — a group of related **configuration**
+for an app or service (URLs, feature flags, and any credentials it needs),
+loaded together. Each `env` asset is an entire `.env` file stored under `env/`
+in your stash (mode 0600). Values may or may not be sensitive; **akm protects
+them all the same** — key *names* and comments are discoverable, values never
+appear in structured output. akm does **not** manage individual entries — you
+edit the `.env` with your own editor (or ingest one with `--from-file`) and akm
+loads it wholesale. `list` and `show` surface key names + comments only; `run`
+and `export` are the supported value-use paths.
 
 ```sh
 akm env list
@@ -1422,11 +1430,12 @@ generated file can never execute it. `export` **never prints values to stdout**
 
 ### secret
 
-Manage **whole-file secrets** — a PEM private key, an API token, a TLS cert, a
-service-account JSON. Where an [env](#env) file stores `KEY=value` pairs and
-exposes key *names*, a secret's **entire file is the value**, so only the
-secret's *name* is ever surfaced. Each secret is a mode-0600 file under
-`secrets/` in your stash.
+Manage **secrets** — a single sensitive value used on its own for
+**authentication**: an API token, a PEM private key, a TLS cert, a
+service-account JSON. Where an [env](#env) file holds a *group* of related
+configuration and exposes key *names*, a secret is *one* value and its **entire
+file is the value**, so only the secret's *name* is ever surfaced. Each secret
+is a mode-0600 file under `secrets/` in your stash.
 
 This mirrors Docker's secret model (one value per file, mounted at
 `/run/secrets/<name>`, read at runtime, never baked into the image or env at

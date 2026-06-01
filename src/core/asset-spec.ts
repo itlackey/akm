@@ -141,8 +141,9 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     actionBuilder: (ref) =>
       `DEPRECATED (use env): akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with injected env`,
   },
-  // Whole-file secrets (PEM keys, tokens, certs). Unlike `vault` (.env
-  // key/value pairs), the ENTIRE file is the secret value — there is no safe
+  // Secrets — a single sensitive value used on its own for authentication (a
+  // PEM key, API token, TLS cert). Unlike `env` (a group of related .env
+  // configuration), the ENTIRE file is the one secret value — there is no safe
   // region to parse, so only the filename is ever surfaced as metadata. The
   // value reaches a command only via `akm secret run` (injected into a child
   // env var) or `akm secret path` (Docker `_FILE` convention). A secret is any

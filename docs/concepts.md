@@ -76,8 +76,8 @@ my-stash/
   commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
-  env/            # Environment files (.env) — whole-file source/inject
-  secrets/        # Whole-file secrets (one opaque value per file)
+  env/            # Environment files (.env) — groups of related config, loaded whole
+  secrets/        # Secrets — one sensitive value per file (auth tokens, keys, certs)
   workflows/      # Step-by-step workflow documents (.md)
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
    lessons/        # Distilled lessons (.md, see akm improve / proposals)
@@ -95,8 +95,8 @@ There are eleven asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
-| **env** | A whole `.env` environment file | Key names and comments, never values. Key names are intentionally discoverable — they appear in `env list`, search results, and agent context by design. Only values are secret. Inject via `akm env run <ref> -- <cmd>` (the agent-safe path). (`vault` is the deprecated alias, removed in 0.9.0.) |
-| **secret** | A whole-file secret (one opaque value) | Name only — the entire file is the value and never appears in output. Use `akm secret path` / `akm secret run` |
+| **env** | A `.env` file of related **configuration** for an app/service | Key names and comments, never values. Holds a group of related settings (URLs, flags, and any credentials it needs); values may or may not be sensitive but are always protected. Key names are intentionally discoverable — they appear in `env list`, search results, and agent context by design. Inject via `akm env run <ref> -- <cmd>` (the agent-safe path). (`vault` is the deprecated alias, removed in 0.9.0.) |
+| **secret** | A single sensitive value for **authentication** (token, key, cert) | Name only — the entire file is the value and never appears in output. Use for one credential used on its own; for a group of related config use `env`. Access via `akm secret path` / `akm secret run` |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
 | **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |

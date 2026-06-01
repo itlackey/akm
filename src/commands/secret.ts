@@ -5,11 +5,13 @@
 /**
  * Secret asset type — whole-file secret storage.
  *
- * Where a `vault` stores `KEY=value` pairs in a `.env` file and exposes key
- * NAMES as metadata, a `secret` stores a single opaque value: the ENTIRE file
- * is the secret (a PEM private key, an API token, a TLS cert, a
- * service-account JSON). There is no safe region to parse, so only the
- * filename is ever surfaced.
+ * A `secret` holds a single SENSITIVE value used on its own for authentication
+ * (a PEM private key, an API token, a TLS cert, a service-account JSON): the
+ * ENTIRE file is the secret. There is no safe region to parse, so only the
+ * filename is ever surfaced. Where an `env` file holds a GROUP of related
+ * configuration and exposes key NAMES as metadata, a secret is ONE value and
+ * exposes nothing but its name — reach for `secret` when one value *is* the
+ * credential, and for `env` when loading a service's related configuration.
  *
  * Invariant: a secret's bytes must never be written to stdout, returned
  * through the indexer / `akm show` renderer, or any structured output channel.
@@ -21,7 +23,7 @@
  *     itself (Docker `/run/secrets` + `_FILE` convention).
  *
  * Values are stored as raw bytes (no quoting, multi-line allowed) so they
- * round-trip byte-exact, unlike vault values which forbid literal newlines.
+ * round-trip byte-exact, unlike env values which forbid literal newlines.
  */
 
 import crypto from "node:crypto";
@@ -33,7 +35,7 @@ import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 
 /**
  * Acquire an exclusive lock for the given secret path, run `fn`, then release.
- * Mirrors the vault write-lock: O_EXCL creation, 5s deadline, PID-based stale
+ * Mirrors the env write-lock: O_EXCL creation, 5s deadline, PID-based stale
  * detection. A timeout is always a stale lock or a programming error, so we
  * throw rather than silently proceeding.
  */

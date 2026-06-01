@@ -2376,7 +2376,7 @@ const envCommand = defineCommand({
   meta: {
     name: "env",
     description:
-      "Manage whole `.env` files — many KEY=value vars loaded together. Key names are visible; values stay on disk and never appear in structured output. For a single opaque value (token, key, cert), use `akm secret`.",
+      "Manage `.env` files — a group of related CONFIGURATION values for an app or service (URLs, flags, plus any credentials it needs), loaded together. Values may or may not be sensitive; akm protects them all the same (key names visible, values never in structured output). For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.",
   },
   subCommands: {
     list: envListCommand,
@@ -2804,7 +2804,7 @@ const secretCommand = defineCommand({
   meta: {
     name: "secret",
     description:
-      "Manage whole-file secrets — one opaque value per file (a PEM key, token, or cert). Names are visible; the file contents are the value and never appear in structured output. For a set of KEY=value config loaded together, use `akm env`.",
+      "Manage secrets — a single sensitive value used on its own for authentication (an API token, a PEM private key, a TLS cert), one value per file. Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`.",
   },
   subCommands: {
     list: secretListCommand,

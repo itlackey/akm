@@ -5,8 +5,13 @@
 /**
  * Environment asset type (`env`) — whole `.env` file storage.
  *
- * An `env` asset is an entire `.env` file sourced/injected wholesale. Unlike
- * the deprecated `vault` type it replaces, akm does NOT manage individual
+ * An `env` asset holds a GROUP of related CONFIGURATION for an app or service
+ * (URLs, feature flags, and any credentials it needs) in a single `.env` file,
+ * sourced/injected wholesale. Values may or may not be sensitive — akm protects
+ * them all the same. For a single sensitive value used on its own for
+ * authentication (a token, key, or cert), use the `secret` type instead.
+ *
+ * Unlike the deprecated `vault` type it replaces, akm does NOT manage individual
  * KEY=value entries (no `set`/`unset`/quoting): you edit the `.env` file with
  * your own editor, and akm loads it. The simplification removes the
  * hand-rolled quoting/escaping surface; the safety guarantee moves to the READ
