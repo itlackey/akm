@@ -155,6 +155,43 @@ export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
   return null;
 }
 
+/**
+ * Resolve the runner for the triage judgment tier (Proposal-Queue Triage,
+ * Phase 3). The `judgment` block is a `{ mode?, profile?, timeoutMs? }` subset
+ * compatible with {@link ImproveProcessConfig}, so it resolves through the same
+ * {@link resolveImproveProcessRunnerFromProfile} path.
+ *
+ * Mirrors {@link resolveValidationRunner}'s `defaults.llm` fallback: when the
+ * block sets neither `mode` nor `profile` (so the profile resolver returns
+ * `null`), fall back to an `llm` runner built from `defaults.llm` so
+ * `judgment.mode: llm` defaults are honored (§14). Returns `null` when nothing
+ * is configured — callers then skip the judgment tier (and emit
+ * `triage_deferred`).
+ */
+export function resolveTriageJudgmentRunner(
+  judgment: { mode?: "llm" | "agent" | "sdk"; profile?: string; timeoutMs?: number | null } | undefined,
+  config: AkmConfig,
+): RunnerSpec | null {
+  if (judgment && (judgment.mode || judgment.profile)) {
+    try {
+      const spec = resolveImproveProcessRunnerFromProfile(judgment, config);
+      if (spec) return spec;
+    } catch {
+      // Fall through to defaults.llm below.
+    }
+  }
+
+  const defaultLlm = config.defaults?.llm;
+  if (defaultLlm) {
+    try {
+      return buildLlmRunnerSpec(defaultLlm, judgment?.timeoutMs, config);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function resolveRunner(mode: "llm" | "agent" | "sdk", profileName: string, config: AkmConfig): RunnerSpec {
   if (mode === "llm") return buildLlmRunnerSpec(profileName, undefined, config);
   return buildAgentRunnerSpec(mode, profileName, undefined, config);

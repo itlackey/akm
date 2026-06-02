@@ -21,19 +21,33 @@
  *     the promote loop (remainder → `skippedByCap`); `maxDiffLines` defers large
  *     accepts; `applyMode: "queue"` (the safe default) never promotes (stage
  *     only); `rejectEmpty` rejects empty / near-empty diffs.
- *   - The judgment tier is Phase 3. This engine accepts a `judgment` runner but
- *     leaves deferred items in the `deferred[]` list unprocessed.
+ *   - The judgment tier (Phase 3) adjudicates the deferred items: when a
+ *     `judgment` RunnerSpec is supplied the engine pre-fetches context (the live
+ *     asset + sibling pending proposals for the same ref) into a prompt,
+ *     dispatches it to the configured runner (llm → `chatCompletion`, agent →
+ *     `runAgent`, sdk → `runOpencodeSdk`, mirroring `reflect.ts`'s switch), and
+ *     performs the resulting accept / reject *itself* (the runner only judges).
+ *     Items the runner cannot resolve — and any deferred items when no runner is
+ *     configured — surface a `triage_deferred` event so "enabled, no agent"
+ *     never silently looks like full success.
  *
- * The promote / reject functions are injectable (mirrors
- * `improve-auto-accept.ts`) so tests can run the full engine without touching
- * the filesystem.
+ * The promote / reject functions and the runner dispatch are injectable
+ * (mirrors `improve-auto-accept.ts` and reflect's dual test seams) so tests can
+ * run the full engine without touching the filesystem or spawning a process.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { parseAssetRef } from "../core/asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../core/asset-spec";
 import type { EventsContext } from "../core/events";
 import { appendEvent } from "../core/events";
 import { listProposals, type Proposal } from "../core/proposals";
 import { info, warn } from "../core/warn";
+import { type AgentRunResult, runAgent } from "../integrations/agent";
 import type { RunnerSpec } from "../integrations/agent/runner";
+import { runOpencodeSdk } from "../integrations/agent/sdk-runner";
+import { type ChatMessage, chatCompletion, stripJsonFences } from "../llm/client";
 import { akmProposalAccept, akmProposalReject } from "./proposal";
 
 // ---------------------------------------------------------------------------
@@ -83,7 +97,12 @@ export interface DrainOptions {
    * `maxDiffLines`.
    */
   maxDiffLines?: number;
-  /** Judgment tier (Phase 3). Accepted but unused in Phase 1. */
+  /**
+   * Optional judgment tier (Phase 3). When a RunnerSpec is supplied the engine
+   * adjudicates each deferred item through the runner and performs the resulting
+   * accept / reject itself. `null` / absent leaves deferred items unresolved and
+   * emits `triage_deferred`.
+   */
   judgment?: RunnerSpec | null;
   eventsCtx?: EventsContext;
 }
@@ -102,6 +121,27 @@ export interface DrainResult {
 // Injectable test seams (mirrors improve-auto-accept.ts's promoteFn override).
 export type PromoteFn = typeof akmProposalAccept;
 export type RejectFn = typeof akmProposalReject;
+
+/** A single verdict the judgment runner returns for a deferred proposal. */
+export interface JudgmentVerdict {
+  decision: "accept" | "reject" | "defer";
+  reason: string;
+}
+
+/**
+ * Injectable runner seams for the judgment tier, mirroring reflect's dual test
+ * seams (`chat` for the LLM HTTP path, `runAgentFn` for the spawn path). Tests
+ * inject a fake `chat` (llm-mode) or `runAgentFn` (agent-mode) so the dispatch
+ * switch runs deterministically without a network call or a real process.
+ */
+export interface JudgmentSeams {
+  /** Test seam for the `llm` runner kind — replaces `chatCompletion`. */
+  chat?: (config: RunnerSpec & { kind: "llm" }, messages: ChatMessage[]) => Promise<string>;
+  /** Test seam for the `agent` runner kind — replaces `runAgent`. */
+  runAgentFn?: typeof runAgent;
+  /** Test seam for the `sdk` runner kind — replaces `runOpencodeSdk`. */
+  runSdkFn?: typeof runOpencodeSdk;
+}
 
 // ---------------------------------------------------------------------------
 // Content helpers
@@ -189,6 +229,252 @@ function deferReasonForSource(source: string): DrainDeferReason {
 }
 
 // ---------------------------------------------------------------------------
+// Judgment tier (Phase 3)
+// ---------------------------------------------------------------------------
+
+/** Read the live on-disk content of a proposal's target asset, if it exists. */
+function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
+  try {
+    const parsed = parseAssetRef(ref);
+    const typeDir = TYPE_DIRS[parsed.type];
+    if (!typeDir) return undefined;
+    const typeRoot = path.join(stashDir, typeDir);
+    const assetPath = resolveAssetPathFromName(parsed.type, typeRoot, parsed.name);
+    if (!fs.existsSync(assetPath)) return undefined;
+    return fs.readFileSync(assetPath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Pre-fetch the context the judgment runner needs to adjudicate one deferred
+ * proposal: the proposed content, the live asset it would overwrite, and the
+ * sibling pending proposals for the same ref (so a dedup verdict can compare).
+ */
+function prefetchJudgmentContext(
+  stashDir: string,
+  proposal: Proposal,
+  pending: Proposal[],
+): { liveAsset: string | undefined; siblings: Proposal[] } {
+  const liveAsset = readLiveAssetContent(stashDir, proposal.ref);
+  const siblings = pending.filter((p) => p.ref === proposal.ref && p.id !== proposal.id);
+  return { liveAsset, siblings };
+}
+
+/** Build the judgment prompt with the proposed content + pre-fetched context. */
+export function buildJudgmentPrompt(
+  proposal: Proposal,
+  reason: DrainDeferReason,
+  ctx: { liveAsset: string | undefined; siblings: Proposal[] },
+): string {
+  const proposed = proposal.payload.content ?? "";
+  const sections: string[] = [
+    "You are adjudicating a pending knowledge-base proposal that the deterministic",
+    "triage pass could not resolve. Decide whether to accept, reject, or defer it.",
+    "",
+    `Asset ref: ${proposal.ref}`,
+    `Generator (source): ${proposal.source}`,
+    `Deferred because: ${reason}`,
+    "",
+    "## Proposed content",
+    "```",
+    proposed,
+    "```",
+  ];
+
+  if (ctx.liveAsset !== undefined) {
+    sections.push("", "## Current live asset (would be overwritten on accept)", "```", ctx.liveAsset, "```");
+  } else {
+    sections.push("", "## Current live asset", "(none — this proposal would create a new asset)");
+  }
+
+  if (ctx.siblings.length > 0) {
+    sections.push("", "## Other pending proposals for the same ref (dedup context)");
+    for (const sib of ctx.siblings) {
+      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", sib.payload.content ?? "", "```");
+    }
+  }
+
+  sections.push(
+    "",
+    "## Your task",
+    'Return ONLY a JSON object: {"decision": "accept" | "reject" | "defer", "reason": "<short reason>"}.',
+    "- accept: the proposed content is a correct, valuable update worth committing.",
+    "- reject: the proposal is wrong, a duplicate, or contradicts the live asset.",
+    "- defer: you cannot decide from the provided context (leave it pending).",
+    "Output the JSON object and nothing else.",
+  );
+
+  return sections.join("\n");
+}
+
+/** Parse a {@link JudgmentVerdict} from raw runner output. Lenient. */
+export function parseJudgmentVerdict(raw: string): JudgmentVerdict | null {
+  const cleaned = stripJsonFences(raw).trim();
+  if (!cleaned) return null;
+  // Find the first balanced-looking JSON object in the output.
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (typeof obj !== "object" || obj === null) return null;
+  const decision = (obj as { decision?: unknown }).decision;
+  const reason = (obj as { reason?: unknown }).reason;
+  if (decision !== "accept" && decision !== "reject" && decision !== "defer") return null;
+  return { decision, reason: typeof reason === "string" ? reason : "" };
+}
+
+/**
+ * Dispatch a single judgment prompt to the resolved runner. The switch mirrors
+ * the canonical consumer at `reflect.ts:1060-1090`: llm → `chatCompletion`
+ * (no filesystem), agent → `runAgent`, sdk → `runOpencodeSdk`.
+ */
+async function dispatchJudgment(
+  runner: RunnerSpec,
+  prompt: string,
+  seams: JudgmentSeams,
+): Promise<JudgmentVerdict | null> {
+  let raw: string;
+  switch (runner.kind) {
+    case "llm": {
+      const messages: ChatMessage[] = [{ role: "user", content: prompt }];
+      raw = seams.chat
+        ? await seams.chat(runner, messages)
+        : await chatCompletion(runner.connection, messages, {
+            ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
+          });
+      break;
+    }
+    case "agent": {
+      const run = seams.runAgentFn ?? runAgent;
+      const result: AgentRunResult = await run(runner.profile, prompt, {
+        stdio: "captured",
+        parseOutput: "text",
+        ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
+      });
+      if (!result.ok) {
+        warn(`[triage] judgment agent failed: ${result.error ?? result.reason ?? "unknown error"}`);
+        return null;
+      }
+      raw = result.stdout;
+      break;
+    }
+    case "sdk": {
+      const run = seams.runSdkFn ?? runOpencodeSdk;
+      const result: AgentRunResult = await run(runner.profile, prompt, {
+        stdio: "captured",
+        parseOutput: "text",
+        ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
+      });
+      if (!result.ok) {
+        warn(`[triage] judgment sdk failed: ${result.error ?? result.reason ?? "unknown error"}`);
+        return null;
+      }
+      raw = result.stdout;
+      break;
+    }
+  }
+  return parseJudgmentVerdict(raw);
+}
+
+interface JudgmentTierInput {
+  stashDir: string;
+  applyMode: "queue" | "promote";
+  dryRun: boolean;
+  runner: RunnerSpec;
+  deferred: Array<{ id: string; reason: DrainDeferReason }>;
+  pending: Proposal[];
+  promoteFn: PromoteFn;
+  rejectFn: RejectFn;
+  seams: JudgmentSeams;
+}
+
+/**
+ * Run the judgment tier over the deferred items. The runner only *judges*; the
+ * engine performs the resulting accept (respecting `applyMode`) / reject write.
+ * Returns the ids the engine promoted / rejected and the items still unresolved
+ * (verdict "defer", parse failure, or a runner error).
+ */
+async function runJudgmentTier(input: JudgmentTierInput): Promise<{
+  promoted: string[];
+  rejected: string[];
+  stillDeferred: Array<{ id: string; reason: DrainDeferReason }>;
+}> {
+  const byId = new Map(input.pending.map((p) => [p.id, p]));
+  const promoted: string[] = [];
+  const rejected: string[] = [];
+  const stillDeferred: Array<{ id: string; reason: DrainDeferReason }> = [];
+
+  for (const item of input.deferred) {
+    const proposal = byId.get(item.id);
+    if (!proposal) {
+      stillDeferred.push(item);
+      continue;
+    }
+    const ctx = prefetchJudgmentContext(input.stashDir, proposal, input.pending);
+    const prompt = buildJudgmentPrompt(proposal, item.reason, ctx);
+
+    let verdict: JudgmentVerdict | null;
+    try {
+      verdict = await dispatchJudgment(input.runner, prompt, input.seams);
+    } catch (err) {
+      warn(`[triage] judgment dispatch failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
+      stillDeferred.push(item);
+      continue;
+    }
+
+    if (!verdict || verdict.decision === "defer") {
+      stillDeferred.push(item);
+      continue;
+    }
+
+    if (verdict.decision === "reject") {
+      if (input.dryRun) {
+        rejected.push(item.id);
+        continue;
+      }
+      try {
+        input.rejectFn({ stashDir: input.stashDir, id: item.id, reason: verdict.reason || "judgment: reject" });
+        rejected.push(item.id);
+      } catch (err) {
+        warn(`[triage] judgment reject failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
+        stillDeferred.push(item);
+      }
+      continue;
+    }
+
+    // decision === "accept" — gated on applyMode, exactly like the
+    // deterministic accept path (queue mode never writes).
+    if (input.applyMode !== "promote") {
+      // Staged: a queue-mode run never promotes, so the item stays pending but
+      // is no longer "unresolved" (the runner judged it). Report as deferred so
+      // the staged accept is visible and a follow-up promote run picks it up.
+      stillDeferred.push(item);
+      continue;
+    }
+    if (input.dryRun) {
+      promoted.push(item.id);
+      continue;
+    }
+    try {
+      await input.promoteFn({ stashDir: input.stashDir, id: item.id });
+      promoted.push(item.id);
+    } catch (err) {
+      warn(`[triage] judgment promote failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
+      stillDeferred.push(item);
+    }
+  }
+
+  return { promoted, rejected, stillDeferred };
+}
+
+// ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
 
@@ -203,6 +489,7 @@ export async function drainProposals(
   opts: DrainOptions,
   promoteFn: PromoteFn = akmProposalAccept,
   rejectFn: RejectFn = akmProposalReject,
+  judgmentSeams: JudgmentSeams = {},
 ): Promise<DrainResult> {
   const result: DrainResult = { promoted: [], rejected: [], deferred: [], skippedByCap: [] };
 
@@ -265,6 +552,28 @@ export async function drainProposals(
   }
   // applyMode "queue": leave accept candidates pending (staged). No promotion.
 
+  // --- Judgment tier (Phase 3): adjudicate the deferred items ---
+  // Only runs when a RunnerSpec is configured. The runner returns a verdict; the
+  // ENGINE performs the resulting accept (respecting applyMode) / reject write.
+  if (opts.judgment && result.deferred.length > 0) {
+    const tier = await runJudgmentTier({
+      stashDir: opts.stashDir,
+      applyMode: opts.applyMode,
+      dryRun: opts.dryRun,
+      runner: opts.judgment,
+      deferred: result.deferred,
+      pending,
+      promoteFn,
+      rejectFn,
+      seams: judgmentSeams,
+    });
+    result.promoted.push(...tier.promoted);
+    result.rejected.push(...tier.rejected);
+    // Replace the deferred list with whatever the judgment tier could not
+    // resolve (verdict "defer", staged queue-mode accepts, or runner failures).
+    result.deferred = tier.stillDeferred;
+  }
+
   emitDrainEvents(opts, result);
 
   return result;
@@ -296,16 +605,19 @@ function emitDrainEvents(opts: DrainOptions, result: DrainResult): void {
     opts.eventsCtx ?? {},
   );
 
-  // Surface "enabled, but no judgment runner" so a backlog of deferred items
-  // never silently looks like full success (Phase 3 will consume these).
-  if (result.deferred.length > 0 && !opts.judgment) {
+  // Surface any items still unresolved after the (optional) judgment tier so a
+  // backlog of deferred items never silently looks like full success. This
+  // fires both when no runner is configured AND when the judgment tier ran but
+  // could not resolve every item (verdict "defer", staged queue accept, or a
+  // runner error).
+  if (result.deferred.length > 0) {
     appendEvent(
       {
         eventType: "triage_deferred",
         metadata: {
           deferred: result.deferred.length,
           deferredByReason,
-          reason: "no judgment runner configured",
+          reason: opts.judgment ? "judgment tier left items unresolved" : "no judgment runner configured",
         },
       },
       opts.eventsCtx ?? {},

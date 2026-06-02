@@ -160,6 +160,7 @@ import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbos
 import { closeDatabase, openExistingDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
+import { resolveTriageJudgmentRunner } from "./integrations/agent/runner";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import {
   getHyphenatedArg,
@@ -3891,12 +3892,13 @@ const proposalDrainCommand = defineCommand({
     },
     judgment: {
       type: "boolean",
-      description: "Opt into the judgment tier for deferred items (Phase 3; currently a no-op).",
+      description:
+        "Opt into the judgment tier (llm by default; agent/sdk per config) for deferred items. No-op with a logged triage_deferred summary when no runner is configured.",
       default: false,
     },
     profile: {
       type: "string",
-      description: "Read the triage block from this improve profile (Phase 2; currently ignored).",
+      description: "Read the triage block (policy, applyMode, ceilings, judgment) from this improve profile.",
     },
   },
   async run({ args }) {
@@ -3951,6 +3953,14 @@ const proposalDrainCommand = defineCommand({
         );
       }
 
+      // Phase 3: resolve the judgment runner when --judgment is set. Default
+      // mode is llm; falls back to defaults.llm when the triage block sets
+      // neither mode nor profile (mirrors resolveValidationRunner). null when
+      // nothing is configured → the engine leaves deferred items unresolved and
+      // emits triage_deferred.
+      const judgment =
+        args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, loadConfig()) : null;
+
       const result = await drainProposals({
         stashDir,
         policy,
@@ -3959,8 +3969,7 @@ const proposalDrainCommand = defineCommand({
         dryRun,
         ...(maxDiffLines !== undefined ? { maxDiffLines } : {}),
         ...(excludeIds ? { excludeIds } : {}),
-        // Judgment tier resolution lands in Phase 3; the flag is accepted now.
-        judgment: null,
+        judgment,
       });
 
       output("proposal-drain", {

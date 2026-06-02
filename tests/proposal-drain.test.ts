@@ -3,10 +3,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal";
-import { classifyProposal, type DrainOptions, drainProposals, isEmptyDiff } from "../src/commands/proposal-drain";
+import {
+  classifyProposal,
+  type DrainOptions,
+  drainProposals,
+  isEmptyDiff,
+  type JudgmentSeams,
+} from "../src/commands/proposal-drain";
 import { CONSERVATIVE, MANUAL, PERSONAL_STASH, resolveDrainPolicy } from "../src/commands/proposal-drain-policies";
 import type { EventsContext } from "../src/core/events";
 import { createProposal, isProposalSkipped, listProposals, type Proposal } from "../src/core/proposals";
+import type { AgentRunResult } from "../src/integrations/agent";
+import type { RunnerSpec } from "../src/integrations/agent/runner";
 
 // ── Test setup ────────────────────────────────────────────────────────────
 //
@@ -281,5 +289,167 @@ describe("drainProposals — dry-run", () => {
     // and the queue is untouched on disk
     const stillPending = listProposals(stash, { status: "pending" });
     expect(stillPending.map((p) => p.id).sort()).toEqual([accepted.id, empty.id].sort());
+  });
+});
+
+// ── Judgment tier (Phase 3) ─────────────────────────────────────────────────
+//
+// The judgment tier adjudicates the *deferred* items. PERSONAL_STASH defers
+// large consolidate proposals (mid-band). We inject a fake runner that returns
+// a verdict and assert the ENGINE performs the resulting accept / reject write
+// (the runner only judges). Mirrors reflect's dual test seams: an `llm`-mode
+// test injects a fake `chat`; an `agent`-mode test injects a fake `runAgentFn`.
+
+/** A minimal `llm` RunnerSpec — the injected `chat` seam ignores the connection. */
+const FAKE_LLM_RUNNER: RunnerSpec = {
+  kind: "llm",
+  connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "fake-judge" },
+};
+
+/** A minimal `agent` RunnerSpec — the injected `runAgentFn` ignores the profile. */
+const FAKE_AGENT_RUNNER: RunnerSpec = {
+  kind: "agent",
+  profile: {
+    name: "fake-judge",
+    bin: "fake-judge",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [],
+    parseOutput: "text",
+  },
+};
+
+function agentResult(stdout: string): AgentRunResult {
+  return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: 1 };
+}
+
+describe("drainProposals — judgment tier (llm mode)", () => {
+  test("engine accepts a deferred item when the llm verdict is accept", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable consolidation" }));
+    const seams: JudgmentSeams = { chat };
+    const promoteFn = fakeAccept();
+    const rejectFn = fakeReject();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, rejectFn, seams);
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    // The ENGINE performed the accept (promote mode), not the runner.
+    expect(result.promoted).toEqual([deferred.id]);
+    expect(result.deferred).toEqual([]);
+    expect(promoteFn).toHaveBeenCalledTimes(1);
+    expect(rejectFn).not.toHaveBeenCalled();
+  });
+
+  test("engine rejects a deferred item when the llm verdict is reject", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const chat = mock(async () => '```json\n{"decision":"reject","reason":"duplicate"}\n```');
+    const promoteFn = fakeAccept();
+    const rejectFn = fakeReject();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, rejectFn, { chat });
+
+    expect(result.rejected).toEqual([deferred.id]);
+    expect(result.deferred).toEqual([]);
+    expect(rejectFn).toHaveBeenCalledTimes(1);
+    expect(promoteFn).not.toHaveBeenCalled();
+  });
+
+  test("verdict 'defer' leaves the item unresolved (triage_deferred)", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const chat = mock(async () => JSON.stringify({ decision: "defer", reason: "need more context" }));
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, fakeReject(), {
+      chat,
+    });
+
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+    expect(promoteFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("drainProposals — judgment tier (agent mode)", () => {
+  test("engine accepts a deferred item when the agent verdict is accept", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const runAgentFn = mock(async () =>
+      agentResult(JSON.stringify({ decision: "accept", reason: "merge is correct" })),
+    );
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_AGENT_RUNNER }), promoteFn, fakeReject(), {
+      runAgentFn,
+    });
+
+    expect(runAgentFn).toHaveBeenCalledTimes(1);
+    expect(result.promoted).toEqual([deferred.id]);
+    expect(result.deferred).toEqual([]);
+    expect(promoteFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed agent run leaves the item unresolved", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const runAgentFn = mock(
+      async (): Promise<AgentRunResult> => ({
+        ok: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "boom",
+        durationMs: 1,
+        reason: "non_zero_exit",
+        error: "boom",
+      }),
+    );
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_AGENT_RUNNER }), promoteFn, fakeReject(), {
+      runAgentFn,
+    });
+
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+    expect(promoteFn).not.toHaveBeenCalled();
+  });
+
+  test("queue applyMode stages an accept verdict rather than promoting", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const runAgentFn = mock(async () => agentResult(JSON.stringify({ decision: "accept", reason: "ok" })));
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_AGENT_RUNNER, applyMode: "queue" }),
+      promoteFn,
+      fakeReject(),
+      { runAgentFn },
+    );
+
+    // queue mode never writes; the staged accept surfaces as still-deferred.
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+  });
+});
+
+describe("drainProposals — judgment disabled", () => {
+  test("deferred items stay unresolved when no runner is configured", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const result = await drainProposals(baseOpts(stash, { judgment: null }), fakeAccept(), fakeReject(), {});
+
+    expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
   });
 });
