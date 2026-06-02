@@ -5,6 +5,7 @@ import { akmHistory } from "../../src/commands/history";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
+import { setQuiet } from "../../src/core/warn";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage-events";
@@ -534,8 +535,8 @@ describe("akmHistory --source filter", () => {
   });
 });
 
-describe("akm history --source CLI flag", () => {
-  test("filters by source via CLI", async () => {
+describe("akm history --generator CLI flag", () => {
+  test("filters by generator via CLI", async () => {
     const stashDir = sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
@@ -556,25 +557,63 @@ describe("akm history --source CLI flag", () => {
     }
 
     // Filter to user events only.
-    const userOnly = await runCli(["history", "--source", "user", "--format=json"]);
+    const userOnly = await runCli(["history", "--generator", "user", "--format=json"]);
     expect(userOnly.status).toBe(0);
     const userJson = parseJsonOutput(userOnly);
     const userEntries = userJson.entries as Array<Record<string, unknown>>;
     expect(userEntries.every((e) => e.source === "user")).toBe(true);
 
     // Filter to improve events only.
-    const improveOnly = await runCli(["history", "--source", "improve", "--format=json"]);
+    const improveOnly = await runCli(["history", "--generator", "improve", "--format=json"]);
     expect(improveOnly.status).toBe(0);
     const improveJson = parseJsonOutput(improveOnly);
     const improveEntries = improveJson.entries as Array<Record<string, unknown>>;
     expect(improveEntries.every((e) => e.source === "improve")).toBe(true);
   });
 
-  test("rejects invalid source value", async () => {
-    const result = await runCli(["history", "--source", "invalid", "--format=json"]);
+  test("rejects invalid generator value", async () => {
+    const result = await runCli(["history", "--generator", "invalid", "--format=json"]);
     expect(result.status).not.toBe(0);
     const parsed = parseJsonOutput(result);
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
+  });
+
+  test("--source still works as a deprecated alias and warns on stderr", async () => {
+    // The harness defaults to quiet=true (tests/_preload.ts); opt into noisy mode
+    // so the deprecation warning surfaces, as in a normal (non-`--quiet`) run.
+    setQuiet(false);
+    const stashDir = sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+
+    writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
+    await akmIndex({ stashDir, full: true });
+
+    const db = openDatabase(getDbPath());
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });
+    } finally {
+      closeDatabase(db);
+    }
+
+    const improveOnly = await runCli(["history", "--source", "improve", "--format=json"]);
+    expect(improveOnly.status).toBe(0);
+    expect(improveOnly.stderr).toContain("'--source' is deprecated");
+    expect(improveOnly.stderr).toContain("--generator");
+    const improveJson = parseJsonOutput(improveOnly);
+    const improveEntries = improveJson.entries as Array<Record<string, unknown>>;
+    expect(improveEntries.every((e) => e.source === "improve")).toBe(true);
+  });
+
+  test("deprecation warning is suppressed under --quiet", async () => {
+    // quiet defaults to true under the harness (mirrors `--quiet` in prod, which
+    // sets the same global via applyEarlyStderrFlags).
+    setQuiet(true);
+    sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+    const result = await runCli(["history", "--source", "user", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
   });
 });

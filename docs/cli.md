@@ -1072,6 +1072,7 @@ akm history --format text                      # Human-readable trail
 | --- | --- |
 | `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
 | `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
+| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). `--source` is a deprecated alias (removed 0.9.0). |
 | `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
 
 Output envelope (JSON):
@@ -1849,7 +1850,13 @@ akm proposal accept <id>
 akm proposal accept 7c115132                  # 8-char UUID prefix
 akm proposal accept skill:akm-dream           # Asset ref
 akm proposal accept <id> --target team-stash
+akm proposal accept --generator reflect -y    # Bulk-accept by generator (requires -y)
 ```
+
+Bulk-accept all pending proposals from one generator with `--generator <name>`
+(e.g. `reflect`, `distill`) and no positional id. `--source` is a deprecated
+alias for `--generator` (removed 0.9.0). Bulk accept requires `-y`/`--yes` in
+non-interactive shells.
 
 #### proposal reject
 
@@ -1860,7 +1867,12 @@ UUID prefix, or an asset ref.
 akm proposal reject <id> --reason "duplicates existing workflow"
 akm proposal reject 7c115132 --reason "not ready"      # 8-char UUID prefix
 akm proposal reject skill:my-skill --reason "not ready" # Asset ref
+akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by generator
 ```
+
+Bulk-reject all pending proposals from one generator with `--generator <name>`
+and no positional id. `--source` is a deprecated alias for `--generator`
+(removed 0.9.0). Bulk reject requires `-y`/`--yes` in non-interactive shells.
 
 #### proposal revert
 

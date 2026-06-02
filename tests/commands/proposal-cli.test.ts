@@ -211,6 +211,71 @@ describe("akm accept --source bulk safety guard (WS0)", () => {
   });
 });
 
+describe("accept/reject --generator flag (WS3)", () => {
+  test("bulk accept --generator proceeds with --yes and promotes matching proposals", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.accepted).toBe(1);
+    // Canonical spelling emits no deprecation warning.
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("bulk accept --source still works as a deprecated alias and warns", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).accepted).toBe(1);
+    expect(result.stderr).toContain("'--source' is deprecated");
+    expect(result.stderr).toContain("--generator");
+  });
+
+  test("bulk reject --generator proceeds with --yes", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(
+      ["proposal", "reject", "--generator", "reflect", "--reason", "dup", "--yes", "--format=json"],
+      { stashDir: stash },
+    );
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).rejected).toBe(1);
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("bulk reject --source still works as a deprecated alias and warns", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(
+      ["proposal", "reject", "--source", "reflect", "--reason", "dup", "--yes", "--format=json"],
+      { stashDir: stash },
+    );
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).rejected).toBe(1);
+    expect(result.stderr).toContain("'--source' is deprecated");
+    expect(result.stderr).toContain("--generator");
+  });
+
+  test("accept --source deprecation warning is suppressed under --quiet", async () => {
+    setQuiet(true);
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
+  });
+});
+
 describe("akm proposal noun group (canonical)", () => {
   test("proposal list: lists pending proposal as JSON with totalCount", async () => {
     const stash = makeStashDir();

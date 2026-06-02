@@ -41,8 +41,9 @@ CHANGELOG with a migration note.
   `akm proposals`, `akm show proposal`, `akm accept`, `akm reject`, `akm diff`,
   and `akm revert` are deprecated aliases that warn on stderr and delegate
   (removed in 0.9.0). Output JSON keys are stable; CLI flags (`--auto-accept`,
-  `--profile`, `--task`, `--source`) may add options or tighten validation across
-  releases.
+  `--profile`, `--task`, `--generator`) may add options or tighten validation
+  across releases. On `accept`/`reject`/`history`, `--source` is a deprecated
+  alias for `--generator` (removed in 0.9.0).
 - **Tasks** — `akm tasks` subcommand surface; YAML schema for scheduled
   tasks. Schema additions in patch releases; removals only at minor.
 - **Wiki management** — `akm wiki *` subcommands.

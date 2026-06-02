@@ -65,11 +65,14 @@ akm wiki register <name> <path-or-repo>
                              # and refresh source/search state immediately
 akm wiki list                # table: name, pages, raws, last-modified
 akm wiki show <name>         # path, description, counts, last 3 log entries
-akm wiki remove <name> --force [--with-sources]
+akm wiki remove <name> -y [--with-sources]
+                               # prompts for confirmation (or pass -y/--yes to
+                               # skip it; required in non-interactive shells).
                                # deletes pages/index/log/schema; preserves raw/
                                # unless --with-sources. For external wikis,
                                # unregisters without touching source files and
                                # clears wiki search hits immediately.
+                               # (--force is a deprecated alias for -y, removed 0.9.0)
 ```
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$`.

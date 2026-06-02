@@ -153,7 +153,7 @@ import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
 import { plainize } from "./core/tty";
-import { clearLogFile, info, isQuiet, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
+import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { closeDatabase, openExistingDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
@@ -392,7 +392,6 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
-    verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
     clean: {
       type: "boolean",
       description: "After indexing, remove any entries whose source file no longer exists on disk.",
@@ -428,7 +427,8 @@ const indexCommand = defineCommand({
         `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
       );
       setLogFile(indexLogFile);
-      const spin = !args.verbose && outputMode.format === "text" ? p.spinner() : null;
+      const verbose = isVerbose();
+      const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
@@ -441,7 +441,7 @@ const indexCommand = defineCommand({
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (args.verbose) {
+            if (verbose) {
               info(`[index:${phase}] ${progressPrefix}${message}`);
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
@@ -1396,9 +1396,13 @@ const historyCommand = defineCommand({
   args: {
     ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    generator: {
+      type: "string",
+      description: 'Filter by event generator: "user" (default) or "improve" (akm improve operations).',
+    },
     source: {
       type: "string",
-      description: 'Filter by event source: "user" (default) or "improve" (akm improve operations).',
+      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
     },
     "include-proposals": {
       type: "boolean",
@@ -1418,10 +1422,13 @@ const historyCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const sourceFlag = args.source as "user" | "improve" | undefined;
-      if (sourceFlag !== undefined && sourceFlag !== "user" && sourceFlag !== "improve") {
+      if (args.generator === undefined && args.source !== undefined) {
+        emitFlagDeprecation("--source", "--generator", "history");
+      }
+      const generatorFlag = (args.generator ?? args.source) as "user" | "improve" | undefined;
+      if (generatorFlag !== undefined && generatorFlag !== "user" && generatorFlag !== "improve") {
         throw new UsageError(
-          `Invalid --source value: "${args.source}". Must be "user" or "improve".`,
+          `Invalid --generator value: "${generatorFlag}". Must be "user" or "improve".`,
           "INVALID_FLAG_VALUE",
         );
       }
@@ -1430,7 +1437,7 @@ const historyCommand = defineCommand({
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
-        source: sourceFlag,
+        source: generatorFlag,
         includeProposals: args["include-proposals"],
         acceptRateBySource: args["accept-rate-by-source"] as boolean | undefined,
         stashDir,
@@ -2454,6 +2461,11 @@ function emitVaultDeprecation(sub: string): void {
   );
 }
 
+function emitFlagDeprecation(oldFlag: string, newFlag: string, cmd: string): void {
+  if (isQuiet()) return;
+  process.stderr.write(`warning: '${oldFlag}' is deprecated for 'akm ${cmd}'; use '${newFlag}'. Removed in 0.9.0.\n`);
+}
+
 const vaultSetCommand = defineCommand({
   meta: { name: "set", description: "DEPRECATED — removed. Edit the .env file directly, or use `akm secret set`." },
   args: {
@@ -2948,9 +2960,15 @@ const wikiRemoveCommand = defineCommand({
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip confirmation prompt (required in non-interactive shells)",
+      default: false,
+    },
     force: {
       type: "boolean",
-      description: "Remove without prompting (required in non-interactive shells)",
+      description: "DEPRECATED — use -y/--yes. Removed in 0.9.0.",
       default: false,
     },
     "with-sources": {
@@ -2961,8 +2979,16 @@ const wikiRemoveCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (!args.force) {
-        throw new UsageError("Refusing to remove without --force. Pass `--force` to confirm.");
+      if (args.yes !== true && args.force === true) {
+        emitFlagDeprecation("--force", "-y/--yes", "wiki remove");
+      }
+      const { confirmDestructive } = await import("./cli/confirm.js");
+      const confirmed = await confirmDestructive(`Remove wiki "${args.name}"? This cannot be undone.`, {
+        yes: args.yes === true || args.force === true,
+      });
+      if (!confirmed) {
+        process.stderr.write("Aborted.\n");
+        return;
       }
       const withSources = getHyphenatedBoolean(args, "with-sources");
       const { removeWiki } = await import("./wiki/wiki.js");
@@ -3432,15 +3458,19 @@ const proposalAcceptCommand = defineCommand({
     id: {
       type: "positional",
       description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --generator is provided.",
       required: false,
     },
     target: { type: "string", description: "Override the write target by source name" },
-    // F-6 / #393: Batch accept by source, diff size, or age.
-    source: {
+    // F-6 / #393: Batch accept by generator, diff size, or age.
+    generator: {
       type: "string",
       description:
-        "F-6: Bulk-accept all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+        "F-6: Bulk-accept all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
+    },
+    source: {
+      type: "string",
+      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
     },
     "max-diff-lines": {
       type: "string",
@@ -3466,11 +3496,15 @@ const proposalAcceptCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      // F-6 / #393: Bulk-accept when --source is provided without a positional id.
-      if (args.source && !args.id) {
+      if (args.generator === undefined && args.source !== undefined) {
+        emitFlagDeprecation("--source", "--generator", "proposal accept");
+      }
+      const generator = (args.generator ?? args.source) as string | undefined;
+      // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
+      if (generator && !args.id) {
         const { confirmDestructive } = await import("./cli/confirm.js");
         const confirmed = await confirmDestructive(
-          `Bulk-accept all matching proposals from generator "${args.source}"? This cannot be undone.`,
+          `Bulk-accept all matching proposals from generator "${generator}"? This cannot be undone.`,
           { yes: args.yes === true || args["dry-run"] === true },
         );
         if (!confirmed) {
@@ -3490,7 +3524,7 @@ const proposalAcceptCommand = defineCommand({
         const maxDiffLines = rawMaxDiff;
         const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
         const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
-          if (p.source !== args.source) return false;
+          if (p.source !== generator) return false;
           if (maxDiffLines !== undefined) {
             const lines = (p.payload.content ?? "").split("\n").length;
             if (lines > maxDiffLines) return false;
@@ -3514,7 +3548,10 @@ const proposalAcceptCommand = defineCommand({
         return;
       }
       if (!args.id) {
-        throw new UsageError("Usage: akm accept <id>  OR  akm accept --source <source>", "MISSING_REQUIRED_ARGUMENT");
+        throw new UsageError(
+          "Usage: akm proposal accept <id>  OR  akm proposal accept --generator <generator>",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
       }
       const result = await akmProposalAccept({ id: args.id as string, target: args.target as string | undefined });
       output("proposal-accept", result);
@@ -3528,15 +3565,19 @@ const proposalRejectCommand = defineCommand({
     id: {
       type: "positional",
       description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --generator is provided.",
       required: false,
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
-    // F-6 / #393: Batch reject by source, diff size, or age.
-    source: {
+    // F-6 / #393: Batch reject by generator, diff size, or age.
+    generator: {
       type: "string",
       description:
-        "F-6: Bulk-reject all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+        "F-6: Bulk-reject all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
+    },
+    source: {
+      type: "string",
+      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
     },
     "max-diff-lines": {
       type: "string",
@@ -3562,17 +3603,21 @@ const proposalRejectCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      if (args.generator === undefined && args.source !== undefined) {
+        emitFlagDeprecation("--source", "--generator", "proposal reject");
+      }
+      const generator = (args.generator ?? args.source) as string | undefined;
       if (!args.reason || !String(args.reason).trim()) {
         throw new UsageError(
-          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "Usage: akm proposal reject <id> --reason '<reason>'  OR  akm proposal reject --generator <generator> --reason '<reason>'",
           "MISSING_REQUIRED_ARGUMENT",
         );
       }
-      // F-6 / #393: Bulk-reject when --source is provided without a positional id.
-      if (args.source && !args.id) {
+      // F-6 / #393: Bulk-reject when --generator is provided without a positional id.
+      if (generator && !args.id) {
         const { confirmDestructive } = await import("./cli/confirm.js");
         const confirmed = await confirmDestructive(
-          `Bulk-reject all matching proposals from source "${args.source}"? This cannot be undone.`,
+          `Bulk-reject all matching proposals from generator "${generator}"? This cannot be undone.`,
           { yes: args.yes === true || args["dry-run"] === true },
         );
         if (!confirmed) {
@@ -3592,7 +3637,7 @@ const proposalRejectCommand = defineCommand({
         const maxDiffLines = rawMaxDiff;
         const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
         const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
-          if (p.source !== args.source) return false;
+          if (p.source !== generator) return false;
           if (maxDiffLines !== undefined) {
             const lines = (p.payload.content ?? "").split("\n").length;
             if (lines > maxDiffLines) return false;
@@ -3617,7 +3662,7 @@ const proposalRejectCommand = defineCommand({
       }
       if (!args.id) {
         throw new UsageError(
-          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "Usage: akm proposal reject <id> --reason '<reason>'  OR  akm proposal reject --generator <generator> --reason '<reason>'",
           "MISSING_REQUIRED_ARGUMENT",
         );
       }
