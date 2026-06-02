@@ -416,8 +416,21 @@ async function searchDatabase(
   const preFilter =
     minScore > 0 ? scored.filter((item) => item.rankingMode !== "semantic" || item.score >= minScore) : scored;
 
-  // Deterministic tiebreaker on equal scores
-  preFilter.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
+  // Deterministic tiebreaker on equal scores.
+  //
+  // CRITICAL: sort on the SAME clamped+rounded value the user sees (see the
+  // `finalScore`/round-to-4dp logic below at buildDbHit), NOT the raw pre-clamp
+  // `item.score`. The boost loop can push scores above 1.0 (utility, graph,
+  // project boosts) and carries ~15 significant digits. Two entries that DISPLAY
+  // an identical score (e.g. both clamp to 1.0000) can still differ in their raw
+  // pre-clamp score by a timing-dependent epsilon — utility recency uses
+  // `Date.now()` and `last_used_at`, so the same query run twice in one process
+  // can yield raw scores that diverge at the 6th decimal. Sorting on the raw
+  // value lets that invisible epsilon decide the order, so the visible name
+  // tiebreaker never engages and the order flips run-to-run (Issue #14). Quantize
+  // to the display value first; only then does `localeCompare` break true ties.
+  const displayScore = (s: number): number => Math.round(Math.min(1, Math.max(0, s)) * 10000) / 10000;
+  preFilter.sort((a, b) => displayScore(b.score) - displayScore(a.score) || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
   // Multiple .stash.json entries can map to the same file (e.g. entries without

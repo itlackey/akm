@@ -599,7 +599,7 @@ describe("Issue #14: Deterministic sort on tied scores", () => {
     // Run the search multiple times to verify determinism
     const results: string[][] = [];
     for (let i = 0; i < 5; i++) {
-      const result = await akmSearch({ query: "widget factory", source: "local" });
+      const result = await akmSearch({ query: "widget factory", source: "local", skipLogging: true });
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       const order = localHits.filter((h) => names.includes(h.name)).map((h) => h.name);
       results.push(order);

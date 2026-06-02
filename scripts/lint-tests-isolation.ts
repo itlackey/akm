@@ -1,12 +1,31 @@
 /**
- * Lint rule: flag test files that use raw `mkdtempSync` **and** also set
- * AKM-specific env vars in the same file.
+ * Lint rules for deterministic, isolated tests.
  *
- * A file that creates a temp dir and immediately assigns it to
- * `process.env.AKM_STASH_DIR` (or XDG_CONFIG_HOME / XDG_DATA_HOME / HOME)
- * should use the `tests/_helpers/sandbox.ts` helpers instead.  Raw
- * `mkdtempSync` for generic fixture data (not an AKM path) is fine and is
- * intentionally NOT flagged.
+ * Rule 1 (mkdtempSync + env): flag test files that use raw `mkdtempSync`
+ * **and** also set AKM-specific env vars in the same file. Such a file should
+ * use the `tests/_helpers/sandbox.ts` helpers instead. Raw `mkdtempSync` for
+ * generic fixture data (not an AKM path) is fine and is intentionally NOT
+ * flagged.
+ *
+ * Rule 2 (unguarded env assignment): flag any test file that *assigns* an
+ * AKM-/XDG-/HOME env var (`process.env.AKM_STASH_DIR = …`) without routing
+ * through a sanctioned restoring wrapper (`withEnv` / `sandbox*` helpers).
+ * Under `bun test` the whole suite shares ONE `process.env`; a stray
+ * assignment that survives past a yield point (or a forgotten restore) silently
+ * pollutes every other file's tests. This is the CLASS behind the two
+ * release/0.8.0 flakes (scoring-pipeline Issue #14 read the wrong DB when a
+ * sibling mutated XDG_DATA_HOME). Rule 1's `mkdtempSync` precondition meant
+ * files that set env from a *literal* path or a *helper* temp dir were never
+ * even considered — Rule 2 closes that blind spot. Files that legitimately set
+ * literal sentinel paths for pure path-resolution tests (and restore via their
+ * own save/restore wrapper) are listed in ENV_ASSIGN_ALLOWED with a reason.
+ *
+ * Rule 3 (elapsed-time assertion): flag `expect(<elapsed|durationMs|…>)` upper-
+ * or lower-bound comparisons against a wall-clock delta (`Date.now() - start`).
+ * These race the scheduler under load — assert the *observable result* (the
+ * timeout fired, the reason is "timeout") and/or drive time with fake timers
+ * instead. `toBeGreaterThanOrEqual(0)` and exact `toBe(<n>)` against an injected
+ * timestamp are deterministic and NOT flagged.
  *
  * Exit codes:
  *   0 — no violations
@@ -31,6 +50,31 @@ const AKM_ENV_VARS: readonly string[] = [
   "XDG_CACHE_HOME",
   "HOME",
 ];
+
+/**
+ * Rule 2 exemptions: files that assign AKM/XDG/HOME env vars without going
+ * through the sandbox helpers, but do so SAFELY (own save/restore wrapper,
+ * synchronous tests, no real I/O). Each entry must be justified. The list may
+ * only shrink as files migrate to the sanctioned helpers.
+ */
+const ENV_ASSIGN_ALLOWED = new Set<string>([
+  // paths.test.ts: pure path-resolution unit tests. They set LITERAL sentinel
+  // paths (e.g. "/test-xdg", "/home/user") to exercise getConfigDir/getDbPath
+  // env precedence — real sandbox temp dirs would defeat the purpose. A
+  // module-level saveEnv()/afterEach(restoreEnv) snapshots and restores every
+  // env key; tests are synchronous so nothing leaks across a yield point.
+  "tests/paths.test.ts",
+
+  // registry-resolve.test.ts: sets AKM_NPM_REGISTRY to literal URLs to test
+  // registry URL resolution precedence. beforeEach deletes it, afterEach
+  // restores the captured original. Synchronous, no real I/O.
+  "tests/registry-resolve.test.ts",
+
+  // fixtures/stashes/load.test.ts: sets AKM_STASH_DIR to a sentinel string to
+  // verify the fixture loader's env handling; captures and restores the prior
+  // value in afterEach (both branches). No temp dir, no leak.
+  "tests/fixtures/stashes/load.test.ts",
+]);
 
 /**
  * Files that are KNOWN good exemptions.  Each entry must be justified.
@@ -208,44 +252,113 @@ function collectTestFiles(dir: string): string[] {
   return results;
 }
 
+type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion";
+
 interface Violation {
   file: string;
-  envVars: string[];
+  rule: Rule;
+  detail: string;
   line: number;
+  envVars?: string[];
 }
 
-function lintFile(filePath: string): Violation | null {
-  const rel = path.relative(repoRoot, filePath).replace(/\\/g, "/");
-
-  // Skip explicitly allowed files
-  if (ALLOWED_FILES.has(rel)) return null;
-
-  const src = fs.readFileSync(filePath, "utf8");
-
-  // Must use mkdtempSync to be a candidate
-  if (!src.includes("mkdtempSync")) return null;
-
-  // Check which AKM env vars are set via process.env
-  const foundVars: string[] = [];
+/**
+ * Find every AKM/XDG/HOME env var that is *assigned* (not merely deleted or
+ * compared) anywhere in the source. Returns the var name + 1-based line.
+ */
+function findEnvAssignments(src: string): Array<{ envVar: string; line: number }> {
+  const lines = src.split("\n");
+  const found: Array<{ envVar: string; line: number }> = [];
   for (const envVar of AKM_ENV_VARS) {
-    // Match:  process.env.AKM_STASH_DIR = ...
-    //         process.env["AKM_STASH_DIR"] = ...
-    const pattern = new RegExp(
-      `process\\.env(?:\\[["']${envVar}["']\\]|\\.)${envVar}\\s*=`,
-      "g",
-    );
-    if (pattern.test(src)) {
-      foundVars.push(envVar);
+    // Assignment only: `process.env.X =` / `process.env["X"] =`, NOT `== `,
+    // `=== `, or `delete process.env.X`. The negative lookahead on `=` rules
+    // out comparison operators.
+    const pattern = new RegExp(`process\\.env(?:\\[["']${envVar}["']\\]|\\.${envVar})\\s*=(?!=)`);
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\s*(\/\/|\*)/.test(l)) continue; // skip comment lines
+      if (pattern.test(l)) found.push({ envVar, line: i + 1 });
+    }
+  }
+  return found;
+}
+
+/** True when the file routes env mutation through a sanctioned restoring wrapper. */
+function usesSanctionedWrapper(src: string): boolean {
+  return /\bwithEnv\s*\(/.test(src) || /\bsandbox(StashDir|Xdg\w+|Home)\s*\(/.test(src);
+}
+
+function lintFile(filePath: string): Violation[] {
+  const rel = path.relative(repoRoot, filePath).replace(/\\/g, "/");
+  const src = fs.readFileSync(filePath, "utf8");
+  const violations: Violation[] = [];
+
+  // ── Rule 1: mkdtempSync + AKM env var ──────────────────────────────────────
+  if (!ALLOWED_FILES.has(rel) && src.includes("mkdtempSync")) {
+    const foundVars: string[] = [];
+    for (const envVar of AKM_ENV_VARS) {
+      const pattern = new RegExp(`process\\.env(?:\\[["']${envVar}["']\\]|\\.)${envVar}\\s*=`, "g");
+      if (pattern.test(src)) foundVars.push(envVar);
+    }
+    if (foundVars.length > 0) {
+      const lines = src.split("\n");
+      const lineNum = lines.findIndex((l) => l.includes("mkdtempSync")) + 1;
+      violations.push({ file: rel, rule: "mkdtemp-env", detail: `env vars: ${foundVars.join(", ")}`, line: lineNum, envVars: foundVars });
     }
   }
 
-  if (foundVars.length === 0) return null;
+  // ── Rule 2: unguarded AKM/XDG/HOME env assignment (no mkdtempSync needed) ───
+  // A Rule-1 hit already covers the same hazard, so only fire Rule 2 when the
+  // file is NOT a Rule-1 candidate (no mkdtempSync) — that's the blind spot.
+  if (!ALLOWED_FILES.has(rel) && !ENV_ASSIGN_ALLOWED.has(rel) && !src.includes("mkdtempSync")) {
+    const assigns = findEnvAssignments(src);
+    if (assigns.length > 0 && !usesSanctionedWrapper(src)) {
+      const vars = [...new Set(assigns.map((a) => a.envVar))];
+      violations.push({
+        file: rel,
+        rule: "unguarded-env",
+        detail: `assigns ${vars.join(", ")} without a restoring wrapper (use withEnv/sandbox* or add a justified ENV_ASSIGN_ALLOWED entry)`,
+        line: assigns[0].line,
+        envVars: vars,
+      });
+    }
+  }
 
-  // Find a representative line number (first mkdtempSync call)
-  const lines = src.split("\n");
-  const lineNum = lines.findIndex((l) => l.includes("mkdtempSync")) + 1;
+  // ── Rule 3: wall-clock elapsed-time assertion ──────────────────────────────
+  // Targets the precise flaky shape: a LOCAL variable assigned a measured
+  // wall-clock delta (`const elapsed = Date.now() - start`) then bounded with
+  // toBeLessThan/toBeGreaterThan. We require BOTH (a) a bare-identifier subject
+  // (no `.` — so `result.improve.wallTime.minMs`, an aggregate over fixture
+  // rows, is NOT flagged) AND (b) that identifier being assigned from a
+  // `Date.now()`/`performance.now()` subtraction somewhere in the file. This
+  // keeps the rule from firing on deterministic duration fields computed from
+  // injected fixtures.
+  {
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\s*(\/\/|\*)/.test(l)) continue;
+      const m = l.match(/expect\(\s*([A-Za-z_$][\w$]*)\s*\)\.toBe(LessThan|GreaterThan)(OrEqual)?\(/);
+      if (!m) continue;
+      const subject = m[1];
+      // The subject must be a locally-measured wall-clock delta.
+      const measured = new RegExp(
+        `(?:const|let|var)\\s+${subject}\\s*=\\s*[^;\\n]*(?:Date\\.now\\(\\)|performance\\.now\\(\\))[^;\\n]*-`,
+      );
+      const measuredReverse = new RegExp(
+        `(?:const|let|var)\\s+${subject}\\s*=\\s*[^;\\n]*-[^;\\n]*(?:Date\\.now\\(\\)|performance\\.now\\(\\))`,
+      );
+      if (!measured.test(src) && !measuredReverse.test(src)) continue;
+      violations.push({
+        file: rel,
+        rule: "elapsed-assertion",
+        detail: `wall-clock assertion on measured delta \`${subject}\` — assert the observable result (e.g. result.reason === "timeout") or drive time with fake timers instead`,
+        line: i + 1,
+      });
+    }
+  }
 
-  return { file: rel, envVars: foundVars, line: lineNum };
+  return violations;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -259,20 +372,25 @@ const allTestFiles = collectTestFiles(testsDir);
 const violations: Violation[] = [];
 
 for (const f of allTestFiles) {
-  const v = lintFile(f);
-  if (v) violations.push(v);
+  violations.push(...lintFile(f));
 }
 
 if (violations.length === 0) {
-  console.log("lint-tests-isolation: OK — no raw-mkdtempSync+env-var violations found");
+  console.log("lint-tests-isolation: OK — no isolation / determinism violations found");
   process.exit(0);
 }
 
+const RULE_LABEL: Record<Rule, string> = {
+  "mkdtemp-env": "raw mkdtempSync + AKM env var",
+  "unguarded-env": "unguarded AKM/XDG/HOME env assignment",
+  "elapsed-assertion": "wall-clock elapsed-time assertion",
+};
+
 console.error(`lint-tests-isolation: ${violations.length} violation(s) found\n`);
 for (const v of violations) {
-  console.error(`  ${v.file}:${v.line}`);
-  console.error(`    env vars: ${v.envVars.join(", ")}`);
-  if (showFixHints) {
+  console.error(`  ${v.file}:${v.line}  [${RULE_LABEL[v.rule]}]`);
+  console.error(`    ${v.detail}`);
+  if (showFixHints && v.envVars && (v.rule === "mkdtemp-env" || v.rule === "unguarded-env")) {
     const importPath = v.file.startsWith("tests/") ? "../_helpers/sandbox" : "./_helpers/sandbox";
     const helpers = v.envVars.map((e) => {
       if (e === "AKM_STASH_DIR") return "sandboxStashDir";
@@ -280,7 +398,7 @@ for (const v of violations) {
       if (e === "XDG_DATA_HOME") return "sandboxXdgDataHome";
       if (e === "XDG_CACHE_HOME") return "sandboxXdgCacheHome";
       if (e === "HOME") return "sandboxHome";
-      return "sandboxEnvDir";
+      return "withEnv";
     });
     const unique = [...new Set(helpers)];
     console.error(`    hint: import { ${unique.join(", ")} } from "${importPath}";`);

@@ -43,6 +43,30 @@ jobs:
       - name: Full project check
         run: bun run check
 
+  # Order-dependence / flake detector. `bun test` shares ONE process across the
+  # whole unit suite, so a test that leaks process.env, a singleton, fake timers,
+  # or stateful DB rows can pass on one scheduling and fail on another. Running
+  # the unit suite a SECOND time in a fresh, independent process surfaces those
+  # nondeterministic flakes that a single run hides. Informational only
+  # (continue-on-error) so a pre-existing intermittent flake never blocks a merge
+  # — but a consistently-red run here is a strong signal of new order-dependence.
+  flake-detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+
+      - name: Unit suite — run 1
+        run: bun run test:unit
+
+      - name: Unit suite — run 2 (fresh process, catches order-dependence)
+        run: bun run test:unit
+
   semantic-search:
     runs-on: ubuntu-latest
     timeout-minutes: 10
