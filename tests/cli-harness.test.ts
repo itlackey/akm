@@ -14,8 +14,9 @@
 // test-isolation lint.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import path from "node:path";
 import { runCliCapture } from "./_helpers/cli";
-import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 afterEach(() => {
@@ -62,7 +63,24 @@ describe("in-process CLI harness", () => {
 
   test("back-to-back runs in one test do not leak singleton state", async () => {
     // First run with no stash -> ConfigError envelope on stderr.
-    const noStash = await runCliCapture(["search", "test"]);
+    //
+    // The "no stash" condition must be constructed explicitly, not inherited
+    // from the ambient environment. `resolveStashDir` falls back to the
+    // platform default `$HOME/akm` when neither `AKM_STASH_DIR` nor a config
+    // `stashDir` is set; under the suite-wide preload sandbox, `HOME` is a
+    // SHARED per-process directory. If any earlier test in the sequential suite
+    // creates `$HOME/akm` (e.g. by resolving the default stash dir without
+    // overriding HOME), this run would resolve that empty dir and exit 0 with
+    // empty results instead of `STASH_DIR_NOT_FOUND` — an order-dependent
+    // flake. Point HOME (and the matching XDG_CONFIG_HOME, so no leaked config
+    // supplies a stashDir) at a fresh empty dir so the missing-stash branch is
+    // exercised deterministically regardless of suite ordering.
+    const freshHome = makeSandboxDir("akm-harness-home");
+    disposers.push(freshHome);
+    const noStash = await withEnv(
+      { HOME: freshHome.dir, XDG_CONFIG_HOME: path.join(freshHome.dir, "config"), AKM_STASH_DIR: undefined },
+      () => runCliCapture(["search", "test"]),
+    );
     expect(noStash.code).not.toBe(0);
     expect(noStash.stderr).toContain("STASH_DIR_NOT_FOUND");
 
