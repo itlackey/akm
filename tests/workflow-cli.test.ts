@@ -317,6 +317,23 @@ describe("workflow CLI", async () => {
     expect(finalStatus.run.currentStepId ?? null).toBeNull();
   }, 30_000);
 
+  // WS5.1: the `--dry-run` arg declaration was removed from `workflow next`
+  // (so it no longer appears in --help) but the runtime guard remains, reading
+  // the flag straight from process.argv so callers still get a clear message.
+  test("next rejects --dry-run with a clear usage error", async () => {
+    const env = createWorkflowEnv();
+    const sourceDir = makeTempDir("akm-workflow-source-");
+    const sourcePath = path.join(sourceDir, "release.md");
+    fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
+    expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
+
+    const result = await runCli(["workflow", "next", "workflow:release", "--dry-run"], env);
+    expect(result.status).toBe(2);
+    const error = parseLastJsonLine(result.stderr) as { error: string; code?: string };
+    expect(error.error).toContain("does not support --dry-run");
+    expect(error.code).toBe("INVALID_FLAG_VALUE");
+  });
+
   test("next auto-starts a workflow and run state survives full index rebuilds", async () => {
     const env = createWorkflowEnv();
     const sourceDir = makeTempDir("akm-workflow-source-");

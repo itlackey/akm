@@ -16,17 +16,32 @@ import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
 
 // ── Exit codes ───────────────────────────────────────────────────────────────
-const EXIT_GENERAL = 1;
-const EXIT_USAGE = 2;
-const EXIT_CONFIG = 78;
+/**
+ * Canonical process exit-code table for the akm CLI. Single source of truth —
+ * referenced by `classifyExitCode` here and re-imported by `src/cli.ts` so the
+ * health-warn / general-failure paths stay in sync.
+ *
+ *   0  success
+ *   1  general / not-found
+ *   2  usage error
+ *   4  health warn (health command only)
+ *  78  config error
+ */
+export const EXIT_CODES = {
+  SUCCESS: 0,
+  GENERAL: 1,
+  USAGE: 2,
+  HEALTH_WARN: 4,
+  CONFIG: 78,
+} as const;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function classifyExitCode(error: unknown): number {
-  if (error instanceof UsageError) return EXIT_USAGE;
-  if (error instanceof ConfigError) return EXIT_CONFIG;
-  if (error instanceof NotFoundError) return EXIT_GENERAL;
-  return EXIT_GENERAL;
+  if (error instanceof UsageError) return EXIT_CODES.USAGE;
+  if (error instanceof ConfigError) return EXIT_CODES.CONFIG;
+  if (error instanceof NotFoundError) return EXIT_CODES.GENERAL;
+  return EXIT_CODES.GENERAL;
 }
 
 function extractHint(error: unknown): string | undefined {

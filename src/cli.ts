@@ -70,7 +70,7 @@ import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
 import { getStringArg, hasSubcommand, parsePositiveIntFlag } from "./cli/parse-args";
-import { emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
+import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { addCommand, buildWebsiteOptions } from "./commands/add-cli";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -162,6 +162,7 @@ import {
   getHyphenatedArg,
   getHyphenatedBoolean,
   getOutputMode,
+  hasBooleanFlag,
   initOutputMode,
   parseDetailLevel,
   parseFlagValue,
@@ -1549,11 +1550,14 @@ const workflowNextCommand = defineCommand({
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
-    "dry-run": { type: "boolean", description: "Not supported — rejected with an error", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (getHyphenatedBoolean(args, "dry-run")) {
+      // `--dry-run` is intentionally NOT a declared arg (so it stays out of
+      // --help). The guard reads it straight from process.argv so existing
+      // callers still get a clear, actionable error instead of a generic
+      // "unknown flag" from citty.
+      if (hasBooleanFlag(process.argv, "--dry-run")) {
         throw new UsageError(
           "`akm workflow next` does not support --dry-run. Remove the flag to start or resume a run.",
           "INVALID_FLAG_VALUE",
@@ -4348,7 +4352,14 @@ export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description: "Agent Knowledge Management — search, show, and manage assets from your stash.",
+    description:
+      "Agent Knowledge Management — search, show, and manage assets from your stash.\n\n" +
+      "Exit codes:\n" +
+      "  0   success\n" +
+      "  1   general error / not found\n" +
+      "  2   usage error\n" +
+      "  4   health warn (akm health only)\n" +
+      "  78  config error",
   },
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
@@ -4454,11 +4465,12 @@ const WIKI_SUBCOMMAND_SET = new Set([
   "ingest",
 ]);
 // ── Exit codes ──────────────────────────────────────────────────────────────
-const EXIT_GENERAL = 1;
-/** `akm health` warn status — emitted when overall status is "warn" (advisories
- *  fired but no hard failure). Chosen as 4 to avoid colliding with EXIT_GENERAL
- *  (1) and USAGE (2). CI monitors can map: 0=pass, 4=warn, 1=fail. */
-const EXIT_HEALTH_WARN = 4;
+// Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
+// the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
+// status — advisories fired but no hard failure; chosen to avoid colliding with
+// GENERAL (1) and USAGE (2). CI monitors can map: 0=pass, 4=warn, 1=fail.
+const EXIT_GENERAL = EXIT_CODES.GENERAL;
+const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 
 // Only run the CLI when this module is the direct entry point. When it is
 // imported (e.g. by the in-process test harness in tests/_helpers/cli.ts),

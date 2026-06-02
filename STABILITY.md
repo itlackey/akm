@@ -15,7 +15,9 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
 
 - **Asset ref syntax** — `<type>:<name>` for the 11 supported asset types
   (`script`, `skill`, `command`, `agent`, `knowledge`, `memory`, `workflow`,
-  `wiki`, `vault`, `lesson`, `task`).
+  `wiki`, `vault`, `lesson`, `task`). The `vault` asset type is deprecated
+  (removed in 0.9.0 — use `env`); it continues to resolve to frozen `vaults/`
+  files for the 0.8 window.
 - **Read commands** — `akm search`, `akm show`, `akm list`, `akm curate`,
   `akm info`, `akm config get`, `akm config list`, `akm vault list`,
   `akm vault show`, `akm proposal list` (list filters). The flat `akm proposals`

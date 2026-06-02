@@ -645,6 +645,13 @@ is working. If it shows `"ready-js"`, the JS fallback is in use.
 
 akm reads a small set of environment variables in addition to `config.json`.
 
+### Public environment variables
+
+These variables are part of the supported surface — safe to set in scripts and
+CI. Variables not listed here (e.g. `AKM_FORCE_INIT_TMP_STASH`, `AKM_DEBUG*`,
+`AKM_DISABLE_*`) are internal test/debug hooks, are undocumented on purpose,
+and may change or be renamed without notice.
+
 | Variable | Purpose | Default | Notes |
 | --- | --- | --- | --- |
 | `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) | |
@@ -663,6 +670,9 @@ akm reads a small set of environment variables in addition to `config.json`.
 | `AKM_VERBOSE` | When truthy, print verbose diagnostics. | unset | Env wins over `--verbose` / `--quiet` flags. |
 | `AKM_DB_BACKUP` | Set to `0`/`false`/`no`/`off` to skip the pre-upgrade data-dir snapshot. | unset (backups enabled) | The snapshot is a `fs.cpSync` of the data directory into `<dataDir>/backups/<timestamp>-pre-v<targetVersion>/` and only runs when the binary upgrades the on-disk `DB_VERSION`. Failures warn-and-proceed; they do not block the upgrade. |
 | `AKM_DB_BACKUP_RETAIN` | FIFO retention for pre-upgrade snapshots. | `5` | Older snapshots are pruned at backup time. Invalid values fall back to the default with a one-line warning. |
+| `AKM_BIN` | Absolute path to the `akm` binary used when scheduled tasks re-invoke akm. | resolved from `execPath`/PATH | Takes precedence over auto-detection. Set when akm is not on PATH for the scheduler. |
+| `AKM_NON_INTERACTIVE` | Set to `1` to force non-interactive behavior (treat as no TTY) for prompts and consolidation review. | unset | Useful in CI and headless agents. Also inferred when stdin is not a TTY. |
+| `AKM_EVENT_SOURCE` | Tags emitted events with their source (`user` or `improve`). | unset | Set automatically by `akm improve` for agent subprocesses so improve-driven events can be filtered out of user-facing history. |
 
 ### Pre-upgrade data-directory backups
 
