@@ -302,6 +302,27 @@ export function formatProposalRejectPlain(r: Record<string, unknown>): string {
   return `Rejected proposal ${String(r.id ?? "?")} (${String(r.ref ?? "?")})${reason}`;
 }
 
+export function formatProposalDrainPlain(r: Record<string, unknown>): string {
+  const policy = String(r.policy ?? "?");
+  const applyMode = String(r.applyMode ?? "queue");
+  const promoted = Array.isArray(r.promoted) ? (r.promoted as unknown[]) : [];
+  const rejected = Array.isArray(r.rejected) ? (r.rejected as unknown[]) : [];
+  const deferred = Array.isArray(r.deferred) ? (r.deferred as Array<Record<string, unknown>>) : [];
+  const skippedByCap = Array.isArray(r.skippedByCap) ? (r.skippedByCap as unknown[]) : [];
+  const prefix = r.dryRun === true ? "[dry-run] " : "";
+  const lines = [
+    `${prefix}Drained proposal queue (policy=${policy}, applyMode=${applyMode})`,
+    `  promoted: ${promoted.length}`,
+    `  rejected: ${rejected.length}`,
+    `  deferred: ${deferred.length}`,
+    `  skippedByCap: ${skippedByCap.length}`,
+  ];
+  for (const d of deferred) {
+    lines.push(`    - ${String(d.id ?? "?")} (${String(d.reason ?? "?")})`);
+  }
+  return lines.join("\n").trimEnd();
+}
+
 export function formatDistillPlain(r: Record<string, unknown>): string {
   const outcome = String(r.outcome ?? "unknown");
   const inputRef = String(r.inputRef ?? "?");

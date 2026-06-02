@@ -128,6 +128,8 @@ import {
   akmProposalRevert,
   akmProposalShow,
 } from "./commands/proposal";
+import { drainProposals } from "./commands/proposal-drain";
+import { resolveDrainPolicy } from "./commands/proposal-drain-policies";
 import { akmPropose } from "./commands/propose";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
 import { checkForUpdate, performUpgrade } from "./commands/self-update";
@@ -3848,6 +3850,120 @@ const proposalShowCommand = defineCommand({
   },
 });
 
+const proposalDrainCommand = defineCommand({
+  meta: {
+    name: "drain",
+    description: "Drain the standing pending proposal backlog using a deterministic triage policy",
+  },
+  args: {
+    policy: {
+      type: "string",
+      description: "Built-in preset (personal-stash|conservative|manual) or path to a policy file",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "List what would be accepted/rejected/deferred without writing.",
+      default: false,
+    },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip confirmation prompt (required in non-interactive mode for promotion).",
+      default: false,
+    },
+    "max-accepts": {
+      type: "string",
+      description: "Hard per-run accept ceiling. Accepts beyond this are reported as skippedByCap.",
+    },
+    "max-diff-lines": {
+      type: "string",
+      description: "Defer (never promote) accepts whose proposed content exceeds this many lines.",
+    },
+    "older-than": {
+      type: "string",
+      description: "Only consider proposals created more than this many days ago.",
+    },
+    promote: {
+      type: "boolean",
+      description: "Promote (accept) matching proposals. Default is queue mode (stage only, no writes to assets).",
+      default: false,
+    },
+    judgment: {
+      type: "boolean",
+      description: "Opt into the judgment tier for deferred items (Phase 3; currently a no-op).",
+      default: false,
+    },
+    profile: {
+      type: "string",
+      description: "Read the triage block from this improve profile (Phase 2; currently ignored).",
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const stashDir = resolveStashDir();
+      const policy = resolveDrainPolicy(args.policy as string | undefined);
+      const dryRun = args["dry-run"] === true;
+      const applyMode: "queue" | "promote" = args.promote === true ? "promote" : "queue";
+
+      const maxAccepts = parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ?? 25;
+      const maxDiffLines = parsePositiveIntFlag(args["max-diff-lines"] as string | undefined, "--max-diff-lines");
+
+      const rawOlderThan = parsePositiveIntFlag(args["older-than"] as string | undefined, "--older-than");
+      const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
+
+      // Promotion in promote mode is destructive (commits to git, no batch revert).
+      if (applyMode === "promote" && !dryRun) {
+        const { confirmDestructive } = await import("./cli/confirm.js");
+        const confirmed = await confirmDestructive(
+          `Drain and promote matching pending proposals under policy "${policy.name}"? Promotions commit to git and cannot be batch-reverted.`,
+          { yes: args.yes === true },
+        );
+        if (!confirmed) {
+          process.stderr.write("Aborted.\n");
+          return;
+        }
+      }
+
+      // `--older-than` is applied here as a pre-filter on excludeIds: ids that
+      // are too fresh are excluded so the engine never touches them.
+      let excludeIds: Set<string> | undefined;
+      if (olderThanMs !== undefined) {
+        const { listProposals } = await import("./core/proposals");
+        const now = Date.now();
+        excludeIds = new Set(
+          listProposals(stashDir, { status: "pending" })
+            .filter((proposal) => now - new Date(proposal.createdAt).getTime() < olderThanMs)
+            .map((proposal) => proposal.id),
+        );
+      }
+
+      const result = await drainProposals({
+        stashDir,
+        policy,
+        applyMode,
+        maxAccepts,
+        dryRun,
+        ...(maxDiffLines !== undefined ? { maxDiffLines } : {}),
+        ...(excludeIds ? { excludeIds } : {}),
+        // Judgment tier resolution lands in Phase 3; the flag is accepted now.
+        judgment: null,
+      });
+
+      output("proposal-drain", {
+        schemaVersion: 1,
+        ok: true,
+        policy: policy.name,
+        applyMode,
+        dryRun,
+        promoted: result.promoted,
+        rejected: result.rejected,
+        deferred: result.deferred,
+        skippedByCap: result.skippedByCap,
+      });
+    });
+  },
+});
+
 // ── proposal noun group (#225 / 0.8 CLI stabilization) ────────────────────────
 //
 // `akm proposal <verb>` is the canonical grammar in 0.8. The flat verbs
@@ -3855,7 +3971,7 @@ const proposalShowCommand = defineCommand({
 // that warn to stderr and delegate to the same command bodies; they are removed
 // in 0.9.0. Bare `akm proposal` behaves as `proposal list` (mirrors `akm env`).
 
-const PROPOSAL_SUBCOMMAND_SET = new Set(["list", "show", "diff", "accept", "reject", "revert"]);
+const PROPOSAL_SUBCOMMAND_SET = new Set(["list", "show", "diff", "accept", "reject", "revert", "drain"]);
 
 function emitProposalVerbDeprecation(oldVerb: string, canonical: string): void {
   if (isQuiet()) return;
@@ -3881,6 +3997,7 @@ const proposalCommand = defineCommand({
     accept: proposalAcceptCommand,
     reject: proposalRejectCommand,
     revert: proposalRevertCommand,
+    drain: proposalDrainCommand,
   },
   run({ args }) {
     return runWithJsonErrors(() => {

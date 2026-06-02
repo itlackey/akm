@@ -7,6 +7,7 @@
 import {
   formatProposalAcceptPlain,
   formatProposalDiffPlain,
+  formatProposalDrainPlain,
   formatProposalListPlain,
   formatProposalRejectPlain,
   formatProposalShowPlain,
@@ -18,3 +19,4 @@ registerTextFormatter("proposal-show", (r) => formatProposalShowPlain(r));
 registerTextFormatter("proposal-accept", (r) => formatProposalAcceptPlain(r));
 registerTextFormatter("proposal-reject", (r) => formatProposalRejectPlain(r));
 registerTextFormatter("proposal-diff", (r) => formatProposalDiffPlain(r));
+registerTextFormatter("proposal-drain", (r) => formatProposalDrainPlain(r));
