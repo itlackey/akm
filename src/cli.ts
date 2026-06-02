@@ -782,7 +782,7 @@ const searchCommand = defineCommand({
       default: "all",
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
     "no-project-context": {
       type: "boolean",
       description:
@@ -1396,8 +1396,8 @@ const saveCommand = defineCommand({
  */
 function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "save" | "sync"): boolean {
   const argv = process.argv.slice(2);
-  const saveIndex = argv.indexOf(verb);
-  const tokens = saveIndex >= 0 ? argv.slice(saveIndex + 1) : argv;
+  const verbIndex = argv.indexOf(verb);
+  const tokens = verbIndex >= 0 ? argv.slice(verbIndex + 1) : argv;
 
   let formatIndex = -1;
   let formatConsumesNextToken = false;
@@ -1497,8 +1497,11 @@ const historyCommand = defineCommand({
       }
       const generatorFlag = (args.generator ?? args.source) as "user" | "improve" | undefined;
       if (generatorFlag !== undefined && generatorFlag !== "user" && generatorFlag !== "improve") {
+        // Name the flag the user actually typed so the diagnostic points at
+        // their command line, not the canonical flag they may not have used.
+        const usedFlag = args.generator !== undefined ? "--generator" : "--source";
         throw new UsageError(
-          `Invalid --generator value: "${generatorFlag}". Must be "user" or "improve".`,
+          `Invalid ${usedFlag} value: "${generatorFlag}". Must be "user" or "improve".`,
           "INVALID_FLAG_VALUE",
         );
       }
@@ -3534,6 +3537,7 @@ const proposalListCommand = defineCommand({
       const result = akmProposalList({
         status,
         ref: args.ref,
+        type: args.type,
         includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
       });
       output("proposal-list", result);
@@ -3887,6 +3891,7 @@ const proposalCommand = defineCommand({
       const result = akmProposalList({
         status,
         ref: args.ref,
+        type: args.type,
         includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
       });
       output("proposal-list", result);
@@ -4491,6 +4496,16 @@ if (import.meta.main) {
     initOutputMode(process.argv, loadConfig().output ?? {});
   } catch (error: unknown) {
     emitJsonError(error);
+  }
+
+  // `--shape summary` is only meaningful on `akm show`. Reject it up front for
+  // every other command so a write command (e.g. `akm proposal accept …`)
+  // fails fast BEFORE performing its mutation, rather than throwing at
+  // output-shaping time after the side effect has already happened. The
+  // shape-registry gate in shapeForCommand() remains as defense-in-depth (and
+  // covers the in-process test harness, which skips this startup block).
+  if (getOutputMode().shape === "summary" && process.argv[2] !== "show") {
+    emitJsonError(new UsageError("'--shape summary' is only valid on 'akm show'.", "INVALID_SHAPE_VALUE"));
   }
 
   // One-time cleanup of stale 0.7.x index file at the old cache location.

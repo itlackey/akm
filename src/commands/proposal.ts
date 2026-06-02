@@ -47,6 +47,7 @@ export interface ProposalListOptions {
   stashDir?: string;
   status?: "pending" | "accepted" | "rejected" | "reverted";
   ref?: string;
+  type?: string;
   includeArchive?: boolean;
 }
 
@@ -69,6 +70,7 @@ export function akmProposalList(options: ProposalListOptions = {}): ProposalList
     includeArchive,
     status: options.status,
     ref: options.ref,
+    type: options.type,
   });
   return { schemaVersion: 1, totalCount: proposals.length, proposals };
 }

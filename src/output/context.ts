@@ -116,7 +116,10 @@ export function resolveOutputMode(argv: string[], defaults: OutputDefaults | und
   let detailForVerbosity: string | undefined = rawDetail;
   let shapeFromLegacyDetail: ShapeMode | undefined;
   if (rawDetail === "summary" || rawDetail === "agent") {
-    emitDetailShapeDeprecation(rawDetail);
+    // Only nudge toward `--shape` when the caller did not already pass an
+    // explicit `--shape` (which wins below). Otherwise the "use --shape <x>"
+    // advice would name a projection the caller did not request.
+    if (rawShape === undefined) emitDetailShapeDeprecation(rawDetail);
     shapeFromLegacyDetail = rawDetail;
     detailForVerbosity = "normal";
   } else if (rawDetail === "per-run") {

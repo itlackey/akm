@@ -52,14 +52,16 @@ spellings are kept as deprecated aliases that warn on stderr (removed in
 
 ### `--shape summary`
 
-Available for `show` and `search`. Returns a compact view suitable for
-capability discovery:
+Valid **only on `akm show`**. Every other command rejects `--shape summary`
+with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rather
+than a silent fallback. It returns a compact view suitable for capability
+discovery:
 
 - **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
-- **search**: For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release.
 
 The legacy `--detail summary` spelling is a deprecated alias for `--shape
-summary` (removed in 0.9.0).
+summary` (removed in 0.9.0); like `--shape summary`, it is accepted only on
+`akm show` and is rejected elsewhere.
 
 ## Exit Codes and Error Envelope
 

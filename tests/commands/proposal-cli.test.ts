@@ -82,6 +82,20 @@ describe("akm proposals (CLI)", () => {
     expect(parsed.proposals[0].ref).toBe("lesson:docker-cleanup");
   });
 
+  test("supports --type filtering (asset type derived from ref)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash, "lesson:rg-over-grep");
+    seedProposal(stash, "knowledge:docker-cleanup");
+    const onlyLessons = await runCli(["proposal", "list", "--type", "lesson", "--format=json"], { stashDir: stash });
+    expect(onlyLessons.status).toBe(0);
+    const parsed = JSON.parse(onlyLessons.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].ref).toBe("lesson:rg-over-grep");
+    // No-match type yields an empty list, not the full set.
+    const none = await runCli(["proposal", "list", "--type", "agent", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(none.stdout).totalCount).toBe(0);
+  });
+
   test("error path: invalid --status value → UsageError exit 2 with code", async () => {
     const stash = makeStashDir();
     seedProposal(stash);

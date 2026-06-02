@@ -577,6 +577,17 @@ describe("akm history --generator CLI flag", () => {
     const parsed = parseJsonOutput(result);
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
+    expect(parsed.error).toContain("--generator");
+  });
+
+  test("invalid value via deprecated --source names --source in the error, not --generator", async () => {
+    const result = await runCli(["history", "--source", "bogus", "--format=json"]);
+    expect(result.status).not.toBe(0);
+    const parsed = parseJsonOutput(result);
+    expect(parsed.ok).toBe(false);
+    // The diagnostic must point at the flag the user actually typed.
+    expect(parsed.error).toContain('Invalid --source value: "bogus"');
+    expect(parsed.error).not.toContain("--generator");
   });
 
   test("--source still works as a deprecated alias and warns on stderr", async () => {
