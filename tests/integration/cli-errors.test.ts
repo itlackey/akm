@@ -281,7 +281,7 @@ describe("registry remove", () => {
       )}\n`,
     );
 
-    const { status } = spawnCli(["registry", "remove", "user", "--format=json"], {
+    const { status } = spawnCli(["registry", "remove", "user", "-y", "--format=json"], {
       cwd: project.dir,
       env: {
         HOME: home.dir,

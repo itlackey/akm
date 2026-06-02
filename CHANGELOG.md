@@ -8,6 +8,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.8.0] - 2026-05-28
 
+### Breaking changes (deprecation aliases, removed 0.9.0)
+
+The 0.8 line is the clean-break window for CLI ergonomics. Every rename below
+keeps the **old spelling working** as a deprecated alias that prints a stderr
+warning (never on stdout, so JSON consumers are unaffected) and delegates to the
+canonical form. **All of these deprecated aliases are removed in 0.9.0.** See
+[`docs/migration/v0.8-to-v0.9.md`](docs/migration/v0.8-to-v0.9.md) for the full
+old → new table.
+
+- **Proposal queue is now a noun group**: `akm proposal {list,show,diff,accept,reject,revert}`.
+  The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
+  `akm reject`, `akm diff`, and `akm revert` are deprecated aliases.
+  Bare `akm proposal` behaves as `akm proposal list`.
+- **`--detail` is now verbosity only** (`brief|normal|full`). The output
+  *projection* moved to a new **`--shape`** flag (`human|agent|summary`).
+  `--detail summary` and `--detail agent` are deprecated aliases that map to
+  `--shape summary` / `--shape agent`.
+- **`--for-agent`** is a deprecated alias for `--shape agent`.
+- **`--generator`** replaces `--source` on `accept` / `reject` / `history`
+  (which generator produced the proposal/event). `--source` is a deprecated
+  alias on **those three commands only** — it is unchanged on
+  `search` / `curate` / `graph` / `remember`, where it means "read from here".
+- **`akm save` → `akm sync`** (commit + optional push; `sync` connotes push
+  better). `akm save` is a deprecated alias. `akm sync` adds `--no-push`.
+- **`akm enable` / `akm disable` → `akm config enable` / `akm config disable`**.
+  The top-level `enable` / `disable` are deprecated aliases.
+- **`akm events` → `akm log`**: `log` is an additive alias for the same
+  state.db stream in 0.8 and becomes primary in 0.9.0. (`akm history` remains the
+  asset-scoped, cross-source analytical trail — a different surface.)
+- **`akm wiki remove --force` → `-y` / `--yes`** for skipping the confirmation
+  prompt. `wiki remove` now also *prompts* interactively when a TTY is present;
+  `--force` is a deprecated alias for `-y`.
+- **`akm feedback --note` → `--reason`**: `--note` is a deprecated alias and
+  warns when used without `--reason`.
+- **`akm workflow next --dry-run` removed**: the flag is no longer declared, so
+  it no longer appears in `--help`. The explicit "next does not support
+  --dry-run" guard remains (read from argv) so existing callers still get a clear
+  message instead of silent acceptance.
+- **Singular aliases added** (additive, non-breaking): `akm task` for
+  `akm tasks`, `akm lesson` for `akm lessons`.
+
+### Safety
+
+Two destructive paths that previously acted with no confirmation now guard
+behind an interactive prompt (or `-y` / `--yes` in non-interactive use).
+**Scripts that ran these non-interactively must add `-y`.**
+
+- **`akm registry remove`** now confirms before splicing the registry out of the
+  config (`confirmDestructive`). Pass `-y` / `--yes` to skip the prompt;
+  non-interactive use without `-y` aborts.
+- **Bulk `akm proposal accept --generator <g>`** (the multi-proposal branch) now
+  confirms before promoting every matching proposal, mirroring the existing
+  guard on bulk `reject`. Single-id accept stays unguarded (it is revertable).
+
 ### Fixed
 
 - **Consolidation `delete_failed` on stale index entries** — when consolidation

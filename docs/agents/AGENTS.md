@@ -101,15 +101,15 @@ akm improve <ref>                              # Produce an improvement proposal
 akm improve <ref> --task "tighten the description"
 akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
 akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
-akm proposals                                  # List pending proposals
-akm proposals --status pending|accepted|rejected
-akm show proposal <id>                         # Render the proposal body
-akm diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
-akm diff skill:akm-dream                       # diff accepts full asset ref
-akm accept 7c115132                            # Accept by UUID prefix
-akm accept <id>                                # Validate + promote into the stash
-akm reject skill:my-skill --reason "not ready" # Reject by asset ref
-akm reject <id> --reason "..."                 # Archive with a reason
+akm proposal list                              # List pending proposals
+akm proposal list --status pending|accepted|rejected
+akm proposal show <id>                          # Render the proposal body
+akm proposal diff <ref-or-id>                   # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
+akm proposal diff skill:akm-dream               # diff accepts full asset ref
+akm proposal accept 7c115132                    # Accept by UUID prefix
+akm proposal accept <id>                        # Validate + promote into the stash
+akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject <id> --reason "..."         # Archive with a reason
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history --ref <ref>                        # Per-asset state-change trail
 ```

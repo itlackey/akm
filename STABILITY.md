@@ -28,10 +28,20 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
   `akm config enable`, `akm config disable`. `akm save` (now `akm sync`) and the
   top-level `akm enable` / `akm disable` (now `akm config enable` /
   `akm config disable`) are deprecated aliases that warn on stderr and delegate
-  (removed in 0.9.0).
+  (removed in 0.9.0). On `akm feedback`, `--note` is a deprecated alias for
+  `--reason` (removed in 0.9.0).
 - **Output contracts** — JSON output shape (the top-level keys, error
-  envelope `{ok: false, error, hint}`, exit codes from the runbook in
-  `--help`).
+  envelope `{ok: false, error, hint}`), and the exit-code table below.
+  `--detail` is verbosity only (`brief|normal|full`); `--shape`
+  (`human|agent|summary`) is the output-projection axis (see Experimental).
+
+  | Exit code | Meaning |
+  | --- | --- |
+  | `0` | Success |
+  | `1` | General error / not found |
+  | `2` | Usage / bad input |
+  | `4` | Health warning (`akm health` only) |
+  | `78` | Configuration error |
 - **Install scripts** — `install.sh` and `install.ps1` URLs; the `--prefix`
   / `AKM_INSTALL_DIR` environment override.
 
@@ -57,7 +67,9 @@ CHANGELOG with a migration note.
   alias for the same stream in 0.8; `log` becomes primary in 0.9.0).
 - **Lessons** — `akm lessons` subcommand surface (singular `akm lesson` is an
   additive alias).
-- **Wiki management** — `akm wiki *` subcommands.
+- **Wiki management** — `akm wiki *` subcommands. `akm wiki remove` now confirms
+  before deleting; pass `-y` / `--yes` to skip the prompt. The old
+  `--force` flag is a deprecated alias for `-y` (removed in 0.9.0).
 - **Agent dispatch** — `akm agent` subcommand. The supported set of
   agent CLI backends (claude, opencode, codex, gemini, aider) will grow.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,

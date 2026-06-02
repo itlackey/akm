@@ -70,7 +70,7 @@ bun run build
 - **Improve continuously** — feedback drives proposals; proposals drive asset quality [(details)](docs/features/improvement-loop.md)
   ```sh
   akm feedback skill:code-review --positive
-  akm improve && akm proposals
+  akm improve && akm proposal list
   ```
 
 ## Quick start
@@ -135,11 +135,11 @@ akm implements [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442
 
 **Improvement loop**
 ```sh
-akm feedback skill:planner --negative --note "Doesn't account for merge conflicts"
+akm feedback skill:planner --negative --reason "Doesn't account for merge conflicts"
 akm improve                   # generate proposals from feedback + history
-akm proposals                 # review pending proposals
-akm accept <uuid-or-ref>      # apply a proposal
-akm reject <uuid-or-ref>      # discard it
+akm proposal list             # review pending proposals
+akm proposal accept <uuid-or-ref>   # apply a proposal
+akm proposal reject <uuid-or-ref>   # discard it
 ```
 
 **Clone and customize an asset**
@@ -150,7 +150,7 @@ akm clone workflow:ship-release --dest ./project/.claude
 
 ## The improvement loop
 
-akm tracks which assets agents actually use (`select` events) and what agents think of them (`akm feedback`). Running `akm improve` processes that signal to generate proposals — suggested edits, promotions, or deprecations. Review with `akm proposals`, then `akm accept` or `akm reject`. Accepted changes write back to your writable sources. Distilled lessons surface via `akm improve --distill`.
+akm tracks which assets agents actually use (`select` events) and what agents think of them (`akm feedback`). Running `akm improve` processes that signal to generate proposals — suggested edits, promotions, or deprecations. Review with `akm proposal list`, then `akm proposal accept` or `akm proposal reject`. Accepted changes write back to your writable sources. Distilled lessons surface via `akm improve --distill`.
 
 ## Tell your agent about akm
 

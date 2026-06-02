@@ -21,10 +21,17 @@ These flags are accepted by all commands:
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary`, `agent` | `brief` | Output detail level |
-| `--for-agent` | boolean | `false` | **Deprecated alias** for `--detail=agent`; kept for one release cycle. Prefer `--detail=agent` |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level |
+| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** (was `--detail summary\|agent`) |
+| `--for-agent` | boolean | `false` | **Deprecated alias** for `--shape=agent` (removed in 0.9.0). Prefer `--shape=agent` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
+
+`--detail` controls **how much** is returned (`brief|normal|full`); `--shape`
+controls the **projection** (`human` for people, `agent` for a token-lean
+action view, `summary` for capability discovery). The legacy spellings
+`--detail summary`, `--detail agent`, and `--for-agent` are deprecated aliases
+that warn on stderr and map to `--shape` (removed in 0.9.0).
 
 ### `--format jsonl`
 
@@ -32,24 +39,27 @@ Outputs one JSON object per line. For `search` and `registry search`, each hit
 is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--detail=agent` (was `--for-agent`)
+### `--shape=agent` (was `--detail=agent` / `--for-agent`)
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 - **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`, `comments`
 
-Prefer `--detail=agent` going forward. The `--for-agent` boolean is kept as
-a deprecated alias for one release cycle and will be removed in a future
-minor release — see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md).
+Prefer `--shape=agent` going forward. The `--detail=agent` and `--for-agent`
+spellings are kept as deprecated aliases that warn on stderr (removed in
+0.9.0).
 
-### `--detail summary`
+### `--shape summary`
 
 Available for `show` and `search`. Returns a compact view suitable for
 capability discovery:
 
 - **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
 - **search**: For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release.
+
+The legacy `--detail summary` spelling is a deprecated alias for `--shape
+summary` (removed in 0.9.0).
 
 ## Exit Codes and Error Envelope
 
@@ -60,6 +70,7 @@ Every command exits with one of the following codes:
 | 0 | Success | — |
 | 1 | Not found or general error | `NotFoundError`, other |
 | 2 | Usage / bad input | `UsageError` |
+| 4 | Health warning (`akm health` only) | — |
 | 78 | Configuration error | `ConfigError` |
 
 On failure, every command emits a JSON error envelope on **stderr** before
@@ -347,7 +358,8 @@ akm search "deploy" --include-proposed
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level. For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release. |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level |
+| `--shape` | `human`, `agent`, `summary` | `human` | Output projection. For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release. |
 
 `--filter` flags AND-join: every supplied key must match the entry's
 `scope` for the entry to appear in the result set. Entries without any scope
@@ -355,10 +367,10 @@ are excluded as soon as a filter is supplied. With no `--filter` (the
 default), unfiltered queries continue to surface all entries — including
 legacy memories that pre-date the scope contract.
 
-The `ref` handle for `akm show` is **only present at `full` and `agent` detail
-levels** for local stash hits; `brief` and `normal` omit it intentionally to
-keep the payload compact. Use `--detail=agent` to get `ref` without the full
-hit payload. Key fields by availability:
+The `ref` handle for `akm show` is **only present at `full` detail and under
+`--shape=agent`** for local stash hits; `brief` and `normal` omit it
+intentionally to keep the payload compact. Use `--shape=agent` to get `ref`
+without the full hit payload. Key fields by availability:
 
 - **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`);
   present at `full` and `agent` only (for local hits)
@@ -368,7 +380,7 @@ hit payload. Key fields by availability:
 - **`id`** -- Registry-level stash identifier (registry hits only)
 
 The default brief shape is intentionally small. The exact field set per
-detail level is authoritative in `src/output/shapes.ts`
+detail level (and per `--shape`) is authoritative in `src/output/shapes.ts`
 (`shapeSearchHit` / `shapeSearchHitForAgent`):
 
 | Level | Local stash hits | Registry hits |
@@ -376,8 +388,8 @@ detail level is authoritative in `src/output/shapes.ts`
 | `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
 | `normal` | adds `description`, `score`, optional `warnings`, optional `quality` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, stash metadata) | full hit object |
-| `summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
-| `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+| `--shape summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
+| `--shape agent` (was `--detail agent` / `--for-agent`) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
 The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
 surface an optional `warnings: string[]` field on hits when a provider has
