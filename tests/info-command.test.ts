@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { assembleInfo } from "../src/commands/info";
-import { loadConfig, saveConfig } from "../src/core/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config";
 import {
   closeDatabase,
   openDatabase,
@@ -14,6 +14,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
+import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,
   sandboxStashDir,
@@ -220,5 +221,20 @@ describe("assembleInfo", () => {
     const serialized = JSON.stringify(info);
     expect(serialized).not.toContain("super-secret-key-12345");
     expect(serialized).not.toContain("apiKey");
+  });
+});
+
+// ── WS2: info honors --format (already supported; regression guard) ───────────
+describe("akm info --format", () => {
+  test("--format text differs from --format json (info honors --format)", async () => {
+    resetConfigCache();
+    const json = await runCliCapture(["info", "--format", "json"]);
+    resetConfigCache();
+    const text = await runCliCapture(["info", "--format", "text"]);
+    expect(json.code).toBe(0);
+    expect(text.code).toBe(0);
+    // JSON output parses as JSON; text output does not.
+    expect(() => JSON.parse(json.stdout)).not.toThrow();
+    expect(json.stdout).not.toBe(text.stdout);
   });
 });

@@ -20,7 +20,8 @@ akm curate "<task>"                          # Curate the best matches for a tas
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` |
+| `--detail` | `brief`, `normal`, `full` | `brief` |
+| `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
 
 ## Show
 
@@ -264,7 +265,7 @@ Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
 
 ## Output Control
 
-All commands accept `--format` and `--detail` flags:
+All commands accept `--format`, `--detail`, and `--shape` flags:
 
 - `--format json` (default) — structured JSON
 - `--format jsonl` — one JSON object per line (streaming-friendly)
@@ -273,7 +274,9 @@ All commands accept `--format` and `--detail` flags:
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
-- `--detail summary` — metadata only (no content/template/prompt), under 200 tokens
+- `--shape human` (default) — standard projection
+- `--shape agent` — agent-optimized output: strips non-actionable fields
+- `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only valid on `akm show`
 
 Run `akm -h` or `akm <command> -h` for per-command help.
 

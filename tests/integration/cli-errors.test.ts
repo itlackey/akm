@@ -181,7 +181,10 @@ describe("error class hints", () => {
     expect(new UsageError("bad source", "INVALID_SOURCE_VALUE").hint()).toBe("Pick one of: stash, registry, both.");
     expect(new UsageError("bad format", "INVALID_FORMAT_VALUE").hint()).toBe("Pick one of: json, jsonl, text, yaml.");
     expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
-      "Pick one of: brief, normal, full, summary, agent.",
+      "Pick one of: brief, normal, full. For agent/summary projections use --shape.",
+    );
+    expect(new UsageError("bad shape", "INVALID_SHAPE_VALUE").hint()).toBe(
+      "Pick one of: human, agent, summary (summary is only valid on `akm show`).",
     );
     expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("Quote JSON values");
     expect(new UsageError("bad target", "MISSING_OR_AMBIGUOUS_TARGET").hint()).toContain("akm update --all");

@@ -8,7 +8,7 @@
  * No registry imports — no circular dependencies.
  */
 
-import type { DetailLevel } from "../context";
+import type { DetailLevel, ShapeMode } from "../context";
 
 export const NORMAL_DESCRIPTION_LIMIT = 250;
 
@@ -54,10 +54,10 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
   if (detail === "brief") {
     return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
   }
-  if (detail === "normal" || detail === "summary") {
+  if (detail === "normal") {
     return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
   }
-  // full / agent: project everything including the payload.
+  // full: project everything including the payload.
   return pickFields(entry, [
     "id",
     "ref",
@@ -146,7 +146,7 @@ export function shapeDistillOutput(result: Record<string, unknown>, detail: Deta
     ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}),
     ...(result.message !== undefined ? { message: result.message } : {}),
     ...(Array.isArray(result.findings) && result.findings.length > 0 ? { findings: result.findings } : {}),
-    ...(proposal ? { proposal: shapeProposalEntry(proposal, detail === "summary" ? "normal" : detail) } : {}),
+    ...(proposal ? { proposal: shapeProposalEntry(proposal, detail) } : {}),
   };
   if (detail === "full") {
     return { schemaVersion: result.schemaVersion ?? 1, ...base };
@@ -195,10 +195,10 @@ export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLe
   if (detail === "brief") {
     return pickFields(entry, ["eventType", "ref", "ts"]);
   }
-  if (detail === "normal" || detail === "summary") {
+  if (detail === "normal") {
     return pickFields(entry, ["eventType", "ref", "ts"]);
   }
-  // full / agent: project everything the reader emits.
+  // full: project everything the reader emits.
   return pickFields(entry, ["id", "schemaVersion", "eventType", "ref", "ts", "metadata"]);
 }
 
@@ -236,18 +236,19 @@ export function shapeHistoryEntry(entry: Record<string, unknown>, detail: Detail
     // source lets callers verify filter correctness (e.g. --source user).
     return pickFields(entry, ["eventType", "ref", "signal", "source", "createdAt"]);
   }
-  if (detail === "normal" || detail === "summary") {
+  if (detail === "normal") {
     return pickFields(entry, ["eventType", "ref", "signal", "source", "query", "createdAt"]);
   }
-  // full / agent: return everything the reader emits.
+  // full: return everything the reader emits.
   return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "source", "metadata", "createdAt"]);
 }
 
 export function shapeSearchOutput(
   result: Record<string, unknown>,
   detail: DetailLevel,
-  forAgent = false,
+  shape: ShapeMode = "human",
 ): Record<string, unknown> {
+  const forAgent = shape === "agent";
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
   const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
   const shapedHits = forAgent
@@ -390,9 +391,9 @@ export function truncateDescription(description: string, limit: number): string 
 export function shapeShowOutput(
   result: Record<string, unknown>,
   detail: DetailLevel,
-  forAgent = false,
+  shape: ShapeMode = "human",
 ): Record<string, unknown> {
-  if (forAgent) {
+  if (shape === "agent") {
     return pickFields(result, [
       "type",
       "name",
@@ -417,7 +418,7 @@ export function shapeShowOutput(
       "related",
     ]);
   }
-  if (detail === "summary") {
+  if (shape === "summary") {
     return pickFields(result, [
       "type",
       "name",

@@ -8,8 +8,8 @@
  *
  * Extracted from `src/cli.ts` so it does not bloat the CLI module and so
  * docs/CI tooling can re-use the same constants. Two flavors:
- * `EMBEDDED_HINTS` (default reference, ~40 lines) and
- * `EMBEDDED_HINTS_FULL` (`--detail full`, ~250 lines).
+ * `EMBEDDED_HINTS` (`--detail brief`, short reference, ~40 lines) and
+ * `EMBEDDED_HINTS_FULL` (`--detail normal|full`, ~250 lines).
  */
 
 import EMBEDDED_HINTS_FULL from "./cli-hints-full.md" with { type: "text" };

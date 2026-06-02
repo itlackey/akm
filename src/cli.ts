@@ -163,6 +163,7 @@ import {
   getHyphenatedBoolean,
   getOutputMode,
   initOutputMode,
+  parseDetailLevel,
   parseFlagValue,
 } from "./output/context";
 import { formatEventLine } from "./output/text";
@@ -468,7 +469,7 @@ const indexCommand = defineCommand({
 });
 
 const infoCommand = defineCommand({
-  meta: { name: "info", description: "Show system capabilities, configuration, and index stats as JSON" },
+  meta: { name: "info", description: "Show system capabilities, configuration, and index stats" },
   run() {
     return runWithJsonErrors(() => {
       const result = assembleInfo();
@@ -484,9 +485,13 @@ const healthCommand = defineCommand({
       type: "string",
       description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
     },
+    "group-by": {
+      type: "string",
+      description: "Group rows by: run (one row per improve_runs entry). Omit for the default summary.",
+    },
     detail: {
       type: "string",
-      description: "Detail level: brief (default) or per-run for one row per improve_runs entry",
+      description: "DEPRECATED: use --group-by run instead of --detail per-run (removed 0.9.0).",
     },
     "window-compare": {
       type: "string",
@@ -506,11 +511,34 @@ const healthCommand = defineCommand({
       const rawWindows = parseAllFlagValues("--windows");
       const windows: WindowSpec[] | undefined =
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
+      const groupByRaw = (args as Record<string, unknown>)["group-by"] as string | undefined;
       const detailRaw = (args as Record<string, unknown>).detail as string | undefined;
+      // Back-compat: `--detail per-run` → `--group-by run` (warns; removed 0.9.0).
+      let groupBy = groupByRaw;
+      if (detailRaw !== undefined) {
+        if (detailRaw === "per-run") {
+          // Read --quiet from argv (not the warn-module singleton) so the
+          // warning fires correctly even when the early-stderr flags were not
+          // applied (e.g. the in-process test harness), matching the WS2
+          // output-flag deprecations in src/output/context.ts.
+          const quietRequested = process.argv.includes("--quiet") || process.argv.includes("-q");
+          if (!quietRequested) {
+            process.stderr.write(
+              "warning: '--detail per-run' is deprecated for 'akm health'; use '--group-by run'. Removed in 0.9.0.\n",
+            );
+          }
+          groupBy = groupBy ?? "run";
+        } else {
+          throw new UsageError(
+            `Invalid value for --detail: ${detailRaw}. 'akm health' uses --group-by run (not --detail).`,
+            "INVALID_DETAIL_VALUE",
+          );
+        }
+      }
       const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
       const result = akmHealth({
         since: args.since,
-        detail: detailRaw as "brief" | "per-run" | undefined,
+        groupBy: groupBy as "run" | undefined,
         windowCompare: windowCompareRaw,
         windows,
       });
@@ -813,6 +841,12 @@ const curateCommand = defineCommand({
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
+    // Output-contract flags. The active values are read from the process-level
+    // singleton (parsed from argv at startup); these declarations make them
+    // visible in `akm curate --help` and document the supported axes.
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    shape: { type: "string", description: "Output projection (human|agent)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -962,7 +996,8 @@ const showCommand = defineCommand({
       required: true,
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    shape: { type: "string", description: "Output projection (human|agent|summary)" },
     scope: {
       type: "string",
       description:
@@ -1018,10 +1053,14 @@ const showCommand = defineCommand({
             throw new UsageError(`Unknown view mode: ${akmView}. Expected one of: full|toc|frontmatter|section|lines`);
         }
       }
-      const cliDetail = getOutputMode().detail;
+      const cliShape = getOutputMode().shape;
       const explicitDetail = parseFlagValue(process.argv, "--detail");
+      // `--shape summary` selects the compact metadata projection for show
+      // (the legacy `--detail summary` spelling still maps here via the
+      // back-compat path in resolveOutputMode). `--detail brief` forces the
+      // brief response regardless of shape.
       const showDetail: ShowDetailLevel | undefined =
-        explicitDetail === "brief" ? "brief" : cliDetail === "summary" ? "summary" : undefined;
+        explicitDetail === "brief" ? "brief" : cliShape === "summary" ? "summary" : undefined;
       // `--scope` is repeatable — citty only exposes the last value, so read
       // every occurrence directly from argv (same pattern as `--filter`).
       const scopeTokens = parseAllFlagValues("--scope");
@@ -1765,18 +1804,18 @@ const hintsCommand = defineCommand({
     detail: {
       type: "string",
       description:
-        "Hints detail level — accepts only `normal` or `full`. Differs from the global --detail flag (brief|normal|full|summary|agent); other values are rejected with INVALID_DETAIL_VALUE.",
+        "Hints detail level (brief|normal|full). `brief` prints the short guide; `normal`/`full` print the complete guide.",
       default: "normal",
     },
   },
   run({ args }) {
-    if (args.detail !== "normal" && args.detail !== "full") {
-      throw new UsageError(
-        `Invalid value for --detail: ${args.detail}. Expected one of: normal|full.`,
-        "INVALID_DETAIL_VALUE",
-      );
-    }
-    process.stdout.write(loadHints(args.detail));
+    return runWithJsonErrors(() => {
+      // Let the global parser validate the value so an invalid `--detail`
+      // returns the standard JSON error envelope (exit 2) rather than a raw
+      // stack trace + exit 1. `brief` → short doc; `normal`/`full` → full doc.
+      const detail = parseDetailLevel(args.detail as string | undefined) ?? "normal";
+      process.stdout.write(loadHints(detail === "brief" ? "brief" : "full"));
+    });
   },
 });
 
@@ -4184,11 +4223,19 @@ export const main = defineCommand({
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
     detail: {
       type: "string",
-      description:
-        "Detail level. Stable: brief|normal|full. Experimental: summary|agent " +
-        "(supported on a subset of commands; coverage will expand or these will be replaced — " +
-        "see STABILITY.md). Default: brief.",
+      description: "Detail level (verbosity): brief|normal|full. Default: brief.",
       default: "brief",
+    },
+    shape: {
+      type: "string",
+      description:
+        "Output projection: human|agent|summary. 'agent' trims to agent-essential fields; " +
+        "'summary' is only valid on 'akm show'. Default: human.",
+    },
+    "for-agent": {
+      type: "boolean",
+      description: "DEPRECATED alias for '--shape agent' (removed 0.9.0).",
+      default: false,
     },
     quiet: {
       type: "boolean",
@@ -4347,9 +4394,11 @@ if (import.meta.main) {
 
 // ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────
 
-function loadHints(detail: "normal" | "full" = "normal"): string {
-  const filename = detail === "full" ? "AGENTS.full.md" : "AGENTS.md";
-  const fallback = detail === "full" ? EMBEDDED_HINTS_FULL : EMBEDDED_HINTS;
+function loadHints(detail: "brief" | "normal" | "full" = "normal"): string {
+  // `brief` → the short AGENTS.md guide; `normal`/`full` → the complete guide.
+  const wantFull = detail !== "brief";
+  const filename = wantFull ? "AGENTS.full.md" : "AGENTS.md";
+  const fallback = wantFull ? EMBEDDED_HINTS_FULL : EMBEDDED_HINTS;
 
   // Try reading from the docs/ directory (works in dev and when installed via npm)
   try {

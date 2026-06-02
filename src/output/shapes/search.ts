@@ -5,6 +5,6 @@
 import { shapeSearchOutput } from "./helpers";
 import { registerOutputShape } from "./registry";
 
-registerOutputShape("search", (result, detail, forAgent) =>
-  shapeSearchOutput(result as Record<string, unknown>, detail, forAgent),
+registerOutputShape("search", (result, detail, shape) =>
+  shapeSearchOutput(result as Record<string, unknown>, detail, shape),
 );

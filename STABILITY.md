@@ -59,9 +59,13 @@ for scripted use.
 
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
-- **`--detail=agent` and `--detail=summary` flags** — only implemented on
-  a subset of commands; will either roll out everywhere or be replaced
-  with a different mechanism.
+- **`--shape agent` and `--shape summary`** — the output-projection axis
+  (`--shape human|agent|summary`) is new in 0.8. `summary` is implemented
+  only on `akm show`; `agent` is implemented on `search`, `show`, and
+  `curate`. Coverage will expand. The legacy spellings `--detail summary`,
+  `--detail agent`, and `--for-agent` are deprecated aliases (warn on
+  stderr; removed in 0.9.0). `--detail` is now verbosity only
+  (`brief|normal|full`).
 - **Vault providers** — vault read/write is stable; external/network vault
   providers (issue #190) are not yet shipped.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,

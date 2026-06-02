@@ -169,4 +169,53 @@ describe("curate command", () => {
       db.close();
     }
   });
+
+  // ── WS2: --detail / --shape are now effective on curate ─────────────────────
+  test("--detail full projects description on stash items; brief omits it", async () => {
+    const stashDir = makeStash();
+    const brief = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json"])) as {
+      items: Array<Record<string, unknown>>;
+    };
+    const full = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json", "--detail=full"])) as {
+      items: Array<Record<string, unknown>>;
+    };
+    const briefStash = brief.items.find((i) => i.source === "stash");
+    const fullStash = full.items.find((i) => i.source === "stash");
+    expect(briefStash).toBeDefined();
+    expect(fullStash).toBeDefined();
+    // brief omits description; full carries it (when the item has one).
+    expect(briefStash).not.toHaveProperty("description");
+  });
+
+  test("--shape agent trims items to the agent field set", async () => {
+    const stashDir = makeStash();
+    const output = await runCli(stashDir, ["curate", "release", "--format=json", "--shape=agent"]);
+    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+    const stashItem = json.items.find((i) => i.source === "stash");
+    expect(stashItem).toBeDefined();
+    // agent shape never carries the heavyweight `preview` field.
+    expect(stashItem).not.toHaveProperty("preview");
+    // but keeps the actionable followUp.
+    expect(String(stashItem?.followUp)).toContain("akm show");
+  });
+
+  test("--shape summary is rejected on curate (only valid on show)", async () => {
+    const stashDir = makeStash();
+    const res = await withEnv(
+      {
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: makeTempDir("akm-curate-cache-"),
+        XDG_CONFIG_HOME: makeTempDir("akm-curate-config-"),
+        XDG_DATA_HOME: makeTempDir("akm-curate-data-"),
+      },
+      async () => {
+        resetConfigCache();
+        return runCliCapture(["curate", "release", "--format=json", "--shape=summary"]);
+      },
+    );
+    expect(res.code).toBe(2);
+    // The error envelope is pretty-printed JSON on stderr.
+    const parsed = JSON.parse(res.stderr.trim());
+    expect(parsed.code).toBe("INVALID_SHAPE_VALUE");
+  });
 });

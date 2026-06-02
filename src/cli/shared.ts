@@ -69,7 +69,7 @@ export async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)
  */
 export function output(command: string, result: unknown): void {
   const mode: OutputMode = getOutputMode();
-  const shaped = shapeForCommand(command, result, mode.detail, mode.forAgent);
+  const shaped = shapeForCommand(command, result, mode.detail, mode.shape);
 
   if (mode.format === "jsonl") {
     outputJsonl(command, shaped);
