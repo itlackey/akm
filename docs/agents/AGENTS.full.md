@@ -20,7 +20,8 @@ akm curate "<task>"                          # Curate the best matches for a tas
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` |
+| `--detail` | `brief`, `normal`, `full` | `brief` |
+| `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
 
 ## Show
 
@@ -87,27 +88,30 @@ akm improve <ref>                              # Produce an improvement proposal
 akm improve <ref> --task "tighten the description"
 akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
 akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
-akm proposals                                  # List pending proposals
-akm proposals --status pending|accepted|rejected
-akm show proposal <id>                         # Render the proposal body and metadata
-akm diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
-akm diff skill:akm-dream                       # diff accepts full asset ref
-akm accept 7c115132                            # Accept by UUID prefix
-akm accept <id>                                # Validate and promote via writeAssetToSource
-akm reject skill:my-skill --reason "not ready" # Reject by asset ref
-akm reject <id> --reason "..."                 # Archive with a reason; body is preserved
+akm proposal list                              # List pending proposals
+akm proposal list --status pending|accepted|rejected
+akm proposal show <id>                          # Render the proposal body and metadata
+akm proposal diff <ref-or-id>                   # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
+akm proposal diff skill:akm-dream               # diff accepts full asset ref
+akm proposal accept 7c115132                    # Accept by UUID prefix
+akm proposal accept <id>                        # Validate and promote via writeAssetToSource
+akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject <id> --reason "..."         # Archive with a reason; body is preserved
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history                                    # Per-asset (or stash-wide) state-change trail
 akm history --ref <ref>
 ```
 
 The `akm improve` command replaces both `akm reflect` and `akm distill` workflows.
-The five proposal subcommands are now accessed via:
-- `akm proposals` (list)
-- `akm show proposal` (show)
-- `akm diff proposal` (diff)
-- `akm accept` (accept)
-- `akm reject` (reject)
+The six proposal subcommands are now accessed via the `proposal` noun group:
+- `akm proposal list` (was `akm proposals`)
+- `akm proposal show` (was `akm show proposal`)
+- `akm proposal diff` (was `akm diff`)
+- `akm proposal accept` (was `akm accept`)
+- `akm proposal reject` (was `akm reject`)
+- `akm proposal revert` (was `akm revert`)
+
+The flat verbs remain as deprecated aliases that warn on stderr (removed in 0.9.0).
 
 ## Wikis
 
@@ -177,9 +181,11 @@ akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 
 When `--dest` is provided, `akm setup` is not required first.
 
-## Save
+## Sync
 
-Commit local changes in a git-backed stash. Behaviour adapts automatically:
+Commit local changes in a git-backed stash. Behaviour adapts automatically.
+(`akm save` is the deprecated 0.7 spelling — it still works but warns; removed
+in 0.9.0.)
 
 - **Not a git repo** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default stash always falls here)
@@ -187,10 +193,11 @@ Commit local changes in a git-backed stash. Behaviour adapts automatically:
 - **Git repo, has remote, `writable: true`** — stage, commit, and push
 
 ```sh
-akm save                                      # Save primary stash (timestamp message)
-akm save -m "Add deploy skill"               # Save with explicit message
-akm save my-skills                            # Save a named writable git stash
-akm save my-skills -m "Update patterns"      # Save named stash with message
+akm sync                                      # Sync primary stash (timestamp message)
+akm sync -m "Add deploy skill"               # Sync with explicit message
+akm sync --no-push                            # Commit only; never push
+akm sync my-skills                            # Sync a named writable git stash
+akm sync my-skills -m "Update patterns"      # Sync named stash with message
 ```
 
 The `--writable` flag on `akm add` opts a remote git stash into push-on-save:
@@ -264,7 +271,7 @@ Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
 
 ## Output Control
 
-All commands accept `--format` and `--detail` flags:
+All commands accept `--format`, `--detail`, and `--shape` flags:
 
 - `--format json` (default) — structured JSON
 - `--format jsonl` — one JSON object per line (streaming-friendly)
@@ -273,7 +280,9 @@ All commands accept `--format` and `--detail` flags:
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
-- `--detail summary` — metadata only (no content/template/prompt), under 200 tokens
+- `--shape human` (default) — standard projection
+- `--shape agent` — agent-optimized output: strips non-actionable fields
+- `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only valid on `akm show`
 
 Run `akm -h` or `akm <command> -h` for per-command help.
 

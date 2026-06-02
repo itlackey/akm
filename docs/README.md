@@ -10,6 +10,7 @@
 
 ## Upgrading
 
+- [Roadmap](roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
 - [v1 migration guide](migration/v1.md) -- The path from 0.x to v1.0, including the `.stash.json` removal scheduled for v0.8.0
 - [Release notes (latest: 0.8.0)](migration/release-notes/0.8.0.md) -- Per-release notes drop into `migration/release-notes/`, including current pre-release removals
 - [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting

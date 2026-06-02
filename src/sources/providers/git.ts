@@ -471,7 +471,15 @@ export interface SaveGitStashResult {
  * When `name` is omitted the primary stash directory is used.
  * When `message` is omitted a timestamp is used.
  */
-export function saveGitStash(name?: string, message?: string, writableOverride?: boolean): SaveGitStashResult {
+export function saveGitStash(
+  name?: string,
+  message?: string,
+  writableOverride?: boolean,
+  options?: { push?: boolean },
+): SaveGitStashResult {
+  // `push: false` (from `akm sync --no-push`) commits but never pushes, even
+  // when the stash is writable with a remote configured.
+  const allowPush = options?.push !== false;
   const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
   // Sanitize the user-supplied message: strip CR/LF/NUL, collapse whitespace,
   // clamp length. An attacker can otherwise pass `--message "subject\n\n\
@@ -565,7 +573,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
   }
   const hasRemote = remoteResult.stdout.trim().length > 0;
 
-  if (!hasRemote || !writable) {
+  if (!hasRemote || !writable || !allowPush) {
     return { committed: true, pushed: false, skipped: false, output: commitResult.stdout.trim() };
   }
 

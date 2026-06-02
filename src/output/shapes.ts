@@ -15,7 +15,8 @@
  * commands (v1 spec §9 — exhaustive registry, no silent fallback).
  */
 
-import type { DetailLevel } from "./context";
+import { UsageError } from "../core/errors";
+import type { DetailLevel, ShapeMode } from "./context";
 import { getOutputShapeHandler } from "./shapes/registry";
 
 // Re-export helpers so existing imports from `shapes.ts` keep working.
@@ -53,6 +54,7 @@ export { deregisterOutputShape, registerOutputShape } from "./shapes/registry";
 // These imports must come AFTER the registry module has been loaded (guaranteed
 // by the import order above).
 import "./shapes/search";
+import "./shapes/curate";
 import "./shapes/registry-search";
 import "./shapes/show";
 import "./shapes/history";
@@ -71,10 +73,28 @@ import "./shapes/passthrough";
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
-export function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
+/**
+ * Commands whose shape handler implements the `summary` projection. For every
+ * other command, `--shape summary` is a usage error (v1 §5 — honest rejection
+ * for a soon-frozen contract, not a silent fallback to `human`).
+ */
+const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
+
+export function shapeForCommand(
+  command: string,
+  result: unknown,
+  detail: DetailLevel,
+  shape: ShapeMode = "human",
+): unknown {
+  if (shape === "summary" && !SHAPE_SUMMARY_COMMANDS.has(command)) {
+    throw new UsageError(
+      `'--shape summary' is not supported for 'akm ${command}'. It is only available on 'akm show'.`,
+      "INVALID_SHAPE_VALUE",
+    );
+  }
   const handler = getOutputShapeHandler(command);
   if (handler) {
-    return handler(result, detail, forAgent);
+    return handler(result, detail, shape);
   }
   // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
   // fallback. A missing case here is a registration bug — fail loudly so

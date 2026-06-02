@@ -10,17 +10,17 @@
  * the main shapes module.
  */
 
-import type { DetailLevel } from "../context";
+import type { DetailLevel, ShapeMode } from "../context";
 
 /**
  * Handler signature for a registered output shape.
  *
  * @param result  Raw command result object.
- * @param detail  Active detail level.
- * @param forAgent  Whether the caller is an LLM agent.
+ * @param detail  Active detail level (verbosity).
+ * @param shape   Active output-projection mode (human|agent|summary).
  * @returns Shaped result (may be the same reference if no trimming needed).
  */
-export type OutputShapeHandler = (result: unknown, detail: DetailLevel, forAgent: boolean) => unknown;
+export type OutputShapeHandler = (result: unknown, detail: DetailLevel, shape: ShapeMode) => unknown;
 
 const OUTPUT_SHAPE_REGISTRY = new Map<string, OutputShapeHandler>();
 

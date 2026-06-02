@@ -36,7 +36,15 @@ const SHIPPED_COMMANDS = [
   "config",
 ] as const;
 
-const PLANNED_FOR_V1 = ["agent", "improve", "propose", "proposals", "accept", "reject"] as const;
+// The proposal queue is now exposed as the `proposal` noun group (0.8 CLI
+// stabilization). The flat verbs (`proposals` / `accept` / `reject`) survive as
+// deprecated aliases (removed 0.9.0), so the spec still names them, but the
+// canonical v1 surface is `proposal <verb>`.
+const PLANNED_FOR_V1 = ["agent", "improve", "propose", "proposal"] as const;
+
+// Spec §9.4 still enumerates the deprecated flat verbs alongside the canonical
+// group; assert they remain documented as the alias surface.
+const PLANNED_FOR_V1_SPEC = [...PLANNED_FOR_V1, "proposals", "accept", "reject"] as const;
 
 describe("v1 spec §9.4 — CLI command surface", () => {
   const spec = readDoc(SPEC_PATH);
@@ -58,7 +66,7 @@ describe("v1 spec §9.4 — CLI command surface", () => {
   });
 
   test("§9.4 declares each planned-for-v1 command", () => {
-    for (const cmd of PLANNED_FOR_V1) {
+    for (const cmd of PLANNED_FOR_V1_SPEC) {
       // accept either `cmd` or `cmd <args>` patterns
       const re = new RegExp(`\`${cmd}\\b`);
       expect(re.test(section)).toBe(true);

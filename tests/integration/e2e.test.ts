@@ -1025,7 +1025,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
         ]),
       );
 
-      const removeResult = runCli("wiki", "remove", "ics-docs", "--force", "--format", "json");
+      const removeResult = runCli("wiki", "remove", "ics-docs", "-y", "--format", "json");
       expect(removeResult.exitCode).toBe(0);
 
       const removedSearchResult = runCli("search", "documentation", "--type", "wiki", "--format", "json");
@@ -1052,7 +1052,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       const stashResult = runCli("wiki", "stash", "my-notes", rawSource, "--as", "test-page", "--format", "json");
       expect(stashResult.exitCode).toBe(0);
 
-      const removeResult = runCli("wiki", "remove", "my-notes", "--force", "--format", "text");
+      const removeResult = runCli("wiki", "remove", "my-notes", "-y", "--format", "text");
       expect(removeResult.exitCode).toBe(0);
       expect(removeResult.stdout).toContain("raw/ preserved at");
 
@@ -1065,8 +1065,37 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(showResult.exitCode).not.toBe(0);
       expect(showResult.stderr).toContain("Wiki not found: my-notes");
 
+      // --force still works as a deprecated skip-prompt alias for -y, but warns on stderr.
       const cleanupResult = runCli("wiki", "remove", "my-notes", "--force", "--with-sources", "--format", "json");
       expect(cleanupResult.exitCode).toBe(0);
+      expect(cleanupResult.stderr).toContain("'--force' is deprecated");
+      expect(cleanupResult.stderr).toContain("-y/--yes");
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+    }
+  });
+
+  test("cli: wiki remove without -y aborts in non-interactive mode", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-wiki-remove-abort-");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+
+    try {
+      const createResult = runCli("wiki", "create", "keep-me", "--format", "json");
+      expect(createResult.exitCode).toBe(0);
+
+      // No -y / --force in a non-TTY: confirmDestructive fails loudly (exit 2),
+      // requiring explicit --yes. The wiki must NOT be removed.
+      const removeResult = runCli("wiki", "remove", "keep-me", "--format", "json");
+      expect(removeResult.exitCode).not.toBe(0);
+      const removeJson = parseJson(removeResult.stdout || removeResult.stderr);
+      expect(removeJson.ok).toBe(false);
+
+      // The wiki must still exist after the aborted removal.
+      const listResult = runCli("wiki", "list", "--format", "json");
+      expect(listResult.exitCode).toBe(0);
+      const listJson = parseJson(listResult.stdout);
+      expect(listJson.wikis).toEqual(expect.arrayContaining([expect.objectContaining({ name: "keep-me" })]));
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }

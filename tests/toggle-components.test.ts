@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { setQuiet } from "../src/core/warn";
 import { runCliCapture } from "./_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
@@ -30,34 +31,84 @@ async function runCli(
   return { status: code, stdout, stderr };
 }
 
-describe("component toggles", () => {
-  test("akm disable skills.sh marks skills.sh registry as disabled", async () => {
-    const xdgConfig = makeTempDir("akm-toggle-config-");
-    const xdgCache = makeTempDir("akm-toggle-cache-");
-    const xdgData = makeTempDir("akm-toggle-data-");
-    const xdgState = makeTempDir("akm-toggle-state-");
-    const stashDir = makeTempDir("akm-toggle-stash-");
+function sandboxEnv(): Record<string, string | undefined> {
+  return {
+    XDG_CONFIG_HOME: makeTempDir("akm-toggle-config-"),
+    XDG_CACHE_HOME: makeTempDir("akm-toggle-cache-"),
+    XDG_DATA_HOME: makeTempDir("akm-toggle-data-"),
+    XDG_STATE_HOME: makeTempDir("akm-toggle-state-"),
+    AKM_STASH_DIR: makeTempDir("akm-toggle-stash-"),
+  };
+}
 
-    const result = await runCli(["disable", "skills.sh", "--format=json"], {
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-      AKM_STASH_DIR: stashDir,
-    });
+function readSkillsRegistry(xdgConfig: string): { name?: string; provider?: string; enabled?: boolean } | undefined {
+  const configPath = path.join(xdgConfig, "akm", "config.json");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    registries?: Array<{ name?: string; provider?: string; enabled?: boolean }>;
+  };
+  return config.registries?.find((entry) => entry.name === "skills.sh" || entry.provider === "skills-sh");
+}
+
+describe("component toggles", () => {
+  test("akm config disable skills.sh marks skills.sh registry as disabled", async () => {
+    const env = sandboxEnv();
+
+    const result = await runCli(["config", "disable", "skills.sh", "--format=json"], env);
 
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout).enabled).toBe(false);
 
-    const configPath = path.join(xdgConfig, "akm", "config.json");
-    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
-      registries?: Array<{ name?: string; provider?: string; enabled?: boolean }>;
-    };
-    const skillsRegistry = config.registries?.find(
-      (entry) => entry.name === "skills.sh" || entry.provider === "skills-sh",
-    );
+    const skillsRegistry = readSkillsRegistry(env.XDG_CONFIG_HOME as string);
     expect(skillsRegistry).toBeDefined();
     expect(skillsRegistry?.enabled).toBe(false);
+  });
+
+  test("akm config enable skills.sh marks skills.sh registry as enabled", async () => {
+    const env = sandboxEnv();
+
+    const result = await runCli(["config", "enable", "skills.sh", "--format=json"], env);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).enabled).toBe(true);
+
+    const skillsRegistry = readSkillsRegistry(env.XDG_CONFIG_HOME as string);
+    expect(skillsRegistry?.enabled).toBe(true);
+  });
+
+  test("deprecated top-level `akm disable` still works AND warns on stderr", async () => {
+    setQuiet(false);
+    const env = sandboxEnv();
+
+    const result = await runCli(["disable", "skills.sh", "--format=json"], env);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).enabled).toBe(false);
+    expect(result.stderr).toContain("'akm disable' is deprecated");
+    expect(result.stderr).toContain("akm config disable");
+    expect(readSkillsRegistry(env.XDG_CONFIG_HOME as string)?.enabled).toBe(false);
+  });
+
+  test("deprecated top-level `akm enable` still works AND warns on stderr", async () => {
+    setQuiet(false);
+    const env = sandboxEnv();
+
+    const result = await runCli(["enable", "skills.sh", "--format=json"], env);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).enabled).toBe(true);
+    expect(result.stderr).toContain("'akm enable' is deprecated");
+    expect(result.stderr).toContain("akm config enable");
+  });
+
+  test("deprecated top-level `akm enable` warning is suppressed under --quiet", async () => {
+    setQuiet(true);
+    const env = sandboxEnv();
+
+    const result = await runCli(["enable", "skills.sh", "--format=json"], env);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
+    setQuiet(false);
   });
 
   test("akm enable <unsupported-target> exits with usage error", async () => {

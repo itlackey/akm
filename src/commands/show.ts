@@ -521,15 +521,21 @@ export function normalizeShowArgv(argv: string[]): string[] {
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
+    if (
+      arg === "--quiet" ||
+      arg === "-q" ||
+      arg === "--verbose" ||
+      arg === "--for-agent" ||
+      arg === "--for-agent=true"
+    ) {
       globalFlags.push(arg);
       continue;
     }
-    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
+    if (arg.startsWith("--format=") || arg.startsWith("--detail=") || arg.startsWith("--shape=")) {
       globalFlags.push(arg);
       continue;
     }
-    if (arg === "--format" || arg === "--detail") {
+    if (arg === "--format" || arg === "--detail" || arg === "--shape") {
       globalFlags.push(arg);
       if (rest[i + 1] !== undefined) {
         globalFlags.push(rest[i + 1]);

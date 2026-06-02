@@ -5,8 +5,9 @@ import path from "node:path";
 import type { RegistryIndex } from "../src/commands/registry-search";
 import { resolveRegistries, searchRegistry } from "../src/commands/registry-search";
 import type { RegistryConfigEntry } from "../src/core/config";
-import { loadConfig, saveConfig } from "../src/core/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config";
 import { getConfigPath } from "../src/core/paths";
+import { runCliCapture } from "./_helpers/cli";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -177,6 +178,54 @@ describe("registry add/remove/list via config", () => {
     const final = loadConfig();
     expect(final.registries?.length).toBe(1);
     expect(final.registries?.[0].name).toBe("beta");
+  });
+});
+
+// ── registry remove safety guard (WS0) ──────────────────────────────────────
+
+describe("registry remove confirmation guard (WS0)", () => {
+  function seedRegistries(): void {
+    const config = loadConfig();
+    const registries: RegistryConfigEntry[] = [
+      { url: "https://example.com/a.json", name: "alpha" },
+      { url: "https://example.com/b.json", name: "beta" },
+    ];
+    saveConfig({ ...config, registries });
+    resetConfigCache();
+  }
+
+  test("remove without --yes aborts in non-interactive mode (exit 2) and keeps the registry", async () => {
+    seedRegistries();
+    const result = await runCliCapture(["registry", "remove", "alpha", "--format=json"]);
+    // confirmDestructive throws NON_INTERACTIVE_REQUIRES_YES (UsageError → exit 2)
+    expect(result.code).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+    // Registry must NOT have been removed.
+    resetConfigCache();
+    const after = loadConfig();
+    expect(after.registries?.some((r) => r.name === "alpha")).toBe(true);
+  });
+
+  test("remove with --yes proceeds and removes the registry", async () => {
+    seedRegistries();
+    const result = await runCliCapture(["registry", "remove", "alpha", "--yes", "--format=json"]);
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.removed).toBe(true);
+    expect(parsed.entry.name).toBe("alpha");
+    resetConfigCache();
+    const after = loadConfig();
+    expect(after.registries?.some((r) => r.name === "alpha")).toBe(false);
+    expect(after.registries?.some((r) => r.name === "beta")).toBe(true);
+  });
+
+  test("remove of a non-existent registry is a no-op and needs no confirmation", async () => {
+    seedRegistries();
+    const result = await runCliCapture(["registry", "remove", "does-not-exist", "--format=json"]);
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.removed).toBe(false);
   });
 });
 

@@ -3,20 +3,31 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Regression suite for #484 — schemaVersion + shape discriminator on
-// passthrough envelopes (curate, workflow-*, vault-*, etc.). Third-party
+// passthrough envelopes (clone, workflow-*, vault-*, etc.). Third-party
 // consumers parsing `akm --format=json` output rely on these fields to
 // pin a schema version and dispatch on the response shape.
+//
+// NOTE: `curate` is no longer a passthrough — WS2 (0.8) gave it a dedicated
+// shape that honors --detail/--shape. Its envelope still carries
+// `schemaVersion`/`shape: "curate"`; the generic passthrough cases below use
+// `clone` (still a passthrough) as the representative command.
 
 import { describe, expect, it } from "bun:test";
 import { shapeForCommand } from "../src/output/shapes";
 
 describe("passthrough envelope stamping (#484)", () => {
   it("adds schemaVersion + shape to curate responses", () => {
-    const result = { hits: [{ ref: "skill:foo" }] };
+    const result = { query: "q", summary: "Selected 1", items: [{ source: "stash", ref: "skill:foo" }] };
     const shaped = shapeForCommand("curate", result, "normal") as Record<string, unknown>;
     expect(shaped.shape).toBe("curate");
     expect(shaped.schemaVersion).toBe(1);
-    expect(shaped.hits).toEqual([{ ref: "skill:foo" }]);
+    expect(Array.isArray(shaped.items)).toBe(true);
+  });
+
+  it("adds schemaVersion + shape to clone (passthrough)", () => {
+    const shaped = shapeForCommand("clone", { ref: "skill:foo", cloned: true }, "normal") as Record<string, unknown>;
+    expect(shaped.shape).toBe("clone");
+    expect(shaped.schemaVersion).toBe(1);
   });
 
   it("adds schemaVersion + shape to workflow-next", () => {
@@ -49,7 +60,7 @@ describe("passthrough envelope stamping (#484)", () => {
 
   it("respects existing schemaVersion / shape fields (idempotent)", () => {
     const result = { schemaVersion: 7, shape: "custom-shape", payload: 42 };
-    const shaped = shapeForCommand("curate", result, "normal") as Record<string, unknown>;
+    const shaped = shapeForCommand("clone", result, "normal") as Record<string, unknown>;
     expect(shaped.shape).toBe("custom-shape");
     expect(shaped.schemaVersion).toBe(7);
   });
@@ -57,9 +68,9 @@ describe("passthrough envelope stamping (#484)", () => {
   it("does not stamp non-object passthrough results", () => {
     // Some passthrough commands might return arrays or primitives — leave them
     // alone so callers that return naked arrays still work.
-    const arr = shapeForCommand("curate", [1, 2, 3], "normal");
+    const arr = shapeForCommand("clone", [1, 2, 3], "normal");
     expect(arr).toEqual([1, 2, 3]);
-    const nullish = shapeForCommand("curate", null, "normal");
+    const nullish = shapeForCommand("clone", null, "normal");
     expect(nullish).toBeNull();
   });
 

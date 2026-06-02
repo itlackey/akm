@@ -187,4 +187,47 @@ describe("output baseline", () => {
     expect(Object.keys(json)).toContain("path");
     expect(Object.keys(json)).toContain("editable");
   });
+
+  // ── WS2: --shape summary on show projects the compact metadata set ──────────
+  test("show --shape summary returns compact metadata (no content/template body)", async () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    writeFile(
+      path.join(stashDir, "commands", "release.md"),
+      "---\ndescription: Release\n---\nRun release {{version}}\n",
+    );
+
+    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=summary"]);
+    const json = JSON.parse(output) as Record<string, unknown>;
+    expect(json.type).toBe("command");
+    expect(json.name).toBe("release.md");
+    // summary omits the heavyweight template/content body.
+    expect(json).not.toHaveProperty("template");
+    expect(json).not.toHaveProperty("content");
+  });
+
+  test("legacy show --detail summary still works and warns on stderr", async () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    writeFile(
+      path.join(stashDir, "commands", "release.md"),
+      "---\ndescription: Release\n---\nRun release {{version}}\n",
+    );
+    const xdgCache = makeTempDir("akm-output-cache-");
+    const xdgConfig = makeTempDir("akm-output-config-");
+    const xdgData = makeTempDir("akm-output-data-");
+    const xdgState = makeTempDir("akm-output-state-");
+    const res = await withEnv(
+      {
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: xdgCache,
+        XDG_CONFIG_HOME: xdgConfig,
+        XDG_DATA_HOME: xdgData,
+        XDG_STATE_HOME: xdgState,
+      },
+      async () => runCliCapture(["show", "command:release.md", "--format=json", "--detail=summary"]),
+    );
+    expect(res.code).toBe(0);
+    expect(res.stderr).toContain("'--detail summary' is deprecated");
+    const json = JSON.parse(res.stdout.trim()) as Record<string, unknown>;
+    expect(json).not.toHaveProperty("template");
+  });
 });

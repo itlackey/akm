@@ -51,6 +51,7 @@ export type UsageErrorCode =
   | "INVALID_SOURCE_VALUE"
   | "INVALID_FORMAT_VALUE"
   | "INVALID_DETAIL_VALUE"
+  | "INVALID_SHAPE_VALUE"
   | "INVALID_JSON_CONFIG_VALUE"
   | "UNKNOWN_CONFIG_KEY"
   | "INVALID_JSON_ARGUMENT"
@@ -95,7 +96,8 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: stash, registry, both.",
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, text, yaml.",
-  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, summary, agent.",
+  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full. For agent/summary projections use --shape.",
+  INVALID_SHAPE_VALUE: "Pick one of: human, agent, summary (summary is only valid on `akm show`).",
   INVALID_JSON_CONFIG_VALUE:
     'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',
   MISSING_OR_AMBIGUOUS_TARGET: "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg` (not both).",

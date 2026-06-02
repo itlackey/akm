@@ -592,7 +592,7 @@ export function createProposal(
  */
 export function listProposals(
   stashDir: string,
-  options: { includeArchive?: boolean; status?: ProposalStatus; ref?: string } = {},
+  options: { includeArchive?: boolean; status?: ProposalStatus; ref?: string; type?: string } = {},
 ): Proposal[] {
   const out: Proposal[] = [];
   const roots: { dir: string; archive: boolean }[] = [{ dir: getProposalsRoot(stashDir, false), archive: false }];
@@ -639,6 +639,16 @@ export function listProposals(
   return out
     .filter((p) => (options.status ? p.status === options.status : true))
     .filter((p) => (options.ref ? p.ref === options.ref : true))
+    .filter((p) => {
+      if (!options.type) return true;
+      try {
+        return parseAssetRef(p.ref).type === options.type;
+      } catch {
+        // Unparseable ref (e.g. the synthetic "unknown:unknown" stub for an
+        // invalid proposal file) never matches a concrete type filter.
+        return false;
+      }
+    })
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 

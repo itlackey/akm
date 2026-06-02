@@ -83,14 +83,23 @@ export const registryCommand = defineCommand({
       meta: { name: "remove", description: "Remove a registry by URL or name" },
       args: {
         target: { type: "positional", description: "Registry URL or name to remove", required: true },
+        yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
       },
       run({ args }) {
-        return runWithJsonErrors(() => {
+        return runWithJsonErrors(async () => {
           const config = loadUserConfig();
           const registries = [...(config.registries ?? [])];
           const idx = registries.findIndex((r) => r.url === args.target || r.name === args.target);
           if (idx === -1) {
             output("registry-remove", { registries, removed: false, message: "No matching registry found" });
+            return;
+          }
+          const { confirmDestructive } = await import("../cli/confirm.js");
+          const confirmed = await confirmDestructive(`Remove registry "${args.target}"? This cannot be undone.`, {
+            yes: args.yes === true,
+          });
+          if (!confirmed) {
+            process.stderr.write("Aborted.\n");
             return;
           }
           const removed = registries.splice(idx, 1)[0];

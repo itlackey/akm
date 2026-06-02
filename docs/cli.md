@@ -21,10 +21,17 @@ These flags are accepted by all commands:
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary`, `agent` | `brief` | Output detail level |
-| `--for-agent` | boolean | `false` | **Deprecated alias** for `--detail=agent`; kept for one release cycle. Prefer `--detail=agent` |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level |
+| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** (was `--detail summary\|agent`) |
+| `--for-agent` | boolean | `false` | **Deprecated alias** for `--shape=agent` (removed in 0.9.0). Prefer `--shape=agent` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
+
+`--detail` controls **how much** is returned (`brief|normal|full`); `--shape`
+controls the **projection** (`human` for people, `agent` for a token-lean
+action view, `summary` for capability discovery). The legacy spellings
+`--detail summary`, `--detail agent`, and `--for-agent` are deprecated aliases
+that warn on stderr and map to `--shape` (removed in 0.9.0).
 
 ### `--format jsonl`
 
@@ -32,24 +39,29 @@ Outputs one JSON object per line. For `search` and `registry search`, each hit
 is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--detail=agent` (was `--for-agent`)
+### `--shape=agent` (was `--detail=agent` / `--for-agent`)
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 - **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`, `comments`
 
-Prefer `--detail=agent` going forward. The `--for-agent` boolean is kept as
-a deprecated alias for one release cycle and will be removed in a future
-minor release — see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md).
+Prefer `--shape=agent` going forward. The `--detail=agent` and `--for-agent`
+spellings are kept as deprecated aliases that warn on stderr (removed in
+0.9.0).
 
-### `--detail summary`
+### `--shape summary`
 
-Available for `show` and `search`. Returns a compact view suitable for
-capability discovery:
+Valid **only on `akm show`**. Every other command rejects `--shape summary`
+with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rather
+than a silent fallback. It returns a compact view suitable for capability
+discovery:
 
 - **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
-- **search**: For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release.
+
+The legacy `--detail summary` spelling is a deprecated alias for `--shape
+summary` (removed in 0.9.0); like `--shape summary`, it is accepted only on
+`akm show` and is rejected elsewhere.
 
 ## Exit Codes and Error Envelope
 
@@ -60,6 +72,7 @@ Every command exits with one of the following codes:
 | 0 | Success | — |
 | 1 | Not found or general error | `NotFoundError`, other |
 | 2 | Usage / bad input | `UsageError` |
+| 4 | Health warning (`akm health` only) | — |
 | 78 | Configuration error | `ConfigError` |
 
 On failure, every command emits a JSON error envelope on **stderr** before
@@ -347,7 +360,8 @@ akm search "deploy" --include-proposed
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level. For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release. |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level |
+| `--shape` | `human`, `agent`, `summary` | `human` | Output projection. For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release. |
 
 `--filter` flags AND-join: every supplied key must match the entry's
 `scope` for the entry to appear in the result set. Entries without any scope
@@ -355,10 +369,10 @@ are excluded as soon as a filter is supplied. With no `--filter` (the
 default), unfiltered queries continue to surface all entries — including
 legacy memories that pre-date the scope contract.
 
-The `ref` handle for `akm show` is **only present at `full` and `agent` detail
-levels** for local stash hits; `brief` and `normal` omit it intentionally to
-keep the payload compact. Use `--detail=agent` to get `ref` without the full
-hit payload. Key fields by availability:
+The `ref` handle for `akm show` is **only present at `full` detail and under
+`--shape=agent`** for local stash hits; `brief` and `normal` omit it
+intentionally to keep the payload compact. Use `--shape=agent` to get `ref`
+without the full hit payload. Key fields by availability:
 
 - **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`);
   present at `full` and `agent` only (for local hits)
@@ -368,7 +382,7 @@ hit payload. Key fields by availability:
 - **`id`** -- Registry-level stash identifier (registry hits only)
 
 The default brief shape is intentionally small. The exact field set per
-detail level is authoritative in `src/output/shapes.ts`
+detail level (and per `--shape`) is authoritative in `src/output/shapes.ts`
 (`shapeSearchHit` / `shapeSearchHitForAgent`):
 
 | Level | Local stash hits | Registry hits |
@@ -376,8 +390,8 @@ detail level is authoritative in `src/output/shapes.ts`
 | `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
 | `normal` | adds `description`, `score`, optional `warnings`, optional `quality` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, stash metadata) | full hit object |
-| `summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
-| `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+| `--shape summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
+| `--shape agent` (was `--detail agent` / `--for-agent`) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
 The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
 surface an optional `warnings: string[]` field on hits when a provider has
@@ -649,7 +663,7 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | --- | --- |
 | `--name` | Human-friendly name for the source |
 | `--provider` | Provider type (e.g. `website`, `npm`). Required for URL sources where inference would be ambiguous |
-| `--writable` | Mark a git source as writable so `akm save` also pushes (default: false) |
+| `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
 | `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous env key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) env keys that can hijack process execution. Use only after reviewing the stash manually |
@@ -814,27 +828,34 @@ When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm setup` first.
 
-### save
+### sync
 
 Stage and commit local changes in a git-backed stash. If the stash has a
 remote configured and is marked `writable: true`, the commit is also pushed.
 
+> **Renamed in 0.8.0.** `akm save` is the deprecated spelling — it still works
+> and delegates to `akm sync`, but prints a stderr deprecation warning and is
+> removed in 0.9.0. `sync` connotes the commit+push behaviour better than
+> `save`.
+
 ```sh
-akm save                            # Save primary stash (auto timestamp message)
-akm save -m "Add deploy skill"     # Save with custom message
-akm save --format json             # Explicit format (both --format json and --format=json work)
-akm save my-skills                  # Save a named writable git stash
-akm save team/core -m "Update"    # Slash-containing source names are valid selectors
-akm save my-skills -m "Update"     # Save named stash with message
+akm sync                            # Sync primary stash (auto timestamp message)
+akm sync -m "Add deploy skill"     # Sync with custom message
+akm sync --no-push                  # Commit only; never push even when writable
+akm sync --format json             # Explicit format (both --format json and --format=json work)
+akm sync my-skills                  # Sync a named writable git stash
+akm sync team/core -m "Update"    # Slash-containing source names are valid selectors
+akm sync my-skills -m "Update"     # Sync named stash with message
 ```
 
 | Argument / Flag | Description |
 | --- | --- |
 | `[name]` | Optional git-backed stash selector. Matches the configured source name exactly and also accepts canonical GitHub aliases such as `owner/repo`, `github:owner/repo`, and branch-ref forms like `github:owner/repo#branch`. Forward slashes are allowed. Defaults to the primary stash |
 | `-m`, `--message` | Commit message. Defaults to `akm save <timestamp>` |
+| `--no-push` | Commit only; never push even when the stash is writable with a remote configured |
 | `--format` | Output format (`json`, `text`, `yaml`). Both `--format json` and `--format=json` are accepted |
 
-If no positional selector is provided, `akm save --format json` still targets
+If no positional selector is provided, `akm sync --format json` still targets
 the primary stash. If a positional selector is provided, it wins even when the
 value also looks like a format token.
 
@@ -846,10 +867,11 @@ value also looks like a format token.
 | Git repo, no remote | Stage and commit only |
 | Git repo, has remote, not writable | Stage and commit only |
 | Git repo, has remote, `writable: true` | Stage, commit, and push |
+| Any writable repo with `--no-push` | Stage and commit only (push suppressed) |
 
 **Primary stash writable config:**
 
-To make the primary stash push on save, set `writable: true` at the root of
+To make the primary stash push on sync, set `writable: true` at the root of
 your config file (`~/.config/akm/config.json` or the path shown by
 `akm config path`):
 
@@ -861,11 +883,11 @@ your config file (`~/.config/akm/config.json` or the path shown by
 ```
 
 When `writable: true` is set and the primary stash has a git remote configured,
-`akm save` will stage, commit, and push.
+`akm sync` will stage, commit, and push.
 
 When `akm setup` successfully initializes the default stash as a local git repo
-(requires `git` to be installed), `akm save` will commit there safely without
-pushing. If git is unavailable, the stash will not be a git repo and save will
+(requires `git` to be installed), `akm sync` will commit there safely without
+pushing. If git is unavailable, the stash will not be a git repo and sync will
 return a skipped result.
 
 To make a named remote git stash writable, pass `--writable` when adding it:
@@ -1072,6 +1094,7 @@ akm history --format text                      # Human-readable trail
 | --- | --- |
 | `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
 | `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
+| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). `--source` is a deprecated alias (removed 0.9.0). |
 | `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
 
 Output envelope (JSON):
@@ -1107,14 +1130,19 @@ If the stash has never been indexed, the `usage_events` schema is created
 on demand and the command returns an empty `entries` array rather than
 erroring.
 
-### events
+### events (alias: `log`)
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends
 an event row to `<dataDir>/state.db`; `akm events list` reads it and
 `akm events tail` follows it via polling.
 
+> **Alias:** `akm log` resolves to this same command in 0.8 (`akm log list`,
+> `akm log tail`). In 0.9.0 `log` becomes the primary spelling and `events`
+> becomes the deprecated alias.
+
 ```sh
 akm events list                                   # All events, oldest first
+akm log list                                      # Same — `log` is an alias for `events`
 akm events list --type feedback                   # Filter by event type
 akm events list --ref skill:deploy                # Filter by asset ref
 akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
@@ -1122,6 +1150,20 @@ akm events list --since '@offset:12345'           # Resume from a row-id cursor
 akm events tail --max-events 10                   # Follow until 10 events
 akm events tail --format jsonl                    # Stream as JSONL
 ```
+
+**`history` vs `events`/`log` — which one do I want?**
+
+| | `akm history` | `akm events` / `akm log` |
+| --- | --- | --- |
+| Scope | Per-asset (or stash-wide) state changes | Raw stash-wide mutation stream |
+| Backing store | `usage_events` table (built by the indexer) | `state.db` append-only events |
+| Granularity | Analytical replay — what was *recorded* for an asset | Every mutating verb, at the moment it happens |
+| Cross-source | Yes — aggregates across configured sources | No — the local `state.db` only |
+| Resumable cursor | No | Yes (`--since '@offset:<id>'`) |
+| Typical use | Audit a specific asset; debug utility-score shifts | Tail the live mutation bus; drive cooperating processes |
+
+In short: reach for `history` when you care about *an asset's lifecycle*, and
+for `events`/`log` when you care about *the raw, resumable mutation stream*.
 
 | Flag | Description |
 | --- | --- |
@@ -1796,15 +1838,26 @@ Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 disable the kill timer entirely (useful for long-running local-model tasks), or
 a positive integer (milliseconds) to apply a task-specific limit.
 
-### proposals
+### proposal
 
 **Status: Available since 0.8.0.**
+Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
+`list`, `show`, `diff`, `accept`, `reject`, `revert`. Bare `akm proposal`
+behaves as `akm proposal list`.
+
+The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
+`akm reject`, `akm diff`, and `akm revert` remain as **deprecated aliases** that
+warn on stderr and delegate to the `proposal <verb>` forms. They are removed in
+0.9.0.
+
+#### proposal list
+
 List proposal queue entries.
 
 ```sh
-akm proposals
-akm proposals --status pending|accepted|rejected|reverted
-akm proposals --ref skill:deploy
+akm proposal list
+akm proposal list --status pending|accepted|rejected|reverted
+akm proposal list --ref skill:deploy
 ```
 
 | Flag | Description |
@@ -1817,53 +1870,62 @@ Each proposal record carries an optional `confidence` field (0..1) emitted by
 reflect/propose runs. The `--auto-accept` flag on `improve` uses this score to
 auto-promote high-confidence proposals — see the `improve` section above. After
 promotion, accepted proposals that overwrote an existing asset also carry a
-`backup` field pointing to the captured prior content, which `akm revert` uses.
+`backup` field pointing to the captured prior content, which
+`akm proposal revert` uses.
 
-### accept
+#### proposal show
 
-**Status: Available since 0.8.0.**
+Inspect a queued proposal and its validation findings.
+
+```sh
+akm proposal show <id>
+```
+
+#### proposal accept
+
 Accept a proposal and promote it into the stash. Accepts a full UUID, an
 8-character UUID prefix, or an asset ref.
 
 ```sh
-akm accept <id>
-akm accept 7c115132                           # 8-char UUID prefix
-akm accept skill:akm-dream                   # Asset ref
-akm accept <id> --target team-stash
+akm proposal accept <id>
+akm proposal accept 7c115132                  # 8-char UUID prefix
+akm proposal accept skill:akm-dream           # Asset ref
+akm proposal accept <id> --target team-stash
+akm proposal accept --generator reflect -y    # Bulk-accept by generator (requires -y)
 ```
 
-### reject
+Bulk-accept all pending proposals from one generator with `--generator <name>`
+(e.g. `reflect`, `distill`) and no positional id. `--source` is a deprecated
+alias for `--generator` (removed 0.9.0). Bulk accept requires `-y`/`--yes` in
+non-interactive shells.
 
-**Status: Available since 0.8.0.**
+#### proposal reject
+
 Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
 UUID prefix, or an asset ref.
 
 ```sh
-akm reject <id> --reason "duplicates existing workflow"
-akm reject 7c115132 --reason "not ready"      # 8-char UUID prefix
-akm reject skill:my-skill --reason "not ready" # Asset ref
+akm proposal reject <id> --reason "duplicates existing workflow"
+akm proposal reject 7c115132 --reason "not ready"      # 8-char UUID prefix
+akm proposal reject skill:my-skill --reason "not ready" # Asset ref
+akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by generator
 ```
 
-### show proposal
+Bulk-reject all pending proposals from one generator with `--generator <name>`
+and no positional id. `--source` is a deprecated alias for `--generator`
+(removed 0.9.0). Bulk reject requires `-y`/`--yes` in non-interactive shells.
 
-Inspect a queued proposal.
+#### proposal revert
 
-```sh
-akm show proposal <id>
-```
-
-### revert
-
-**Status: Available since 0.8.0.**
 Revert an accepted proposal by restoring the prior asset content from the
 backup captured at promotion time. Only works on proposals that overwrote an
 existing asset; new-asset proposals leave no backup. Sets the proposal's status
 to `reverted` and appends a `proposal_reverted` event to the audit log.
 
 ```sh
-akm revert <id>
-akm revert skill:akm-dream                   # Asset ref
-akm revert <id> --target team-stash
+akm proposal revert <id>
+akm proposal revert skill:akm-dream           # Asset ref
+akm proposal revert <id> --target team-stash
 ```
 
 | Flag | Description |
@@ -1875,25 +1937,24 @@ supported for reverting (archived proposals require the full identifier). Errors
 with exit code 2 if the proposal is not in `accepted` status, has no captured
 backup, or cannot be found.
 
-### diff proposal
+#### proposal diff
 
-Preview the proposed change against the live asset. The `proposal` subject
-positional is optional — `akm diff` accepts a full UUID, an 8-character UUID
-prefix, or an asset ref directly.
+Preview the proposed change against the live asset. Accepts a full UUID, an
+8-character UUID prefix, or an asset ref directly.
 
 ```sh
-akm diff proposal <id>
-akm diff <id>
-akm diff skill:akm-dream                      # Asset ref form
-akm diff 7c115132                             # 8-char UUID prefix
-akm diff proposal <id> --target team-stash
+akm proposal diff <id>
+akm proposal diff skill:akm-dream             # Asset ref form
+akm proposal diff 7c115132                    # 8-char UUID prefix
+akm proposal diff <id> --target team-stash
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--target <name>` | Override the write destination by source name for `accept` and `diff proposal` |
+| `--target <name>` | Override the write destination by source name for `proposal accept` and `proposal diff` |
 
-`accept` runs full validation before promoting. `reject` requires `--reason`.
+`proposal accept` runs full validation before promoting. `proposal reject`
+requires `--reason`.
 
 ### feedback (`--reason` extension)
 

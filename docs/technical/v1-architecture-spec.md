@@ -371,7 +371,7 @@ field. The contract is:
     subsequent index runs skip re-enrichment unless the caller explicitly requests it.
   - `"proposed"` — sitting in the proposal queue, not yet promoted.
     **Excluded from default search**; surfaced only with
-    `--include-proposed` or via `akm proposals` commands.
+    `--include-proposed` or via `akm proposal list` commands.
 - Unknown quality values **parse, warn once, and remain searchable** (treated
   as included-by-default). They must not crash the indexer or the search
   pipeline.
@@ -705,9 +705,12 @@ hints | config *`.
 - `--no-init` — skip the `akmInit()` call (useful when the stash directory already exists).
 
 **Shipped in pre-release milestones (0.7–0.8):**
-- `proposals` / `show proposal` / `diff proposal` / `accept` / `reject` — operate the
-  proposal queue (§11). Note: `--type` filter on `akm proposals` is declared but
-  silently ignored in the current implementation; use `--ref` to filter instead.
+- `proposal list` / `proposal show` / `proposal diff` / `proposal accept` /
+  `proposal reject` / `proposal revert` — operate the proposal queue (§11). The
+  flat verbs (`proposals` / `show proposal` / `accept` / `reject` / `diff` /
+  `revert`) remain as deprecated aliases, removed in 0.9.0. Note: `--type` filter
+  on `akm proposal list` is declared but silently ignored in the current
+  implementation; use `--ref` to filter instead.
 - `improve [ref|type] [--task ...]` — produce improvement proposals into the
   proposal queue (§11, §12).
 - `propose <type> <name> [--task ...]` — produce generation proposals into
@@ -886,7 +889,7 @@ content is never mutated by reflection, generation, or distillation paths.
   `<stashRoot>/.akm/proposals/archive/<id>/`. The move is the archival
   state — there is no separate `archived` status, so the on-disk
   location is the source of truth for "active vs. archived" listings.
-- Invalid `proposal.json` files are surfaced via `akm proposals`
+- Invalid `proposal.json` files are surfaced via `akm proposal list`
   with a clear warning entry. They do not crash the queue.
 - The proposal store is queue state, not asset state, so it does **not**
   go through `writeAssetToSource()` for proposal writes themselves
@@ -897,13 +900,19 @@ content is never mutated by reflection, generation, or distillation paths.
 ### 11.2 Commands
 
 ```sh
-akm proposals                           # list pending proposals
-akm proposals --status accepted         # filter by status
-akm show proposal <id>                  # render one proposal
-akm diff proposal <id>                  # diff vs. the live ref (if any)
-akm accept <id>                         # validate, then promote
-akm reject <id> --reason "…"            # archive with reason
+akm proposal list                       # list pending proposals
+akm proposal list --status accepted     # filter by status
+akm proposal show <id>                  # render one proposal
+akm proposal diff <id>                  # diff vs. the live ref (if any)
+akm proposal accept <id>                # validate, then promote
+akm proposal reject <id> --reason "…"   # archive with reason
+akm proposal revert <id>                # restore the pre-promotion content
 ```
+
+The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
+`akm reject`, `akm diff`, and `akm revert` remain as deprecated aliases that
+warn on stderr and delegate to the `akm proposal <verb>` forms above. They are
+removed in 0.9.0.
 
 `accept` runs full validation (frontmatter, type-renderer, ref grammar,
 write-source policy) **before** promoting. Promotion calls
@@ -1054,7 +1063,7 @@ proposal-accept path.
 ### 13.3 Origin
 
 Lessons normally arrive via `akm improve <ref>` (§14.5) as `proposed`
-quality (§4.2) and are promoted via `akm accept`. They can also be
+quality (§4.2) and are promoted via `akm proposal accept`. They can also be
 authored directly with `akm import` or `akm remember`-style flows.
 
 ---
@@ -1178,7 +1187,7 @@ agent path (§12).
 5. Emits `improve_invoked`.
 
 It never mutates the live stash. Promotion remains a human-initiated
-`akm accept`.
+`akm proposal accept`.
 
 ### 14.6 Agent-driven memory consolidation (`Planned for v1`)
 

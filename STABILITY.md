@@ -15,16 +15,33 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
 
 - **Asset ref syntax** — `<type>:<name>` for the 11 supported asset types
   (`script`, `skill`, `command`, `agent`, `knowledge`, `memory`, `workflow`,
-  `wiki`, `vault`, `lesson`, `task`).
+  `wiki`, `vault`, `lesson`, `task`). The `vault` asset type is deprecated
+  (removed in 0.9.0 — use `env`); it continues to resolve to frozen `vaults/`
+  files for the 0.8 window.
 - **Read commands** — `akm search`, `akm show`, `akm list`, `akm curate`,
   `akm info`, `akm config get`, `akm config list`, `akm vault list`,
-  `akm vault show`, `akm proposals` (list filters).
+  `akm vault show`, `akm proposal list` (list filters). The flat `akm proposals`
+  spelling is a deprecated alias (removed in 0.9.0).
 - **Write commands core surface** — `akm add`, `akm update`, `akm remove`,
-  `akm clone`, `akm import`, `akm save`, `akm index`, `akm setup`,
-  `akm remember`, `akm feedback`, `akm config set`, `akm config unset`.
+  `akm clone`, `akm import`, `akm sync`, `akm index`, `akm setup`,
+  `akm remember`, `akm feedback`, `akm config set`, `akm config unset`,
+  `akm config enable`, `akm config disable`. `akm save` (now `akm sync`) and the
+  top-level `akm enable` / `akm disable` (now `akm config enable` /
+  `akm config disable`) are deprecated aliases that warn on stderr and delegate
+  (removed in 0.9.0). On `akm feedback`, `--note` is a deprecated alias for
+  `--reason` (removed in 0.9.0).
 - **Output contracts** — JSON output shape (the top-level keys, error
-  envelope `{ok: false, error, hint}`, exit codes from the runbook in
-  `--help`).
+  envelope `{ok: false, error, hint}`), and the exit-code table below.
+  `--detail` is verbosity only (`brief|normal|full`); `--shape`
+  (`human|agent|summary`) is the output-projection axis (see Experimental).
+
+  | Exit code | Meaning |
+  | --- | --- |
+  | `0` | Success |
+  | `1` | General error / not found |
+  | `2` | Usage / bad input |
+  | `4` | Health warning (`akm health` only) |
+  | `78` | Configuration error |
 - **Install scripts** — `install.sh` and `install.ps1` URLs; the `--prefix`
   / `AKM_INSTALL_DIR` environment override.
 
@@ -35,13 +52,24 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
-- **Improvement loop** — `akm improve`, `akm propose`, `akm accept`,
-  `akm reject`, `akm diff`, `akm revert`. Output JSON keys are stable;
-  CLI flags (`--auto-accept`, `--profile`, `--task`, `--source`) may add
-  options or tighten validation across releases.
-- **Tasks** — `akm tasks` subcommand surface; YAML schema for scheduled
-  tasks. Schema additions in patch releases; removals only at minor.
-- **Wiki management** — `akm wiki *` subcommands.
+- **Improvement loop** — `akm improve`, `akm propose`, and the proposal noun
+  group `akm proposal {list,show,diff,accept,reject,revert}`. The flat verbs
+  `akm proposals`, `akm show proposal`, `akm accept`, `akm reject`, `akm diff`,
+  and `akm revert` are deprecated aliases that warn on stderr and delegate
+  (removed in 0.9.0). Output JSON keys are stable; CLI flags (`--auto-accept`,
+  `--profile`, `--task`, `--generator`) may add options or tighten validation
+  across releases. On `accept`/`reject`/`history`, `--source` is a deprecated
+  alias for `--generator` (removed in 0.9.0).
+- **Tasks** — `akm tasks` subcommand surface (singular `akm task` is an
+  additive alias); YAML schema for scheduled tasks. Schema additions in patch
+  releases; removals only at minor.
+- **Events / log** — `akm events` subcommand surface (`akm log` is an additive
+  alias for the same stream in 0.8; `log` becomes primary in 0.9.0).
+- **Lessons** — `akm lessons` subcommand surface (singular `akm lesson` is an
+  additive alias).
+- **Wiki management** — `akm wiki *` subcommands. `akm wiki remove` now confirms
+  before deleting; pass `-y` / `--yes` to skip the prompt. The old
+  `--force` flag is a deprecated alias for `-y` (removed in 0.9.0).
 - **Agent dispatch** — `akm agent` subcommand. The supported set of
   agent CLI backends (claude, opencode, codex, gemini, aider) will grow.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
@@ -55,9 +83,13 @@ for scripted use.
 
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
-- **`--detail=agent` and `--detail=summary` flags** — only implemented on
-  a subset of commands; will either roll out everywhere or be replaced
-  with a different mechanism.
+- **`--shape agent` and `--shape summary`** — the output-projection axis
+  (`--shape human|agent|summary`) is new in 0.8. `summary` is implemented
+  only on `akm show`; `agent` is implemented on `search`, `show`, and
+  `curate`. Coverage will expand. The legacy spellings `--detail summary`,
+  `--detail agent`, and `--for-agent` are deprecated aliases (warn on
+  stderr; removed in 0.9.0). `--detail` is now verbosity only
+  (`brief|normal|full`).
 - **Vault providers** — vault read/write is stable; external/network vault
   providers (issue #190) are not yet shipped.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,

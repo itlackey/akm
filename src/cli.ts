@@ -70,7 +70,7 @@ import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
 import { getStringArg, hasSubcommand, parsePositiveIntFlag } from "./cli/parse-args";
-import { emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
+import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { addCommand, buildWebsiteOptions } from "./commands/add-cli";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -153,7 +153,7 @@ import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
 import { plainize } from "./core/tty";
-import { clearLogFile, info, isQuiet, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
+import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { closeDatabase, openExistingDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
@@ -162,7 +162,9 @@ import {
   getHyphenatedArg,
   getHyphenatedBoolean,
   getOutputMode,
+  hasBooleanFlag,
   initOutputMode,
+  parseDetailLevel,
   parseFlagValue,
 } from "./output/context";
 import { formatEventLine } from "./output/text";
@@ -391,7 +393,6 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
-    verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
     clean: {
       type: "boolean",
       description: "After indexing, remove any entries whose source file no longer exists on disk.",
@@ -427,7 +428,8 @@ const indexCommand = defineCommand({
         `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
       );
       setLogFile(indexLogFile);
-      const spin = !args.verbose && outputMode.format === "text" ? p.spinner() : null;
+      const verbose = isVerbose();
+      const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
@@ -440,7 +442,7 @@ const indexCommand = defineCommand({
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (args.verbose) {
+            if (verbose) {
               info(`[index:${phase}] ${progressPrefix}${message}`);
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
@@ -468,7 +470,7 @@ const indexCommand = defineCommand({
 });
 
 const infoCommand = defineCommand({
-  meta: { name: "info", description: "Show system capabilities, configuration, and index stats as JSON" },
+  meta: { name: "info", description: "Show system capabilities, configuration, and index stats" },
   run() {
     return runWithJsonErrors(() => {
       const result = assembleInfo();
@@ -484,9 +486,13 @@ const healthCommand = defineCommand({
       type: "string",
       description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
     },
+    "group-by": {
+      type: "string",
+      description: "Group rows by: run (one row per improve_runs entry). Omit for the default summary.",
+    },
     detail: {
       type: "string",
-      description: "Detail level: brief (default) or per-run for one row per improve_runs entry",
+      description: "DEPRECATED: use --group-by run instead of --detail per-run (removed 0.9.0).",
     },
     "window-compare": {
       type: "string",
@@ -506,11 +512,34 @@ const healthCommand = defineCommand({
       const rawWindows = parseAllFlagValues("--windows");
       const windows: WindowSpec[] | undefined =
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
+      const groupByRaw = (args as Record<string, unknown>)["group-by"] as string | undefined;
       const detailRaw = (args as Record<string, unknown>).detail as string | undefined;
+      // Back-compat: `--detail per-run` → `--group-by run` (warns; removed 0.9.0).
+      let groupBy = groupByRaw;
+      if (detailRaw !== undefined) {
+        if (detailRaw === "per-run") {
+          // Read --quiet from argv (not the warn-module singleton) so the
+          // warning fires correctly even when the early-stderr flags were not
+          // applied (e.g. the in-process test harness), matching the WS2
+          // output-flag deprecations in src/output/context.ts.
+          const quietRequested = process.argv.includes("--quiet") || process.argv.includes("-q");
+          if (!quietRequested) {
+            process.stderr.write(
+              "warning: '--detail per-run' is deprecated for 'akm health'; use '--group-by run'. Removed in 0.9.0.\n",
+            );
+          }
+          groupBy = groupBy ?? "run";
+        } else {
+          throw new UsageError(
+            `Invalid value for --detail: ${detailRaw}. 'akm health' uses --group-by run (not --detail).`,
+            "INVALID_DETAIL_VALUE",
+          );
+        }
+      }
       const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
       const result = akmHealth({
         since: args.since,
-        detail: detailRaw as "brief" | "per-run" | undefined,
+        groupBy: groupBy as "run" | undefined,
         windowCompare: windowCompareRaw,
         windows,
       });
@@ -753,7 +782,7 @@ const searchCommand = defineCommand({
       default: "all",
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
     "no-project-context": {
       type: "boolean",
       description:
@@ -813,6 +842,12 @@ const curateCommand = defineCommand({
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
+    // Output-contract flags. The active values are read from the process-level
+    // singleton (parsed from argv at startup); these declarations make them
+    // visible in `akm curate --help` and document the supported axes.
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    shape: { type: "string", description: "Output projection (human|agent)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -962,7 +997,8 @@ const showCommand = defineCommand({
       required: true,
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    shape: { type: "string", description: "Output projection (human|agent|summary)" },
     scope: {
       type: "string",
       description:
@@ -973,9 +1009,14 @@ const showCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const subcommand = Array.isArray(args._) ? args._[0] : undefined;
       if (subcommand === "proposal") {
+        if (!isQuiet()) {
+          process.stderr.write(
+            "warning: 'akm show proposal <id>' is deprecated and will be removed in 0.9.0. Use 'akm proposal show <id>'.\n",
+          );
+        }
         const proposalId = Array.isArray(args._) ? args._[1] : undefined;
         if (typeof proposalId !== "string" || !proposalId.trim()) {
-          throw new UsageError("Usage: akm show proposal <id>", "MISSING_REQUIRED_ARGUMENT");
+          throw new UsageError("Usage: akm proposal show <id>", "MISSING_REQUIRED_ARGUMENT");
         }
         const result = akmProposalShow({ id: proposalId.trim() });
         output("proposal-show", result);
@@ -1013,10 +1054,14 @@ const showCommand = defineCommand({
             throw new UsageError(`Unknown view mode: ${akmView}. Expected one of: full|toc|frontmatter|section|lines`);
         }
       }
-      const cliDetail = getOutputMode().detail;
+      const cliShape = getOutputMode().shape;
       const explicitDetail = parseFlagValue(process.argv, "--detail");
+      // `--shape summary` selects the compact metadata projection for show
+      // (the legacy `--detail summary` spelling still maps here via the
+      // back-compat path in resolveOutputMode). `--detail brief` forces the
+      // brief response regardless of shape.
       const showDetail: ShowDetailLevel | undefined =
-        explicitDetail === "brief" ? "brief" : cliDetail === "summary" ? "summary" : undefined;
+        explicitDetail === "brief" ? "brief" : cliShape === "summary" ? "summary" : undefined;
       // `--scope` is repeatable — citty only exposes the last value, so read
       // every occurrence directly from argv (same pattern as `--filter`).
       const scopeTokens = parseAllFlagValues("--scope");
@@ -1200,6 +1245,30 @@ const configCommand = defineCommand({
         });
       },
     }),
+    enable: defineCommand({
+      meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
+      args: {
+        target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const result = toggleComponent(args.target, true);
+          output("enable", result);
+        });
+      },
+    }),
+    disable: defineCommand({
+      meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
+      args: {
+        target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const result = toggleComponent(args.target, false);
+          output("disable", result);
+        });
+      },
+    }),
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -1213,11 +1282,83 @@ const configCommand = defineCommand({
   },
 });
 
+// Shared `save`/`sync` body. `sync` is the canonical spelling in 0.8; `save`
+// remains a deprecated alias (removed 0.9.0). Both share this implementation so
+// the git-commit/push logic and the `--format`-as-name workaround stay in one place.
+async function runSyncBody(
+  args: { name?: string; message?: string; push?: boolean },
+  verb: "save" | "sync",
+): Promise<void> {
+  await runWithJsonErrors(async () => {
+    // Fix: citty can consume `--format json` (space-separated) as the
+    // positional `name` argument (e.g. `akm sync --format json` parses
+    // name="json"). Detect the mis-parse by checking argv order — only
+    // treat the positional as consumed by --format when --format appears
+    // before any standalone occurrence of the same value in the sync
+    // subcommand's argv slice. This preserves legitimate invocations
+    // like `akm sync json --format json`.
+    const parsedFormat = parseFlagValue(process.argv, "--format");
+    const effectiveName =
+      args.name !== undefined &&
+      parsedFormat !== undefined &&
+      args.name === parsedFormat &&
+      wasFormatValueConsumedAsName(args.name, parsedFormat, verb)
+        ? undefined
+        : args.name;
+
+    let writable: boolean | undefined;
+    if (effectiveName === undefined) {
+      // Primary stash — honour the root-level writable flag from config.
+      const cfg = loadConfig();
+      writable = cfg.writable === true ? true : undefined;
+    }
+
+    const result = saveGitStash(effectiveName, args.message, writable, { push: args.push !== false });
+    appendEvent({
+      eventType: "save",
+      metadata: {
+        name: effectiveName ?? null,
+        message: args.message ?? null,
+        ok: (result as { ok?: boolean }).ok !== false,
+      },
+    });
+    output("save", result);
+  });
+}
+
+const syncCommand = defineCommand({
+  meta: {
+    name: "sync",
+    description:
+      "Sync changes in a git-backed stash: commits (and pushes when writable + remote is configured). No-op for non-git stashes.",
+  },
+  args: {
+    name: {
+      type: "positional",
+      description: "Name of the git stash to sync (default: primary stash directory)",
+      required: false,
+    },
+    message: {
+      type: "string",
+      alias: "m",
+      description: "Commit message (default: timestamp)",
+    },
+    push: {
+      type: "boolean",
+      description: "Push after commit when writable + remote configured (use --no-push to commit only). Default: true.",
+      default: true,
+    },
+  },
+  async run({ args }) {
+    await runSyncBody(args, "sync");
+  },
+});
+
+// Deprecated alias (removed 0.9.0): `akm save` → `akm sync`.
 const saveCommand = defineCommand({
   meta: {
     name: "save",
-    description:
-      "Save changes in a git-backed stash: commits (and pushes when writable + remote is configured). No-op for non-git stashes.",
+    description: "DEPRECATED — use `akm sync`. Removed in 0.9.0.",
   },
   args: {
     name: {
@@ -1230,43 +1371,15 @@ const saveCommand = defineCommand({
       alias: "m",
       description: "Commit message (default: timestamp)",
     },
+    push: {
+      type: "boolean",
+      description: "Push after commit when writable + remote configured (use --no-push to commit only). Default: true.",
+      default: true,
+    },
   },
   async run({ args }) {
-    await runWithJsonErrors(async () => {
-      // Fix: citty can consume `--format json` (space-separated) as the
-      // positional `name` argument (e.g. `akm save --format json` parses
-      // name="json"). Detect the mis-parse by checking argv order — only
-      // treat the positional as consumed by --format when --format appears
-      // before any standalone occurrence of the same value in the save
-      // subcommand's argv slice. This preserves legitimate invocations
-      // like `akm save json --format json`.
-      const parsedFormat = parseFlagValue(process.argv, "--format");
-      const effectiveName =
-        args.name !== undefined &&
-        parsedFormat !== undefined &&
-        args.name === parsedFormat &&
-        wasFormatValueConsumedAsName(args.name, parsedFormat)
-          ? undefined
-          : args.name;
-
-      let writable: boolean | undefined;
-      if (effectiveName === undefined) {
-        // Primary stash — honour the root-level writable flag from config.
-        const cfg = loadConfig();
-        writable = cfg.writable === true ? true : undefined;
-      }
-
-      const result = saveGitStash(effectiveName, args.message, writable);
-      appendEvent({
-        eventType: "save",
-        metadata: {
-          name: effectiveName ?? null,
-          message: args.message ?? null,
-          ok: (result as { ok?: boolean }).ok !== false,
-        },
-      });
-      output("save", result);
-    });
+    emitCommandDeprecation("save", "sync");
+    await runSyncBody(args, "save");
   },
 });
 
@@ -1276,14 +1389,15 @@ const saveCommand = defineCommand({
  * in the save subcommand's argv slice AND the candidate name does NOT
  * appear as a standalone positional elsewhere (before or after the flag).
  *
- * This keeps `akm save json --format json` routing `json` as the stash name,
- * while `akm save --format json` (no separate positional) is treated as a
- * primary-stash save.
+ * This keeps `akm sync json --format json` routing `json` as the stash name,
+ * while `akm sync --format json` (no separate positional) is treated as a
+ * primary-stash sync. `verb` is the subcommand token to anchor on (`sync` or
+ * the deprecated `save`).
  */
-function wasFormatValueConsumedAsName(name: string, formatValue: string): boolean {
+function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "save" | "sync"): boolean {
   const argv = process.argv.slice(2);
-  const saveIndex = argv.indexOf("save");
-  const tokens = saveIndex >= 0 ? argv.slice(saveIndex + 1) : argv;
+  const verbIndex = argv.indexOf(verb);
+  const tokens = verbIndex >= 0 ? argv.slice(verbIndex + 1) : argv;
 
   let formatIndex = -1;
   let formatConsumesNextToken = false;
@@ -1352,9 +1466,13 @@ const historyCommand = defineCommand({
   args: {
     ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    generator: {
+      type: "string",
+      description: 'Filter by event generator: "user" (default) or "improve" (akm improve operations).',
+    },
     source: {
       type: "string",
-      description: 'Filter by event source: "user" (default) or "improve" (akm improve operations).',
+      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
     },
     "include-proposals": {
       type: "boolean",
@@ -1374,10 +1492,16 @@ const historyCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const sourceFlag = args.source as "user" | "improve" | undefined;
-      if (sourceFlag !== undefined && sourceFlag !== "user" && sourceFlag !== "improve") {
+      if (args.generator === undefined && args.source !== undefined) {
+        emitFlagDeprecation("--source", "--generator", "history");
+      }
+      const generatorFlag = (args.generator ?? args.source) as "user" | "improve" | undefined;
+      if (generatorFlag !== undefined && generatorFlag !== "user" && generatorFlag !== "improve") {
+        // Name the flag the user actually typed so the diagnostic points at
+        // their command line, not the canonical flag they may not have used.
+        const usedFlag = args.generator !== undefined ? "--generator" : "--source";
         throw new UsageError(
-          `Invalid --source value: "${args.source}". Must be "user" or "improve".`,
+          `Invalid ${usedFlag} value: "${generatorFlag}". Must be "user" or "improve".`,
           "INVALID_FLAG_VALUE",
         );
       }
@@ -1386,7 +1510,7 @@ const historyCommand = defineCommand({
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
-        source: sourceFlag,
+        source: generatorFlag,
         includeProposals: args["include-proposals"],
         acceptRateBySource: args["accept-rate-by-source"] as boolean | undefined,
         stashDir,
@@ -1429,11 +1553,14 @@ const workflowNextCommand = defineCommand({
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
-    "dry-run": { type: "boolean", description: "Not supported — rejected with an error", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (getHyphenatedBoolean(args, "dry-run")) {
+      // `--dry-run` is intentionally NOT a declared arg (so it stays out of
+      // --help). The guard reads it straight from process.argv so existing
+      // callers still get a clear, actionable error instead of a generic
+      // "unknown flag" from citty.
+      if (hasBooleanFlag(process.argv, "--dry-run")) {
         throw new UsageError(
           "`akm workflow next` does not support --dry-run. Remove the flag to start or resume a run.",
           "INVALID_FLAG_VALUE",
@@ -1760,18 +1887,18 @@ const hintsCommand = defineCommand({
     detail: {
       type: "string",
       description:
-        "Hints detail level — accepts only `normal` or `full`. Differs from the global --detail flag (brief|normal|full|summary|agent); other values are rejected with INVALID_DETAIL_VALUE.",
+        "Hints detail level (brief|normal|full). `brief` prints the short guide; `normal`/`full` print the complete guide.",
       default: "normal",
     },
   },
   run({ args }) {
-    if (args.detail !== "normal" && args.detail !== "full") {
-      throw new UsageError(
-        `Invalid value for --detail: ${args.detail}. Expected one of: normal|full.`,
-        "INVALID_DETAIL_VALUE",
-      );
-    }
-    process.stdout.write(loadHints(args.detail));
+    return runWithJsonErrors(() => {
+      // Let the global parser validate the value so an invalid `--detail`
+      // returns the standard JSON error envelope (exit 2) rather than a raw
+      // stack trace + exit 1. `brief` → short doc; `normal`/`full` → full doc.
+      const detail = parseDetailLevel(args.detail as string | undefined) ?? "normal";
+      process.stdout.write(loadHints(detail === "brief" ? "brief" : "full"));
+    });
   },
 });
 
@@ -1890,13 +2017,15 @@ function toggleComponent(
   throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
 }
 
+// Deprecated top-level aliases (removed 0.9.0) — delegate to `config enable|disable`.
 const enableCommand = defineCommand({
-  meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
+  meta: { name: "enable", description: "DEPRECATED — use `akm config enable`. Removed in 0.9.0." },
   args: {
     target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      emitCommandDeprecation("enable", "config enable");
       const result = toggleComponent(args.target, true);
       output("enable", result);
     });
@@ -1904,12 +2033,13 @@ const enableCommand = defineCommand({
 });
 
 const disableCommand = defineCommand({
-  meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
+  meta: { name: "disable", description: "DEPRECATED — use `akm config disable`. Removed in 0.9.0." },
   args: {
     target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      emitCommandDeprecation("disable", "config disable");
       const result = toggleComponent(args.target, false);
       output("disable", result);
     });
@@ -2410,6 +2540,22 @@ function emitVaultDeprecation(sub: string): void {
   );
 }
 
+function emitFlagDeprecation(oldFlag: string, newFlag: string, cmd: string): void {
+  if (isQuiet()) return;
+  process.stderr.write(`warning: '${oldFlag}' is deprecated for 'akm ${cmd}'; use '${newFlag}'. Removed in 0.9.0.\n`);
+}
+
+/**
+ * Emit a stderr deprecation warning for a renamed top-level command. The old
+ * spelling keeps working in 0.8 (wrap-and-delegate) and is removed in 0.9.0.
+ * Suppressed under --quiet; never written to stdout so JSON consumers are
+ * unaffected.
+ */
+function emitCommandDeprecation(oldCmd: string, newCmd: string): void {
+  if (isQuiet()) return;
+  process.stderr.write(`warning: 'akm ${oldCmd}' is deprecated and will be removed in 0.9.0. Use 'akm ${newCmd}'.\n`);
+}
+
 const vaultSetCommand = defineCommand({
   meta: { name: "set", description: "DEPRECATED — removed. Edit the .env file directly, or use `akm secret set`." },
   args: {
@@ -2904,9 +3050,15 @@ const wikiRemoveCommand = defineCommand({
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip confirmation prompt (required in non-interactive shells)",
+      default: false,
+    },
     force: {
       type: "boolean",
-      description: "Remove without prompting (required in non-interactive shells)",
+      description: "DEPRECATED — use -y/--yes. Removed in 0.9.0.",
       default: false,
     },
     "with-sources": {
@@ -2917,8 +3069,16 @@ const wikiRemoveCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (!args.force) {
-        throw new UsageError("Refusing to remove without --force. Pass `--force` to confirm.");
+      if (args.yes !== true && args.force === true) {
+        emitFlagDeprecation("--force", "-y/--yes", "wiki remove");
+      }
+      const { confirmDestructive } = await import("./cli/confirm.js");
+      const confirmed = await confirmDestructive(`Remove wiki "${args.name}"? This cannot be undone.`, {
+        yes: args.yes === true || args.force === true,
+      });
+      if (!confirmed) {
+        process.stderr.write("Aborted.\n");
+        return;
       }
       const withSources = getHyphenatedBoolean(args, "with-sources");
       const { removeWiki } = await import("./wiki/wiki.js");
@@ -3272,6 +3432,7 @@ const eventsTailCommand = defineCommand({
 const eventsCommand = defineCommand({
   meta: {
     name: "events",
+    alias: "log",
     description: "Read or follow the append-only state.db events stream (mutations, feedback, indexing)",
   },
   subCommands: {
@@ -3350,6 +3511,7 @@ function collectTagSetFromEntries(db: import("bun:sqlite").Database, entryType: 
 const lessonsCommand = defineCommand({
   meta: {
     name: "lessons",
+    alias: "lesson",
     description: "Lesson-asset tooling: tag-coverage gaps, strength queries.",
   },
   subCommands: {
@@ -3359,8 +3521,8 @@ const lessonsCommand = defineCommand({
 
 // ── proposal substrate (#225) ────────────────────────────────────────────────
 
-const proposalsCommand = defineCommand({
-  meta: { name: "proposals", description: "List proposal queue entries" },
+const proposalListCommand = defineCommand({
+  meta: { name: "list", description: "List proposal queue entries" },
   args: {
     status: {
       type: "string",
@@ -3375,6 +3537,7 @@ const proposalsCommand = defineCommand({
       const result = akmProposalList({
         status,
         ref: args.ref,
+        type: args.type,
         includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
       });
       output("proposal-list", result);
@@ -3382,21 +3545,25 @@ const proposalsCommand = defineCommand({
   },
 });
 
-const acceptCommand = defineCommand({
+const proposalAcceptCommand = defineCommand({
   meta: { name: "accept", description: "Accept a proposal and promote it into the stash" },
   args: {
     id: {
       type: "positional",
       description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --generator is provided.",
       required: false,
     },
     target: { type: "string", description: "Override the write target by source name" },
-    // F-6 / #393: Batch accept by source, diff size, or age.
-    source: {
+    // F-6 / #393: Batch accept by generator, diff size, or age.
+    generator: {
       type: "string",
       description:
-        "F-6: Bulk-accept all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+        "F-6: Bulk-accept all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
+    },
+    source: {
+      type: "string",
+      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
     },
     "max-diff-lines": {
       type: "string",
@@ -3413,11 +3580,30 @@ const acceptCommand = defineCommand({
       description: "F-6: List proposals that would be bulk-accepted without accepting them.",
       default: false,
     },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip confirmation prompt (required in non-interactive mode for bulk accept)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      // F-6 / #393: Bulk-accept when --source is provided without a positional id.
-      if (args.source && !args.id) {
+      if (args.generator === undefined && args.source !== undefined) {
+        emitFlagDeprecation("--source", "--generator", "proposal accept");
+      }
+      const generator = (args.generator ?? args.source) as string | undefined;
+      // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
+      if (generator && !args.id) {
+        const { confirmDestructive } = await import("./cli/confirm.js");
+        const confirmed = await confirmDestructive(
+          `Bulk-accept all matching proposals from generator "${generator}"? This cannot be undone.`,
+          { yes: args.yes === true || args["dry-run"] === true },
+        );
+        if (!confirmed) {
+          process.stderr.write("Aborted.\n");
+          return;
+        }
         const { listProposals } = await import("./core/proposals");
         const stashDir = resolveStashDir();
         const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
@@ -3431,7 +3617,7 @@ const acceptCommand = defineCommand({
         const maxDiffLines = rawMaxDiff;
         const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
         const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
-          if (p.source !== args.source) return false;
+          if (p.source !== generator) return false;
           if (maxDiffLines !== undefined) {
             const lines = (p.payload.content ?? "").split("\n").length;
             if (lines > maxDiffLines) return false;
@@ -3455,7 +3641,10 @@ const acceptCommand = defineCommand({
         return;
       }
       if (!args.id) {
-        throw new UsageError("Usage: akm accept <id>  OR  akm accept --source <source>", "MISSING_REQUIRED_ARGUMENT");
+        throw new UsageError(
+          "Usage: akm proposal accept <id>  OR  akm proposal accept --generator <generator>",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
       }
       const result = await akmProposalAccept({ id: args.id as string, target: args.target as string | undefined });
       output("proposal-accept", result);
@@ -3463,21 +3652,25 @@ const acceptCommand = defineCommand({
   },
 });
 
-const rejectCommand = defineCommand({
+const proposalRejectCommand = defineCommand({
   meta: { name: "reject", description: "Reject a proposal and record the reason" },
   args: {
     id: {
       type: "positional",
       description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --source is provided.",
+        "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --generator is provided.",
       required: false,
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
-    // F-6 / #393: Batch reject by source, diff size, or age.
-    source: {
+    // F-6 / #393: Batch reject by generator, diff size, or age.
+    generator: {
       type: "string",
       description:
-        "F-6: Bulk-reject all pending proposals from this source (e.g. reflect, distill). Requires no positional id.",
+        "F-6: Bulk-reject all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
+    },
+    source: {
+      type: "string",
+      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
     },
     "max-diff-lines": {
       type: "string",
@@ -3503,17 +3696,21 @@ const rejectCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
+      if (args.generator === undefined && args.source !== undefined) {
+        emitFlagDeprecation("--source", "--generator", "proposal reject");
+      }
+      const generator = (args.generator ?? args.source) as string | undefined;
       if (!args.reason || !String(args.reason).trim()) {
         throw new UsageError(
-          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "Usage: akm proposal reject <id> --reason '<reason>'  OR  akm proposal reject --generator <generator> --reason '<reason>'",
           "MISSING_REQUIRED_ARGUMENT",
         );
       }
-      // F-6 / #393: Bulk-reject when --source is provided without a positional id.
-      if (args.source && !args.id) {
+      // F-6 / #393: Bulk-reject when --generator is provided without a positional id.
+      if (generator && !args.id) {
         const { confirmDestructive } = await import("./cli/confirm.js");
         const confirmed = await confirmDestructive(
-          `Bulk-reject all matching proposals from source "${args.source}"? This cannot be undone.`,
+          `Bulk-reject all matching proposals from generator "${generator}"? This cannot be undone.`,
           { yes: args.yes === true || args["dry-run"] === true },
         );
         if (!confirmed) {
@@ -3533,7 +3730,7 @@ const rejectCommand = defineCommand({
         const maxDiffLines = rawMaxDiff;
         const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
         const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
-          if (p.source !== args.source) return false;
+          if (p.source !== generator) return false;
           if (maxDiffLines !== undefined) {
             const lines = (p.payload.content ?? "").split("\n").length;
             if (lines > maxDiffLines) return false;
@@ -3558,7 +3755,7 @@ const rejectCommand = defineCommand({
       }
       if (!args.id) {
         throw new UsageError(
-          "Usage: akm reject <id> --reason '<reason>'  OR  akm reject --source <source> --reason '<reason>'",
+          "Usage: akm proposal reject <id> --reason '<reason>'  OR  akm proposal reject --generator <generator> --reason '<reason>'",
           "MISSING_REQUIRED_ARGUMENT",
         );
       }
@@ -3576,7 +3773,7 @@ const rejectCommand = defineCommand({
   },
 });
 
-const diffCommand = defineCommand({
+const proposalDiffCommand = defineCommand({
   meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix, or asset ref)" },
   args: {
     id: {
@@ -3603,7 +3800,7 @@ const diffCommand = defineCommand({
 //       `UsageError("MISSING_REQUIRED_ARGUMENT")` when the proposal is not
 //       accepted, or no backup is available).
 //   1 — `NotFoundError("FILE_NOT_FOUND")` when the proposal id does not resolve.
-const revertCommand = defineCommand({
+const proposalRevertCommand = defineCommand({
   meta: {
     name: "revert",
     description:
@@ -3628,6 +3825,124 @@ const revertCommand = defineCommand({
       });
       output("proposal-revert", result);
     });
+  },
+});
+
+// `proposal show` (#225): show a single proposal with its validation findings.
+// `akmProposalShow` already backs `akm show proposal <id>` (now deprecated); this
+// is the canonical noun-group entry point.
+const proposalShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a single proposal and its validation findings" },
+  args: {
+    id: {
+      type: "positional",
+      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
+      required: true,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalShow({ id: args.id as string });
+      output("proposal-show", result);
+    });
+  },
+});
+
+// ── proposal noun group (#225 / 0.8 CLI stabilization) ────────────────────────
+//
+// `akm proposal <verb>` is the canonical grammar in 0.8. The flat verbs
+// (`proposals`/`accept`/`reject`/`diff`/`revert`) remain as deprecated aliases
+// that warn to stderr and delegate to the same command bodies; they are removed
+// in 0.9.0. Bare `akm proposal` behaves as `proposal list` (mirrors `akm env`).
+
+const PROPOSAL_SUBCOMMAND_SET = new Set(["list", "show", "diff", "accept", "reject", "revert"]);
+
+function emitProposalVerbDeprecation(oldVerb: string, canonical: string): void {
+  if (isQuiet()) return;
+  process.stderr.write(
+    `warning: 'akm ${oldVerb}' is deprecated and will be removed in 0.9.0. Use 'akm ${canonical}'.\n`,
+  );
+}
+
+const proposalCommand = defineCommand({
+  meta: { name: "proposal", description: "Manage the proposal queue: list, show, diff, accept, reject, revert" },
+  args: {
+    status: {
+      type: "string",
+      description: "Filter by status (pending|accepted|rejected|reverted)",
+    },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    type: { type: "string", description: "Filter by asset type" },
+  },
+  subCommands: {
+    list: proposalListCommand,
+    show: proposalShowCommand,
+    diff: proposalDiffCommand,
+    accept: proposalAcceptCommand,
+    reject: proposalRejectCommand,
+    revert: proposalRevertCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      // citty runs the group body even after a subcommand; short-circuit so the
+      // default-to-list body only fires for bare `akm proposal [--status …]`.
+      if (hasSubcommand(args, PROPOSAL_SUBCOMMAND_SET)) return;
+      const status = parseProposalStatus(args.status);
+      const result = akmProposalList({
+        status,
+        ref: args.ref,
+        type: args.type,
+        includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
+      });
+      output("proposal-list", result);
+    });
+  },
+});
+
+// Deprecated flat-verb aliases (removed 0.9.0). Each wraps the canonical command
+// body so bulk/guard logic is not duplicated.
+const proposalsCommand = defineCommand({
+  meta: { name: "proposals", description: "DEPRECATED — use `akm proposal list`. Removed in 0.9.0." },
+  args: proposalListCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("proposals", "proposal list");
+    return proposalListCommand.run?.(ctx);
+  },
+});
+
+const acceptCommand = defineCommand({
+  meta: { name: "accept", description: "DEPRECATED — use `akm proposal accept`. Removed in 0.9.0." },
+  args: proposalAcceptCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("accept", "proposal accept");
+    return proposalAcceptCommand.run?.(ctx);
+  },
+});
+
+const rejectCommand = defineCommand({
+  meta: { name: "reject", description: "DEPRECATED — use `akm proposal reject`. Removed in 0.9.0." },
+  args: proposalRejectCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("reject", "proposal reject");
+    return proposalRejectCommand.run?.(ctx);
+  },
+});
+
+const diffCommand = defineCommand({
+  meta: { name: "diff", description: "DEPRECATED — use `akm proposal diff`. Removed in 0.9.0." },
+  args: proposalDiffCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("diff", "proposal diff");
+    return proposalDiffCommand.run?.(ctx);
+  },
+});
+
+const revertCommand = defineCommand({
+  meta: { name: "revert", description: "DEPRECATED — use `akm proposal revert`. Removed in 0.9.0." },
+  args: proposalRevertCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("revert", "proposal revert");
+    return proposalRevertCommand.run?.(ctx);
   },
 });
 
@@ -4014,6 +4329,7 @@ const tasksDoctorCommand = defineCommand({
 const tasksCommand = defineCommand({
   meta: {
     name: "tasks",
+    alias: "task",
     description: "Schedule workflows or prompts via the OS-native scheduler (cron / launchd / schtasks)",
   },
   subCommands: {
@@ -4041,17 +4357,32 @@ export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description: "Agent Knowledge Management — search, show, and manage assets from your stash.",
+    description:
+      "Agent Knowledge Management — search, show, and manage assets from your stash.\n\n" +
+      "Exit codes:\n" +
+      "  0   success\n" +
+      "  1   general error / not found\n" +
+      "  2   usage error\n" +
+      "  4   health warn (akm health only)\n" +
+      "  78  config error",
   },
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
     detail: {
       type: "string",
-      description:
-        "Detail level. Stable: brief|normal|full. Experimental: summary|agent " +
-        "(supported on a subset of commands; coverage will expand or these will be replaced — " +
-        "see STABILITY.md). Default: brief.",
+      description: "Detail level (verbosity): brief|normal|full. Default: brief.",
       default: "brief",
+    },
+    shape: {
+      type: "string",
+      description:
+        "Output projection: human|agent|summary. 'agent' trims to agent-essential fields; " +
+        "'summary' is only valid on 'akm show'. Default: human.",
+    },
+    "for-agent": {
+      type: "boolean",
+      description: "DEPRECATED alias for '--shape agent' (removed 0.9.0).",
+      default: false,
     },
     quiet: {
       type: "boolean",
@@ -4087,6 +4418,8 @@ export const main = defineCommand({
     workflow: workflowCommand,
     remember: rememberCommand,
     import: importKnowledgeCommand,
+    sync: syncCommand,
+    // Deprecated alias (removed 0.9.0) — delegates to `sync`.
     save: saveCommand,
     clone: cloneCommand,
     registry: registryCommand,
@@ -4102,6 +4435,8 @@ export const main = defineCommand({
     improve: improveCommand,
     extract: extractCommand,
     propose: proposeCommand,
+    proposal: proposalCommand,
+    // Deprecated flat verbs (removed 0.9.0) — delegate to `proposal <verb>`.
     proposals: proposalsCommand,
     accept: acceptCommand,
     reject: rejectCommand,
@@ -4118,7 +4453,7 @@ export const main = defineCommand({
   },
 });
 
-const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset"]);
+const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);
 const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "remove"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);
@@ -4135,11 +4470,12 @@ const WIKI_SUBCOMMAND_SET = new Set([
   "ingest",
 ]);
 // ── Exit codes ──────────────────────────────────────────────────────────────
-const EXIT_GENERAL = 1;
-/** `akm health` warn status — emitted when overall status is "warn" (advisories
- *  fired but no hard failure). Chosen as 4 to avoid colliding with EXIT_GENERAL
- *  (1) and USAGE (2). CI monitors can map: 0=pass, 4=warn, 1=fail. */
-const EXIT_HEALTH_WARN = 4;
+// Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
+// the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
+// status — advisories fired but no hard failure; chosen to avoid colliding with
+// GENERAL (1) and USAGE (2). CI monitors can map: 0=pass, 4=warn, 1=fail.
+const EXIT_GENERAL = EXIT_CODES.GENERAL;
+const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 
 // Only run the CLI when this module is the direct entry point. When it is
 // imported (e.g. by the in-process test harness in tests/_helpers/cli.ts),
@@ -4160,6 +4496,16 @@ if (import.meta.main) {
     initOutputMode(process.argv, loadConfig().output ?? {});
   } catch (error: unknown) {
     emitJsonError(error);
+  }
+
+  // `--shape summary` is only meaningful on `akm show`. Reject it up front for
+  // every other command so a write command (e.g. `akm proposal accept …`)
+  // fails fast BEFORE performing its mutation, rather than throwing at
+  // output-shaping time after the side effect has already happened. The
+  // shape-registry gate in shapeForCommand() remains as defense-in-depth (and
+  // covers the in-process test harness, which skips this startup block).
+  if (getOutputMode().shape === "summary" && process.argv[2] !== "show") {
+    emitJsonError(new UsageError("'--shape summary' is only valid on 'akm show'.", "INVALID_SHAPE_VALUE"));
   }
 
   // One-time cleanup of stale 0.7.x index file at the old cache location.
@@ -4208,9 +4554,11 @@ if (import.meta.main) {
 
 // ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────
 
-function loadHints(detail: "normal" | "full" = "normal"): string {
-  const filename = detail === "full" ? "AGENTS.full.md" : "AGENTS.md";
-  const fallback = detail === "full" ? EMBEDDED_HINTS_FULL : EMBEDDED_HINTS;
+function loadHints(detail: "brief" | "normal" | "full" = "normal"): string {
+  // `brief` → the short AGENTS.md guide; `normal`/`full` → the complete guide.
+  const wantFull = detail !== "brief";
+  const filename = wantFull ? "AGENTS.full.md" : "AGENTS.md";
+  const fallback = wantFull ? EMBEDDED_HINTS_FULL : EMBEDDED_HINTS;
 
   // Try reading from the docs/ directory (works in dev and when installed via npm)
   try {

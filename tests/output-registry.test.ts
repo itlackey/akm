@@ -26,18 +26,18 @@ describe("registerOutputShape", () => {
     expect(called).toBe(true);
   });
 
-  test("handler receives result, detail, and forAgent", () => {
-    const calls: Array<[unknown, string, boolean]> = [];
-    registerOutputShape("mock-command", (result, detail, forAgent) => {
-      calls.push([result, detail, forAgent]);
+  test("handler receives result, detail, and shape", () => {
+    const calls: Array<[unknown, string, string]> = [];
+    registerOutputShape("mock-command", (result, detail, shape) => {
+      calls.push([result, detail, shape]);
       return result;
     });
     const input = { x: 1 };
-    shapeForCommand("mock-command", input, "normal", true);
+    shapeForCommand("mock-command", input, "normal", "agent");
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe(input);
     expect(calls[0][1]).toBe("normal");
-    expect(calls[0][2]).toBe(true);
+    expect(calls[0][2]).toBe("agent");
   });
 
   test("handler return value is used by shapeForCommand", () => {

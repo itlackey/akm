@@ -192,6 +192,13 @@ export const feedbackCommand = defineCommand({
         throw new UsageError("Specify --positive or --negative.");
       }
       const signal = args.positive ? "positive" : "negative";
+      // `--note` is a deprecated back-compat alias for `--reason` (removed in
+      // 0.9.0). Warn on stderr when it is used as the sole source (i.e. without
+      // an explicit `--reason`). Warnings go to stderr only so JSON stdout
+      // consumers are unaffected.
+      if ((args.note as string | undefined) !== undefined && (args.reason as string | undefined) === undefined) {
+        warn("warning: '--note' is deprecated for 'akm feedback'; use '--reason'. Removed in 0.9.0.");
+      }
       const reason = (args.reason as string | undefined) ?? (args.note as string | undefined);
 
       // F-3 / #384: Validate --failure-mode against the curated enum.

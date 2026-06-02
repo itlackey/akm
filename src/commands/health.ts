@@ -412,7 +412,8 @@ export interface AkmHealthResult {
 
 export interface AkmHealthOptions {
   since?: string;
-  detail?: "brief" | "per-run";
+  /** Row grouping. `run` emits one row per improve_runs entry (was `--detail per-run`). */
+  groupBy?: "run";
   windowCompare?: string;
   windows?: WindowSpec[];
   getExecutionLogCandidatesFn?: (sinceDays?: number) => SessionLogEntry[];
@@ -1467,11 +1468,8 @@ function buildWindowMetrics(db: Database, stateDbPath: string, since: string, un
 }
 
 function validateAkmHealthOptions(options: AkmHealthOptions): void {
-  if (options.detail !== undefined && options.detail !== "brief" && options.detail !== "per-run") {
-    throw new UsageError(
-      `Invalid value for --detail: ${options.detail}. Expected one of: brief|per-run`,
-      "INVALID_DETAIL_VALUE",
-    );
+  if (options.groupBy !== undefined && options.groupBy !== "run") {
+    throw new UsageError(`Invalid value for --group-by: ${options.groupBy}. Expected: run`, "INVALID_FLAG_VALUE");
   }
   if (options.windowCompare !== undefined && options.windows !== undefined && options.windows.length > 0) {
     throw new UsageError("--window-compare and --windows are mutually exclusive.", "INVALID_FLAG_VALUE");
@@ -1709,7 +1707,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
 
     // ── Per-run mode (Phase 2) ────────────────────────────────────────────
     let runs: ImproveRunSummary[] | undefined;
-    if (options.detail === "per-run") {
+    if (options.groupBy === "run") {
       runs = buildPerRunSummaries(db, since);
     }
 
