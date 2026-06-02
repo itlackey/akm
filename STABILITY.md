@@ -21,8 +21,12 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
   `akm vault show`, `akm proposal list` (list filters). The flat `akm proposals`
   spelling is a deprecated alias (removed in 0.9.0).
 - **Write commands core surface** — `akm add`, `akm update`, `akm remove`,
-  `akm clone`, `akm import`, `akm save`, `akm index`, `akm setup`,
-  `akm remember`, `akm feedback`, `akm config set`, `akm config unset`.
+  `akm clone`, `akm import`, `akm sync`, `akm index`, `akm setup`,
+  `akm remember`, `akm feedback`, `akm config set`, `akm config unset`,
+  `akm config enable`, `akm config disable`. `akm save` (now `akm sync`) and the
+  top-level `akm enable` / `akm disable` (now `akm config enable` /
+  `akm config disable`) are deprecated aliases that warn on stderr and delegate
+  (removed in 0.9.0).
 - **Output contracts** — JSON output shape (the top-level keys, error
   envelope `{ok: false, error, hint}`, exit codes from the runbook in
   `--help`).
@@ -44,8 +48,13 @@ CHANGELOG with a migration note.
   `--profile`, `--task`, `--generator`) may add options or tighten validation
   across releases. On `accept`/`reject`/`history`, `--source` is a deprecated
   alias for `--generator` (removed in 0.9.0).
-- **Tasks** — `akm tasks` subcommand surface; YAML schema for scheduled
-  tasks. Schema additions in patch releases; removals only at minor.
+- **Tasks** — `akm tasks` subcommand surface (singular `akm task` is an
+  additive alias); YAML schema for scheduled tasks. Schema additions in patch
+  releases; removals only at minor.
+- **Events / log** — `akm events` subcommand surface (`akm log` is an additive
+  alias for the same stream in 0.8; `log` becomes primary in 0.9.0).
+- **Lessons** — `akm lessons` subcommand surface (singular `akm lesson` is an
+  additive alias).
 - **Wiki management** — `akm wiki *` subcommands.
 - **Agent dispatch** — `akm agent` subcommand. The supported set of
   agent CLI backends (claude, opencode, codex, gemini, aider) will grow.

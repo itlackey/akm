@@ -41,7 +41,7 @@ akm proposal reject skill:my-skill --reason "..."  # Reject by ref
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
-akm save                                      # Commit (and push if writable remote) changes in the primary stash
+akm sync                                      # Commit (and push if writable remote) changes in the primary stash (--no-push to skip push)
 akm registry search "<query>"                 # Search all registries
 ```
 

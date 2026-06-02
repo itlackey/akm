@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setQuiet } from "../src/core/warn";
 import { parseGitRepoUrl } from "../src/sources/providers/git";
 import { type CliResult, runCliCapture } from "./_helpers/cli";
 import { withEnv } from "./_helpers/sandbox";
@@ -110,10 +111,10 @@ function getGitCacheRepoDir(xdgCacheHome: string, repoUrl: string): string {
   return path.join(xdgCacheHome, "akm", "registry-index", `git-${key}`, "repo");
 }
 
-describe("akm save", () => {
+describe("akm sync", () => {
   test("returns skipped when stash is not a git repo", async () => {
     const stashDir = makeTempDir("akm-save-nongit-");
-    const result = await runCli(["save"], stashDir);
+    const result = await runCli(["sync"], stashDir);
     expect(result.code).toBe(0);
     const json = parseSaveOutput(result.stdout);
     expect(json.skipped).toBe(true);
@@ -132,7 +133,7 @@ describe("akm save", () => {
       encoding: "utf8",
     });
 
-    const result = await runCli(["save"], stashDir);
+    const result = await runCli(["sync"], stashDir);
     expect(result.code).toBe(0);
     const json = parseSaveOutput(result.stdout);
     expect(json.committed).toBe(false);
@@ -148,7 +149,7 @@ describe("akm save", () => {
     fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
 
-    const result = await runCli(["save", "-m", "test commit"], stashDir);
+    const result = await runCli(["sync", "-m", "test commit"], stashDir);
     expect(result.code).toBe(0);
     const json = parseSaveOutput(result.stdout);
     expect(json.committed).toBe(true);
@@ -166,13 +167,93 @@ describe("akm save", () => {
     fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
 
-    const result = await runCli(["save"], stashDir);
+    const result = await runCli(["sync"], stashDir);
     expect(result.code).toBe(0);
     const json = parseSaveOutput(result.stdout);
     expect(json.committed).toBe(true);
 
     const log = spawnSync("git", ["-C", stashDir, "log", "--oneline"], { encoding: "utf8" });
     expect(log.stdout).toContain("akm save");
+  });
+
+  test("--no-push commits but does not push even with writable remote", async () => {
+    // Bare upstream to push to, plus a working clone marked writable.
+    const upstream = makeTempDir("akm-sync-upstream-");
+    spawnSync("git", ["init", "--bare", upstream], { encoding: "utf8" });
+
+    const xdgCacheHome = makeTempDir("akm-sync-cache-");
+    const xdgConfigHome = makeTempDir("akm-sync-config-");
+    const repoUrl = "https://github.com/acme/nopush-stash";
+    const repoDir = getGitCacheRepoDir(xdgCacheHome, repoUrl);
+    initGitRepo(repoDir);
+    // Seed an initial commit so a branch + upstream tracking exist.
+    fs.writeFileSync(path.join(repoDir, "seed.md"), "# seed\n");
+    spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
+    spawnSync("git", ["-C", repoDir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "seed"], {
+      encoding: "utf8",
+    });
+    spawnSync("git", ["-C", repoDir, "remote", "add", "origin", upstream], { encoding: "utf8" });
+    spawnSync("git", ["-C", repoDir, "push", "-u", "origin", "HEAD"], { encoding: "utf8" });
+
+    writeJson(path.join(xdgConfigHome, "akm", "config.json"), {
+      semanticSearchMode: "off",
+      sources: [{ type: "git", name: "nopush-stash", url: repoUrl, writable: true }],
+    });
+
+    const upstreamCountBefore = spawnSync("git", ["-C", upstream, "rev-list", "--count", "HEAD"], {
+      encoding: "utf8",
+    }).stdout.trim();
+
+    // Make a new change and sync with --no-push.
+    fs.mkdirSync(path.join(repoDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, "skills", "s.md"), "# s\n");
+
+    const result = await runCliWithEnv(["sync", "nopush-stash", "-m", "no push commit", "--no-push"], upstream, {
+      XDG_CACHE_HOME: xdgCacheHome,
+      XDG_CONFIG_HOME: xdgConfigHome,
+    });
+    expect(result.code).toBe(0);
+    const json = parseSaveOutput(result.stdout);
+    expect(json.committed).toBe(true);
+    expect(json.pushed).toBe(false);
+
+    // Upstream HEAD count is unchanged — nothing was pushed.
+    const upstreamCountAfter = spawnSync("git", ["-C", upstream, "rev-list", "--count", "HEAD"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    expect(upstreamCountAfter).toBe(upstreamCountBefore);
+    expect(gitHeadSubject(repoDir)).toBe("no push commit");
+  });
+
+  test("deprecated `akm save` still works AND warns on stderr", async () => {
+    setQuiet(false);
+    const stashDir = makeTempDir("akm-save-deprecated-");
+    initGitRepo(stashDir);
+    fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
+
+    const result = await runCli(["save", "-m", "via save alias"], stashDir);
+    expect(result.code).toBe(0);
+    const json = parseSaveOutput(result.stdout);
+    expect(json.committed).toBe(true);
+    expect(result.stderr).toContain("'akm save' is deprecated");
+    expect(result.stderr).toContain("akm sync");
+
+    const log = spawnSync("git", ["-C", stashDir, "log", "--oneline"], { encoding: "utf8" });
+    expect(log.stdout).toContain("via save alias");
+  });
+
+  test("deprecated `akm save` warning is suppressed under --quiet", async () => {
+    setQuiet(true);
+    const stashDir = makeTempDir("akm-save-quiet-");
+    initGitRepo(stashDir);
+    fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
+
+    const result = await runCli(["save", "-m", "quiet save"], stashDir);
+    expect(result.code).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
+    setQuiet(false);
   });
 
   test("named git-backed save targets the named repo instead of the primary stash", async () => {
@@ -194,7 +275,7 @@ describe("akm save", () => {
       sources: [{ type: "git", name: "named-stash", url: namedRepoUrl }],
     });
 
-    const result = await runCliWithEnv(["save", "named-stash", "-m", "named target commit"], primaryStashDir, {
+    const result = await runCliWithEnv(["sync", "named-stash", "-m", "named target commit"], primaryStashDir, {
       XDG_CACHE_HOME: xdgCacheHome,
       XDG_CONFIG_HOME: xdgConfigHome,
     });

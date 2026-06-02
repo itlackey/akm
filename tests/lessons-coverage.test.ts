@@ -129,4 +129,24 @@ describe("akm lessons coverage (Phase 7A)", () => {
     const parsed = JSON.parse(result.stdout) as { uncoveredTags: string[] };
     expect(parsed.uncoveredTags).toEqual([]);
   });
+
+  test("singular `akm lesson` alias resolves to the same command", async () => {
+    const stashDir = makeTempDir("akm-lessons-alias-");
+
+    writeFile(
+      path.join(stashDir, "skills", "deploy.md"),
+      "---\ndescription: deploy skill\ntags: [deploy]\n---\nBody.\n",
+    );
+    writeFile(
+      path.join(stashDir, "lessons", "deploy.md"),
+      "---\ndescription: deploy lesson\ntags: [deploy]\n---\nBody.\n",
+    );
+
+    await buildIndex(stashDir);
+
+    const result = await runCli(["lesson", "coverage", "--format=json"]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { uncoveredTags: string[] };
+    expect(parsed.uncoveredTags).toEqual([]);
+  });
 });

@@ -24,8 +24,8 @@ akm wiki ingest <name>                        # Dispatch defaults.agent (or --pr
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
-akm save                                      # Commit (and push if writable) the primary git stash
-akm save my-skills -m "Update"               # Save a named writable git stash
+akm sync                                      # Commit (and push if writable) the primary git stash
+akm sync my-skills -m "Update"               # Sync a named writable git stash
 akm registry search "<query>"                 # Search all registries
 ```
 

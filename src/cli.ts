@@ -1244,6 +1244,30 @@ const configCommand = defineCommand({
         });
       },
     }),
+    enable: defineCommand({
+      meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
+      args: {
+        target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const result = toggleComponent(args.target, true);
+          output("enable", result);
+        });
+      },
+    }),
+    disable: defineCommand({
+      meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
+      args: {
+        target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const result = toggleComponent(args.target, false);
+          output("disable", result);
+        });
+      },
+    }),
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -1257,11 +1281,83 @@ const configCommand = defineCommand({
   },
 });
 
+// Shared `save`/`sync` body. `sync` is the canonical spelling in 0.8; `save`
+// remains a deprecated alias (removed 0.9.0). Both share this implementation so
+// the git-commit/push logic and the `--format`-as-name workaround stay in one place.
+async function runSyncBody(
+  args: { name?: string; message?: string; push?: boolean },
+  verb: "save" | "sync",
+): Promise<void> {
+  await runWithJsonErrors(async () => {
+    // Fix: citty can consume `--format json` (space-separated) as the
+    // positional `name` argument (e.g. `akm sync --format json` parses
+    // name="json"). Detect the mis-parse by checking argv order — only
+    // treat the positional as consumed by --format when --format appears
+    // before any standalone occurrence of the same value in the sync
+    // subcommand's argv slice. This preserves legitimate invocations
+    // like `akm sync json --format json`.
+    const parsedFormat = parseFlagValue(process.argv, "--format");
+    const effectiveName =
+      args.name !== undefined &&
+      parsedFormat !== undefined &&
+      args.name === parsedFormat &&
+      wasFormatValueConsumedAsName(args.name, parsedFormat, verb)
+        ? undefined
+        : args.name;
+
+    let writable: boolean | undefined;
+    if (effectiveName === undefined) {
+      // Primary stash — honour the root-level writable flag from config.
+      const cfg = loadConfig();
+      writable = cfg.writable === true ? true : undefined;
+    }
+
+    const result = saveGitStash(effectiveName, args.message, writable, { push: args.push !== false });
+    appendEvent({
+      eventType: "save",
+      metadata: {
+        name: effectiveName ?? null,
+        message: args.message ?? null,
+        ok: (result as { ok?: boolean }).ok !== false,
+      },
+    });
+    output("save", result);
+  });
+}
+
+const syncCommand = defineCommand({
+  meta: {
+    name: "sync",
+    description:
+      "Sync changes in a git-backed stash: commits (and pushes when writable + remote is configured). No-op for non-git stashes.",
+  },
+  args: {
+    name: {
+      type: "positional",
+      description: "Name of the git stash to sync (default: primary stash directory)",
+      required: false,
+    },
+    message: {
+      type: "string",
+      alias: "m",
+      description: "Commit message (default: timestamp)",
+    },
+    push: {
+      type: "boolean",
+      description: "Push after commit when writable + remote configured (use --no-push to commit only). Default: true.",
+      default: true,
+    },
+  },
+  async run({ args }) {
+    await runSyncBody(args, "sync");
+  },
+});
+
+// Deprecated alias (removed 0.9.0): `akm save` → `akm sync`.
 const saveCommand = defineCommand({
   meta: {
     name: "save",
-    description:
-      "Save changes in a git-backed stash: commits (and pushes when writable + remote is configured). No-op for non-git stashes.",
+    description: "DEPRECATED — use `akm sync`. Removed in 0.9.0.",
   },
   args: {
     name: {
@@ -1274,43 +1370,15 @@ const saveCommand = defineCommand({
       alias: "m",
       description: "Commit message (default: timestamp)",
     },
+    push: {
+      type: "boolean",
+      description: "Push after commit when writable + remote configured (use --no-push to commit only). Default: true.",
+      default: true,
+    },
   },
   async run({ args }) {
-    await runWithJsonErrors(async () => {
-      // Fix: citty can consume `--format json` (space-separated) as the
-      // positional `name` argument (e.g. `akm save --format json` parses
-      // name="json"). Detect the mis-parse by checking argv order — only
-      // treat the positional as consumed by --format when --format appears
-      // before any standalone occurrence of the same value in the save
-      // subcommand's argv slice. This preserves legitimate invocations
-      // like `akm save json --format json`.
-      const parsedFormat = parseFlagValue(process.argv, "--format");
-      const effectiveName =
-        args.name !== undefined &&
-        parsedFormat !== undefined &&
-        args.name === parsedFormat &&
-        wasFormatValueConsumedAsName(args.name, parsedFormat)
-          ? undefined
-          : args.name;
-
-      let writable: boolean | undefined;
-      if (effectiveName === undefined) {
-        // Primary stash — honour the root-level writable flag from config.
-        const cfg = loadConfig();
-        writable = cfg.writable === true ? true : undefined;
-      }
-
-      const result = saveGitStash(effectiveName, args.message, writable);
-      appendEvent({
-        eventType: "save",
-        metadata: {
-          name: effectiveName ?? null,
-          message: args.message ?? null,
-          ok: (result as { ok?: boolean }).ok !== false,
-        },
-      });
-      output("save", result);
-    });
+    emitCommandDeprecation("save", "sync");
+    await runSyncBody(args, "save");
   },
 });
 
@@ -1320,13 +1388,14 @@ const saveCommand = defineCommand({
  * in the save subcommand's argv slice AND the candidate name does NOT
  * appear as a standalone positional elsewhere (before or after the flag).
  *
- * This keeps `akm save json --format json` routing `json` as the stash name,
- * while `akm save --format json` (no separate positional) is treated as a
- * primary-stash save.
+ * This keeps `akm sync json --format json` routing `json` as the stash name,
+ * while `akm sync --format json` (no separate positional) is treated as a
+ * primary-stash sync. `verb` is the subcommand token to anchor on (`sync` or
+ * the deprecated `save`).
  */
-function wasFormatValueConsumedAsName(name: string, formatValue: string): boolean {
+function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "save" | "sync"): boolean {
   const argv = process.argv.slice(2);
-  const saveIndex = argv.indexOf("save");
+  const saveIndex = argv.indexOf(verb);
   const tokens = saveIndex >= 0 ? argv.slice(saveIndex + 1) : argv;
 
   let formatIndex = -1;
@@ -1941,13 +2010,15 @@ function toggleComponent(
   throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
 }
 
+// Deprecated top-level aliases (removed 0.9.0) — delegate to `config enable|disable`.
 const enableCommand = defineCommand({
-  meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
+  meta: { name: "enable", description: "DEPRECATED — use `akm config enable`. Removed in 0.9.0." },
   args: {
     target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      emitCommandDeprecation("enable", "config enable");
       const result = toggleComponent(args.target, true);
       output("enable", result);
     });
@@ -1955,12 +2026,13 @@ const enableCommand = defineCommand({
 });
 
 const disableCommand = defineCommand({
-  meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
+  meta: { name: "disable", description: "DEPRECATED — use `akm config disable`. Removed in 0.9.0." },
   args: {
     target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      emitCommandDeprecation("disable", "config disable");
       const result = toggleComponent(args.target, false);
       output("disable", result);
     });
@@ -2464,6 +2536,17 @@ function emitVaultDeprecation(sub: string): void {
 function emitFlagDeprecation(oldFlag: string, newFlag: string, cmd: string): void {
   if (isQuiet()) return;
   process.stderr.write(`warning: '${oldFlag}' is deprecated for 'akm ${cmd}'; use '${newFlag}'. Removed in 0.9.0.\n`);
+}
+
+/**
+ * Emit a stderr deprecation warning for a renamed top-level command. The old
+ * spelling keeps working in 0.8 (wrap-and-delegate) and is removed in 0.9.0.
+ * Suppressed under --quiet; never written to stdout so JSON consumers are
+ * unaffected.
+ */
+function emitCommandDeprecation(oldCmd: string, newCmd: string): void {
+  if (isQuiet()) return;
+  process.stderr.write(`warning: 'akm ${oldCmd}' is deprecated and will be removed in 0.9.0. Use 'akm ${newCmd}'.\n`);
 }
 
 const vaultSetCommand = defineCommand({
@@ -3342,6 +3425,7 @@ const eventsTailCommand = defineCommand({
 const eventsCommand = defineCommand({
   meta: {
     name: "events",
+    alias: "log",
     description: "Read or follow the append-only state.db events stream (mutations, feedback, indexing)",
   },
   subCommands: {
@@ -3420,6 +3504,7 @@ function collectTagSetFromEntries(db: import("bun:sqlite").Database, entryType: 
 const lessonsCommand = defineCommand({
   meta: {
     name: "lessons",
+    alias: "lesson",
     description: "Lesson-asset tooling: tag-coverage gaps, strength queries.",
   },
   subCommands: {
@@ -4235,6 +4320,7 @@ const tasksDoctorCommand = defineCommand({
 const tasksCommand = defineCommand({
   meta: {
     name: "tasks",
+    alias: "task",
     description: "Schedule workflows or prompts via the OS-native scheduler (cron / launchd / schtasks)",
   },
   subCommands: {
@@ -4316,6 +4402,8 @@ export const main = defineCommand({
     workflow: workflowCommand,
     remember: rememberCommand,
     import: importKnowledgeCommand,
+    sync: syncCommand,
+    // Deprecated alias (removed 0.9.0) — delegates to `sync`.
     save: saveCommand,
     clone: cloneCommand,
     registry: registryCommand,
@@ -4349,7 +4437,7 @@ export const main = defineCommand({
   },
 });
 
-const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset"]);
+const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);
 const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "remove"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);

@@ -23,6 +23,7 @@ import {
   akmTasksSetEnabled,
   akmTasksShow,
 } from "../src/commands/tasks";
+import { runCliCapture } from "./_helpers/cli";
 
 let stashDir: string;
 let xdgConfig: string;
@@ -191,5 +192,18 @@ describe("legacy .md task file warning fires from all task subcommands", () => {
     });
 
     expect(stderr).toContain("legacy .md format");
+  });
+});
+
+describe("singular `akm task` alias", () => {
+  test("`akm task list` resolves to the same `tasks` command group", async () => {
+    const tasksRoot = path.join(stashDir, "tasks");
+    fs.writeFileSync(path.join(tasksRoot, "ok.yml"), ['schedule: "@daily"', "command: echo hi", ""].join("\n"), "utf8");
+
+    // `task` is a citty meta.alias for `tasks` in 0.8 (flip primary in 0.9).
+    const result = await runCliCapture(["task", "list", "--format=json"]);
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { tasks: Array<{ id: string }> };
+    expect(parsed.tasks.map((t) => t.id)).toContain("ok");
   });
 });

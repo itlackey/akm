@@ -343,6 +343,20 @@ describe("akm CLI mutation events", () => {
     expect(events.some((e) => e.eventType === "remember")).toBe(true);
   });
 
+  test("`akm log list` resolves to the same events stream (alias)", async () => {
+    sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+
+    const remember = await runCli(["remember", "alias resolves", "--name", "delta", "--format=json"]);
+    expect(remember.status).toBe(0);
+
+    // `log` is a citty meta.alias for `events` in 0.8 (flip primary in 0.9).
+    const list = await runCli(["log", "list", "--format=json"]);
+    expect(list.status).toBe(0);
+    const parsed = JSON.parse(list.stdout) as { events: Array<{ eventType: string }> };
+    expect(parsed.events.some((e) => e.eventType === "remember")).toBe(true);
+  });
+
   test("`akm events list --type feedback` filters by event type", async () => {
     sandboxStash();
     saveConfig({ semanticSearchMode: "off" });

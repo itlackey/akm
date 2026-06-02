@@ -649,7 +649,7 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | --- | --- |
 | `--name` | Human-friendly name for the source |
 | `--provider` | Provider type (e.g. `website`, `npm`). Required for URL sources where inference would be ambiguous |
-| `--writable` | Mark a git source as writable so `akm save` also pushes (default: false) |
+| `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
 | `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous env key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) env keys that can hijack process execution. Use only after reviewing the stash manually |
@@ -814,27 +814,34 @@ When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm setup` first.
 
-### save
+### sync
 
 Stage and commit local changes in a git-backed stash. If the stash has a
 remote configured and is marked `writable: true`, the commit is also pushed.
 
+> **Renamed in 0.8.0.** `akm save` is the deprecated spelling — it still works
+> and delegates to `akm sync`, but prints a stderr deprecation warning and is
+> removed in 0.9.0. `sync` connotes the commit+push behaviour better than
+> `save`.
+
 ```sh
-akm save                            # Save primary stash (auto timestamp message)
-akm save -m "Add deploy skill"     # Save with custom message
-akm save --format json             # Explicit format (both --format json and --format=json work)
-akm save my-skills                  # Save a named writable git stash
-akm save team/core -m "Update"    # Slash-containing source names are valid selectors
-akm save my-skills -m "Update"     # Save named stash with message
+akm sync                            # Sync primary stash (auto timestamp message)
+akm sync -m "Add deploy skill"     # Sync with custom message
+akm sync --no-push                  # Commit only; never push even when writable
+akm sync --format json             # Explicit format (both --format json and --format=json work)
+akm sync my-skills                  # Sync a named writable git stash
+akm sync team/core -m "Update"    # Slash-containing source names are valid selectors
+akm sync my-skills -m "Update"     # Sync named stash with message
 ```
 
 | Argument / Flag | Description |
 | --- | --- |
 | `[name]` | Optional git-backed stash selector. Matches the configured source name exactly and also accepts canonical GitHub aliases such as `owner/repo`, `github:owner/repo`, and branch-ref forms like `github:owner/repo#branch`. Forward slashes are allowed. Defaults to the primary stash |
 | `-m`, `--message` | Commit message. Defaults to `akm save <timestamp>` |
+| `--no-push` | Commit only; never push even when the stash is writable with a remote configured |
 | `--format` | Output format (`json`, `text`, `yaml`). Both `--format json` and `--format=json` are accepted |
 
-If no positional selector is provided, `akm save --format json` still targets
+If no positional selector is provided, `akm sync --format json` still targets
 the primary stash. If a positional selector is provided, it wins even when the
 value also looks like a format token.
 
@@ -846,10 +853,11 @@ value also looks like a format token.
 | Git repo, no remote | Stage and commit only |
 | Git repo, has remote, not writable | Stage and commit only |
 | Git repo, has remote, `writable: true` | Stage, commit, and push |
+| Any writable repo with `--no-push` | Stage and commit only (push suppressed) |
 
 **Primary stash writable config:**
 
-To make the primary stash push on save, set `writable: true` at the root of
+To make the primary stash push on sync, set `writable: true` at the root of
 your config file (`~/.config/akm/config.json` or the path shown by
 `akm config path`):
 
@@ -861,11 +869,11 @@ your config file (`~/.config/akm/config.json` or the path shown by
 ```
 
 When `writable: true` is set and the primary stash has a git remote configured,
-`akm save` will stage, commit, and push.
+`akm sync` will stage, commit, and push.
 
 When `akm setup` successfully initializes the default stash as a local git repo
-(requires `git` to be installed), `akm save` will commit there safely without
-pushing. If git is unavailable, the stash will not be a git repo and save will
+(requires `git` to be installed), `akm sync` will commit there safely without
+pushing. If git is unavailable, the stash will not be a git repo and sync will
 return a skipped result.
 
 To make a named remote git stash writable, pass `--writable` when adding it:
@@ -1108,14 +1116,19 @@ If the stash has never been indexed, the `usage_events` schema is created
 on demand and the command returns an empty `entries` array rather than
 erroring.
 
-### events
+### events (alias: `log`)
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends
 an event row to `<dataDir>/state.db`; `akm events list` reads it and
 `akm events tail` follows it via polling.
 
+> **Alias:** `akm log` resolves to this same command in 0.8 (`akm log list`,
+> `akm log tail`). In 0.9.0 `log` becomes the primary spelling and `events`
+> becomes the deprecated alias.
+
 ```sh
 akm events list                                   # All events, oldest first
+akm log list                                      # Same — `log` is an alias for `events`
 akm events list --type feedback                   # Filter by event type
 akm events list --ref skill:deploy                # Filter by asset ref
 akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
@@ -1123,6 +1136,20 @@ akm events list --since '@offset:12345'           # Resume from a row-id cursor
 akm events tail --max-events 10                   # Follow until 10 events
 akm events tail --format jsonl                    # Stream as JSONL
 ```
+
+**`history` vs `events`/`log` — which one do I want?**
+
+| | `akm history` | `akm events` / `akm log` |
+| --- | --- | --- |
+| Scope | Per-asset (or stash-wide) state changes | Raw stash-wide mutation stream |
+| Backing store | `usage_events` table (built by the indexer) | `state.db` append-only events |
+| Granularity | Analytical replay — what was *recorded* for an asset | Every mutating verb, at the moment it happens |
+| Cross-source | Yes — aggregates across configured sources | No — the local `state.db` only |
+| Resumable cursor | No | Yes (`--since '@offset:<id>'`) |
+| Typical use | Audit a specific asset; debug utility-score shifts | Tail the live mutation bus; drive cooperating processes |
+
+In short: reach for `history` when you care about *an asset's lifecycle*, and
+for `events`/`log` when you care about *the raw, resumable mutation stream*.
 
 | Flag | Description |
 | --- | --- |
