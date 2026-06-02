@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createProposal, isProposalSkipped } from "../../src/core/proposals";
+import { setQuiet } from "../../src/core/warn";
 import { runCliCapture } from "../_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
@@ -207,6 +208,176 @@ describe("akm accept --source bulk safety guard (WS0)", () => {
     // Nothing promoted — proposal still pending.
     const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
     expect(JSON.parse(list.stdout).totalCount).toBe(1);
+  });
+});
+
+describe("akm proposal noun group (canonical)", () => {
+  test("proposal list: lists pending proposal as JSON with totalCount", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].id).toBe(created.id);
+    // No deprecation warning on the canonical spelling.
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("bare `akm proposal` defaults to list", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].id).toBe(created.id);
+  });
+
+  test("bare `akm proposal --status` filters (group args mirror list filters)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "--status=reverted", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).totalCount).toBe(0);
+  });
+
+  test("proposal show: returns proposal + validation report", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "show", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.proposal.id).toBe(created.id);
+    expect(parsed.validation.ok).toBe(true);
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("proposal show: requires an id (citty rejects the missing positional)", async () => {
+    // Like `proposal diff`/`proposal revert`, the required positional is enforced
+    // by citty, which renders usage and exits 1 (not the JSON envelope path).
+    const stash = makeStashDir();
+    const result = await runCli(["proposal", "show", "--format=json"], { stashDir: stash });
+    expect(result.status).not.toBe(0);
+  });
+
+  test("proposal diff: shows a unified diff", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "diff", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).unified).toContain("/dev/null");
+  });
+
+  test("proposal accept: materialises asset on disk", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "accept", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(fs.existsSync(parsed.assetPath as string)).toBe(true);
+  });
+
+  test("proposal reject: archives proposal with reason", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "reject", created.id, "--reason", "dup", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).reason).toBe("dup");
+  });
+
+  test("proposal accept --source bulk guard still applies under the noun group", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--source", "reflect", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+  });
+});
+
+describe("deprecated flat proposal verbs warn on stderr and delegate", () => {
+  // The harness sets quiet=true by default (tests/_preload.ts) and resets it
+  // before each test; opt into noisy mode so the deprecation warning surfaces,
+  // exactly as it would in a normal (non-`--quiet`) production invocation.
+  test("`proposals` delegates to `proposal list` and warns", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).proposals[0].id).toBe(created.id);
+    expect(result.stderr).toContain("'akm proposals' is deprecated");
+    expect(result.stderr).toContain("akm proposal list");
+  });
+
+  test("`accept` delegates and warns", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["accept", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).ok).toBe(true);
+    expect(result.stderr).toContain("'akm accept' is deprecated");
+    expect(result.stderr).toContain("akm proposal accept");
+  });
+
+  test("`reject` delegates and warns", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["reject", created.id, "--reason", "dup", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("'akm reject' is deprecated");
+    expect(result.stderr).toContain("akm proposal reject");
+  });
+
+  test("`diff` delegates and warns", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["diff", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).id).toBe(created.id);
+    expect(result.stderr).toContain("'akm diff' is deprecated");
+    expect(result.stderr).toContain("akm proposal diff");
+  });
+
+  test("deprecation warning is suppressed under --quiet", async () => {
+    // quiet defaults to true under the harness (mirrors `--quiet` in prod, which
+    // sets the same global via applyEarlyStderrFlags).
+    setQuiet(true);
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
+  });
+});
+
+describe("akm show proposal (deprecated alias)", () => {
+  test("still works but warns and points to `akm proposal show`", async () => {
+    setQuiet(false);
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).proposal.id).toBe(created.id);
+    expect(result.stderr).toContain("'akm show proposal <id>' is deprecated");
+    expect(result.stderr).toContain("akm proposal show");
+  });
+
+  test("warning suppressed under --quiet", async () => {
+    setQuiet(true);
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
   });
 });
 

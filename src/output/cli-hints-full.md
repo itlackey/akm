@@ -248,16 +248,21 @@ akm completions --install                     # Install completions
 ## Proposals & Improvement (0.8.0+)
 
 ```sh
-akm improve <ref>                              # Propose improvement for an asset
-akm proposals                                  # List pending proposals
-akm show proposal <id>                         # Render the proposal body
-akm diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
-akm diff skill:akm-dream                       # Diff by asset ref
-akm accept 7c115132                            # Accept by UUID prefix
-akm accept <id> --target team-stash            # Accept to a named writable stash source
-akm reject skill:my-skill --reason "not ready" # Reject by asset ref
-akm reject <id> --reason "..."                 # Archive with a reason
+akm improve <ref>                                       # Propose improvement for an asset
+akm proposal list                                       # List pending proposals
+akm proposal show <id>                                  # Render the proposal body
+akm proposal diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix
+akm proposal diff skill:akm-dream                       # Diff by asset ref
+akm proposal accept 7c115132                            # Accept by UUID prefix
+akm proposal accept <id> --target team-stash            # Accept to a named writable stash source
+akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject <id> --reason "..."                 # Archive with a reason
+akm proposal revert <id>                                # Restore the pre-promotion content
 ```
+
+The flat verbs `akm proposals` / `akm show proposal` / `akm accept` /
+`akm reject` / `akm diff` / `akm revert` still work as deprecated aliases
+(warn on stderr; removed in 0.9.0).
 
 Per-task `timeoutMs`: task markdown frontmatter may set `timeoutMs: null` to
 disable the agent kill timer for long-running local-model tasks, or a number

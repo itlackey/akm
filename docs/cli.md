@@ -1796,15 +1796,26 @@ Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 disable the kill timer entirely (useful for long-running local-model tasks), or
 a positive integer (milliseconds) to apply a task-specific limit.
 
-### proposals
+### proposal
 
 **Status: Available since 0.8.0.**
+Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
+`list`, `show`, `diff`, `accept`, `reject`, `revert`. Bare `akm proposal`
+behaves as `akm proposal list`.
+
+The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
+`akm reject`, `akm diff`, and `akm revert` remain as **deprecated aliases** that
+warn on stderr and delegate to the `proposal <verb>` forms. They are removed in
+0.9.0.
+
+#### proposal list
+
 List proposal queue entries.
 
 ```sh
-akm proposals
-akm proposals --status pending|accepted|rejected|reverted
-akm proposals --ref skill:deploy
+akm proposal list
+akm proposal list --status pending|accepted|rejected|reverted
+akm proposal list --ref skill:deploy
 ```
 
 | Flag | Description |
@@ -1817,53 +1828,51 @@ Each proposal record carries an optional `confidence` field (0..1) emitted by
 reflect/propose runs. The `--auto-accept` flag on `improve` uses this score to
 auto-promote high-confidence proposals — see the `improve` section above. After
 promotion, accepted proposals that overwrote an existing asset also carry a
-`backup` field pointing to the captured prior content, which `akm revert` uses.
+`backup` field pointing to the captured prior content, which
+`akm proposal revert` uses.
 
-### accept
+#### proposal show
 
-**Status: Available since 0.8.0.**
+Inspect a queued proposal and its validation findings.
+
+```sh
+akm proposal show <id>
+```
+
+#### proposal accept
+
 Accept a proposal and promote it into the stash. Accepts a full UUID, an
 8-character UUID prefix, or an asset ref.
 
 ```sh
-akm accept <id>
-akm accept 7c115132                           # 8-char UUID prefix
-akm accept skill:akm-dream                   # Asset ref
-akm accept <id> --target team-stash
+akm proposal accept <id>
+akm proposal accept 7c115132                  # 8-char UUID prefix
+akm proposal accept skill:akm-dream           # Asset ref
+akm proposal accept <id> --target team-stash
 ```
 
-### reject
+#### proposal reject
 
-**Status: Available since 0.8.0.**
 Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
 UUID prefix, or an asset ref.
 
 ```sh
-akm reject <id> --reason "duplicates existing workflow"
-akm reject 7c115132 --reason "not ready"      # 8-char UUID prefix
-akm reject skill:my-skill --reason "not ready" # Asset ref
+akm proposal reject <id> --reason "duplicates existing workflow"
+akm proposal reject 7c115132 --reason "not ready"      # 8-char UUID prefix
+akm proposal reject skill:my-skill --reason "not ready" # Asset ref
 ```
 
-### show proposal
+#### proposal revert
 
-Inspect a queued proposal.
-
-```sh
-akm show proposal <id>
-```
-
-### revert
-
-**Status: Available since 0.8.0.**
 Revert an accepted proposal by restoring the prior asset content from the
 backup captured at promotion time. Only works on proposals that overwrote an
 existing asset; new-asset proposals leave no backup. Sets the proposal's status
 to `reverted` and appends a `proposal_reverted` event to the audit log.
 
 ```sh
-akm revert <id>
-akm revert skill:akm-dream                   # Asset ref
-akm revert <id> --target team-stash
+akm proposal revert <id>
+akm proposal revert skill:akm-dream           # Asset ref
+akm proposal revert <id> --target team-stash
 ```
 
 | Flag | Description |
@@ -1875,25 +1884,24 @@ supported for reverting (archived proposals require the full identifier). Errors
 with exit code 2 if the proposal is not in `accepted` status, has no captured
 backup, or cannot be found.
 
-### diff proposal
+#### proposal diff
 
-Preview the proposed change against the live asset. The `proposal` subject
-positional is optional — `akm diff` accepts a full UUID, an 8-character UUID
-prefix, or an asset ref directly.
+Preview the proposed change against the live asset. Accepts a full UUID, an
+8-character UUID prefix, or an asset ref directly.
 
 ```sh
-akm diff proposal <id>
-akm diff <id>
-akm diff skill:akm-dream                      # Asset ref form
-akm diff 7c115132                             # 8-char UUID prefix
-akm diff proposal <id> --target team-stash
+akm proposal diff <id>
+akm proposal diff skill:akm-dream             # Asset ref form
+akm proposal diff 7c115132                    # 8-char UUID prefix
+akm proposal diff <id> --target team-stash
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--target <name>` | Override the write destination by source name for `accept` and `diff proposal` |
+| `--target <name>` | Override the write destination by source name for `proposal accept` and `proposal diff` |
 
-`accept` runs full validation before promoting. `reject` requires `--reason`.
+`proposal accept` runs full validation before promoting. `proposal reject`
+requires `--reason`.
 
 ### feedback (`--reason` extension)
 

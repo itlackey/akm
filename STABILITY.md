@@ -18,7 +18,8 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
   `wiki`, `vault`, `lesson`, `task`).
 - **Read commands** — `akm search`, `akm show`, `akm list`, `akm curate`,
   `akm info`, `akm config get`, `akm config list`, `akm vault list`,
-  `akm vault show`, `akm proposals` (list filters).
+  `akm vault show`, `akm proposal list` (list filters). The flat `akm proposals`
+  spelling is a deprecated alias (removed in 0.9.0).
 - **Write commands core surface** — `akm add`, `akm update`, `akm remove`,
   `akm clone`, `akm import`, `akm save`, `akm index`, `akm setup`,
   `akm remember`, `akm feedback`, `akm config set`, `akm config unset`.
@@ -35,10 +36,13 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
-- **Improvement loop** — `akm improve`, `akm propose`, `akm accept`,
-  `akm reject`, `akm diff`, `akm revert`. Output JSON keys are stable;
-  CLI flags (`--auto-accept`, `--profile`, `--task`, `--source`) may add
-  options or tighten validation across releases.
+- **Improvement loop** — `akm improve`, `akm propose`, and the proposal noun
+  group `akm proposal {list,show,diff,accept,reject,revert}`. The flat verbs
+  `akm proposals`, `akm show proposal`, `akm accept`, `akm reject`, `akm diff`,
+  and `akm revert` are deprecated aliases that warn on stderr and delegate
+  (removed in 0.9.0). Output JSON keys are stable; CLI flags (`--auto-accept`,
+  `--profile`, `--task`, `--source`) may add options or tighten validation across
+  releases.
 - **Tasks** — `akm tasks` subcommand surface; YAML schema for scheduled
   tasks. Schema additions in patch releases; removals only at minor.
 - **Wiki management** — `akm wiki *` subcommands.

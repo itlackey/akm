@@ -973,9 +973,14 @@ const showCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const subcommand = Array.isArray(args._) ? args._[0] : undefined;
       if (subcommand === "proposal") {
+        if (!isQuiet()) {
+          process.stderr.write(
+            "warning: 'akm show proposal <id>' is deprecated and will be removed in 0.9.0. Use 'akm proposal show <id>'.\n",
+          );
+        }
         const proposalId = Array.isArray(args._) ? args._[1] : undefined;
         if (typeof proposalId !== "string" || !proposalId.trim()) {
-          throw new UsageError("Usage: akm show proposal <id>", "MISSING_REQUIRED_ARGUMENT");
+          throw new UsageError("Usage: akm proposal show <id>", "MISSING_REQUIRED_ARGUMENT");
         }
         const result = akmProposalShow({ id: proposalId.trim() });
         output("proposal-show", result);
@@ -3359,8 +3364,8 @@ const lessonsCommand = defineCommand({
 
 // ── proposal substrate (#225) ────────────────────────────────────────────────
 
-const proposalsCommand = defineCommand({
-  meta: { name: "proposals", description: "List proposal queue entries" },
+const proposalListCommand = defineCommand({
+  meta: { name: "list", description: "List proposal queue entries" },
   args: {
     status: {
       type: "string",
@@ -3382,7 +3387,7 @@ const proposalsCommand = defineCommand({
   },
 });
 
-const acceptCommand = defineCommand({
+const proposalAcceptCommand = defineCommand({
   meta: { name: "accept", description: "Accept a proposal and promote it into the stash" },
   args: {
     id: {
@@ -3478,7 +3483,7 @@ const acceptCommand = defineCommand({
   },
 });
 
-const rejectCommand = defineCommand({
+const proposalRejectCommand = defineCommand({
   meta: { name: "reject", description: "Reject a proposal and record the reason" },
   args: {
     id: {
@@ -3591,7 +3596,7 @@ const rejectCommand = defineCommand({
   },
 });
 
-const diffCommand = defineCommand({
+const proposalDiffCommand = defineCommand({
   meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix, or asset ref)" },
   args: {
     id: {
@@ -3618,7 +3623,7 @@ const diffCommand = defineCommand({
 //       `UsageError("MISSING_REQUIRED_ARGUMENT")` when the proposal is not
 //       accepted, or no backup is available).
 //   1 — `NotFoundError("FILE_NOT_FOUND")` when the proposal id does not resolve.
-const revertCommand = defineCommand({
+const proposalRevertCommand = defineCommand({
   meta: {
     name: "revert",
     description:
@@ -3643,6 +3648,123 @@ const revertCommand = defineCommand({
       });
       output("proposal-revert", result);
     });
+  },
+});
+
+// `proposal show` (#225): show a single proposal with its validation findings.
+// `akmProposalShow` already backs `akm show proposal <id>` (now deprecated); this
+// is the canonical noun-group entry point.
+const proposalShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a single proposal and its validation findings" },
+  args: {
+    id: {
+      type: "positional",
+      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
+      required: true,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalShow({ id: args.id as string });
+      output("proposal-show", result);
+    });
+  },
+});
+
+// ── proposal noun group (#225 / 0.8 CLI stabilization) ────────────────────────
+//
+// `akm proposal <verb>` is the canonical grammar in 0.8. The flat verbs
+// (`proposals`/`accept`/`reject`/`diff`/`revert`) remain as deprecated aliases
+// that warn to stderr and delegate to the same command bodies; they are removed
+// in 0.9.0. Bare `akm proposal` behaves as `proposal list` (mirrors `akm env`).
+
+const PROPOSAL_SUBCOMMAND_SET = new Set(["list", "show", "diff", "accept", "reject", "revert"]);
+
+function emitProposalVerbDeprecation(oldVerb: string, canonical: string): void {
+  if (isQuiet()) return;
+  process.stderr.write(
+    `warning: 'akm ${oldVerb}' is deprecated and will be removed in 0.9.0. Use 'akm ${canonical}'.\n`,
+  );
+}
+
+const proposalCommand = defineCommand({
+  meta: { name: "proposal", description: "Manage the proposal queue: list, show, diff, accept, reject, revert" },
+  args: {
+    status: {
+      type: "string",
+      description: "Filter by status (pending|accepted|rejected|reverted)",
+    },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    type: { type: "string", description: "Filter by asset type" },
+  },
+  subCommands: {
+    list: proposalListCommand,
+    show: proposalShowCommand,
+    diff: proposalDiffCommand,
+    accept: proposalAcceptCommand,
+    reject: proposalRejectCommand,
+    revert: proposalRevertCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      // citty runs the group body even after a subcommand; short-circuit so the
+      // default-to-list body only fires for bare `akm proposal [--status …]`.
+      if (hasSubcommand(args, PROPOSAL_SUBCOMMAND_SET)) return;
+      const status = parseProposalStatus(args.status);
+      const result = akmProposalList({
+        status,
+        ref: args.ref,
+        includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
+      });
+      output("proposal-list", result);
+    });
+  },
+});
+
+// Deprecated flat-verb aliases (removed 0.9.0). Each wraps the canonical command
+// body so bulk/guard logic is not duplicated.
+const proposalsCommand = defineCommand({
+  meta: { name: "proposals", description: "DEPRECATED — use `akm proposal list`. Removed in 0.9.0." },
+  args: proposalListCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("proposals", "proposal list");
+    return proposalListCommand.run?.(ctx);
+  },
+});
+
+const acceptCommand = defineCommand({
+  meta: { name: "accept", description: "DEPRECATED — use `akm proposal accept`. Removed in 0.9.0." },
+  args: proposalAcceptCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("accept", "proposal accept");
+    return proposalAcceptCommand.run?.(ctx);
+  },
+});
+
+const rejectCommand = defineCommand({
+  meta: { name: "reject", description: "DEPRECATED — use `akm proposal reject`. Removed in 0.9.0." },
+  args: proposalRejectCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("reject", "proposal reject");
+    return proposalRejectCommand.run?.(ctx);
+  },
+});
+
+const diffCommand = defineCommand({
+  meta: { name: "diff", description: "DEPRECATED — use `akm proposal diff`. Removed in 0.9.0." },
+  args: proposalDiffCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("diff", "proposal diff");
+    return proposalDiffCommand.run?.(ctx);
+  },
+});
+
+const revertCommand = defineCommand({
+  meta: { name: "revert", description: "DEPRECATED — use `akm proposal revert`. Removed in 0.9.0." },
+  args: proposalRevertCommand.args,
+  run(ctx) {
+    emitProposalVerbDeprecation("revert", "proposal revert");
+    return proposalRevertCommand.run?.(ctx);
   },
 });
 
@@ -4117,6 +4239,8 @@ export const main = defineCommand({
     improve: improveCommand,
     extract: extractCommand,
     propose: proposeCommand,
+    proposal: proposalCommand,
+    // Deprecated flat verbs (removed 0.9.0) — delegate to `proposal <verb>`.
     proposals: proposalsCommand,
     accept: acceptCommand,
     reject: rejectCommand,
