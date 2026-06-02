@@ -1188,6 +1188,26 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
 
     const chunk = chunks[chunkIdx];
+
+    // All-hot chunk early-exit. The per-prompt hot-list block (see
+    // buildChunkPrompt) only *discourages* delete proposals on a mixed chunk;
+    // when EVERY memory in the chunk is captureMode: hot, the only ops the LLM
+    // could ever propose are deletes — all of which the downstream guard
+    // refuses unconditionally. Calling the model is therefore pure token waste.
+    // Skip the request entirely and bucket every memory as judgedNoAction (we
+    // judged "no action" without spending an LLM call), preserving the
+    // accounting invariant `processed == actioned + judgedNoAction +
+    // Σ(skipReasons) + failedChunkMemories`. Not counted toward the
+    // LLM-failure-rate abort policy — no request was attempted.
+    if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
+      for (const m of chunk) judgedNoActionRefs.add(`memory:${m.name}`);
+      judgedNoAction += chunk.length;
+      warn(
+        `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
+      );
+      continue;
+    }
+
     warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
     const userPrompt = buildChunkPrompt(
       sourceName,
