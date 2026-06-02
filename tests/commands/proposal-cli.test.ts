@@ -159,6 +159,55 @@ describe("akm accept / reject / diff proposal (CLI)", () => {
     expect(parsed.id).toBe(created.id);
     expect(parsed.unified).toContain("/dev/null");
   });
+
+  test("single-id accept is NOT guarded (revertable) — proceeds without --yes", async () => {
+    // WS0: the bulk-accept guard must not leak onto the single-id path.
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["accept", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+  });
+});
+
+describe("akm accept --source bulk safety guard (WS0)", () => {
+  test("bulk accept without --yes aborts in non-interactive mode (exit 2)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["accept", "--source", "reflect", "--format=json"], { stashDir: stash });
+    // confirmDestructive throws NON_INTERACTIVE_REQUIRES_YES (UsageError → exit 2)
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+    // Proposal must NOT have been promoted.
+    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(list.stdout).totalCount).toBe(1);
+  });
+
+  test("bulk accept with --yes proceeds and promotes matching proposals", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["accept", "--source", "reflect", "--yes", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.accepted).toBe(1);
+    expect(parsed.dryRun).toBe(false);
+    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(list.stdout).totalCount).toBe(0);
+  });
+
+  test("bulk accept --dry-run auto-passes the guard (no --yes needed)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["accept", "--source", "reflect", "--dry-run", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.dryRun).toBe(true);
+    // Nothing promoted — proposal still pending.
+    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(list.stdout).totalCount).toBe(1);
+  });
 });
 
 describe("akm propose (CLI)", () => {

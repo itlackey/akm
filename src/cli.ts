@@ -3413,11 +3413,26 @@ const acceptCommand = defineCommand({
       description: "F-6: List proposals that would be bulk-accepted without accepting them.",
       default: false,
     },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip confirmation prompt (required in non-interactive mode for bulk accept)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       // F-6 / #393: Bulk-accept when --source is provided without a positional id.
       if (args.source && !args.id) {
+        const { confirmDestructive } = await import("./cli/confirm.js");
+        const confirmed = await confirmDestructive(
+          `Bulk-accept all matching proposals from generator "${args.source}"? This cannot be undone.`,
+          { yes: args.yes === true || args["dry-run"] === true },
+        );
+        if (!confirmed) {
+          process.stderr.write("Aborted.\n");
+          return;
+        }
         const { listProposals } = await import("./core/proposals");
         const stashDir = resolveStashDir();
         const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
