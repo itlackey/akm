@@ -1466,6 +1466,30 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
+      // Pre-flight hot guard — skip the LLM call entirely if any participant
+      // is hot or unparseable. Without this, mixed chunks still send hot merges
+      // to the planner which proposes them; generateMergedContent() is then
+      // called, produces output without `description`, and the skip is
+      // misattributed to merge_missing_description instead of the real cause.
+      const preflightParticipants: string[] = [op.primary, ...op.secondaries];
+      const preflightBlocked = preflightParticipants.flatMap<{ ref: string; verdict: ConsolidateGuardVerdict }>(
+        (ref) => {
+          const e = memoryByRef.get(ref);
+          if (!e) return [];
+          const verdict = consolidateGuardStatus(e.filePath);
+          if (verdict === "hot" || verdict === "unparseable") return [{ ref, verdict }];
+          return [];
+        },
+      );
+      if (preflightBlocked.length > 0) {
+        const detail = preflightBlocked.map((p) => `${p.ref} (${p.verdict})`).join(", ");
+        warnings.push(
+          `Merge: refused for ${op.primary} — ${preflightBlocked.length} participant(s) blocked by hot/unparseable frontmatter guard (pre-flight): ${detail}`,
+        );
+        emitMergeFailureSkips("merge_participant_blocked");
+        continue;
+      }
+
       let primaryBody = "";
       try {
         primaryBody = fs.readFileSync(primaryEntry.filePath, "utf8");
@@ -2395,6 +2419,7 @@ async function generateMergedContent(
     "",
     "## FRONTMATTER RULES (MANDATORY)",
     "- The `updated:` field, if present, MUST be a real ISO date (e.g. `updated: 2026-05-20`). NEVER emit `updated: today`, `updated: now`, or `updated: {today: null}`. If you don't have a real date, OMIT the field — the post-processor will not invent one.",
+    "- REQUIRED: The merged frontmatter MUST include a `description` field with a concise one-sentence summary of the merged asset's content. If neither source has a `description` field, synthesize one from the content.",
     requiredFmKeys.length > 0
       ? `- CRITICAL: The merged frontmatter MUST include ALL of these keys from both source memories: ${requiredFmKeys.join(", ")}. Do NOT drop any of them.`
       : null,
