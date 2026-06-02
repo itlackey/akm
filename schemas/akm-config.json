@@ -202,6 +202,57 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -272,6 +323,57 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -342,6 +444,57 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -412,6 +565,57 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -482,6 +686,57 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -552,6 +807,178 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "triage": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -1203,6 +1630,57 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -1273,6 +1751,57 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -1343,6 +1872,57 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -1413,6 +1993,57 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -1483,6 +2114,57 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -1553,6 +2235,178 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "triage": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -2186,6 +3040,57 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 50
+        },
+        "applyMode": {
+          "type": "string",
+          "enum": [
+            "queue",
+            "promote"
+          ]
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxAcceptsPerRun": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "maxDiffLines": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "rejectEmpty": {
+          "type": "boolean"
+        },
+        "judgment": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "llm",
+                "agent",
+                "sdk"
+              ]
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "timeoutMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -2266,6 +3171,57 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -2336,6 +3292,57 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -2406,6 +3413,57 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -2476,6 +3534,57 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -2546,6 +3655,57 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -2616,6 +3776,178 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "triage": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false

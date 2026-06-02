@@ -27,6 +27,7 @@ import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from 
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../tasks/schedule";
 import type { TaskDocument } from "../tasks/schema";
 import { validateTaskDocument } from "../tasks/validator";
+import { resolveImproveProfile } from "./improve-profiles";
 
 export interface TasksAddInput {
   id: string;
@@ -410,6 +411,16 @@ export interface TasksDoctorResult {
   agent: { defaultProfile?: string; available: string[] };
   scheduleSubset: string;
   warnings: string[];
+  /**
+   * Effective proposal-queue triage settings for the default improve profile.
+   * Absent when the resolved profile has no `triage` process block.
+   */
+  improveTriage?: {
+    defaultProfile: string;
+    enabled: boolean;
+    applyMode: string;
+    policy: string;
+  };
 }
 
 export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
@@ -434,6 +445,19 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
   const defaultProfile = config.defaults?.agent;
   const profiles = config.profiles?.agent ? Object.keys(config.profiles.agent) : listAgentProfileNames(config);
 
+  // §6.1: surface the effective triage settings for the default improve
+  // profile. The struct is a fixed shape, so this is a deliberate addition.
+  const improveProfileName = typeof config.defaults?.improve === "string" ? config.defaults.improve : "default";
+  const triage = resolveImproveProfile(config.defaults?.improve as string | undefined, config).processes?.triage;
+  const improveTriage = triage
+    ? {
+        defaultProfile: improveProfileName,
+        enabled: triage.enabled === true,
+        applyMode: triage.applyMode ?? "queue",
+        policy: triage.policy ?? "personal-stash",
+      }
+    : undefined;
+
   return {
     backend,
     akm: invocation,
@@ -442,6 +466,7 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
     agent: { defaultProfile, available: profiles },
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,
+    ...(improveTriage ? { improveTriage } : {}),
   };
 }
 

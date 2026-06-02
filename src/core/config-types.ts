@@ -153,6 +153,41 @@ export interface ImproveProcessConfig {
    * Absent = use computed value (capped at 50).
    */
   maxChunkSize?: number;
+  /**
+   * Apply mode for drained proposals: `queue` stages only (never promotes),
+   * `promote` accepts matching proposals (commits to git). Defaults to the
+   * safe `queue`. Only meaningful on the `triage` process.
+   */
+  applyMode?: "queue" | "promote";
+  /**
+   * Built-in policy preset name (`personal-stash` | `conservative` | `manual`)
+   * or a path to a custom policy file. Only meaningful on the `triage` process.
+   */
+  policy?: string;
+  /**
+   * Hard per-run accept ceiling. Accepts beyond this land in `skippedByCap`.
+   * Only meaningful on the `triage` process.
+   */
+  maxAcceptsPerRun?: number;
+  /**
+   * Defer (never promote) accepts whose proposed content exceeds this many
+   * lines. Only meaningful on the `triage` process.
+   */
+  maxDiffLines?: number;
+  /**
+   * Reject proposals whose diff is empty. Only meaningful on the `triage`
+   * process.
+   */
+  rejectEmpty?: boolean;
+  /**
+   * Optional judgment tier for mid-band / ambiguous items. Only meaningful on
+   * the `triage` process.
+   */
+  judgment?: {
+    mode?: "llm" | "agent" | "sdk";
+    profile?: string;
+    timeoutMs?: number | null;
+  };
 }
 
 export interface ImproveProfileConfig {
@@ -171,6 +206,11 @@ export interface ImproveProfileConfig {
      * Default: enabled.
      */
     extract?: ImproveProcessConfig;
+    /**
+     * Drains the standing pending proposal backlog using a deterministic
+     * triage policy. Opt-in (default disabled).
+     */
+    triage?: ImproveProcessConfig;
   };
   autoAccept?: number;
   limit?: number;

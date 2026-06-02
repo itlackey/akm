@@ -120,6 +120,7 @@ function resolveEventSource(): "user" | "improve" | undefined {
   return undefined;
 }
 
+import { resolveImproveProfile } from "./commands/improve-profiles";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -3901,12 +3902,25 @@ const proposalDrainCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const stashDir = resolveStashDir();
-      const policy = resolveDrainPolicy(args.policy as string | undefined);
-      const dryRun = args["dry-run"] === true;
-      const applyMode: "queue" | "promote" = args.promote === true ? "promote" : "queue";
 
-      const maxAccepts = parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ?? 25;
-      const maxDiffLines = parsePositiveIntFlag(args["max-diff-lines"] as string | undefined, "--max-diff-lines");
+      // Phase 2: read the triage block from the named improve profile. CLI flags
+      // always override config; config supplies defaults for any flag omitted.
+      const triageConfig =
+        args.profile !== undefined
+          ? resolveImproveProfile(args.profile as string, loadConfig()).processes?.triage
+          : undefined;
+
+      const policy = resolveDrainPolicy((args.policy as string | undefined) ?? triageConfig?.policy);
+      const dryRun = args["dry-run"] === true;
+      const applyMode: "queue" | "promote" = args.promote === true ? "promote" : (triageConfig?.applyMode ?? "queue");
+
+      const maxAccepts =
+        parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ??
+        triageConfig?.maxAcceptsPerRun ??
+        25;
+      const maxDiffLines =
+        parsePositiveIntFlag(args["max-diff-lines"] as string | undefined, "--max-diff-lines") ??
+        triageConfig?.maxDiffLines;
 
       const rawOlderThan = parsePositiveIntFlag(args["older-than"] as string | undefined, "--older-than");
       const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;

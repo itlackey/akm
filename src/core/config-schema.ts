@@ -151,6 +151,20 @@ export const ImproveProcessConfigSchema = z
     defaultSince: z.string().min(1).optional(),
     maxTotalChars: positiveInt.optional(),
     maxChunkSize: z.number().int().min(1).max(50).optional(),
+    // Triage process config (only meaningful for the `triage` process)
+    applyMode: z.enum(["queue", "promote"]).optional(),
+    policy: z.string().min(1).optional(),
+    maxAcceptsPerRun: positiveInt.optional(),
+    maxDiffLines: positiveInt.optional(),
+    rejectEmpty: z.boolean().optional(),
+    judgment: z
+      .object({
+        mode: z.enum(["llm", "agent", "sdk"]).optional(),
+        profile: z.string().min(1).optional(),
+        timeoutMs: z.union([positiveInt, z.null()]).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -162,6 +176,7 @@ const ImproveProfileProcessesSchema = z
     memoryInference: ImproveProcessConfigSchema.optional(),
     graphExtraction: ImproveProcessConfigSchema.optional(),
     validation: ImproveProcessConfigSchema.optional(),
+    triage: ImproveProcessConfigSchema.optional(),
   })
   .passthrough()
   .superRefine((val, ctx) => {
@@ -185,6 +200,7 @@ const ImproveProfileProcessesSchema = z
       "graphExtraction",
       "validation",
       "extract",
+      "triage",
     ]);
     for (const k of Object.keys(raw)) {
       if (!allowed.has(k)) {

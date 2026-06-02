@@ -28,6 +28,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       memoryInference: { enabled: true },
       graphExtraction: { enabled: true },
       // validation: deliberately undefined — third-tier classifier is opt-in.
+      triage: { enabled: false, applyMode: "queue", policy: "personal-stash" },
     },
   },
   quick: {
@@ -38,6 +39,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: false },
       memoryInference: { enabled: false },
       graphExtraction: { enabled: false },
+      triage: { enabled: false },
     },
   },
   thorough: {
@@ -51,6 +53,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: true },
+      triage: { enabled: true, applyMode: "queue" },
     },
   },
   "memory-focus": {
@@ -61,6 +64,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       consolidate: { enabled: false },
       memoryInference: { enabled: true },
       graphExtraction: { enabled: false },
+      triage: { enabled: false },
     },
   },
 };
@@ -84,6 +88,9 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   // and queues durable-insight proposals. Default on — opt out via
   // profiles.improve.default.processes.extract.enabled: false.
   extract: true,
+  // proposal-queue triage drains the standing backlog. Opt-in (default off),
+  // like `validation` — needs an explicit `enabled: true`.
+  triage: false,
 };
 
 /**
