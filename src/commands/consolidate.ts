@@ -1021,6 +1021,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   let memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
+  // Pre-flight: filter out stale DB entries whose files no longer exist on
+  // disk. Without this, memories deleted by a prior run (but not yet
+  // reindexed) appear in chunk prompts, causing the LLM to generate plans
+  // against ghost refs and wasting tokens. Filtering here ensures the chunk
+  // pool and memoryByRef are authoritative against the actual filesystem state.
+  const staleCount = memories.filter((m) => !fs.existsSync(m.filePath)).length;
+  if (staleCount > 0) {
+    warnings.push(
+      `Pre-flight: filtered ${staleCount} stale DB entr${staleCount === 1 ? "y" : "ies"} (file absent on disk) from memory pool before chunking.`,
+    );
+  }
+  memories = memories.filter((m) => fs.existsSync(m.filePath));
+
   if (memories.length === 0) {
     return {
       schemaVersion: 1 as const,
@@ -1445,6 +1458,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         emitMergeFailureSkips("merge_primary_missing");
         continue;
       }
+      // Defense-in-depth: even if the entry is in memoryByRef (pre-flight ran
+      // before this run's own ops), the file may have been deleted by a
+      // concurrent process or an edge case the pre-flight filter missed.
+      if (!fs.existsSync(primaryEntry.filePath)) {
+        warnings.push(`Merge: primary ${op.primary} file gone at execution time (stale entry) — skipping.`);
+        emitMergeFailureSkips("merge_primary_file_gone");
+        continue;
+      }
 
       // Phase B: generate merged content
       const secondaryBodies: string[] = [];
@@ -1610,6 +1631,13 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       for (const secRef of op.secondaries) {
         if (memoryByRef.has(secRef)) mergedSecondaries++;
       }
+      // Prune consumed refs from memoryByRef so later ops in this run cannot
+      // reference an absorbed secondary as a merge primary and proceed with a
+      // stale entry. Primary is rewritten (not deleted), so we only remove
+      // secondaries; the primary ref remains valid under its new content.
+      for (const secRef of op.secondaries) {
+        memoryByRef.delete(secRef);
+      }
     } else if (op.op === "delete") {
       const entry = memoryByRef.get(op.ref);
       if (!entry) {
@@ -1647,6 +1675,9 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         await deleteAssetFromSource(target.source, target.config, parsedRef);
         markJournalCompleted(stashDir, op.ref);
         deleted++;
+        // Prune from memoryByRef so later ops in this run cannot reference a
+        // deleted memory as a merge primary or secondary.
+        memoryByRef.delete(op.ref);
       } catch (e) {
         // Distinguish "file already absent" from genuine failures. A prior run
         // may have deleted the file but the DB was not yet re-indexed, so the
