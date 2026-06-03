@@ -203,6 +203,16 @@ export interface AkmConsolidateOptions {
   incrementalSince?: string;
   /** Override the computed safe chunk size cap (1–50). */
   maxChunkSize?: number;
+  /**
+   * PROV-DM traceability token for proposals created by this run. When set,
+   * every `createProposal` call includes it so accept-rate-per-run aggregation
+   * works. When absent, a `consolidate-<timestamp>` token is generated at the
+   * start of `akmConsolidate` so standalone `akm consolidate` also emits a
+   * consistent token. Callers (e.g. `akmImprove`) should pass
+   * `sourceRun: \`consolidate-\${startMs}\`` to tie proposals back to the
+   * containing improve run.
+   */
+  sourceRun?: string;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -995,6 +1005,10 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 
 export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
   const startMs = Date.now();
+  // Derive a stable PROV-DM token for this run. Callers (e.g. akmImprove)
+  // should pass opts.sourceRun to tie proposals back to the parent run;
+  // standalone `akm consolidate` gets a self-contained token.
+  const sourceRun = opts.sourceRun ?? `consolidate-${startMs}`;
   const config = opts.config ?? loadConfig();
   const stashDir = opts.stashDir ?? resolveStashDir();
 
@@ -1872,6 +1886,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         const proposalResult = createProposal(stashDir, {
           ref: knowledgeRef,
           source: "consolidate",
+          sourceRun,
           payload: {
             content: proposalContent,
             frontmatter: { description },

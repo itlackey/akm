@@ -2799,6 +2799,9 @@ async function runImprovePostLoopStage(args: {
       config: consolidationConfig,
       stashDir: options.stashDir,
       autoTriggered: volumeTriggered,
+      // Tie consolidate proposals back to this improve invocation so
+      // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
+      sourceRun: `consolidate-${Date.now()}`,
       // Incremental consolidation: in steady state (not bootstrap, not volume-
       // triggered) pass the last-consolidation timestamp so akmConsolidate skips
       // chunks with no memory changed since then. Converts consolidation cost
