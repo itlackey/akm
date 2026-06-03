@@ -359,6 +359,49 @@ is ON at threshold 90 and no prompt is shown.
 | `memoryInference` | `MemoryInferenceResult?` | Improve-owned post-consolidation memory inference telemetry. |
 | `graphExtraction` | `GraphExtractionResult?` | Improve-owned post-consolidation graph refresh telemetry: considered/extracted counts, entity/relation totals, quality summary, latest-run graph telemetry (`extractorId`, `extractionRunId`, model, prompt version, batch size, cache hits/misses, truncation count, failure count), and any low-quality warnings. |
 
+## Consolidation Skip Reason Taxonomy
+
+`akmConsolidate` emits structured `skipReasons` entries in its result. Each entry is `{ op, ref, reason }`. The reasons fall into three categories:
+
+### Expected / healthy (not bugs)
+
+| Reason | Meaning |
+|--------|---------|
+| `merge_participant_blocked` | Hot or unparseable memory was a merge participant. Pre-flight guard fires before LLM call. High counts are normal on stashes with many `captureMode: hot` memories. |
+| `captureMode_hot_refused` | Delete refused on a hot memory. Correct behavior. |
+| `promote_already_exists` | Target knowledge ref already exists on disk. Normal steady-state noise. |
+| `promote_source_too_small` | Source body too short to warrant a promotion proposal. |
+| `merge_content_too_short` | Secondary body too short to be a meaningful merge candidate. |
+| `dedup_pending_proposal` | Ref already has a pending proposal. Clears as triage drains the queue. |
+
+### Fixed bugs — should be 0 in steady state
+
+| Reason | Root cause | Fix | Regression signal |
+|--------|-----------|-----|-------------------|
+| `merge_missing_description` | Guard ordering bug: pre-flight hot guard was placed *after* `generateMergedContent()`, so hot memories wasted LLM calls and then failed the description check. | Commit `208fe06`: pre-flight guard before LLM call. | Any non-zero count. |
+| `merge_primary_missing` (stale-DB path) | Prior run deleted files but did not reindex; ghost DB entries reached chunk prompts. | Commit `d34bc1a`: pre-flight `fs.existsSync` filter before chunking. | Log line `Pre-flight: filtered N stale DB entries` + `merge_primary_missing` in same run. |
+| `merge_primary_missing` (hallucination path) | LLM invented a primary ref not in the loaded pool; `mergePlans()` had no ref-existence check; every real secondary charged with `merge_primary_missing`. | Commit `a853de4`: `mergePlans()` accepts `knownRefs` set; ops with hallucinated primaries dropped pre-execution. | Log line `mergePlans: primary <ref> not in loaded memory pool (LLM hallucination)`. |
+
+### Residual / low-frequency (not bugs at normal rates)
+
+| Reason | Meaning | Normal rate | Investigation threshold |
+|--------|---------|-------------|------------------------|
+| `merge_primary_missing` (intra-run race) | An earlier op consumed the ref as a secondary; Fix-A (`memoryByRef.delete`) pruned it; a later op's plan used that ref as its primary. Log: `Merge: primary <ref> not found in loaded memories (pruned by prior op this run)`. | 0–2/run | >2/run: investigate chunk plan ordering |
+| `merge_primary_file_gone` | Defense-in-depth: file existed at pre-flight but was deleted between pre-flight and Phase B execution. | 0–1/run | >1/run: investigate lock contention |
+
+### Distinguishing `merge_primary_missing` causes at a glance
+
+```
+merge_primary_missing spike → check log for:
+  "Pre-flight: filtered N stale DB entries"  → stale-DB regression (d34bc1a broken)
+  "pruned by prior op this run"              → intra-run race (normal if ≤2)
+  "LLM hallucination" (in mergePlans warn)   → hallucination caught, not charged (a853de4 working)
+  "merge_primary_file_gone" in skip reasons  → concurrent file deletion
+  none of the above + code change            → investigate pre-flight filter / memoryByRef init
+```
+
+See `docs/technical/incidents/2026-06-03-merge-primary-missing-taxonomy.md` for full investigation commands and query recipes.
+
 ## Reviewed
 
 Reviewed against `src/commands/improve.ts` (full `akmImprove` function), `src/commands/reflect.ts` (lines 1–50), and `src/commands/distill.ts` (lines 1–50).
