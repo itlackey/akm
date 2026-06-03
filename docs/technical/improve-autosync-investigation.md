@@ -420,3 +420,167 @@ reindex (`:1566`) → **sync** → `return`.
    `akm sync --no-push`.
 5. **Health surfacing** of sync stats — in scope for this change or a follow-up?
    Recommend follow-up.
+
+---
+
+## Per-asset commit: can/should we remove it?
+
+> Question: can/should we delete the per-asset commit path
+> (`runGitCommit`/`runGitPush` inside `runKindSpecificCommit`,
+> `src/core/write-source.ts:340-408`) before merging, replacing it with
+> batch commits at command boundaries?
+
+### (a) What fires it, and who depends on it (evidence)
+
+**What fires it.** `runKindSpecificCommit` (`src/core/write-source.ts:340`)
+branches on `source.kind`:
+
+- `kind: "filesystem"` → returns immediately, NO commit (`:346-348`).
+- `kind: "git"` → `runGitCommit(source.path, filePath, message)` (`:350`),
+  then `runGitPush(source.path)` ONLY when `config.options?.pushOnCommit` is
+  truthy (`:351-353`).
+- any other kind → `ConfigError` (`:359-364`).
+
+`runGitCommit` (`:367-401`) stages the **single asset file** (`git add -- <rel>`,
+`:371`) and commits it (`Update <ref>` / `Remove <ref>`); `nothing to commit`
+is treated as a no-op success. `runGitPush` (`:403-408`) is a plain `git push`.
+
+So the exact combination that reaches a commit is **(kind === "git", writable,
+reached via `writeAssetToSource`/`deleteAssetFromSource`)**, and push
+additionally requires **`options.pushOnCommit === true`**.
+
+**A git target is only produced by `adaptConfiguredSource`** (`:435-470`), which
+is reached from `resolveWriteTarget` ONLY in the `--target` branch (`:252`) and
+the `defaultWriteTarget` branch (`:272`). The third branch — the primary working
+stash (`:292-300`) — hardcodes `kind: "filesystem"`, with an explicit comment
+(`:286-291`) that routing the stash through per-asset `runGitCommit` would be
+"INCOMPLETE … and NOISY (one commit per asset, ~25 per improve run)". **The
+primary stash therefore never reaches `runGitCommit`.** Confirmed.
+
+**Callers that could resolve a git target:**
+
+| Caller | Call site | Target source | Can be `kind:"git"`? |
+|---|---|---|---|
+| `promoteProposal` | `proposals.ts:992,1023` | `resolveWriteTarget(config, options.target)` | YES — via `--target` or `defaultWriteTarget` |
+| `revertProposal` | `proposals.ts:1111-1112` | `resolveWriteTarget(config, options.target)` | YES |
+| `resolvePromotionTarget` | `proposals.ts:1166` | `resolveWriteTarget(config, options.target)` | YES |
+| `knowledge` (add) | `knowledge.ts:136,157` | `resolveWriteTarget(cfg, options.target)` | YES |
+| `consolidate` | `consolidate.ts:1399,1578,1594,1647` | `resolveWriteTarget(config)` (no explicit target) | YES, only via `defaultWriteTarget` |
+| `memory-inference` | `memory-inference.ts:398-420` | hardcoded `kind:"filesystem"`, `stashRoot` | NO — primary stash only |
+
+So per-asset commit is **live** for any add/promote/revert/consolidate write
+whose target resolves to a writable git source. It is the de-facto write path
+for the "author directly into a cloned writable git stash" workflow.
+
+**Who actually relies on writable git-type sources.** The writable-git-clone
+feature is real and supported:
+
+- `install-types.ts:26` — "Treat the cloned repo as writable (keeps `.git` and
+  pulls instead of re-cloning)."
+- `docs/cli.md:666` — `--writable` flag: "Mark a git source as writable so
+  `akm sync` also pushes (default: false)."
+- `docs/features/sources-registries.md:117` — `akm save my-skills -m "Update"
+  # Named writable git source`.
+- `docs/cli.md:846` — `akm sync my-skills  # Sync a named writable git stash`.
+
+BUT note what the **user-facing docs say persists those writes**: every one of
+them describes `akm save`/`akm sync` (→ `saveGitStash`, a BATCH `git add -A`
+commit, `git.ts:487-604`) as the persistence mechanism — NOT per-asset commit.
+
+**`pushOnCommit` is effectively undocumented.** Outside the v1 spec pseudocode
+(`v1-architecture-spec.md:179,202,411`) the only mention in the docs tree is
+`docs/technical/architecture.md:168` ("…and `git push` when `options.pushOnCommit`
+is set"). It appears in **no** user-facing CLI/feature doc, no `akm config`
+example, and there is no CLI flag that sets it. It is an internal config knob.
+
+### (b) CAN we remove it? — YES (technically)
+
+Removing the `kind === "git"` arm of `runKindSpecificCommit` does **not** touch
+the primary-stash work at all: the primary stash is `kind:"filesystem"`, takes
+the early-return arm, and is committed by the separate `saveGitStash` batch path
+(end-of-improve auto-sync + `akm sync`). Nothing in the new git-backed-stash
+recognition work depends on `runGitCommit`. The branch can be deleted, leaving
+`runKindSpecificCommit` as filesystem-noop + reject-unknown-kind — or removed
+entirely so `writeAssetToSource` becomes a pure filesystem write.
+
+### (c) SHOULD we remove it before merging? — NO. Regression + contract analysis
+
+Removing it now is a **behavioral regression for writable git sources** and
+**breaks committed contract tests**:
+
+**Contract tests that assert per-asset commit/push** (`tests/core/write-source.test.ts`):
+
+- `:206` "performs a git commit after writing" — asserts clean tree post-commit.
+- `:220` "pushes when pushOnCommit option is set" — asserts the commit lands on
+  the bare remote (`Update memory:pushed`, `:235`).
+- `:238` "does not push when pushOnCommit is absent".
+- `:256` "removes the asset and commits the removal on git sources".
+- `:271` "filesystem delete is a plain unlink (no commit)" (stays valid).
+- `:448-` commit-message sanitization suite (issue #270) drives the git arm
+  end-to-end (`:451,473`) — these would need re-homing onto `saveGitStash`,
+  which has its OWN sanitization tests already (`git.test.ts:277-398`), so
+  coverage isn't lost, but the write-source tests would be deleted.
+
+The v1 architecture spec **mandates** the per-asset commit as the canonical
+shape: `v1-architecture-spec.md:176-186` shows the `if (source.kind === "git")`
+commit/push inside `writeAssetToSource` and calls it "the **only** place in the
+codebase that branches on `source.kind`, and it's intentional". `architecture.md:167-168`
+restates it. Removing it now contradicts the locked v1 spec text; that's a
+spec amendment, not a refactor, and is out of scope for a stash-recognition
+branch.
+
+**Functional regression:** today an `akm add --target <writable-git-source>` (or
+with `defaultWriteTarget` set to one) persists immediately. If we delete the git
+arm with no replacement, that write lands on disk **uncommitted** — the user
+must now know to run `akm sync <name>` to persist, with zero in-tool signal.
+That's a silent data-durability regression for a supported, documented
+workflow.
+
+### (d) If we removed it: the exact replacement + migration
+
+Were this pursued as a deliberate unification (a separate, spec-amending PR, not
+this branch), the clean replacement is **batch-at-command-boundary using the
+existing `saveGitStash(name)`**, which already commits a NAMED git source by
+resolving its `repoDir` (`git.ts:507-517`) and handles remote/writable/push
+gating identically. Required work:
+
+1. Delete the `kind === "git"` arm in `runKindSpecificCommit`
+   (`write-source.ts:349-355`); keep the filesystem no-op + unknown-kind reject.
+2. At each command boundary that can write to a non-stash git `--target`
+   (`add`/promote/revert in `proposals.ts`, `knowledge.ts`, `consolidate.ts`),
+   after all writes call `saveGitStash(targetName, message, writable, { push })`
+   ONCE. Because these commands write **one asset at a time**, "batch" is a
+   single-file commit in practice — functionally equivalent to today's per-asset
+   commit but routed through the single batch primitive. The win is one commit
+   path, not two.
+3. Thread the resolved target **name** out of `resolveWriteTarget` to the
+   command boundary (today callers only keep `source`/`config`; the name is on
+   `source.name`, so this is available).
+4. Replace `pushOnCommit` semantics: `saveGitStash` pushes on
+   (remote && writable && allowPush), so the `pushOnCommit` config knob becomes
+   redundant. Either map `pushOnCommit` → the `writable` push gate or drop it
+   (it's undocumented, so dropping is low-risk but is a config-schema change:
+   `config-types.ts:286`, `config-schema.ts:255`).
+5. Tests/docs to update: delete/rewrite the `tests/core/write-source.test.ts`
+   git-commit/push/sanitization cases onto the boundary path; amend
+   `v1-architecture-spec.md:160-209` and `architecture.md:167-168` to describe
+   the batch model; the user-facing docs already describe `akm save`/`sync` as
+   the persistence path so they need no change.
+
+This is non-trivial (config-schema change + spec amendment + test re-homing) and
+delivers no behavior change for users — purely an internal consolidation.
+
+### Recommendation
+
+**KEEP-BUT-UNIFY-LATER.** It does **not** block merging the current branch. The
+primary-stash git-recognition + batch-sync work is fully decoupled from
+`runGitCommit` (primary stash is `kind:"filesystem"` and never reaches it).
+Removing the per-asset path now would (1) silently break durability for the
+supported writable-git `--target` workflow unless a boundary `saveGitStash` is
+wired in, (2) break committed v1-spec contract tests, and (3) contradict the
+locked v1 spec — all out of scope for a stash-recognition branch. Land this
+branch as-is; open a follow-up to unify both write paths onto `saveGitStash`
+(batch) as a deliberate spec amendment, where the `pushOnCommit` knob and the
+two parallel commit implementations can be retired together. Until then the two
+models coexist cleanly because their domains are disjoint: **batch for the
+primary stash, per-asset for named/`--target` writable git sources.**
