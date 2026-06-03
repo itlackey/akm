@@ -157,9 +157,9 @@ describe("CLI error handling", () => {
     expect(status).not.toBe(0);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("STASH_DIR_UNREADABLE");
-    expect(parsed.hint).toBe(new ConfigError("x", "STASH_DIR_UNREADABLE").hint());
-    expect(parsed.hint).toContain("permission");
+    expect(parsed.code).toBe("STASH_DIR_NOT_FOUND");
+    expect(parsed.hint).toBe(new ConfigError("x", "STASH_DIR_NOT_FOUND").hint());
+    expect(parsed.hint).toContain("akm setup");
   });
 });
 
