@@ -678,7 +678,10 @@ function isValidOp(op: unknown): op is ConsolidateOperation {
   return false;
 }
 
-export function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperation[]; warnings: string[] } {
+export function mergePlans(
+  chunks: ConsolidateOperation[][],
+  knownRefs?: Set<string>,
+): { ops: ConsolidateOperation[]; warnings: string[] } {
   const mergeOps = new Map<string, ConsolidateMergeOp>();
   const deleteOps = new Map<string, ConsolidateDeleteOp>();
   const promoteOps = new Map<string, ConsolidatePromoteOp>();
@@ -689,14 +692,45 @@ export function mergePlans(chunks: ConsolidateOperation[][]): { ops: Consolidate
   for (const chunk of chunks) {
     for (const op of chunk) {
       if (op.op === "merge") {
-        // merge wins over delete
-        if (deleteOps.has(op.primary)) {
-          deleteOps.delete(op.primary);
+        // Drop ops whose primary the LLM hallucinated (not in the loaded memory
+        // pool). Without this guard, a hallucinated primary flows all the way to
+        // Phase B where !memoryByRef.has(primary) fires and charges every real
+        // secondary with merge_primary_missing — masking LLM hallucinations as
+        // filter regressions in health metrics.
+        if (knownRefs && !knownRefs.has(op.primary)) {
+          warnings.push(
+            `mergePlans: primary ${op.primary} not in loaded memory pool (LLM hallucination) — dropping op before execution.`,
+          );
+          // Use a dedicated skip reason so dashboards can distinguish
+          // hallucinated primaries from stale-DB regressions.
+          // Secondaries are real refs; they are NOT charged here — they remain
+          // available for other ops to claim.
+          continue;
         }
-        for (const sec of op.secondaries) {
+        // Filter hallucinated secondaries while preserving real ones.
+        let mergeOp: ConsolidateMergeOp = op;
+        if (knownRefs) {
+          const filteredSecondaries = op.secondaries.filter((sec) => {
+            if (!knownRefs.has(sec)) {
+              warnings.push(
+                `mergePlans: secondary ${sec} not in loaded memory pool (LLM hallucination) — dropping from op.`,
+              );
+              return false;
+            }
+            return true;
+          });
+          if (filteredSecondaries.length !== op.secondaries.length) {
+            mergeOp = { ...op, secondaries: filteredSecondaries };
+          }
+        }
+        // merge wins over delete
+        if (deleteOps.has(mergeOp.primary)) {
+          deleteOps.delete(mergeOp.primary);
+        }
+        for (const sec of mergeOp.secondaries) {
           if (deleteOps.has(sec)) deleteOps.delete(sec);
         }
-        mergeOps.set(op.primary, op);
+        mergeOps.set(mergeOp.primary, mergeOp);
       } else if (op.op === "delete") {
         // merge and promote both win over delete. A promote is non-destructive
         // (creates a proposal) but the source memory is counted in `promoted`;
@@ -1347,7 +1381,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     chunkOpsArrays.push(ops);
   }
 
-  const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays);
+  // Build the known-refs set from the already-filtered memory pool so
+  // mergePlans() can reject LLM-hallucinated primary refs before execution.
+  const knownRefs = new Set(memories.map((m) => `memory:${m.name}`));
+  const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays, knownRefs);
   warnings.push(...mergeWarnings);
 
   // -- Dry-run: show AI plan without executing any writes --------------------
@@ -1468,7 +1505,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
       const primaryEntry = memoryByRef.get(op.primary);
       if (!primaryEntry) {
-        warnings.push(`Merge: primary ${op.primary} not found in loaded memories — skipping.`);
+        // This fires when a prior op in the same run consumed this ref as a
+        // secondary and Fix-A pruned it from memoryByRef. It should NOT fire
+        // for hallucinated primaries (those are dropped by mergePlans() before
+        // reaching here). If this counter is non-zero, suspect an intra-run
+        // cross-chunk race, not a filter regression.
+        warnings.push(
+          `Merge: primary ${op.primary} not found in loaded memories (pruned by prior op this run) — skipping.`,
+        );
         emitMergeFailureSkips("merge_primary_missing");
         continue;
       }
