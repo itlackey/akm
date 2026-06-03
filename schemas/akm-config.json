@@ -993,6 +993,22 @@
               "limit": {
                 "type": "integer",
                 "exclusiveMinimum": 0
+              },
+              "sync": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "push": {
+                    "type": "boolean"
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false
@@ -2421,6 +2437,22 @@
                   "limit": {
                     "type": "integer",
                     "exclusiveMinimum": 0
+                  },
+                  "sync": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "push": {
+                        "type": "boolean"
+                      },
+                      "message": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -3962,6 +3994,22 @@
         "limit": {
           "type": "integer",
           "exclusiveMinimum": 0
+        },
+        "sync": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "push": {
+              "type": "boolean"
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
