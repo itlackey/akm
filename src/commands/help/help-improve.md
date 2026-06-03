@@ -48,6 +48,16 @@ Options:
                         run-level autoAccept/limit defaults. Falls back to
                         `defaults.improve` in config, then to "default".
                         Unknown names fall back to default with a warning.
+                        Sync behavior by profile: default and thorough enable
+                        auto-commit + push; quick and memory-focus skip sync.
+  --sync               Commit (and optionally push) the git-backed primary
+                        stash when the run finishes. Use --no-sync to disable.
+                        Default: per profile config (enabled for default and
+                        thorough, disabled for quick and memory-focus).
+  --push               Push after the end-of-run sync commit when the stash
+                        is writable and has a remote configured. Use --no-push
+                        to commit only. Default: per profile config (true when
+                        sync is enabled).
   --consolidate-recovery <mode>
                         Recovery mode for stale consolidate journals: abort (default) or clean
   --require-feedback-signal
@@ -67,3 +77,5 @@ Examples:
   akm improve workflow:incident-response --task "reduce duplication"
   akm improve --profile quick
   akm improve --profile memory-focus
+  akm improve --no-sync
+  akm improve --no-push

@@ -479,14 +479,14 @@ Run only inside the sandbox.
 
 ### 15.1 Proposal queue (no external agent required if seeded by prior steps)
 
-- [ ] `akm proposals` returns a structured queue view.
-- [ ] `akm proposals --status pending` filters correctly.
-- [ ] If any proposal exists, `akm show proposal <id>` renders metadata/body.
-- [ ] If any proposal exists, `akm diff proposal <id>` renders the pending delta.
-- [ ] If any valid proposal exists, `akm accept <id>` promotes it
+- [ ] `akm proposal list` returns a structured queue view.
+- [ ] `akm proposal list --status pending` filters correctly.
+- [ ] If any proposal exists, `akm proposal show <id>` renders metadata/body.
+- [ ] If any proposal exists, `akm proposal diff <id>` renders the pending delta.
+- [ ] If any valid proposal exists, `akm proposal accept <id>` promotes it
       through the normal write-target path and emits the expected mutation
       result without a stack trace.
-- [ ] `akm reject <id> --reason "manual qa"` archives it cleanly.
+- [ ] `akm proposal reject <id> --reason "manual qa"` archives it cleanly.
 
 ### 15.2 improve / propose
 
@@ -599,10 +599,10 @@ checklist did not exercise.
 
 #### Proposal resolution by ref or UUID prefix
 
-- [ ] `akm accept <full-uuid>` works (regression check).
-- [ ] `akm accept <8-char prefix>` works.
-- [ ] `akm accept memory:my-note` resolves the pending proposal by ref.
-- [ ] `akm reject` / `akm diff` accept the same forms.
+- [ ] `akm proposal accept <full-uuid>` works (regression check).
+- [ ] `akm proposal accept <8-char prefix>` works.
+- [ ] `akm proposal accept memory:my-note` resolves the pending proposal by ref.
+- [ ] `akm proposal reject` / `akm proposal diff` accept the same forms.
 
 #### `--target` uniformity
 

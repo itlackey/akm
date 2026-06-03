@@ -75,7 +75,7 @@ akm setup --dir ~/custom-stash
 
 This creates `~/akm` with subdirectories for each asset type: `scripts/`,
 `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, `memories/`,
-`vaults/`, `wikis/`, and `lessons/`. See
+`env/`, `secrets/`, `wikis/`, and `lessons/`. See
 [technical/filesystem.md](technical/filesystem.md) for platform-specific paths and environment
 variable overrides.
 

@@ -89,40 +89,49 @@ retrieval-count fallback for high-traffic assets that have no feedback yet.
 ```sh
 akm improve --dry-run        # preview what would be processed
 akm improve --limit 20       # run a bounded pass
-akm proposals                # review what was generated
+akm proposal list            # review what was generated
 ```
 
-## akm proposals / akm accept / akm reject
+**End-of-run auto-sync:** For git-backed stashes (detected by a `.git`
+directory), `akm improve` automatically commits all changes as a single batch
+at the end of the run — the same operation as `akm sync`. The `default` and
+`thorough` profiles also push if the stash is writable. The `quick` and
+`memory-focus` profiles skip sync entirely (lightweight passes should not
+auto-commit). Use `--no-sync` to disable for any single run, or `--no-push`
+to commit without pushing. Profile sync behavior can be configured via the
+`sync` block under `profiles.improve.<name>` in your config.
 
-`akm proposals` lists pending proposals in the queue. Each proposal is an
+## akm proposal (list, show, diff, accept, reject, revert)
+
+`akm proposal list` lists pending proposals in the queue. Each proposal is an
 AI-generated suggested change — an edit to an existing asset, a new lesson, a
 memory consolidation, or a deprecation. Review the diff, then accept or reject.
 
 ```sh
 # List proposals
-akm proposals
-akm proposals --status pending
-akm proposals --ref skill:code-review
+akm proposal list
+akm proposal list --status pending
+akm proposal list --ref skill:code-review
 
 # Inspect a proposal
-akm show proposal <id>
-akm diff <id>                          # Preview the change vs. the live asset
+akm proposal show <id>
+akm proposal diff <id>                          # Preview the change vs. the live asset
 
 # Apply or discard
-akm accept <uuid-or-prefix>
-akm accept skill:akm-dream --target team-stash
-akm reject <uuid-or-prefix> --reason "duplicates existing workflow"
+akm proposal accept <uuid-or-prefix>
+akm proposal accept skill:akm-dream --target team-stash
+akm proposal reject <uuid-or-prefix> --reason "duplicates existing workflow"
 ```
 
-Accepts full UUIDs, 8-character UUID prefixes, or asset refs. `akm accept` runs
+Accepts full UUIDs, 8-character UUID prefixes, or asset refs. `akm proposal accept` runs
 full validation before promoting the proposal into your stash.
 
 **Example: review and accept a memory consolidation**
 
 ```sh
-akm proposals --status pending
-akm diff abc12345             # preview the proposed consolidation
-akm accept abc12345           # write it to the stash
+akm proposal list --status pending
+akm proposal diff abc12345             # preview the proposed consolidation
+akm proposal accept abc12345           # write it to the stash
 ```
 
 ## akm propose
@@ -137,16 +146,16 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 akm propose workflow release-checklist --task "Standard steps for shipping a release"
 ```
 
-After the proposal is generated, review it with `akm diff <id>` and apply with
-`akm accept`.
+After the proposal is generated, review it with `akm proposal diff <id>` and apply with
+`akm proposal accept`.
 
 **Example: generate a new lesson from a prompt file**
 
 ```sh
 akm propose lesson deployment-gotchas --file ./prompts/lessons-from-may-incidents.md
-akm proposals --status pending
-akm diff deployment-gotchas
-akm accept deployment-gotchas
+akm proposal list --status pending
+akm proposal diff deployment-gotchas
+akm proposal accept deployment-gotchas
 ```
 
 ## See also
@@ -154,5 +163,5 @@ akm accept deployment-gotchas
 - [Search & Discovery](search-discovery.md) — feedback improves ranking over time
 - [Knowledge Management](knowledge-management.md) — capturing memories and docs
 - [Agent Integration](agent-integration.md) — wiring feedback into agent workflows
-- [CLI Reference](../cli.md) — full flag documentation for `feedback`, `history`, `events`, `improve`, `proposals`, `accept`, `reject`, `propose`
+- [CLI Reference](../cli.md) — full flag documentation for `feedback`, `history`, `events`, `improve`, `proposal`, `propose`
 - [Concepts](../concepts.md) — how utility scores affect search ranking

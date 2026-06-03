@@ -356,12 +356,12 @@ processes, per-process runner / cooldown overrides, and run-level
 
 ### Built-in profiles
 
-| Name | Description |
-| --- | --- |
-| `default` | Standard improve pass — all sub-processes, markdown asset types. |
-| `quick` | Reflect-only — distill, consolidate, memoryInference, graphExtraction all disabled. |
-| `thorough` | All sub-processes enabled (currently identical to `default`; reserved for future divergence). |
-| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. |
+| Name | Description | Sync behavior |
+| --- | --- | --- |
+| `default` | Standard improve pass — all sub-processes, markdown asset types. | Auto-commit + push |
+| `quick` | Reflect-only — distill, consolidate, memoryInference, graphExtraction all disabled. | Sync disabled |
+| `thorough` | All sub-processes enabled (currently identical to `default`; reserved for future divergence). | Auto-commit + push |
+| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. | Sync disabled |
 
 ### Schema
 
@@ -386,6 +386,11 @@ processes, per-process runner / cooldown overrides, and run-level
         "consolidate": { "enabled": true },
         "memoryInference": { "enabled": true },
         "graphExtraction": { "enabled": true }
+      },
+      "sync": {
+        "enabled": true,       // optional — false disables end-of-run auto-commit
+        "push": true,          // optional — false commits only, no push
+        "message": "akm improve auto-sync {date}"  // optional — supports {token} placeholders
       }
     }
   }
@@ -395,6 +400,36 @@ processes, per-process runner / cooldown overrides, and run-level
 `allowedTypes` is only honoured by `reflect` and `distill` (per-ref
 operations). Setting it on `consolidate`, `memoryInference`, or
 `graphExtraction` (full-pass operations) triggers a parse-time warning.
+
+### Configuring end-of-run sync
+
+The `sync` block controls whether `akm improve` commits (and optionally pushes)
+the git-backed primary stash at the end of a run. Detection is based on the
+presence of a `.git` directory in the stash — no remote is required.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | true (default/thorough), false (quick/memory-focus) | Whether to auto-commit at run end |
+| `push` | boolean | true | Whether to push after commit (only applies when `enabled: true` and stash is writable) |
+| `message` | string | `"akm improve auto-sync"` | Commit message template; supports `{token}` placeholders |
+
+**Commit message tokens:**
+
+| Token | Value |
+| --- | --- |
+| `{timestamp}` | `YYYY-MM-DD HH:MM:SS` (UTC) |
+| `{date}` | `YYYY-MM-DD` |
+| `{time}` | `HH:MM:SS` |
+| `{scope}` | Scope ref or type, or `all` for whole-stash runs |
+| `{refs}` | Number of planned refs this run processed |
+| `{accepted}` | Number of proposals auto-accepted by the confidence gate |
+
+Unknown tokens pass through verbatim so adding new tokens later never breaks
+an existing template. Example: `"akm improve {scope} on {date} ({refs} refs)"`.
+
+CLI flags `--sync` / `--no-sync` and `--push` / `--no-push` override the
+profile-level `sync` block for a single run. A sync failure is always
+non-fatal — it never fails a successful improve run.
 
 ### Selection precedence
 

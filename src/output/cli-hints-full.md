@@ -174,7 +174,7 @@ Commit local changes in a git-backed stash. Behaviour adapts automatically.
 (`akm save` is the deprecated 0.7 spelling — it still works but warns; removed
 in 0.9.0.)
 
-- **Not a git repo** — no-op (silent skip)
+- **No `.git` directory** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default stash always falls here)
 - **Git repo, has remote, not writable** — stage and commit only
 - **Git repo, has remote, `writable: true`** — stage, commit, and push
@@ -187,6 +187,19 @@ akm sync --no-push                            # Commit only; never push
 akm sync my-skills                            # Sync a named writable git stash
 akm sync my-skills -m "Update patterns"      # Sync named stash with message
 ```
+
+`akm improve` also performs an end-of-run batch commit for git-backed stashes.
+The `--sync` / `--no-sync` and `--push` / `--no-push` flags control this:
+
+```sh
+akm improve                                   # auto-sync per profile default (default/thorough: on; quick/memory-focus: off)
+akm improve --no-sync                         # skip the end-of-run commit
+akm improve --no-push                         # commit but skip push for this run
+akm improve --sync                            # force sync even on profiles that disable it
+```
+
+Profile sync defaults: `default` and `thorough` auto-commit + push; `quick` and
+`memory-focus` skip sync entirely. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm add` opts a remote git stash into push-on-sync:
 

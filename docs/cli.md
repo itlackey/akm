@@ -7,7 +7,7 @@ include `error` and `hint` fields.
 
 > **Status legend.** Every command on this page runs today on the
 > current pre-release build. Commands shipped in 0.8.0 — `health`, `agent`,
-> `improve`, `propose`, `proposals`, `accept`, `reject`, and the `feedback --reason`
+> `improve`, `propose`, `proposal`, and the `feedback --reason`
 > extension — carry an **Available since 0.8.0** marker so you can tell at
 > a glance which surface arrived in that release. The locked v1.0 surface
 > is declared in

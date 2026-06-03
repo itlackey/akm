@@ -388,9 +388,9 @@ Real-world use: repeated gaps in your stash show up in `history` and `events`, s
 Review, diff, accept, or reject queued proposals.
 
 ```sh
-akm proposals
-akm diff proposal 42
-akm accept 42
+akm proposal list
+akm proposal diff 42
+akm proposal accept 42
 ```
 
 Real-world use: keep human review in the loop before generated assets become part of the live stash.

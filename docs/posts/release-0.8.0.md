@@ -19,12 +19,13 @@ If you are on 0.7.x, the v1 migration guide covers the per-surface delta. The up
 
 - **`akm improve`** — unified command for agent-driven asset refinement and post-loop maintenance.
 - **Improve-owned maintenance** — memory inference and graph extraction now run from `akm improve`, not `akm index`.
+- **End-of-run auto-sync** — `akm improve` now auto-commits git-backed stashes; `--sync`/`--no-sync`/`--push`/`--no-push` flags + token-based commit messages.
 - **Task assets** — first-class asset type for defining persistent agent workflows with scheduling, triggers, and context.
 - **Belief-aware memory** — stash updates now incorporate the agent's belief state to prevent overwriting correct information.
-- **Proposal queue commands renamed** — `akm proposals` (list), `akm show proposal`, `akm diff proposal`, `akm accept`, `akm reject`.
+- **Proposal queue commands renamed** — old flat commands (`akm proposals`, `akm show proposal`, `akm diff proposal`, `akm accept`, `akm reject`) are now (`akm proposal list`, `akm proposal show`, `akm proposal diff`, `akm proposal accept`, `akm proposal reject`).
 - **`akm health`** — runtime health report for `state.db`, task execution logs, agent availability, and recent improve telemetry.
-- **CLI breaking changes** — proposal queue workflows are consolidated around `akm improve`, `akm propose`, `akm proposals`, `akm show proposal`, `akm diff`, `akm accept`, and `akm reject`; update your automation.
-- **Release hardening** — empty-query search is a structured error again, `remember --enrich` now truly fail-softs, and the Docker install matrix is green for Bun and binary paths.
+- **CLI breaking changes** — proposal queue workflows are consolidated around `akm improve`, `akm propose`, `akm proposal list`, `akm proposal show`, `akm proposal diff`, `akm proposal accept`, and `akm proposal reject` (old flat aliases deprecated); update your automation.
+- **Release hardening** — empty-query search is a structured error again, `remember --enrich` now truly fail-softs, improve lock-leak on initialization errors fixed, and the Docker install matrix is green for Bun and binary paths.
 
 ---
 
@@ -38,6 +39,53 @@ akm improve <ref>                  # refine an existing asset and produce a prop
 ```
 
 This consolidates the main proposal-oriented improvement workflow. It also now owns the slow maintenance passes that used to be coupled to indexing: after distill and consolidation settle the corpus, improve runs memory inference, reindexes if inference wrote new facts, and then refreshes graph extraction against the final post-improve state.
+
+## End-of-Run Git Sync and Commit Templating
+
+For git-backed stashes (detected by `.git` directory presence), `akm improve`
+now commits all changes as a single batch at the end of the run. Two new flags
+control the behavior:
+
+```sh
+akm improve              # default/thorough profiles: auto-commit + push
+akm improve --no-sync    # skip the end-of-run commit for this run
+akm improve --no-push    # commit but skip push
+akm improve --sync       # force sync even on profiles that disable it
+```
+
+**Sync defaults by profile:**
+
+| Profile | Sync | Push |
+|---------|------|------|
+| `default` | ✓ | ✓ |
+| `thorough` | ✓ | ✓ |
+| `quick` | — | — |
+| `memory-focus` | — | — |
+
+Lightweight passes (`quick`, `memory-focus`) opt out of auto-sync to avoid
+auto-committing partial results.
+
+**Commit message templates:** The `sync.message` config field supports `{token}`
+placeholders — `{timestamp}`, `{date}`, `{time}`, `{scope}`, `{refs}`,
+`{accepted}` — so the commit log can carry run context:
+
+```jsonc
+"sync": { "message": "akm improve {scope} — {refs} refs ({date})" }
+```
+
+The improve result includes a `sync` field (`{ committed, pushed, skipped,
+reason? }`) and a `stash_synced` event is emitted to `state.db`. Sync failures
+are non-fatal — they never fail a successful run.
+
+## Consolidate Reliability Improvements
+
+The consolidate pass received two reliability fixes:
+
+- **Pre-flight stale-DB filter**: entries that have gone stale in the DB since
+  the run started are filtered out before any LLM calls, eliminating wasted
+  tokens on already-processed content.
+- **Defense-in-depth merge guards**: three layers of guards now prevent
+  incorrect merges, improving correctness on edge cases.
 
 ## Task Assets: Persistent Agent Workflows
 
@@ -72,17 +120,17 @@ This is implemented as a pre-write validation in the memory asset pipeline and c
 
 ## Proposal Queue: Renamed Commands
 
-The proposal queue itself is unchanged, but the CLI surfaces have been renamed for consistency:
+The proposal queue itself is unchanged, but the CLI surfaces have been reorganized under a `proposal` subcommand:
 
-| Old Command          | New Command               |
+| Old Command (0.7.x)  | New Command (0.8.0+)      |
 |----------------------|---------------------------|
-| `akm proposal list`  | `akm proposals`           |
-| `akm proposal show`  | `akm show proposal`       |
-| `akm proposal diff`  | `akm diff proposal`       |
-| `akm proposal accept`| `akm accept`              |
-| `akm proposal reject`| `akm reject`              |
+| `akm proposals`      | `akm proposal list`       |
+| `akm show proposal`  | `akm proposal show`       |
+| `akm diff proposal`  | `akm proposal diff`       |
+| `akm accept`         | `akm proposal accept`     |
+| `akm reject`         | `akm proposal reject`     |
 
-All commands retain the same functionality and flags (e.g., `akm reject <id> --reason "..."`). There are no compatibility aliases—update your scripts and documentation.
+All commands retain the same functionality and flags (e.g., `akm proposal reject <id> --reason "..."`). The old flat verbs still work as deprecated aliases (they warn on stderr) and will be removed in 0.9.0 — update your scripts and documentation before then.
 
 ## `akm health`: Runtime Checks in One Command
 
@@ -232,9 +280,10 @@ Full key mapping: [docs/migration/v0.7-to-v0.8.md — Config v2 migration](../mi
 ## Migration Guidance
 
 Breaking changes in 0.8.0:
-- Consolidated around: `akm improve`, `akm propose`, `akm proposals`, `akm show proposal`, `akm diff`, `akm accept`, `akm reject`
+- Consolidated around: `akm improve`, `akm propose`, `akm proposal list`, `akm proposal show`, `akm proposal diff`, `akm proposal accept`, `akm proposal reject` (old flat aliases deprecated)
 - Added: task assets, renamed proposal commands
 - Added: `akm health` for runtime and improve telemetry checks
+- Added: end-of-run auto-sync for git-backed stashes (`--no-sync` to opt out)
 - Removed: `akm index --enrich` and `akm index --re-enrich`
 - Changed: plain `akm index` now owns metadata enhancement only; slow LLM maintenance moved to `akm improve`
 - Windows task path parsing now correctly handles absolute paths and drive letters
@@ -258,13 +307,13 @@ No manual data migration is required. The proposal queue and existing stash asse
 akm improve memory my-new-notes --task "Summarize today's debugging session"
 
 # List improvement proposals
-akm proposals
+akm proposal list
 
 # Show one proposal
-akm show proposal <id>
+akm proposal show <id>
 
 # Accept a proposal (after review)
-akm accept <id>
+akm proposal accept <id>
 
 # Define and run a task
 akm task run daily-code-review
@@ -279,7 +328,7 @@ After upgrading:
 ```sh
 akm info --format text     # version 0.8.x
 akm health --since 24h     # runtime + improve telemetry checks
-akm proposals              # queue starts empty — that's expected
+akm proposal list         # queue starts empty — that's expected
 akm task list              # shows your defined tasks
 akm config get configVersion  # "0.8.0" after akm config migrate
 ```

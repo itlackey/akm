@@ -170,10 +170,10 @@ akm events list --ref skill:code-review
 
 ```sh
 # List pending proposals
-akm proposals
+akm proposal list
 
 # Show a specific proposal
-akm proposals show <id>
+akm proposal show <id>
 ```
 
 ### Clear specific data
