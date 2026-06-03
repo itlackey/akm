@@ -110,7 +110,9 @@ test("indexer rejects broken workflows and surfaces every error in IndexResponse
   writeWorkflow(stashDir, "good", VALID_WORKFLOW);
   const brokenPath = writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
 
-  const result = await akmIndex({ stashDir, full: true });
+  // Use captureStderr to prevent the noise-gate summary warn() from leaking
+  // to the test runner output. This test only cares about result.warnings.
+  const { result } = await captureStderr(() => akmIndex({ stashDir, full: true }));
   expect(result.totalEntries).toBe(1); // only the good one
   expect(result.warnings ?? []).toBeDefined();
 
