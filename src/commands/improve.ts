@@ -57,7 +57,7 @@ import {
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
-import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
+import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
 import { getAvailableHarnesses, getExecutionLogCandidates } from "../integrations/session-logs";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
@@ -67,8 +67,15 @@ import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { type AkmExtractResult, akmExtract } from "./extract";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ImproveProfileConfig } from "./improve-profiles";
-import { isProfileFilteredForAllPasses, resolveImproveProfile, shouldSkipRef } from "./improve-profiles";
+import {
+  isProfileFilteredForAllPasses,
+  resolveImproveProfile,
+  resolveProcessEnabled,
+  shouldSkipRef,
+} from "./improve-profiles";
 import { akmLint } from "./lint/index";
+import { drainProposals } from "./proposal-drain";
+import { resolveDrainPolicy } from "./proposal-drain-policies";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
 import { checkDeadUrls, type DeadUrl } from "./url-checker";
@@ -163,6 +170,12 @@ export interface AkmImproveOptions {
    * Must be >= 2 for voting to make sense. Default: 3. Capped at 5.
    */
   selfConsistencyN?: number;
+  /**
+   * Phase 4: injectable triage drain seam for tests. When omitted, the real
+   * `drainProposals` runs as the improve pre-pass (gated on the `triage`
+   * process being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
+   */
+  drainProposalsFn?: typeof drainProposals;
 }
 
 export interface ImproveEligibleRef {
@@ -744,6 +757,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const distillFn = options.distillFn ?? akmDistill;
   const ensureIndexFn = options.ensureIndexFn ?? ensureIndex;
   const reindexFn = options.reindexFn ?? akmIndex;
+  const drainProposalsFn = options.drainProposalsFn ?? drainProposals;
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
@@ -763,114 +777,20 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     primaryStashDir = undefined;
   }
 
-  // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
-  // query reads the `entries` table; if a DB version upgrade just dropped that
-  // table (or the index is otherwise empty), the prior run order silently
-  // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
-  // here repopulates the index first so the subsequent query sees fresh data.
-  const preEnsureCleanupWarnings: string[] = [];
-  if (primaryStashDir) {
-    // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
-    // Best-effort: a missing DB / unreadable schema is the fresh-install case
-    // and not a bug — we silently skip the probe.
-    let preEnsureEntryCount: number | undefined;
-    try {
-      const dbPath = getDbPath();
-      if (fs.existsSync(dbPath)) {
-        const probeDb = openExistingDatabase();
-        try {
-          preEnsureEntryCount = getEntryCount(probeDb);
-        } finally {
-          closeDatabase(probeDb);
-        }
-      }
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-      // best-effort; leave preEnsureEntryCount undefined
-    }
-
-    try {
-      await ensureIndexFn(primaryStashDir);
-    } catch (err) {
-      preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    // #339 loud-fail: if the index was empty pre-ensureIndex but is now
-    // populated, a version-upgrade-triggered rebuild just happened. Surface
-    // that on stderr so the improve run is not silently masked by stale
-    // index state. Zero-before AND zero-after is the empty-stash case and
-    // is intentionally not warned (not a bug).
-    if (preEnsureEntryCount === 0) {
-      try {
-        const probeDb = openExistingDatabase();
-        let postCount = 0;
-        try {
-          postCount = getEntryCount(probeDb);
-        } finally {
-          closeDatabase(probeDb);
-        }
-        if (postCount > 0) {
-          warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
-        }
-      } catch (err) {
-        rethrowIfTestIsolationError(err);
-        // best-effort
-      }
-    }
-  }
-
-  const { plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefs(
-    scope,
-    options.stashDir,
-    improveProfile,
-  );
-  const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
-
-  // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
-  // the SCC resolver in resolveFamilyContradictions has edges to work on.
-  // Best-effort: failures are warnings, never fatal.
-  if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
-    try {
-      const config = options.config ?? loadConfig();
-      await detectAndWriteContradictions(primaryStashDir, config);
-    } catch (err) {
-      // Non-fatal: contradiction detection is a best-effort pass.
-      warn(`[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  const memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
-    ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
-    : undefined;
-  const guidance =
-    memorySummary.eligible > 0
-      ? "Improve folds memory cleanup into the same proposal queue: speculative promotions still go through reflect/distill proposals, while high-confidence redundant derived memories are moved into a recoverable cleanup archive instead of being left active in the stash."
-      : undefined;
-
-  if (options.dryRun) {
-    const result: AkmImproveResult = {
-      schemaVersion: 1,
-      ok: true,
-      scope,
-      dryRun: true,
-      ...(guidance ? { guidance } : {}),
-      memorySummary,
-      ...(memoryCleanupPlan ? { memoryCleanup: shapeMemoryCleanup(memoryCleanupPlan) } : {}),
-      plannedRefs,
-      ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
-    };
-    return result;
-  }
-
+  // Phase 4 lock hoist (§7): the `improve.lock` setup is hoisted ABOVE
+  // ensureIndex/collectEligibleRefs so the triage pre-pass (and improve's own
+  // queue writes) run fully serialized under the lock. The dry-run early-return
+  // below still skips the lock and triage (the lock+triage block is gated on
+  // `!options.dryRun`); contradiction-detection and memory-cleanup analysis,
+  // which previously ran before the lock, now sit after it for free.
   const resolvedLockPath = primaryStashDir
     ? path.join(primaryStashDir, ".akm", "improve.lock")
     : path.join(options.stashDir ?? ".", ".akm", "improve.lock");
   const MAX_LOCK_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-  fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
-
-  const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
   const acquireLock = (): void => {
+    fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
+    const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
     if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return;
 
     // Lock file already exists — probe to determine whether it's still held
@@ -917,7 +837,185 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       "INVALID_CONFIG_FILE",
     );
   };
-  acquireLock();
+
+  // Phase 4 lock-leak guard (§7 ordering hazard): hoisting `improve.lock` above
+  // the pre-index region (so the triage pre-pass runs under it) means the lock is
+  // held while ensureIndex / collectEligibleRefs / contradiction-detection /
+  // memory-cleanup analysis run — but the main protecting `try { … } finally {
+  // unlinkSync(resolvedLockPath) }` does not begin until after them. A throw in
+  // any of those steps would leak the lock. We close that window by wrapping the
+  // whole region in a try whose catch releases the lock (when held) and
+  // re-throws. The values this region computes are declared in the outer scope so
+  // they remain visible to the main run below. The dry-run path never sets
+  // `lockAcquired`, so its early return releases nothing.
+  let lockAcquired = false;
+  const releaseLockOnError = (): void => {
+    if (!lockAcquired) return;
+    try {
+      fs.unlinkSync(resolvedLockPath);
+    } catch {
+      // best-effort release on the error path
+    }
+    lockAcquired = false;
+  };
+
+  const preEnsureCleanupWarnings: string[] = [];
+  let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"];
+  let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"];
+  let profileFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["profileFilteredRefs"];
+  let memoryCleanupPlan: ReturnType<typeof analyzeMemoryCleanup> | undefined;
+  let guidance: string | undefined;
+
+  try {
+    // Acquire the lock and run the triage pre-pass for non-dry-run executions.
+    // The dry-run branch below produces plannedRefs/memorySummary WITHOUT the lock
+    // or triage (decision: dry-run never mutates the queue).
+    if (!options.dryRun) {
+      acquireLock();
+      lockAcquired = true;
+
+      // Phase 4 triage pre-pass (§7, §13): drain the standing pending backlog
+      // BEFORE ensureIndex so improve generates fresh proposals against a cleared
+      // queue (no `duplicate_pending` collisions) and ensureIndex absorbs triage's
+      // promotions for free. Gated on the triage process being enabled (opt-in,
+      // defaults off) and on a whole-stash / type-scoped run — a single-ref
+      // `akm improve skill:x` must never drain the whole queue. Best-effort: a
+      // triage failure is a non-fatal warning, never an abort (mirrors the
+      // contradiction-detection pass below).
+      if (primaryStashDir && resolveProcessEnabled("triage", improveProfile)) {
+        if (scope.mode === "ref") {
+          warn("[improve] triage pre-pass skipped (single-ref scope never drains the whole queue)");
+        } else {
+          try {
+            const triageConfig = improveProfile.processes?.triage;
+            const policy = resolveDrainPolicy(triageConfig?.policy);
+            const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
+            const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
+            const judgment = triageConfig?.judgment
+              ? resolveTriageJudgmentRunner(triageConfig.judgment, _earlyConfig)
+              : null;
+            await drainProposalsFn({
+              stashDir: primaryStashDir,
+              policy,
+              applyMode,
+              maxAccepts,
+              dryRun: false,
+              // No fresh ids exist yet — triage runs before improve generates any.
+              excludeIds: new Set<string>(),
+              ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
+              judgment,
+            });
+          } catch (err) {
+            // Non-fatal: triage is a best-effort pre-pass and must never abort improve.
+            warn(`[improve] triage pre-pass failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+    }
+
+    // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
+    // query reads the `entries` table; if a DB version upgrade just dropped that
+    // table (or the index is otherwise empty), the prior run order silently
+    // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
+    // here repopulates the index first so the subsequent query sees fresh data.
+    if (primaryStashDir) {
+      // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
+      // Best-effort: a missing DB / unreadable schema is the fresh-install case
+      // and not a bug — we silently skip the probe.
+      let preEnsureEntryCount: number | undefined;
+      try {
+        const dbPath = getDbPath();
+        if (fs.existsSync(dbPath)) {
+          const probeDb = openExistingDatabase();
+          try {
+            preEnsureEntryCount = getEntryCount(probeDb);
+          } finally {
+            closeDatabase(probeDb);
+          }
+        }
+      } catch (err) {
+        rethrowIfTestIsolationError(err);
+        // best-effort; leave preEnsureEntryCount undefined
+      }
+
+      try {
+        await ensureIndexFn(primaryStashDir);
+      } catch (err) {
+        preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // #339 loud-fail: if the index was empty pre-ensureIndex but is now
+      // populated, a version-upgrade-triggered rebuild just happened. Surface
+      // that on stderr so the improve run is not silently masked by stale
+      // index state. Zero-before AND zero-after is the empty-stash case and
+      // is intentionally not warned (not a bug).
+      if (preEnsureEntryCount === 0) {
+        try {
+          const probeDb = openExistingDatabase();
+          let postCount = 0;
+          try {
+            postCount = getEntryCount(probeDb);
+          } finally {
+            closeDatabase(probeDb);
+          }
+          if (postCount > 0) {
+            warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
+          }
+        } catch (err) {
+          rethrowIfTestIsolationError(err);
+          // best-effort
+        }
+      }
+    }
+
+    ({ plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefs(
+      scope,
+      options.stashDir,
+      improveProfile,
+    ));
+    const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
+
+    // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
+    // the SCC resolver in resolveFamilyContradictions has edges to work on.
+    // Best-effort: failures are warnings, never fatal.
+    if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
+      try {
+        const config = options.config ?? loadConfig();
+        await detectAndWriteContradictions(primaryStashDir, config);
+      } catch (err) {
+        // Non-fatal: contradiction detection is a best-effort pass.
+        warn(
+          `[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
+      ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
+      : undefined;
+    guidance =
+      memorySummary.eligible > 0
+        ? "Improve folds memory cleanup into the same proposal queue: speculative promotions still go through reflect/distill proposals, while high-confidence redundant derived memories are moved into a recoverable cleanup archive instead of being left active in the stash."
+        : undefined;
+
+    if (options.dryRun) {
+      const result: AkmImproveResult = {
+        schemaVersion: 1,
+        ok: true,
+        scope,
+        dryRun: true,
+        ...(guidance ? { guidance } : {}),
+        memorySummary,
+        ...(memoryCleanupPlan ? { memoryCleanup: shapeMemoryCleanup(memoryCleanupPlan) } : {}),
+        plannedRefs,
+        ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
+      };
+      return result;
+    }
+  } catch (err) {
+    releaseLockOnError();
+    throw err;
+  }
 
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   const startMs = Date.now();
