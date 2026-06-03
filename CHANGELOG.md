@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.8.0] - 2026-05-28
 
 ### Performance
 
@@ -14,8 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Such chunks now skip the model entirely and are counted as `judgedNoAction`
   up front, instead of relying on a prompt-level hint and spending a wasted
   request. Mixed chunks are unaffected.
-
-## [0.8.0] - 2026-05-28
 
 ### Breaking changes (deprecation aliases, removed 0.9.0)
 
