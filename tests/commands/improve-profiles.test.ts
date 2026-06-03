@@ -51,6 +51,8 @@ describe("resolveImproveProfile", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(false);
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
+    // Lightweight pass opts out of end-of-run auto-sync (no surprise commit/push).
+    expect(profile.sync?.enabled).toBe(false);
   });
 
   test("resolves named built-in 'thorough'", () => {
@@ -69,6 +71,8 @@ describe("resolveImproveProfile", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(true);
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
+    // Limited pass opts out of end-of-run auto-sync (no surprise commit/push).
+    expect(profile.sync?.enabled).toBe(false);
   });
 
   test("unknown name falls back to default built-in", () => {

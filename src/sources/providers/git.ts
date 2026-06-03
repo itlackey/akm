@@ -473,6 +473,17 @@ export interface SaveGitStashResult {
 }
 
 /**
+ * Resolve the writable-override flag for an end-of-run / `akm sync` commit on
+ * the primary stash. Returns `true` when the root config explicitly marks the
+ * primary stash writable, otherwise `undefined` (leave the per-stash default
+ * untouched). Extracted so `akm sync`, `akm improve`'s end-of-run sync, and the
+ * CLI body all derive this identically instead of re-copying the expression.
+ */
+export function resolveWritableOverride(config: { writable?: boolean }): true | undefined {
+  return config.writable === true ? true : undefined;
+}
+
+/**
  * Commit (and optionally push) local changes in a git-backed stash.
  *
  * Behaviour:
@@ -483,12 +494,19 @@ export interface SaveGitStashResult {
  *
  * When `name` is omitted the primary stash directory is used.
  * When `message` is omitted a timestamp is used.
+ *
+ * `options.repoDir` overrides the primary-stash directory the commit targets
+ * (only honoured when `name` is omitted). Callers that already resolved the
+ * primary stash dir (e.g. `akm improve`'s end-of-run sync, whose pre-commit
+ * gate validates that exact directory) pass it here so the gate and the commit
+ * operate on the SAME directory instead of independently calling
+ * `resolveStashDir({ readOnly: true })`. When absent, behaviour is unchanged.
  */
 export function saveGitStash(
   name?: string,
   message?: string,
   writableOverride?: boolean,
-  options?: { push?: boolean },
+  options?: { push?: boolean; repoDir?: string },
 ): SaveGitStashResult {
   // `push: false` (from `akm sync --no-push`) commits but never pushes, even
   // when the stash is writable with a remote configured.
@@ -516,7 +534,9 @@ export function saveGitStash(
     repoDir = getCachePaths(repo.canonicalUrl).repoDir;
     writable = stash.writable === true;
   } else {
-    repoDir = resolveStashDir({ readOnly: true });
+    // Honour an explicit primary-stash dir override (keeps the improve gate and
+    // the commit on the same directory); otherwise resolve the default.
+    repoDir = options?.repoDir ?? resolveStashDir({ readOnly: true });
     // Allow caller to override writable for the primary stash (e.g. from root config.writable)
     if (writableOverride !== undefined) {
       writable = writableOverride;
@@ -751,3 +771,4 @@ function collectNonAkmDirtyPaths(porcelainOutput: string): string[] {
 // ── Exports ─────────────────────────────────────────────────────────────────
 
 export { collectNonAkmDirtyPaths, ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };
+// resolveWritableOverride is exported at its declaration above.

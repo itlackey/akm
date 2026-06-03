@@ -239,6 +239,59 @@ describe("drainProposals — maxAccepts ceiling", () => {
   });
 });
 
+describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)", () => {
+  test("total promotions (deterministic + judgment) never exceed maxAccepts", async () => {
+    const stash = makeStashDir();
+    // 1 deterministic accept (extract) + 2 deferred consolidate items the judge
+    // will accept. maxAccepts=1 → the deterministic accept consumes the whole
+    // budget, so BOTH judged-accepts must be skipped by the cap.
+    const det = seed(stash, "lesson:det", "extract", VALID_LESSON);
+    const big1 = seed(stash, "lesson:big1", "consolidate", BIG_LESSON);
+    const big2 = seed(stash, "lesson:big2", "consolidate", BIG_LESSON);
+
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "ok" }));
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(
+      baseOpts(stash, { maxAccepts: 1, judgment: FAKE_LLM_RUNNER }),
+      promoteFn,
+      fakeReject(),
+      { chat },
+    );
+
+    // Only the deterministic accept was promoted; the cap bounds the total.
+    expect(result.promoted).toEqual([det.id]);
+    expect(promoteFn).toHaveBeenCalledTimes(1);
+    // Both judged-accept items dropped by the shared cap.
+    expect(result.skippedByCap.sort()).toEqual([big1.id, big2.id].sort());
+    expect(result.deferred).toEqual([]);
+  });
+
+  test("judgment promotions consume the remaining budget after deterministic ones", async () => {
+    const stash = makeStashDir();
+    // 1 deterministic accept + 2 judged-accepts, maxAccepts=2 → deterministic
+    // promotes 1, judgment may promote 1 more, the 2nd judged-accept is capped.
+    const det = seed(stash, "lesson:det", "extract", VALID_LESSON);
+    seed(stash, "lesson:big1", "consolidate", BIG_LESSON);
+    seed(stash, "lesson:big2", "consolidate", BIG_LESSON);
+
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "ok" }));
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(
+      baseOpts(stash, { maxAccepts: 2, judgment: FAKE_LLM_RUNNER }),
+      promoteFn,
+      fakeReject(),
+      { chat },
+    );
+
+    expect(result.promoted).toContain(det.id);
+    expect(result.promoted).toHaveLength(2);
+    expect(result.skippedByCap).toHaveLength(1);
+    expect(promoteFn).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("drainProposals — applyMode queue", () => {
   test("queue mode never calls promoteFn but still rejects empties", async () => {
     const stash = makeStashDir();
@@ -436,10 +489,40 @@ describe("drainProposals — judgment tier (agent mode)", () => {
       { runAgentFn },
     );
 
-    // queue mode never writes; the staged accept surfaces as still-deferred.
+    // queue mode never writes; the staged accept is RESOLVED (judge decided)
+    // and surfaces under result.staged, NOT as an unresolved deferral (FIX 7).
     expect(promoteFn).not.toHaveBeenCalled();
     expect(result.promoted).toEqual([]);
-    expect(result.deferred.map((d) => d.id)).toEqual([deferred.id]);
+    expect(result.staged).toEqual([deferred.id]);
+    expect(result.deferred).toEqual([]);
+  });
+});
+
+// ── FIX 7: queue-mode staged accept is not reported as "unresolved" ─────────
+
+describe("drainProposals — queue-mode staged accept (FIX 7)", () => {
+  test("a judged-accept in queue mode does NOT emit triage_deferred 'unresolved'", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+
+    const ctx = eventsCtx();
+    const runAgentFn = mock(async () => agentResult(JSON.stringify({ decision: "accept", reason: "ok" })));
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_AGENT_RUNNER, applyMode: "queue", eventsCtx: ctx }),
+      fakeAccept(),
+      fakeReject(),
+      { runAgentFn },
+    );
+
+    // The staged accept is resolved, so the unresolved deferred list is empty.
+    expect(result.staged).toEqual([deferred.id]);
+    expect(result.deferred).toEqual([]);
+
+    // No triage_deferred "left unresolved" event should be present.
+    const { readEvents } = await import("../src/core/events");
+    const { events } = readEvents({ type: "triage_deferred" }, ctx);
+    expect(events).toEqual([]);
   });
 });
 

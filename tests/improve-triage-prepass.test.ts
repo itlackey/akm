@@ -70,7 +70,7 @@ function triageEnabledConfig(enabled: boolean): AkmConfig {
 }
 
 function emptyDrainResult(): DrainResult {
-  return { promoted: [], rejected: [], deferred: [], skippedByCap: [] };
+  return { promoted: [], rejected: [], deferred: [], skippedByCap: [], staged: [] };
 }
 
 beforeEach(() => {
@@ -234,6 +234,52 @@ describe("akm improve — triage pre-pass", () => {
         config: triageEnabledConfig(true),
         drainProposalsFn: (async () => emptyDrainResult()) as never,
       });
+      expect(result1.ok).toBe(true);
+      expect(fs.existsSync(lockPath)).toBe(false);
+
+      const result2 = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        drainProposalsFn: (async () => emptyDrainResult()) as never,
+      });
+      expect(result2.ok).toBe(true);
+      expect(fs.existsSync(lockPath)).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "lock-leak guard (FIX 2): a throw from the end-of-run sync region does not leak the lock",
+    async () => {
+      // FIX-2 regression: the lock is now held by a single try/finally that spans
+      // the budget-timer setup, openStateDatabase(), the profileFilteredRefs
+      // audit loop, AND the main run through the end-of-run sync. The finally
+      // releases `improve.lock` exactly once. The end-of-run sync swallows its own
+      // failures (non-fatal), so this run still resolves ok — but the key
+      // assertion is that the lock file is gone afterward and a back-to-back run
+      // is not blocked. (Pre-fix, a throw in the post-acquire/pre-mainTry gap
+      // leaked the lock; this asserts the unified finally always releases it.)
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+
+      const lockPath = path.join(stashDir, ".akm", "improve.lock");
+
+      // Make the primary stash git-backed so the end-of-run sync gate fires, then
+      // inject a throwing saveGitStashFn to exercise the sync error path inside
+      // the unified try/finally.
+      fs.mkdirSync(path.join(stashDir, ".git"), { recursive: true });
+
+      const result1 = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        drainProposalsFn: (async () => emptyDrainResult()) as never,
+        saveGitStashFn: (() => {
+          throw new Error("simulated sync failure");
+        }) as never,
+      });
+      // Sync failure is non-fatal, run completes ok, and the lock is released.
       expect(result1.ok).toBe(true);
       expect(fs.existsSync(lockPath)).toBe(false);
 

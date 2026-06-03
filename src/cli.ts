@@ -173,7 +173,7 @@ import {
 } from "./output/context";
 import { formatEventLine } from "./output/text";
 import { resolveSourcesForOrigin } from "./registry/origin-resolve";
-import { saveGitStash } from "./sources/providers/git";
+import { resolveWritableOverride, saveGitStash } from "./sources/providers/git";
 import { resolveAssetPath } from "./sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/types";
 import { pkgVersion } from "./version";
@@ -1313,8 +1313,7 @@ async function runSyncBody(
     let writable: boolean | undefined;
     if (effectiveName === undefined) {
       // Primary stash — honour the root-level writable flag from config.
-      const cfg = loadConfig();
-      writable = cfg.writable === true ? true : undefined;
+      writable = resolveWritableOverride(loadConfig());
     }
 
     const result = saveGitStash(effectiveName, args.message, writable, { push: args.push !== false });
@@ -3904,13 +3903,12 @@ const proposalDrainCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const stashDir = resolveStashDir();
+      const cfg = loadConfig();
 
       // Phase 2: read the triage block from the named improve profile. CLI flags
       // always override config; config supplies defaults for any flag omitted.
       const triageConfig =
-        args.profile !== undefined
-          ? resolveImproveProfile(args.profile as string, loadConfig()).processes?.triage
-          : undefined;
+        args.profile !== undefined ? resolveImproveProfile(args.profile as string, cfg).processes?.triage : undefined;
 
       const policy = resolveDrainPolicy((args.policy as string | undefined) ?? triageConfig?.policy);
       const dryRun = args["dry-run"] === true;
@@ -3941,14 +3939,23 @@ const proposalDrainCommand = defineCommand({
       }
 
       // `--older-than` is applied here as a pre-filter on excludeIds: ids that
-      // are too fresh are excluded so the engine never touches them.
+      // are too fresh are excluded so the engine never touches them. This reads
+      // the pending set once here; drainProposals reads the pending set again
+      // internally, so a future engine-level olderThan option could remove this
+      // second read (engine API owned by another agent — not changed here).
       let excludeIds: Set<string> | undefined;
       if (olderThanMs !== undefined) {
         const { listProposals } = await import("./core/proposals");
         const now = Date.now();
         excludeIds = new Set(
           listProposals(stashDir, { status: "pending" })
-            .filter((proposal) => now - new Date(proposal.createdAt).getTime() < olderThanMs)
+            // Fail SAFE: exclude a proposal when its age cannot be computed
+            // (NaN createdAt) OR it is too fresh. An unparseable createdAt must
+            // never be treated as old enough to drain/promote.
+            .filter((proposal) => {
+              const age = now - new Date(proposal.createdAt).getTime();
+              return Number.isNaN(age) || age < olderThanMs;
+            })
             .map((proposal) => proposal.id),
         );
       }
@@ -3958,8 +3965,7 @@ const proposalDrainCommand = defineCommand({
       // neither mode nor profile (mirrors resolveValidationRunner). null when
       // nothing is configured → the engine leaves deferred items unresolved and
       // emits triage_deferred.
-      const judgment =
-        args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, loadConfig()) : null;
+      const judgment = args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg) : null;
 
       const result = await drainProposals({
         stashDir,

@@ -42,6 +42,7 @@ import { parseAssetRef } from "../core/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../core/asset-spec";
 import type { EventsContext } from "../core/events";
 import { appendEvent } from "../core/events";
+import { parseFrontmatter } from "../core/frontmatter";
 import { listProposals, type Proposal } from "../core/proposals";
 import { info, warn } from "../core/warn";
 import { type AgentRunResult, runAgent } from "../integrations/agent";
@@ -78,7 +79,7 @@ export interface DrainPolicy {
   defer: string[];
 }
 
-export type DrainDeferReason = "mid-band" | "possible-dup" | "possible-contradiction";
+export type DrainDeferReason = "mid-band" | "possible-dup";
 
 export interface DrainOptions {
   stashDir: string;
@@ -116,6 +117,13 @@ export interface DrainResult {
   deferred: Array<{ id: string; reason: DrainDeferReason }>;
   /** Accept candidates dropped because the `maxAccepts` ceiling was reached. */
   skippedByCap: string[];
+  /**
+   * Items the judgment tier resolved as "accept" but that a queue-mode run did
+   * not promote (staged for a follow-up promote run). These are RESOLVED — the
+   * judge decided — and are deliberately NOT reported as "left unresolved" by
+   * the `triage_deferred` event. Empty outside queue mode.
+   */
+  staged: string[];
 }
 
 // Injectable test seams (mirrors improve-auto-accept.ts's promoteFn override).
@@ -147,19 +155,13 @@ export interface JudgmentSeams {
 // Content helpers
 // ---------------------------------------------------------------------------
 
-/** Strip a leading YAML frontmatter block (`---\n...\n---`) from content. */
-function stripFrontmatter(content: string): string {
-  if (!content.startsWith("---")) return content;
-  const end = content.indexOf("\n---", 3);
-  if (end === -1) return content;
-  const after = content.indexOf("\n", end + 1);
-  return after === -1 ? "" : content.slice(after + 1);
-}
-
 /** Number of non-empty body lines (frontmatter excluded). */
 export function contentBodyLineCount(content: string): number {
-  return stripFrontmatter(content)
-    .split("\n")
+  // Reuse the canonical frontmatter parser so CRLF / BOM are handled
+  // consistently with the rest of the stash (parseFrontmatter returns the body
+  // in `content`).
+  return parseFrontmatter(content)
+    .content.split("\n")
     .filter((line) => line.trim().length > 0).length;
 }
 
@@ -223,9 +225,7 @@ export function classifyProposal(
 }
 
 function deferReasonForSource(source: string): DrainDeferReason {
-  if (source === "distill") return "possible-dup";
-  if (source === "consolidate") return "mid-band";
-  return "mid-band";
+  return source === "distill" ? "possible-dup" : "mid-band";
 }
 
 // ---------------------------------------------------------------------------
@@ -352,35 +352,55 @@ async function dispatchJudgment(
       break;
     }
     case "agent": {
-      const run = seams.runAgentFn ?? runAgent;
-      const result: AgentRunResult = await run(runner.profile, prompt, {
-        stdio: "captured",
-        parseOutput: "text",
-        ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
-      });
-      if (!result.ok) {
-        warn(`[triage] judgment agent failed: ${result.error ?? result.reason ?? "unknown error"}`);
-        return null;
-      }
-      raw = result.stdout;
+      const stdout = await runProfileJudgment(
+        seams.runAgentFn ?? runAgent,
+        runner.profile,
+        prompt,
+        "agent",
+        runner.timeoutMs,
+      );
+      if (stdout === null) return null;
+      raw = stdout;
       break;
     }
     case "sdk": {
-      const run = seams.runSdkFn ?? runOpencodeSdk;
-      const result: AgentRunResult = await run(runner.profile, prompt, {
-        stdio: "captured",
-        parseOutput: "text",
-        ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
-      });
-      if (!result.ok) {
-        warn(`[triage] judgment sdk failed: ${result.error ?? result.reason ?? "unknown error"}`);
-        return null;
-      }
-      raw = result.stdout;
+      const stdout = await runProfileJudgment(
+        seams.runSdkFn ?? runOpencodeSdk,
+        runner.profile,
+        prompt,
+        "sdk",
+        runner.timeoutMs,
+      );
+      if (stdout === null) return null;
+      raw = stdout;
       break;
     }
   }
   return parseJudgmentVerdict(raw);
+}
+
+/**
+ * Shared spawn-runner dispatch for the byte-identical `agent` / `sdk` arms: run
+ * the profile-based runner, log a labelled warning on failure, and return the
+ * captured stdout (or `null` on failure). `label` only changes the warn prefix.
+ */
+async function runProfileJudgment(
+  run: typeof runAgent | typeof runOpencodeSdk,
+  profile: Parameters<typeof runAgent>[0],
+  prompt: string,
+  label: string,
+  timeoutMs: number | undefined,
+): Promise<string | null> {
+  const result: AgentRunResult = await run(profile, prompt, {
+    stdio: "captured",
+    parseOutput: "text",
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  });
+  if (!result.ok) {
+    warn(`[triage] judgment ${label} failed: ${result.error ?? result.reason ?? "unknown error"}`);
+    return null;
+  }
+  return result.stdout;
 }
 
 interface JudgmentTierInput {
@@ -393,23 +413,38 @@ interface JudgmentTierInput {
   promoteFn: PromoteFn;
   rejectFn: RejectFn;
   seams: JudgmentSeams;
+  /**
+   * Remaining accept budget so (deterministic promotions + judgment-tier
+   * promotions) ≤ maxAccepts. Once exhausted, further judge-"accept" items are
+   * routed to `skippedByCap` instead of being promoted. Only meaningful in
+   * promote mode (queue mode promotes nothing). Defaults to unbounded.
+   */
+  remainingAcceptBudget: number;
 }
 
 /**
  * Run the judgment tier over the deferred items. The runner only *judges*; the
  * engine performs the resulting accept (respecting `applyMode`) / reject write.
- * Returns the ids the engine promoted / rejected and the items still unresolved
- * (verdict "defer", parse failure, or a runner error).
+ * Returns the ids the engine promoted / rejected, the ids staged (judge said
+ * "accept" but queue mode did not promote), the ids dropped by the accept cap,
+ * and the items still unresolved (verdict "defer", parse failure, or a runner
+ * error).
  */
 async function runJudgmentTier(input: JudgmentTierInput): Promise<{
   promoted: string[];
   rejected: string[];
+  staged: string[];
+  skippedByCap: string[];
   stillDeferred: Array<{ id: string; reason: DrainDeferReason }>;
 }> {
   const byId = new Map(input.pending.map((p) => [p.id, p]));
   const promoted: string[] = [];
   const rejected: string[] = [];
+  const staged: string[] = [];
+  const skippedByCap: string[] = [];
   const stillDeferred: Array<{ id: string; reason: DrainDeferReason }> = [];
+  // Remaining accept budget shared with the deterministic promote loop.
+  let acceptBudget = Math.max(0, input.remainingAcceptBudget);
 
   for (const item of input.deferred) {
     const proposal = byId.get(item.id);
@@ -453,25 +488,33 @@ async function runJudgmentTier(input: JudgmentTierInput): Promise<{
     // deterministic accept path (queue mode never writes).
     if (input.applyMode !== "promote") {
       // Staged: a queue-mode run never promotes, so the item stays pending but
-      // is no longer "unresolved" (the runner judged it). Report as deferred so
-      // the staged accept is visible and a follow-up promote run picks it up.
-      stillDeferred.push(item);
+      // is RESOLVED (the runner judged it). Track separately so it is NOT
+      // reported as "left unresolved" and a follow-up promote run picks it up.
+      staged.push(item.id);
+      continue;
+    }
+    // Accept cap: once the shared budget is exhausted, route further accepts to
+    // skippedByCap instead of promoting (keeps total promotions ≤ maxAccepts).
+    if (acceptBudget <= 0) {
+      skippedByCap.push(item.id);
       continue;
     }
     if (input.dryRun) {
       promoted.push(item.id);
+      acceptBudget -= 1;
       continue;
     }
     try {
       await input.promoteFn({ stashDir: input.stashDir, id: item.id });
       promoted.push(item.id);
+      acceptBudget -= 1;
     } catch (err) {
       warn(`[triage] judgment promote failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
       stillDeferred.push(item);
     }
   }
 
-  return { promoted, rejected, stillDeferred };
+  return { promoted, rejected, staged, skippedByCap, stillDeferred };
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +534,7 @@ export async function drainProposals(
   rejectFn: RejectFn = akmProposalReject,
   judgmentSeams: JudgmentSeams = {},
 ): Promise<DrainResult> {
-  const result: DrainResult = { promoted: [], rejected: [], deferred: [], skippedByCap: [] };
+  const result: DrainResult = { promoted: [], rejected: [], deferred: [], skippedByCap: [], staged: [] };
 
   const exclude = opts.excludeIds ?? new Set<string>();
   const pending = listProposals(opts.stashDir, { status: "pending" }).filter((p) => !exclude.has(p.id));
@@ -536,21 +579,32 @@ export async function drainProposals(
   }
 
   // --- Promotion gate: applyMode "queue" never promotes (stage only) ---
+  // Count deterministic promotions so the judgment tier shares the same accept
+  // budget (deterministic + judgment promotions ≤ maxAccepts).
+  let deterministicPromoted = 0;
   if (opts.applyMode === "promote" && !opts.dryRun) {
     info(`[triage] auto-promote active: ${withinCap.length} accepts allowed this run`);
     for (const id of withinCap) {
       try {
         await promoteFn({ stashDir: opts.stashDir, id });
         result.promoted.push(id);
+        deterministicPromoted += 1;
       } catch (err) {
         warn(`[triage] promote failed for ${id}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   } else if (opts.applyMode === "promote" && opts.dryRun) {
-    // Dry-run promote: report what would be promoted without writing.
+    // Dry-run promote: report (and count, for the shared budget) what would be
+    // promoted without writing.
     result.promoted.push(...withinCap);
+    deterministicPromoted = withinCap.length;
   }
   // applyMode "queue": leave accept candidates pending (staged). No promotion.
+
+  // Remaining accept budget for the judgment tier: maxAccepts minus what was
+  // actually promoted deterministically. Bounds the TOTAL promotions, not just
+  // the deterministic path. Moot in queue mode (it promotes nothing).
+  const remainingAcceptBudget = Math.max(0, Math.max(0, opts.maxAccepts) - deterministicPromoted);
 
   // --- Judgment tier (Phase 3): adjudicate the deferred items ---
   // Only runs when a RunnerSpec is configured. The runner returns a verdict; the
@@ -566,11 +620,22 @@ export async function drainProposals(
       promoteFn,
       rejectFn,
       seams: judgmentSeams,
+      remainingAcceptBudget,
     });
     result.promoted.push(...tier.promoted);
     result.rejected.push(...tier.rejected);
-    // Replace the deferred list with whatever the judgment tier could not
-    // resolve (verdict "defer", staged queue-mode accepts, or runner failures).
+    result.staged.push(...tier.staged);
+    // Judgment-tier accepts dropped by the shared accept cap surface under
+    // skippedByCap, same as deterministic cap drops.
+    result.skippedByCap.push(...tier.skippedByCap);
+    if (tier.skippedByCap.length > 0) {
+      info(
+        `[triage] accept ceiling reached in judgment tier: ${tier.skippedByCap.length} judged-accept items skipped by cap (maxAccepts=${opts.maxAccepts})`,
+      );
+    }
+    // Replace the deferred list with only the items the judgment tier could NOT
+    // resolve (verdict "defer", parse failure, or runner error). Staged
+    // queue-mode accepts are RESOLVED and tracked in result.staged instead.
     result.deferred = tier.stillDeferred;
   }
 
@@ -597,6 +662,7 @@ function emitDrainEvents(opts: DrainOptions, result: DrainResult): void {
         rejected: result.rejected.length,
         deferredByReason,
         skippedByCap: result.skippedByCap.length,
+        ...(result.staged.length > 0 ? { staged: result.staged.length } : {}),
         policy: opts.policy.name,
         applyMode: opts.applyMode,
         ...(opts.dryRun ? { dryRun: true } : {}),
@@ -605,11 +671,12 @@ function emitDrainEvents(opts: DrainOptions, result: DrainResult): void {
     opts.eventsCtx ?? {},
   );
 
-  // Surface any items still unresolved after the (optional) judgment tier so a
-  // backlog of deferred items never silently looks like full success. This
-  // fires both when no runner is configured AND when the judgment tier ran but
-  // could not resolve every item (verdict "defer", staged queue accept, or a
-  // runner error).
+  // Surface any items the judge could NOT resolve after the (optional) judgment
+  // tier so a backlog of deferred items never silently looks like full success.
+  // This fires when no runner is configured OR the judgment tier ran but could
+  // not resolve every item (verdict "defer", parse failure, or a runner error).
+  // Queue-mode staged accepts are RESOLVED (the judge decided) and live in
+  // result.staged, so they are deliberately excluded from this "unresolved" count.
   if (result.deferred.length > 0) {
     appendEvent(
       {

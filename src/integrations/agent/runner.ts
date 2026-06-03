@@ -4,6 +4,7 @@
 
 import type { AkmConfig, ImproveProcessConfig, LlmConnectionConfig } from "../../core/config";
 import { ConfigError } from "../../core/errors";
+import { warn } from "../../core/warn";
 import type { AgentProfile } from "./profiles";
 
 export type ProcessSection = "improve" | "index" | "search" | string;
@@ -133,26 +134,69 @@ function buildAgentRunnerSpec(
  * Returns `null` when neither is configured (callers may then skip the
  * validation pass rather than throwing).
  */
-export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
-  const validation = config.profiles?.improve?.default?.processes?.validation;
-  if (validation && validation.enabled !== false && (validation.profile || validation.mode)) {
+/**
+ * Shared resolution path for the `validation` and `triage judgment` tiers,
+ * both of which take a `{ mode?, profile?, timeoutMs? }`-shaped block, attempt
+ * to resolve it via {@link resolveImproveProcessRunnerFromProfile}, and
+ * otherwise fall back to an `llm` runner built from `defaults.llm`.
+ *
+ * @param block          the `{ mode?, profile?, timeoutMs? }` subset to resolve.
+ * @param config         the active AKM config.
+ * @param opts.fallbackTimeoutMs  timeout applied to the `defaults.llm` fallback
+ *        runner (validation passes `undefined`; triage forwards `block.timeoutMs`).
+ * @param opts.suppressLlmFallbackForExplicitMode  when `true` and the block
+ *        explicitly sets `mode: "agent"` or `"sdk"`, do NOT silently fall back
+ *        to `defaults.llm` if the profile resolver returns `null` or throws —
+ *        return `null` instead and emit a `warn(...)` (see FIX 8). Validation
+ *        passes `false` to preserve its always-fallback behavior.
+ */
+function resolveProcessRunnerWithLlmFallback(
+  block: { mode?: "llm" | "agent" | "sdk"; profile?: string; timeoutMs?: number | null } | undefined,
+  config: AkmConfig,
+  opts: { fallbackTimeoutMs: number | null | undefined; suppressLlmFallbackForExplicitMode: boolean },
+): RunnerSpec | null {
+  const explicitNonLlmMode = block?.mode === "agent" || block?.mode === "sdk";
+
+  if (block && (block.mode || block.profile)) {
     try {
-      const spec = resolveImproveProcessRunnerFromProfile(validation, config);
+      const spec = resolveImproveProcessRunnerFromProfile(block, config);
       if (spec) return spec;
     } catch {
-      // Fall through to defaults.llm below.
+      // Fall through to defaults.llm below (unless suppressed for explicit modes).
+    }
+
+    // FIX 8: an EXPLICIT agent/sdk request must not be silently downgraded to
+    // llm. When the profile resolver could not produce a runner, surface the
+    // misconfiguration and let callers skip this tier rather than substituting
+    // an llm judge.
+    if (opts.suppressLlmFallbackForExplicitMode && explicitNonLlmMode) {
+      warn(
+        `[akm] Could not resolve the "${block?.mode}" judgment profile; ` +
+          `skipping the judgment tier instead of falling back to an llm judge. ` +
+          `Check profiles.agent and the judgment profile/mode configuration.`,
+      );
+      return null;
     }
   }
 
   const defaultLlm = config.defaults?.llm;
   if (defaultLlm) {
     try {
-      return buildLlmRunnerSpec(defaultLlm, undefined, config);
+      return buildLlmRunnerSpec(defaultLlm, opts.fallbackTimeoutMs, config);
     } catch {
       return null;
     }
   }
   return null;
+}
+
+export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
+  const validation = config.profiles?.improve?.default?.processes?.validation;
+  const block = validation && validation.enabled !== false ? validation : undefined;
+  return resolveProcessRunnerWithLlmFallback(block, config, {
+    fallbackTimeoutMs: undefined,
+    suppressLlmFallbackForExplicitMode: false,
+  });
 }
 
 /**
@@ -161,35 +205,24 @@ export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
  * compatible with {@link ImproveProcessConfig}, so it resolves through the same
  * {@link resolveImproveProcessRunnerFromProfile} path.
  *
- * Mirrors {@link resolveValidationRunner}'s `defaults.llm` fallback: when the
- * block sets neither `mode` nor `profile` (so the profile resolver returns
- * `null`), fall back to an `llm` runner built from `defaults.llm` so
- * `judgment.mode: llm` defaults are honored (§14). Returns `null` when nothing
- * is configured — callers then skip the judgment tier (and emit
- * `triage_deferred`).
+ * Mirrors {@link resolveValidationRunner}'s `defaults.llm` fallback only for
+ * the unset/`llm` case: when the block sets neither `mode` nor `profile` (so
+ * the profile resolver returns `null`) or `mode: "llm"`, fall back to an `llm`
+ * runner built from `defaults.llm` so `judgment.mode: llm` defaults are honored
+ * (§14). However (FIX 8) when the caller EXPLICITLY sets `mode: "agent"` or
+ * `"sdk"` and the profile resolver returns `null` or throws, do NOT downgrade
+ * to an llm judge — return `null` (callers skip the judgment tier and emit
+ * `triage_deferred`) and emit a `warn(...)`. Returns `null` when nothing is
+ * configured.
  */
 export function resolveTriageJudgmentRunner(
   judgment: { mode?: "llm" | "agent" | "sdk"; profile?: string; timeoutMs?: number | null } | undefined,
   config: AkmConfig,
 ): RunnerSpec | null {
-  if (judgment && (judgment.mode || judgment.profile)) {
-    try {
-      const spec = resolveImproveProcessRunnerFromProfile(judgment, config);
-      if (spec) return spec;
-    } catch {
-      // Fall through to defaults.llm below.
-    }
-  }
-
-  const defaultLlm = config.defaults?.llm;
-  if (defaultLlm) {
-    try {
-      return buildLlmRunnerSpec(defaultLlm, judgment?.timeoutMs, config);
-    } catch {
-      return null;
-    }
-  }
-  return null;
+  return resolveProcessRunnerWithLlmFallback(judgment, config, {
+    fallbackTimeoutMs: judgment?.timeoutMs,
+    suppressLlmFallbackForExplicitMode: true,
+  });
 }
 
 export function resolveRunner(mode: "llm" | "agent" | "sdk", profileName: string, config: AkmConfig): RunnerSpec {

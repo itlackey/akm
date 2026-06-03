@@ -42,6 +42,11 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       graphExtraction: { enabled: false },
       triage: { enabled: false },
     },
+    // Lightweight passes opt out of end-of-run sync: a reflect-only `quick`
+    // run should not auto-commit/push the git-backed stash to its remote.
+    // (The auto-sync gate in improve.ts treats an absent sync block as
+    // ENABLED + push, so we set this explicitly to avoid a surprise push.)
+    sync: { enabled: false },
   },
   thorough: {
     // Reserved for future divergence; for now behaviorally identical to
@@ -68,6 +73,10 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       graphExtraction: { enabled: false },
       triage: { enabled: false },
     },
+    // Limited pass opts out of end-of-run sync for the same reason as `quick`:
+    // a memory/lesson-only run should not auto-commit/push the stash. Explicit
+    // here because improve.ts treats an absent sync block as ENABLED + push.
+    sync: { enabled: false },
   },
 };
 

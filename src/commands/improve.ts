@@ -60,7 +60,7 @@ import { runStalenessDetectionPass, type StalenessDetectionResult } from "../ind
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
 import { getAvailableHarnesses, getExecutionLogCandidates } from "../integrations/session-logs";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
-import { isGitBackedStash, saveGitStash } from "../sources/providers/git";
+import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../sources/providers/git";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
@@ -475,7 +475,7 @@ export function renderSyncCommitMessage(
     refs: String(result.plannedRefs.length),
     accepted: String(result.gateAutoAcceptedCount ?? 0),
   };
-  return template.replace(/\{(\w+)\}/g, (match, key: string) => (key in tokens ? tokens[key] : match));
+  return template.replace(/\{(\w+)\}/g, (match, key: string) => (Object.hasOwn(tokens, key) ? tokens[key] : match));
 }
 
 async function collectEligibleRefs(
@@ -1037,8 +1037,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // Best-effort: failures are warnings, never fatal.
     if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
       try {
-        const config = options.config ?? loadConfig();
-        await detectAndWriteContradictions(primaryStashDir, config);
+        // Reuse the config resolved at the top of the run instead of a second load.
+        await detectAndWriteContradictions(primaryStashDir, _earlyConfig);
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
         warn(
@@ -1074,49 +1074,63 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     throw err;
   }
 
-  const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
+  // FIX 2 (lock-leak window): everything from here on runs UNDER the lock that
+  // `acquireLock()` just took. The single `try { … } finally { unlinkSync(lock) }`
+  // below now spans the budget-timer setup, `openStateDatabase()`, and the
+  // `profileFilteredRefs` audit-event loop too — regions that previously sat in
+  // the gap between the lock-acquire catch (above) and the main try. A throw in
+  // any of them used to leak the lock (blocking the next improve up to 4h);
+  // now the finally releases it exactly once. The dry-run path already returned
+  // above without acquiring the lock, so it never reaches this finally; the
+  // best-effort `unlinkSync` is a no-op when no lock file exists.
   const startMs = Date.now();
-
+  const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   // O-1 (#364): Create a shared AbortController derived from startMs + budgetMs.
   // Every async seam receives this signal so a hung sub-call cannot extend the
   // run past the declared budget.
   // References: Anthropic *Building Effective Agents* (2024); CoALA §5 (arXiv:2309.02427).
   const budgetAbortController = new AbortController();
-  const budgetTimer = setTimeout(() => budgetAbortController.abort("improve budget exhausted"), budgetMs);
-  // Clear the timer when the run ends to avoid keeping the event loop alive.
-  const clearBudgetTimer = () => clearTimeout(budgetTimer);
-
+  // Declared in the outer scope so the `finally` can clear the timer even if a
+  // throw occurs before/after it is armed. Defaults to a no-op until armed.
+  let clearBudgetTimer = (): void => {};
   // I1: open a single state.db connection for the entire improve run so all
   // appendEvent calls reuse one handle instead of open/migrate/close per call.
   let eventsDb: import("bun:sqlite").Database | undefined;
-  let eventsCtx: EventsContext;
-  try {
-    eventsDb = openStateDatabase();
-    eventsCtx = { db: eventsDb };
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    // If we cannot open state.db up-front, fall back to per-call opens.
-    eventsCtx = {};
-  }
-
-  // 2026-05-27: emit `improve_skipped` audit events for refs the planner
-  // pre-filtered (reflect AND distill both refuse them under the active
-  // profile). One event per ref so the existing improve_skipped histogram in
-  // `health.ts#improveSummary.skipReasons` accumulates the right count under
-  // the new `profile_filtered_all_passes` reason code. See
-  // `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
-  for (const filtered of profileFilteredRefs) {
-    appendEvent(
-      {
-        eventType: "improve_skipped",
-        ref: filtered.ref,
-        metadata: { reason: "profile_filtered_all_passes" },
-      },
-      eventsCtx,
-    );
-  }
+  // `eventsCtx` is read by the main catch (improve_failed) and finally, so it
+  // lives in the outer scope. It is always assigned at the top of the try.
+  let eventsCtx: EventsContext = {};
 
   try {
+    const budgetTimer = setTimeout(() => budgetAbortController.abort("improve budget exhausted"), budgetMs);
+    // Clear the timer when the run ends to avoid keeping the event loop alive.
+    clearBudgetTimer = () => clearTimeout(budgetTimer);
+
+    try {
+      eventsDb = openStateDatabase();
+      eventsCtx = { db: eventsDb };
+    } catch (err) {
+      rethrowIfTestIsolationError(err);
+      // If we cannot open state.db up-front, fall back to per-call opens.
+      eventsCtx = {};
+    }
+
+    // 2026-05-27: emit `improve_skipped` audit events for refs the planner
+    // pre-filtered (reflect AND distill both refuse them under the active
+    // profile). One event per ref so the existing improve_skipped histogram in
+    // `health.ts#improveSummary.skipReasons` accumulates the right count under
+    // the new `profile_filtered_all_passes` reason code. See
+    // `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
+    for (const filtered of profileFilteredRefs) {
+      appendEvent(
+        {
+          eventType: "improve_skipped",
+          ref: filtered.ref,
+          metadata: { reason: "profile_filtered_all_passes" },
+        },
+        eventsCtx,
+      );
+    }
+
     const preparation = await runImprovePreparationStage({
       scope,
       options,
@@ -1296,15 +1310,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const effectiveSync = { ...improveProfile.sync, ...options.sync };
     if (!result.dryRun && primaryStashDir && effectiveSync.enabled !== false && isGitBackedStash(primaryStashDir)) {
       const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
-      const config = options.config ?? loadConfig();
-      const writableOverride = config.writable === true ? true : undefined;
+      // Reuse the config resolved at the top of the run (`_earlyConfig`) instead
+      // of a second loadConfig(); the writable derivation is shared with
+      // `akm sync` via resolveWritableOverride().
+      const writableOverride = resolveWritableOverride(_earlyConfig);
       const push = effectiveSync.push !== false;
       // `sync.message` may contain `{token}` placeholders (timestamp/date/time/
       // scope/refs/accepted) expanded against this run's results; the default
       // template has no tokens so it renders verbatim.
       const message = renderSyncCommitMessage(effectiveSync.message ?? "akm improve auto-sync", result, Date.now());
       try {
-        const syncResult = saveGitStashFn(undefined, message, writableOverride, { push });
+        // Pass primaryStashDir as the explicit commit target so the gate above
+        // (which validated primaryStashDir via isGitBackedStash) and the commit
+        // operate on the SAME directory — avoids divergence when a caller passes
+        // a non-default options.stashDir (FIX 9).
+        const syncResult = saveGitStashFn(undefined, message, writableOverride, { push, repoDir: primaryStashDir });
         result.sync = {
           committed: syncResult.committed,
           pushed: syncResult.pushed,

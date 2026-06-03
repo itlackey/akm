@@ -19,7 +19,19 @@
 import fs from "node:fs";
 import { z } from "zod";
 import { UsageError } from "../core/errors";
+import { PROPOSAL_SOURCES } from "../core/proposals";
 import type { DrainPolicy } from "./proposal-drain";
+
+// Valid `generator` values for a drain rule are exactly the canonical proposal
+// `source` values (see {@link PROPOSAL_SOURCES} in src/core/proposals.ts). The
+// engine matches rules via `policy.accept.find(r => r.generator === proposal.source)`,
+// so a generator that is not a real source can never match — it would be a
+// silent permanent no-op. Validate against the closed set to surface typos.
+const GeneratorSchema = z.enum(PROPOSAL_SOURCES as unknown as [string, ...string[]], {
+  errorMap: () => ({
+    message: `must be one of the known proposal sources: ${PROPOSAL_SOURCES.join(", ")}`,
+  }),
+});
 
 // ---------------------------------------------------------------------------
 // Built-in presets
@@ -80,7 +92,7 @@ export const BUILTIN_POLICY_NAMES = Object.keys(BUILTIN_POLICIES);
 
 const DrainAcceptRuleSchema = z
   .object({
-    generator: z.string().min(1),
+    generator: GeneratorSchema,
     maxDiffLines: z.number().int().positive().optional(),
     minContentLines: z.number().int().nonnegative().optional(),
   })
@@ -91,7 +103,7 @@ const DrainPolicySchema = z
     name: z.string().min(1),
     accept: z.array(DrainAcceptRuleSchema),
     rejectEmpty: z.boolean(),
-    defer: z.array(z.string().min(1)),
+    defer: z.array(GeneratorSchema),
   })
   .strict();
 
