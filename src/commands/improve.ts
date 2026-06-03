@@ -440,6 +440,44 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
   }
 }
 
+/**
+ * Render the end-of-run stash-sync commit message, expanding `{token}`
+ * placeholders against this run's results. Unknown tokens are passed through
+ * verbatim so adding new tokens later never breaks an existing template, and so
+ * a literal brace in a message is harmless.
+ *
+ * Supported tokens (the "free" set — derived from data already on the result):
+ *   {timestamp}  `YYYY-MM-DD HH:MM:SS` (UTC)
+ *   {date}       `YYYY-MM-DD` (UTC)
+ *   {time}       `HH:MM:SS` (UTC)
+ *   {scope}      scope value (e.g. a ref/type) or the scope mode (`all`)
+ *   {refs}       number of planned refs this run processed
+ *   {accepted}   number of proposals auto-accepted by the confidence gate
+ *
+ * The result is still passed through `sanitizeCommitMessage` downstream in
+ * `saveGitStash`, so token values never widen the commit-message attack surface
+ * (newlines/control chars are collapsed there).
+ *
+ * `nowMs` is injected (not read from `Date.now()`) so the function is pure and
+ * deterministically testable.
+ */
+export function renderSyncCommitMessage(
+  template: string,
+  result: { scope: { mode: string; value?: string }; plannedRefs: unknown[]; gateAutoAcceptedCount?: number },
+  nowMs: number,
+): string {
+  const iso = new Date(nowMs).toISOString();
+  const tokens: Record<string, string> = {
+    timestamp: `${iso.slice(0, 10)} ${iso.slice(11, 19)}`,
+    date: iso.slice(0, 10),
+    time: iso.slice(11, 19),
+    scope: result.scope.value ?? result.scope.mode,
+    refs: String(result.plannedRefs.length),
+    accepted: String(result.gateAutoAcceptedCount ?? 0),
+  };
+  return template.replace(/\{(\w+)\}/g, (match, key: string) => (key in tokens ? tokens[key] : match));
+}
+
 async function collectEligibleRefs(
   scope: { mode: "all" | "type" | "ref"; value?: string },
   stashDir?: string,
@@ -1261,7 +1299,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       const config = options.config ?? loadConfig();
       const writableOverride = config.writable === true ? true : undefined;
       const push = effectiveSync.push !== false;
-      const message = effectiveSync.message ?? "akm improve auto-sync";
+      // `sync.message` may contain `{token}` placeholders (timestamp/date/time/
+      // scope/refs/accepted) expanded against this run's results; the default
+      // template has no tokens so it renders verbatim.
+      const message = renderSyncCommitMessage(effectiveSync.message ?? "akm improve auto-sync", result, Date.now());
       try {
         const syncResult = saveGitStashFn(undefined, message, writableOverride, { push });
         result.sync = {

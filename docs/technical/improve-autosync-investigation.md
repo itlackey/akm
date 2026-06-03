@@ -584,3 +584,41 @@ branch as-is; open a follow-up to unify both write paths onto `saveGitStash`
 two parallel commit implementations can be retired together. Until then the two
 models coexist cleanly because their domains are disjoint: **batch for the
 primary stash, per-asset for named/`--target` writable git sources.**
+
+## Commit message templates (`sync.message`)
+
+`profiles.improve.<name>.sync.message` accepts `{token}` placeholders, expanded
+at the end of the run by `renderSyncCommitMessage` (src/commands/improve.ts)
+before the string is handed to `saveGitStash` (which still sanitizes it to a
+single line). Unknown tokens pass through verbatim, so templates are
+forward-compatible and a literal brace is harmless.
+
+Supported tokens (the "free" set — derived from data already on the run result):
+
+| token | value |
+|-------|-------|
+| `{timestamp}` | `YYYY-MM-DD HH:MM:SS` (UTC) |
+| `{date}` | `YYYY-MM-DD` (UTC) |
+| `{time}` | `HH:MM:SS` (UTC) |
+| `{scope}` | scope value (a ref/type) or the scope mode (`all`) |
+| `{refs}` | number of planned refs processed this run |
+| `{accepted}` | proposals auto-accepted by the confidence gate |
+
+Example:
+
+```yaml
+profiles:
+  improve:
+    default:
+      sync:
+        enabled: true
+        push: true
+        message: "akm improve: {accepted} accepted, {refs} refs @ {timestamp}"
+```
+
+The default message (`akm improve auto-sync`) has no tokens and renders verbatim.
+
+Tokens that need extra plumbing — `{triage_promoted}` / `{triage_rejected}`
+(triage `DrainResult` is not yet surfaced on `AkmImproveResult`) and `{runId}`
+(minted in improve-cli.ts, not threaded into `akmImprove`) — are tracked as a
+0.9.0 follow-on.
