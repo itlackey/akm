@@ -451,6 +451,19 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
 
 // ── Save support ─────────────────────────────────────────────────────────────
 
+/**
+ * Recognize a stash directory as git-backed by the presence of a `.git` entry.
+ *
+ * Recognition is deliberately by `.git` presence — NOT by a configured remote.
+ * `akm init` git-inits the primary stash (see init.ts `ensureGitRepo`), so a
+ * freshly-initialized local stash with no remote is still git-backed. This is
+ * the single source of truth used both by `saveGitStash` (below) and by the
+ * end-of-run improve auto-sync gate.
+ */
+export function isGitBackedStash(stashDir: string): boolean {
+  return fs.existsSync(path.join(stashDir, ".git"));
+}
+
 export interface SaveGitStashResult {
   committed: boolean;
   pushed: boolean;
@@ -511,7 +524,7 @@ export function saveGitStash(
   }
 
   // No-op: not a git repo
-  if (!fs.existsSync(path.join(repoDir, ".git"))) {
+  if (!isGitBackedStash(repoDir)) {
     return { committed: false, pushed: false, skipped: true, reason: "not a git repository", output: "" };
   }
 

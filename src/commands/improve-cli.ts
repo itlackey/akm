@@ -72,6 +72,16 @@ export const improveCommand = defineCommand({
       description:
         "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus). Controls which sub-processes run and which asset types are processed.",
     },
+    sync: {
+      type: "boolean",
+      description:
+        "Commit (and optionally push) the git-backed primary stash when the run finishes. Use --no-sync to disable. Default: on for git-backed stashes (per profile config).",
+    },
+    push: {
+      type: "boolean",
+      description:
+        "Push after the end-of-run sync commit when writable + remote configured. Use --no-push to commit only. Default: per profile config (true).",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -106,6 +116,14 @@ export const improveCommand = defineCommand({
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
       const profileArg = getStringArg(args, "profile");
+      // Only set the keys the user actually passed (citty leaves the flag
+      // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
+      // so the resolved profile `sync` block wins by default.
+      const syncFlag = getHyphenatedArg<boolean>(args, "sync");
+      const pushFlag = getHyphenatedArg<boolean>(args, "push");
+      const syncOverride: { enabled?: boolean; push?: boolean } = {};
+      if (syncFlag !== undefined) syncOverride.enabled = syncFlag;
+      if (pushFlag !== undefined) syncOverride.push = pushFlag;
 
       const improveLogFile = path.join(
         getCacheDir(),
@@ -180,6 +198,7 @@ export const improveCommand = defineCommand({
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
           ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
           ...(profileArg !== undefined ? { profile: profileArg } : {}),
+          ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
           consolidateOptions: {
             target: targetArg,
             dryRun,

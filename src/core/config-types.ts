@@ -214,6 +214,16 @@ export interface ImproveProfileConfig {
   };
   autoAccept?: number;
   limit?: number;
+  /**
+   * End-of-run auto-sync: batch-commit (and optionally push) the primary
+   * git-backed stash once an improve run finishes. Default ON for git-backed
+   * stashes; push is gated on `config.writable` + a configured remote.
+   */
+  sync?: {
+    enabled?: boolean;
+    push?: boolean;
+    message?: string;
+  };
 }
 
 export interface RegistryConfigEntry {

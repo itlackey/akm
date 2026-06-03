@@ -280,6 +280,15 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
   }
 
   // 3. Working stash (config.stashDir / resolveStashDir()).
+  //
+  // The primary stash stays `kind: "filesystem"` on purpose, even when it is a
+  // git repo on disk (recognized elsewhere via isGitBackedStash). Returning
+  // `kind: "git"` here would route every asset write through the per-asset
+  // runGitCommit, which is INCOMPLETE (stages only the single asset file,
+  // leaving .akm/proposals + other state dirty) and NOISY (one commit per
+  // asset, ~25 per improve run). Recognition is decoupled: per-write stays
+  // non-committing, and the primary stash is committed in a single batch at
+  // operation boundaries (e.g. the end-of-run improve auto-sync via saveGitStash).
   try {
     const stashDir = resolveStashDir({ readOnly: true });
     return {

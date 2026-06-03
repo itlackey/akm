@@ -60,6 +60,7 @@ import { runStalenessDetectionPass, type StalenessDetectionResult } from "../ind
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
 import { getAvailableHarnesses, getExecutionLogCandidates } from "../integrations/session-logs";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
+import { isGitBackedStash, saveGitStash } from "../sources/providers/git";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
@@ -176,6 +177,17 @@ export interface AkmImproveOptions {
    * process being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
    */
   drainProposalsFn?: typeof drainProposals;
+  /**
+   * Injectable end-of-run stash-sync seam for tests. When omitted, the real
+   * `saveGitStash` runs (gated on a git-backed primary stash + sync enabled).
+   */
+  saveGitStashFn?: typeof saveGitStash;
+  /**
+   * End-of-run auto-sync override (from CLI `--no-sync`/`--no-push`). Only the
+   * keys the caller passed are set; CLI overrides the resolved profile `sync`
+   * block, which in turn overrides the built-in default.
+   */
+  sync?: { enabled?: boolean; push?: boolean };
 }
 
 export interface ImproveEligibleRef {
@@ -316,6 +328,13 @@ export interface AkmImproveResult {
    * Omitted when zero to keep the envelope tidy.
    */
   gateAutoAcceptedCount?: number;
+  /**
+   * End-of-run auto-sync outcome for a git-backed primary stash. Present only
+   * when sync was attempted (non-dry-run, git-backed stash, sync not disabled).
+   * `skipped: true` covers both a no-op `saveGitStash` and a caught failure
+   * (a sync failure is non-fatal and never fails the run).
+   */
+  sync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
 }
 
 type ImproveScope = ReturnType<typeof resolveImproveScope>;
@@ -1228,6 +1247,55 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         },
         eventsCtx,
       );
+
+    // End-of-run BATCH auto-sync. Recognition is decoupled from the per-write
+    // path (see write-source.ts case-3): the primary stash writes as a
+    // filesystem source during the run, then is committed in one shot here via
+    // the same `saveGitStash` that `akm sync` calls. Gated on a non-dry-run, a
+    // git-backed primary stash (by `.git`, not by remote), and sync not
+    // disabled. A sync failure is NON-FATAL — it never fails a successful run
+    // (mirrors the contradiction-detection best-effort pattern).
+    const effectiveSync = { ...improveProfile.sync, ...options.sync };
+    if (!result.dryRun && primaryStashDir && effectiveSync.enabled !== false && isGitBackedStash(primaryStashDir)) {
+      const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
+      const config = options.config ?? loadConfig();
+      const writableOverride = config.writable === true ? true : undefined;
+      const push = effectiveSync.push !== false;
+      const message = effectiveSync.message ?? "akm improve auto-sync";
+      try {
+        const syncResult = saveGitStashFn(undefined, message, writableOverride, { push });
+        result.sync = {
+          committed: syncResult.committed,
+          pushed: syncResult.pushed,
+          skipped: syncResult.skipped,
+          ...(syncResult.reason !== undefined ? { reason: syncResult.reason } : {}),
+        };
+        appendEvent(
+          {
+            eventType: "stash_synced",
+            metadata: {
+              committed: syncResult.committed,
+              pushed: syncResult.pushed,
+              skipped: syncResult.skipped,
+              reason: syncResult.reason ?? null,
+            },
+          },
+          eventsCtx,
+        );
+      } catch (syncErr) {
+        const reason = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        warn(`improve: end-of-run stash sync failed (non-fatal): ${reason}`);
+        result.sync = { committed: false, pushed: false, skipped: true, reason };
+        appendEvent(
+          {
+            eventType: "stash_synced",
+            metadata: { committed: false, pushed: false, skipped: true, reason },
+          },
+          eventsCtx,
+        );
+      }
+    }
+
     return result;
   } catch (err) {
     // D3: emit improve_failed on unexpected crash so dashboards can detect failures.

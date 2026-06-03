@@ -219,6 +219,14 @@ export const ImproveProfileConfigSchema = z
     processes: ImproveProfileProcessesSchema.optional(),
     autoAccept: nonNegativeNumber.optional(),
     limit: positiveInt.optional(),
+    sync: z
+      .object({
+        enabled: z.boolean().optional(),
+        push: z.boolean().optional(),
+        message: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

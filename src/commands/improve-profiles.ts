@@ -30,6 +30,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       // validation: deliberately undefined — third-tier classifier is opt-in.
       triage: { enabled: false, applyMode: "queue", policy: "personal-stash" },
     },
+    sync: { enabled: true, push: true },
   },
   quick: {
     description: "Reflect-only pass — no distill, consolidate, memoryInference, or graphExtraction.",
@@ -55,6 +56,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
       graphExtraction: { enabled: true },
       triage: { enabled: true, applyMode: "queue" },
     },
+    sync: { enabled: true, push: true },
   },
   "memory-focus": {
     description: "Memory and lesson improvement only — no distill or consolidate.",
