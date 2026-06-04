@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "retrieval-improve-keywords",
+  "suite": "improve-smoke",
+  "type": "retrieval",
+  "description": "Searching for 'improve' returns content mentioning proposals or feedback (core 0.8.0 vocabulary).",
+  "input": {
+    "query": "proposal",
+    "topK": 10
+  },
+  "expected": {
+    "keywords": ["proposal"],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "keywordCoverage": 0.7,
+      "minHits": 0.3
+    },
+    "passThreshold": 0.6
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["retrieval", "smoke", "vocabulary"]
+}

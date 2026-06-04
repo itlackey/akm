@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Agent CLI spawn wrapper (v1 spec §12.2).
  *
@@ -11,11 +15,42 @@
  * NEVER imports an LLM SDK. Agents are reachable only via shell-out;
  * this is a pre-emptive guarantee against the #222 invariant.
  */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
-/** Stable failure-reason vocabulary. Wider strings are not allowed. */
-export type AgentFailureReason = "timeout" | "spawn_failed" | "non_zero_exit" | "parse_error";
+/** Stable failure-reason vocabulary. Wider strings are not allowed.
+ *
+ * Note on `content_policy_reject`: this is NOT an LLM fault — it is a
+ * downstream deterministic content-policy guard (e.g. reflect's
+ * EXCESSIVE_SHRINKAGE/EXCESSIVE_EXPANSION size rails) rejecting an
+ * otherwise well-formed LLM response. The agent worked; our guard blocked
+ * the output. Health aggregators count these in a separate
+ * `guardRejected` bucket so the LLM-failure-rate numerator is not
+ * inflated. See `/tmp/akm-health-investigations/metrics-taxonomy-review.md`
+ * §1a / Pattern A.
+ *
+ * Note on `unsupported_type`: deterministic type-guard rejection. Reflect
+ * refuses to operate on non-markdown asset types (script, env, vault, secret, task);
+ * the LLM is never even invoked. Previously emitted as `parse_error` and
+ * conflated with true LLM failures — see review §1a, "Reflect refused
+ * asset type" row (~9% of reflect-failed events). Routed to the
+ * `reflect-skipped` action bucket by the improve loop so it does not
+ * inflate the failure-rate numerator. */
+export type AgentFailureReason =
+  | "timeout"
+  | "spawn_failed"
+  | "non_zero_exit"
+  | "parse_error"
+  | "cooldown"
+  | "llm_rate_limit"
+  | "llm_content_filter"
+  | "llm_invalid_json"
+  | "content_policy_reject"
+  | "unsupported_type";
 
 /** Minimum subprocess surface we need. Bun.spawn returns this shape. */
 export interface SpawnedSubprocess {
@@ -55,7 +90,7 @@ export type SpawnFn = (
  * reaped alongside the node wrapper. The fallback keeps test fakes working
  * without modification.
  */
-export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
+function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
   if (typeof proc.pid === "number") {
     try {
       process.kill(-proc.pid, signal);
@@ -78,15 +113,15 @@ export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"
 export interface RunAgentOptions {
   /** Override `profile.stdio`. Captured = pipe stdout/stderr; interactive = inherit. */
   stdio?: AgentStdioMode;
-  /** Override the profile/global timeout (ms). */
-  timeoutMs?: number;
+  /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
+  timeoutMs?: number | null;
   /** Override `profile.parseOutput`. */
   parseOutput?: AgentParseMode;
   /** Extra env vars merged on top of the profile-derived env. */
   env?: Record<string, string>;
   /** Working directory for the child. */
   cwd?: string;
-  /** Extra args appended after `profile.args`. */
+  /** Extra args appended after the builder-constructed argv. */
   args?: readonly string[];
   /** Optional stdin payload (only honoured in `captured` mode). */
   stdin?: string;
@@ -101,6 +136,18 @@ export interface RunAgentOptions {
   setTimeoutFn?: typeof setTimeout;
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
+  /**
+   * Abstract dispatch parameters. When present, the platform-specific
+   * AgentCommandBuilder constructs the argv from these fields (system prompt,
+   * model alias, tool policy). When absent, falls back to the legacy
+   * positional-prompt behaviour for backwards compatibility.
+   */
+  dispatch?: import("./builders").AgentDispatchRequest;
+  /**
+   * Builder registry override — used by tests to inject fake builders without
+   * touching the global BUILTIN_BUILDERS map.
+   */
+  builderRegistry?: Record<string, import("./builders").AgentCommandBuilder>;
 }
 
 /** Result envelope. `ok=false` always carries a `reason`. */
@@ -119,6 +166,61 @@ export interface AgentRunResult {
 
 const DEFAULT_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_MS;
 
+/**
+ * Supplement `existingPath` with well-known user binary directories when
+ * running in a scheduler context (cron/launchd) where PATH is stripped.
+ *
+ * Detection heuristic: if the current PATH does not contain the user's home
+ * directory, we are likely in a stripped scheduler env. In an interactive
+ * shell the user's home almost always appears (e.g. ~/.bun/bin, ~/.cargo/bin).
+ *
+ * Only directories that actually exist on disk are prepended, and only if
+ * they are not already present, so interactive-shell PATH ordering is never
+ * disturbed.
+ */
+export function supplementPathForSchedulerContext(existingPath: string): string {
+  const home = os.homedir();
+  // If PATH already contains the home directory, we are in an interactive
+  // shell — skip supplementation entirely.
+  if (existingPath.split(path.delimiter).some((d) => d.startsWith(home))) {
+    return existingPath;
+  }
+  const candidates = pathCandidatesForCurrentPlatform(home);
+  const existing = new Set(existingPath.split(path.delimiter).filter(Boolean));
+  const toAdd = candidates.filter((d) => !existing.has(d) && fs.existsSync(d));
+  if (toAdd.length === 0) return existingPath;
+  return [...toAdd, existingPath].filter(Boolean).join(path.delimiter);
+}
+
+function pathCandidatesForCurrentPlatform(home: string): string[] {
+  if (process.platform === "win32") {
+    // Windows: Bun + Cargo + Scoop + Chocolatey + system tools. Order favors
+    // user-local installs over machine-global so the user's chosen toolchain
+    // wins. These paths are commonly stripped from Task Scheduler / service
+    // environments, mirroring the cron/launchd problem on POSIX.
+    const localAppData = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
+    const userProfile = process.env.USERPROFILE ?? home;
+    const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+    return [
+      path.join(userProfile, ".bun", "bin"),
+      path.join(localAppData, "Programs", "bun"),
+      path.join(userProfile, ".cargo", "bin"),
+      path.join(localAppData, "Programs", "Git", "cmd"),
+      path.join(userProfile, "scoop", "shims"),
+      path.join(programFiles, "Git", "cmd"),
+      "C:\\ProgramData\\chocolatey\\bin",
+    ];
+  }
+  return [
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".cargo", "bin"),
+    path.join(home, ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+  ];
+}
+
 function resolveSpawnFn(options: RunAgentOptions): SpawnFn {
   if (options.spawn) return options.spawn;
   // Pull from globalThis so tests that swap it out at module level are honoured.
@@ -134,6 +236,10 @@ function resolveSpawnFn(options: RunAgentOptions): SpawnFn {
  *   • Every name in `profile.envPassthrough`.
  *   • Every entry in `profile.env`.
  *   • Every entry in `options.env` (highest precedence).
+ *
+ * PATH is supplemented with well-known user binary directories when running
+ * in a scheduler context (cron/launchd) where the inherited PATH is stripped.
+ * See {@link supplementPathForSchedulerContext}.
  */
 function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<string, string> {
   const source = options.envSource ?? process.env;
@@ -141,6 +247,11 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
   for (const name of profile.envPassthrough) {
     const value = source[name];
     if (value !== undefined) env[name] = value;
+  }
+  // Supplement PATH after passthrough so the scheduler-context fix applies to
+  // the value actually coming from the environment source.
+  if (env.PATH !== undefined) {
+    env.PATH = supplementPathForSchedulerContext(env.PATH);
   }
   if (profile.env) {
     for (const [k, v] of Object.entries(profile.env)) env[k] = v;
@@ -193,21 +304,37 @@ export async function runAgent(
   options: RunAgentOptions = {},
 ): Promise<AgentRunResult> {
   const stdioMode = options.stdio ?? profile.stdio;
-  const timeoutMs = options.timeoutMs ?? profile.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // null = explicitly disabled (no kill timer). undefined = inherit from profile/default.
+  const timeoutMs: number | null =
+    options.timeoutMs !== undefined ? options.timeoutMs : (profile.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const parseOutput = options.parseOutput ?? profile.parseOutput;
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
 
-  const args: string[] = [...profile.args, ...(options.args ?? [])];
-  if (prompt !== undefined) args.push(prompt);
+  // Build argv via the platform-specific builder when dispatch params are
+  // provided; fall back to the legacy positional-prompt form otherwise.
+  let builtArgv: readonly string[];
+  let builtEnv: Record<string, string> | undefined;
+  if (options.dispatch !== undefined) {
+    const builder = getCommandBuilder(profile.commandBuilder ?? profile.name, options.builderRegistry);
+    const built = builder.build(profile, options.dispatch);
+    builtArgv = built.argv;
+    builtEnv = built.env;
+  } else {
+    const legacyArgs: string[] = [...profile.args, ...(options.args ?? [])];
+    if (prompt !== undefined) legacyArgs.push(prompt);
+    builtArgv = [profile.bin, ...legacyArgs];
+  }
+  // Extra args (e.g. forwarded CLI positionals) are appended after the builder output.
+  const finalArgv: string[] = [...builtArgv, ...(options.dispatch ? (options.args ?? []) : [])];
 
-  const env = buildChildEnv(profile, options);
+  const env = { ...buildChildEnv(profile, options), ...(builtEnv ?? {}) };
   const start = Date.now();
 
   let proc: SpawnedSubprocess;
   try {
     const spawnFn = resolveSpawnFn(options);
-    proc = spawnFn([profile.bin, ...args], {
+    proc = spawnFn(finalArgv, {
       stdin: stdioMode === "captured" ? (options.stdin !== undefined ? "pipe" : "ignore") : "inherit",
       stdout: stdioMode === "captured" ? "pipe" : "inherit",
       stderr: stdioMode === "captured" ? "pipe" : "inherit",
@@ -239,25 +366,33 @@ export async function runAgent(
   // BUG-M3: only flag `timedOut` when the child has not already exited. A
   // timer firing in the same microtask as `proc.exited` resolving could
   // otherwise label a clean exit as a timeout.
+  //
+  // When timeoutMs is null the kill timer is skipped entirely — the task runs
+  // until the process exits naturally. Intended for long-running local-model
+  // tasks where wall-clock time is unpredictable.
   let timedOut = false;
-  const timer = setTimeoutImpl(() => {
-    if (proc.exitCode !== null) return;
-    timedOut = true;
-    killGroup(proc, "SIGTERM");
-    // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
-    setTimeoutImpl(() => {
-      if (proc.exitCode !== null) return;
-      killGroup(proc, "SIGKILL");
-    }, 5000);
-  }, timeoutMs);
+  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
+  if (timeoutMs !== null) {
+    timer = setTimeoutImpl(() => {
+      if (!proc || proc.exitCode !== null) return;
+      timedOut = true;
+      killGroup(proc, "SIGTERM");
+      // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
+      setTimeoutImpl(() => {
+        if (!proc || proc.exitCode !== null) return;
+        killGroup(proc, "SIGKILL");
+      }, 5000);
+    }, timeoutMs);
+  }
 
   // Stream-drain timeout: the overall wall-clock budget plus a 2 s grace
   // period. When a process is killed via SIGTERM/SIGKILL (from our timeout
   // handler or from outside) some runtimes keep the pipe write-end open in
   // background threads, which would cause `Response.text()` to block forever.
-  // Capping stream draining at `timeoutMs + 2 000 ms` ensures the caller
-  // never hangs past the wall budget regardless of subprocess pipe behaviour.
-  const streamDrainTimeoutMs = timeoutMs + 2_000;
+  // Capping stream draining ensures the caller never hangs past the wall
+  // budget regardless of subprocess pipe behaviour.
+  // When there is no kill timer, allow up to 30 s for streams to drain.
+  const streamDrainTimeoutMs = timeoutMs !== null ? timeoutMs + 2_000 : 30_000;
   const stdoutPromise =
     stdioMode === "captured"
       ? readStream(proc.stdout ?? null, { timeoutMs: streamDrainTimeoutMs })
@@ -296,7 +431,7 @@ export async function runAgent(
   try {
     exitCode = await proc.exited;
   } catch (err) {
-    clearTimeoutImpl(timer);
+    if (timer !== undefined) clearTimeoutImpl(timer);
     // BUG-H2: drain stream readers before the early return so they don't
     // surface as unhandled rejections after the function resolves.
     // The streams already carry a built-in drain timeout so this allSettled
@@ -326,7 +461,7 @@ export async function runAgent(
       stderr,
       durationMs,
       reason: "timeout",
-      error: `agent CLI "${profile.name}" timed out after ${timeoutMs}ms`,
+      error: `agent CLI "${profile.name}" timed out after ${timeoutMs ?? 0}ms`,
     };
   }
 

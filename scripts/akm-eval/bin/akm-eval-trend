@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# akm-eval-trend — TSV trend across the last N eval runs.
+#
+# Thin wrapper around scripts/akm-eval/src/trend.ts.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/trend.ts" "$@"

@@ -16,6 +16,7 @@ import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import type { ParsedGithubRef } from "../../src/registry/types";
+import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration of every built-in provider
 import "../../src/registry/providers/index";
@@ -55,7 +56,7 @@ const SKILLS_SH_FIXTURE = {
 const createdTmpDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
 
-function createTmpDir(prefix = "akm-parity-"): string {
+function _createTmpDir(prefix = "akm-parity-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;
@@ -77,10 +78,11 @@ function serveJson(body: unknown): { url: string; close: () => void } {
   };
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-parity-cache-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 });
 
 afterEach(() => {
@@ -92,12 +94,8 @@ afterEach(() => {
     }
   }
   servers.length = 0;
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

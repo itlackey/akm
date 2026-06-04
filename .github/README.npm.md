@@ -1,23 +1,38 @@
-# akm -- Agent Kit Manager
+# akm -- Agent Knowledge Management
 
-> **akm** (Agent Kit Manager) -- A package manager for AI agent skills, commands, tools, and knowledge.
+> **akm** (Agent Knowledge Management) -- A package manager for AI agent skills, commands, tools, and knowledge.
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
 [![npm downloads](https://img.shields.io/npm/dm/akm-cli)](https://www.npmjs.com/package/akm-cli)
 [![license](https://img.shields.io/github/license/itlackey/akm)](https://github.com/itlackey/akm/blob/main/LICENSE)
 
 `akm` is a package manager for AI agent capabilities -- scripts, skills, commands,
-agents, knowledge, and memories. It works with any AI coding assistant that can
-run shell commands, including [Claude Code](https://claude.ai/code),
+agents, knowledge, memories, workflows, wikis, vaults, lessons, and scheduled
+tasks. It works with any AI coding assistant that can run shell commands,
+including [Claude Code](https://claude.ai/code),
 [OpenCode](https://opencode.ai), [Cursor](https://cursor.com), and more.
 
 ## Install
+
+**Option 1 — Prebuilt binary (recommended, no runtime required):**
+
+```sh
+# Linux / macOS
+curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
+
+# Windows (PowerShell)
+irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
+```
+
+**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
 
 ```sh
 bun install -g akm-cli
 ```
 
-Requires [Bun](https://bun.sh) runtime. Upgrade in place with `akm upgrade`.
+Upgrade in place with `akm upgrade`.
+
+> **AKM 0.8 requires the prebuilt binary or the Bun runtime. Node.js / npm / pnpm are not supported in 0.8.0** — running `npm install -g akm-cli` on a Node.js-only machine will print an error from the preinstall hook and exit without installing. Cross-runtime support (Node, npm, pnpm) is planned for 0.9.0.
 
 ## Quick Start
 
@@ -44,7 +59,8 @@ Add this to your `AGENTS.md`, `CLAUDE.md`, or system prompt:
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
+knowledge, memories, workflows, wikis, vaults, lessons, and scheduled tasks
+via the `akm` CLI. Use `akm -h` for details.
 ```
 
 ## Install Stashes from Anywhere

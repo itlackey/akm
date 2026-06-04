@@ -11,7 +11,7 @@ CLI coverage, then Docker-based deployment and upgrade validation.
 
 ## What To Validate
 
-- core CLI flows: `init`, `index`, `search`, `show`, `info`, `list`, `config`
+- core CLI flows: `setup`, `index`, `search`, `show`, `info`, `list`, `config`
 - asset lifecycle: add assets, re-index, search, show, and incremental refresh
 - managed-source lifecycle: `akm add`, `akm list`, `akm update`, `akm remove`
 - binary lifecycle: install, run, `akm upgrade --check`, `akm upgrade`
@@ -43,6 +43,55 @@ Relevant coverage:
 - `tests/e2e.test.ts` - real CLI workflows and subprocess behavior
 - `tests/setup-run.integration.ts` - full setup wizard orchestration and failure handling
 - `tests/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
+
+### Writing deterministic, isolated tests
+
+`bun test` runs the **entire unit suite in one shared process**. There is one
+`process.env`, one module-singleton namespace, and (under fake timers) one
+global clock for every file. A test that mutates shared state without restoring
+it, or that asserts on a wall-clock measurement, can pass on one scheduling and
+fail on another — the two release/0.8.0 flakes (scoring-pipeline Issue #14
+reading the wrong index DB after a sibling mutated `XDG_DATA_HOME`; the
+llm-client timeout test racing real timers) were both this class.
+
+Rules, enforced by `bun scripts/lint-tests-isolation.ts` (part of `bun run lint`):
+
+1. **Never mutate `AKM_*` / `XDG_*` / `HOME` on `process.env` directly.** Use the
+   sanctioned helpers in `tests/_helpers/sandbox.ts`:
+   - `sandboxStashDir`, `sandboxXdgConfigHome`, `sandboxXdgDataHome`,
+     `sandboxXdgCacheHome`, `sandboxXdgStateHome`, `sandboxHome` — set the env var
+     to an isolated temp dir and return a `cleanup` that restores the prior value.
+     Chain them and call `cleanup()` in `afterEach`.
+   - `withEnv({ AKM_STASH_DIR }, async () => …)` — scoped override that always
+     restores in a `finally`, even on throw. Use this for per-call overrides
+     around an in-process CLI invocation.
+   - `makeStashDir` / `makeSandboxDir` — temp dirs that are NOT wired into env
+     (pass them to `withEnv` or a subprocess env object yourself).
+
+   The DB path resolves from `XDG_DATA_HOME`; if you `akmIndex` then `akmSearch`,
+   both must see the **same** sandboxed `XDG_DATA_HOME` or the search reads a
+   different (empty/stale) DB. Sandbox it in `beforeEach`.
+
+2. **Do not assert on a measured wall-clock delta.** `expect(Date.now() - start)
+   .toBeLessThan(N)` races the scheduler. Assert the *observable result* instead
+   (e.g. `result.reason === "timeout"`), or drive time deterministically with
+   `jest.useFakeTimers()` + `jest.advanceTimersByTime(...)` and a fetch/spawn stub.
+   Asserting on a `durationMs` field computed from injected fixture timestamps is
+   fine (it is deterministic).
+
+3. **Sort/compare on the value the user sees.** When a test asserts ordering,
+   make the production sort key the same quantized value that is displayed
+   (`db-search.ts` sorts on the clamped+rounded score, then breaks ties by name),
+   so an invisible sub-display-precision epsilon can never reorder visible ties.
+
+4. **Avoid stateful feedback within one test.** Re-running `akmSearch` without
+   `skipLogging: true` writes utility/recency rows that perturb the next search's
+   ranking. Pass `skipLogging: true` when you need repeatable ranking across
+   calls in a single test.
+
+If a file legitimately needs a literal env value (e.g. pure path-resolution unit
+tests) and restores via its own save/restore wrapper, add it to the linter's
+`ENV_ASSIGN_ALLOWED` set with a one-line justification — the list may only shrink.
 
 ### 2. End-to-end CLI validation
 
@@ -233,7 +282,7 @@ export XDG_CACHE_HOME="$(mktemp -d)"
 export AKM_STASH_DIR="$(mktemp -d)/akm"
 
 bun run build
-bun run src/cli.ts init
+bun run src/cli.ts setup --yes
 ```
 
 Then run a complete user flow:
@@ -255,7 +304,7 @@ bun run src/cli.ts info --format json
 
 Expected outcomes:
 
-- `init` creates the stash and saves config
+- `setup --yes` creates the stash and saves config
 - `index` reports at least one entry
 - `search` returns the script with an action and score
 - `show` returns `type: script` and a `run` command
@@ -315,7 +364,7 @@ docker run --rm -it ubuntu:22.04 bash
 apt-get update && apt-get install -y curl ca-certificates git
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 akm --help
-akm init
+akm setup --yes
 akm index
 ```
 

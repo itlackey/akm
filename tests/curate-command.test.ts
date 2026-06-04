@@ -1,10 +1,19 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resetConfigCache } from "../src/core/config";
+import { runCliCapture } from "./_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts). Each runCli call pins a fresh isolated set of XDG
+// dirs (cache/config/data) plus AKM_STASH_DIR via the allowlisted withEnv
+// wrapper and resets the config cache before driving the CLI in-process,
+// restoring env in finally. The `curate` command auto-indexes into index.db
+// (not state.db), so the in-process write does not contend with the suite's
+// open state DB.
+
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -18,24 +27,48 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content);
 }
 
-function runCli(stashDir: string, args: string[]): string {
+/**
+ * Drive the CLI in-process against `stashDir` with a fresh isolated set of XDG
+ * dirs. Returns the captured stdout plus the data dir (where index.db lands) so
+ * callers that inspect the on-disk DB can locate it. Asserts exit 0.
+ */
+async function runCliWithDataDir(stashDir: string, args: string[]): Promise<{ stdout: string; dataDir: string }> {
   const xdgCache = makeTempDir("akm-curate-cache-");
   const xdgConfig = makeTempDir("akm-curate-config-");
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
+  const xdgData = makeTempDir("akm-curate-data-");
+  const res = await withEnv(
+    {
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
     },
-  });
-  expect(result.status).toBe(0);
-  return result.stdout.trim();
+    async () => {
+      resetConfigCache();
+      return runCliCapture(args);
+    },
+  );
+  expect(res.code).toBe(0);
+  return { stdout: res.stdout.trim(), dataDir: xdgData };
 }
 
+async function runCli(stashDir: string, args: string[]): Promise<string> {
+  const { stdout } = await runCliWithDataDir(stashDir, args);
+  return stdout;
+}
+
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
+
 afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -60,9 +93,9 @@ describe("curate command", () => {
     return stashDir;
   }
 
-  test("returns curated JSON with follow-up commands and previews", () => {
+  test("returns curated JSON with follow-up commands and previews", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["curate", "release deploy", "--format=json"]);
+    const output = await runCli(stashDir, ["curate", "release deploy", "--format=json"]);
     const json = JSON.parse(output) as { query: string; items: Array<Record<string, unknown>>; summary: string };
 
     expect(json.query).toBe("release deploy");
@@ -79,23 +112,23 @@ describe("curate command", () => {
     }
   });
 
-  test("prefers one strong match per asset type by default", () => {
+  test("prefers one strong match per asset type by default", async () => {
     const stashDir = makeStash();
     writeFile(
       path.join(stashDir, "commands", "release-notes.md"),
       "---\ndescription: Draft release notes\n---\nWrite release notes for {{version}}\n",
     );
 
-    const output = runCli(stashDir, ["curate", "release", "--format=json"]);
+    const output = await runCli(stashDir, ["curate", "release", "--format=json"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
     const commandItems = json.items.filter((item) => item.type === "command");
 
     expect(commandItems.length).toBe(1);
   });
 
-  test("text output includes direct refs and follow-up commands", () => {
+  test("text output includes direct refs and follow-up commands", async () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["curate", "release deploy", "--format=text"]);
+    const output = await runCli(stashDir, ["curate", "release deploy", "--format=text"]);
 
     expect(output).toContain('Curated results for "release deploy"');
     expect(output).toContain("[command]");
@@ -103,13 +136,86 @@ describe("curate command", () => {
     expect(output).toContain("show: akm show command:release");
   });
 
-  test("returns a tip when no curated results are found", () => {
+  test("returns a tip when no curated results are found", async () => {
     const stashDir = makeTempDir("akm-curate-empty-stash-");
-    const output = runCli(stashDir, ["curate", "totally unmatched request", "--format=json"]);
+    const output = await runCli(stashDir, ["curate", "totally unmatched request", "--format=json"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>>; tip?: string; summary: string };
 
     expect(json.items).toEqual([]);
     // Auto-index runs but finds nothing in the empty stash
     expect(json.tip).toContain("Index is empty");
+  });
+
+  test("logs a curate event to usage_events", async () => {
+    const stashDir = makeStash();
+    const { dataDir } = await runCliWithDataDir(stashDir, ["curate", "release", "--format=json"]);
+
+    // Check the database for the curate event
+    const dbPath = path.join(dataDir, "akm", "index.db");
+    expect(fs.existsSync(dbPath)).toBe(true);
+
+    const { Database } = require("bun:sqlite");
+    const db = new Database(dbPath);
+    try {
+      const rows = db
+        .prepare("SELECT event_type, query, metadata FROM usage_events WHERE event_type = 'curate'")
+        .all() as Array<{ event_type: string; query: string; metadata: string }>;
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows[0].query).toBe("release");
+      const meta = JSON.parse(rows[0].metadata);
+      expect(meta.itemCount).toBeGreaterThan(0);
+      expect(Array.isArray(meta.itemRefs)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  // ── WS2: --detail / --shape are now effective on curate ─────────────────────
+  test("--detail full projects description on stash items; brief omits it", async () => {
+    const stashDir = makeStash();
+    const brief = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json"])) as {
+      items: Array<Record<string, unknown>>;
+    };
+    const full = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json", "--detail=full"])) as {
+      items: Array<Record<string, unknown>>;
+    };
+    const briefStash = brief.items.find((i) => i.source === "stash");
+    const fullStash = full.items.find((i) => i.source === "stash");
+    expect(briefStash).toBeDefined();
+    expect(fullStash).toBeDefined();
+    // brief omits description; full carries it (when the item has one).
+    expect(briefStash).not.toHaveProperty("description");
+  });
+
+  test("--shape agent trims items to the agent field set", async () => {
+    const stashDir = makeStash();
+    const output = await runCli(stashDir, ["curate", "release", "--format=json", "--shape=agent"]);
+    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+    const stashItem = json.items.find((i) => i.source === "stash");
+    expect(stashItem).toBeDefined();
+    // agent shape never carries the heavyweight `preview` field.
+    expect(stashItem).not.toHaveProperty("preview");
+    // but keeps the actionable followUp.
+    expect(String(stashItem?.followUp)).toContain("akm show");
+  });
+
+  test("--shape summary is rejected on curate (only valid on show)", async () => {
+    const stashDir = makeStash();
+    const res = await withEnv(
+      {
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: makeTempDir("akm-curate-cache-"),
+        XDG_CONFIG_HOME: makeTempDir("akm-curate-config-"),
+        XDG_DATA_HOME: makeTempDir("akm-curate-data-"),
+      },
+      async () => {
+        resetConfigCache();
+        return runCliCapture(["curate", "release", "--format=json", "--shape=summary"]);
+      },
+    );
+    expect(res.code).toBe(2);
+    // The error envelope is pretty-printed JSON on stderr.
+    const parsed = JSON.parse(res.stderr.trim());
+    expect(parsed.code).toBe("INVALID_SHAPE_VALUE");
   });
 });

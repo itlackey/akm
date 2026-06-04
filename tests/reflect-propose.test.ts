@@ -23,23 +23,22 @@ import { appendEvent, readEvents } from "../src/core/events";
 import { listProposals } from "../src/core/proposals";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../src/integrations/agent/spawn";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 
-const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-};
+// Generic fixture dirs (not AKM env paths) — raw mkdtempSync is fine here.
+const fixtureDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
+  fixtureDirs.push(dir);
   return dir;
 }
 
 function makeStashDir(): string {
+  // sandboxStashDir already creates lessons/skills/memories/knowledge;
+  // this helper is used for inline stash dirs (not the env-var-backed one)
   const stash = makeTempDir("akm-reflect-stash-");
   for (const dir of ["lessons", "skills", "memories", "knowledge"]) {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
@@ -131,19 +130,19 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
   content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
 });
 
+let cleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-reflect-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-reflect-config-");
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  cleanup = cfgResult.cleanup;
 });
 
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  for (const dir of tempDirs.splice(0)) {
+  cleanup();
+  cleanup = () => {};
+  for (const dir of fixtureDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -326,8 +325,7 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(true);
     expect(capturedStdoutMode).toBe("pipe");
     expect(capturedStderrMode).toBe("pipe");
-    expect(capturedCmd.at(-1)).toContain("Respond ONLY with a single JSON object.");
-    expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+    expect(capturedCmd.at(-1)).toContain("DRAFT_WRITTEN");
     expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
   });
 });

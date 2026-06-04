@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Registry provider interface (v1 architecture spec §3.1).
  *
@@ -97,7 +101,7 @@ export interface RegistryProvider {
   /** v1-spec §3.1: optional asset preview. */
   searchAssets?(q: RegistryQuery): Promise<AssetPreview[]>;
 
-  /** v1-spec §3.1: fetch the manifest needed to install a kit. */
+  /** v1-spec §3.1: fetch the manifest needed to install a stash. */
   getKit(id: KitId): Promise<KitManifest | null>;
 
   /**

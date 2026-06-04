@@ -1,8 +1,12 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../core/config";
-import { loadConfig } from "../core/config";
+import { getSources, loadConfig } from "../core/config";
 import { resolveSourceProviderFactory } from "../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
@@ -24,6 +28,12 @@ export interface SearchSource {
   registryId?: string;
   /** If set, all .md files in this source are indexed as wiki pages under this wiki name */
   wikiName?: string;
+  /**
+   * Whether this source accepts writes. The primary stash is always writable.
+   * Filesystem/git sources with `writable: true` in config are also writable.
+   * Registry-cached sources (installed without writable: true) are read-only.
+   */
+  writable?: boolean;
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -35,7 +45,7 @@ export interface SearchSource {
  *   1. The primary stash directory (the entry marked `primary: true`, or the
  *      legacy top-level `stashDir`). Always emitted, even when the directory
  *      does not yet exist on disk, so callers can use it as the clone target.
- *   2. Each entry in `config.sources ?? config.stashes[]` (in declared order), excluding the
+ *   2. Each entry in `config.sources[]` (in declared order), excluding the
  *      one already emitted as the primary.
  *   3. Each entry in `config.installed[]` (registry-managed stashes).
  *
@@ -47,12 +57,27 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   const stashDir = overrideStashDir ?? resolveStashDir();
   const config = existingConfig ?? loadConfig();
 
-  const sources: SearchSource[] = [{ path: stashDir }];
+  // Primary stash is always writable.
+  const sources: SearchSource[] = [{ path: stashDir, writable: true }];
   const seen = new Set<string>([path.resolve(stashDir)]);
 
-  const addSource = (dir: string, registryId?: string, wikiName?: string) => {
+  const addSource = (dir: string, registryId?: string, wikiName?: string, writable?: boolean) => {
     const resolved = path.resolve(dir);
-    if (seen.has(resolved)) return;
+    if (seen.has(resolved)) {
+      // Already in the source list — typically the primary stash injected at
+      // sources[0] before this loop. Enrich that entry with whatever metadata
+      // the matching config source carries so `--source <config-name>` can
+      // find it via registryId. Without this, the primary stash entry stays
+      // identity-less and a user-named primary source ("name": "my-stash")
+      // would validate but match zero entries when filtering.
+      const existing = sources.find((s) => s.path === resolved);
+      if (existing) {
+        if (registryId && !existing.registryId) existing.registryId = registryId;
+        if (wikiName && !existing.wikiName) existing.wikiName = wikiName;
+        if (writable && !existing.writable) existing.writable = true;
+      }
+      return;
+    }
     seen.add(resolved);
     if (isSuspiciousStashRoot(dir)) {
       warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`);
@@ -62,6 +87,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         path: resolved,
         ...(registryId ? { registryId } : {}),
         ...(wikiName ? { wikiName } : {}),
+        ...(writable ? { writable: true } : {}),
       });
     }
   };
@@ -69,7 +95,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   // (1) + (2) Single pass over declared stashes — primary first if present,
   // then the rest in declared order. The primary's directory is already
   // injected as `sources[0]` above, so we only need to dedupe the source set.
-  const stashes = config.sources ?? config.stashes ?? [];
+  const stashes = getSources(config);
   const primaryIdx = stashes.findIndex((entry) => entry.primary === true);
   const ordered: SourceConfigEntry[] = [];
   if (primaryIdx >= 0) {
@@ -85,12 +111,13 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     if (entry.enabled === false) continue;
     const dir = resolveEntryContentDir(entry);
     if (dir == null) continue;
-    addSource(dir, entry.name, entry.wikiName);
+    addSource(dir, entry.name, entry.wikiName, entry.writable === true);
   }
 
   // (3) Installed stashes (registry-managed). Always last.
+  // Only installed entries explicitly marked writable: true are considered writable.
   for (const entry of config.installed ?? []) {
-    addSource(entry.stashRoot, entry.id, entry.wikiName);
+    addSource(entry.stashRoot, entry.id, entry.wikiName, entry.writable === true);
   }
 
   return sources;
@@ -156,6 +183,20 @@ function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
  */
 export function resolveAllStashDirs(overrideStashDir?: string): string[] {
   return resolveSourceEntries(overrideStashDir).map((s) => s.path);
+}
+
+/**
+ * Return the resolved absolute paths of all writable stash sources.
+ *
+ * The primary stash is always writable. Filesystem/git sources that have
+ * `writable: true` in config are also included. Registry-cached sources
+ * (installed without `writable: true`) are excluded because they are
+ * overwritten on `akm update` and must never be mutated.
+ */
+export function getWritableStashDirs(overrideStashDir?: string, existingConfig?: AkmConfig): string[] {
+  return resolveSourceEntries(overrideStashDir, existingConfig)
+    .filter((s) => s.writable === true)
+    .map((s) => s.path);
 }
 
 /**
@@ -257,8 +298,7 @@ function isValidDirectory(dir: string): boolean {
 export async function ensureSourceCaches(config?: AkmConfig, options?: { force?: boolean }): Promise<void> {
   const cfg = config ?? loadConfig();
   const force = options?.force === true;
-  // Use sources[] (current key) with fallback to stashes[] (deprecated, one-release compat).
-  const entries = cfg.sources ?? cfg.stashes ?? [];
+  const entries = getSources(cfg);
   for (const entry of entries) {
     if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
     try {

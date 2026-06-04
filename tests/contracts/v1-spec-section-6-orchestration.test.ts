@@ -32,7 +32,7 @@ describe("v1 spec §6 — orchestration", () => {
   test("§6.5 declares the write-target resolution order", () => {
     const flat = section.replace(/\s+/g, " ");
     expect(flat).toMatch(/--target.*defaultWriteTarget.*working stash.*ConfigError/);
-    expect(section).toMatch(/akm init/);
+    expect(section).toMatch(/akm setup/);
   });
 
   test("§6.7 declares index.db is ephemeral and usage_events is preserved", () => {

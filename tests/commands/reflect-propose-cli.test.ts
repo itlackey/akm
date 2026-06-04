@@ -13,7 +13,7 @@
  *
  * Backfill for issue #284 GAP-CRIT 2.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,17 +22,13 @@ import { akmPropose } from "../../src/commands/propose";
 import { akmReflect } from "../../src/commands/reflect";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-};
+const fixtureDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
+  fixtureDirs.push(dir);
   return dir;
 }
 
@@ -43,6 +39,12 @@ function makeStashDir(): string {
   }
   return stash;
 }
+
+afterAll(() => {
+  for (const dir of fixtureDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   return {
@@ -110,21 +112,17 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
   content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
 });
 
+let envCleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-rp-cli-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-rp-cli-config-");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
 });
 
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── argv coercion helpers (mirror src/cli.ts) ───────────────────────────────

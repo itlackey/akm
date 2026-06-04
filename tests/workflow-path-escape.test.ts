@@ -13,7 +13,7 @@
  * `realpathSync`, then reconstruct the full path.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +27,13 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+beforeEach(() => {
+  // Pair AKM_STASH_DIR (set inline below by each test) with XDG_DATA_HOME /
+  // XDG_STATE_HOME so the test-isolation guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = makeTempDir("akm-workflow-path-data-");
+  process.env.XDG_STATE_HOME = makeTempDir("akm-workflow-path-state-");
+});
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -34,6 +41,8 @@ afterEach(() => {
   delete process.env.AKM_STASH_DIR;
   delete process.env.XDG_CONFIG_HOME;
   delete process.env.XDG_CACHE_HOME;
+  delete process.env.XDG_DATA_HOME;
+  delete process.env.XDG_STATE_HOME;
 });
 
 // ── Happy path: clean stash ─────────────────────────────────────────────────

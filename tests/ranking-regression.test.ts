@@ -11,14 +11,12 @@
  * indexer so all tests share the same index.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 import { loadFixtureStash } from "./fixtures/stashes/load";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
@@ -40,30 +38,28 @@ function mergeStashHits(
 let FIXTURE_STASH: string;
 let fixtureCleanup: (() => void) | undefined;
 
-// ── Temp directory tracking ─────────────────────────────────────────────────
-
-const createdTmpDirs: string[] = [];
-
-function createTmpDir(prefix = "akm-ranking-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
-}
+// Stable per-file XDG_DATA_HOME so the index DB (getDbPath() →
+// $XDG_DATA_HOME/akm/index.db) built once in beforeAll persists across all
+// read-only tests in this file. We deliberately do NOT rebuild the (large)
+// fixture index per test; instead the env vars this file depends on are
+// re-asserted in beforeEach so another concurrently-interleaved test file
+// (the suite runs all files in ONE process sharing process.env) can't clobber
+// XDG_DATA_HOME/AKM_STASH_DIR mid-run and point our searches at the wrong DB.
+let fileDataHome = "";
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-let originalXdgCacheHome: string | undefined;
-let originalXdgConfigHome: string | undefined;
-let originalAkmStashDir: string | undefined;
-let testCacheDir: string;
-let testConfigDir: string;
+let envCleanup: Cleanup = () => {};
 
 beforeAll(async () => {
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  originalAkmStashDir = process.env.AKM_STASH_DIR;
-  testCacheDir = createTmpDir("akm-ranking-cache-");
-  testConfigDir = createTmpDir("akm-ranking-config-");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  // Isolate XDG_DATA_HOME to this file so the index DB never collides with
+  // the suite-wide DB or another file's DB. Capture the dir so beforeEach can
+  // re-point at the same stable location for every test.
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  fileDataHome = dataResult.dir;
+  envCleanup = dataResult.cleanup;
 
   // Materialise the shared ranking-baseline fixture into a tmp dir.
   // The suite indexes it in-process against isolated XDG dirs so the
@@ -73,8 +69,6 @@ beforeAll(async () => {
   FIXTURE_STASH = loaded.stashDir;
   fixtureCleanup = loaded.cleanup;
 
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.AKM_STASH_DIR = FIXTURE_STASH;
 
   saveConfig({
@@ -86,19 +80,24 @@ beforeAll(async () => {
   await akmIndex({ stashDir: FIXTURE_STASH, full: true });
 });
 
+beforeEach(() => {
+  // Re-establish the env vars this file's pre-built index depends on. Under
+  // the shared-process suite, another file's beforeEach/afterEach can leave
+  // XDG_DATA_HOME / AKM_STASH_DIR pointing elsewhere between our tests; the
+  // preload snapshots/restores in afterEach but a concurrently-scheduled
+  // file could still have mutated them. Pointing back at the SAME stable
+  // fixture dir + data home (not a fresh one) reuses the index built once in
+  // beforeAll while guaranteeing correctness.
+  process.env.XDG_DATA_HOME = fileDataHome;
+  process.env.AKM_STASH_DIR = FIXTURE_STASH;
+});
+
 afterAll(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  envCleanup();
+  envCleanup = () => {};
+  if (process.env.AKM_STASH_DIR === FIXTURE_STASH) delete process.env.AKM_STASH_DIR;
 
   fixtureCleanup?.();
-
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

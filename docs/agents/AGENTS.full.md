@@ -20,7 +20,8 @@ akm curate "<task>"                          # Curate the best matches for a tas
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` |
+| `--detail` | `brief`, `normal`, `full` | `brief` |
+| `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
 
 ## Show
 
@@ -49,7 +50,7 @@ akm show wiki:research                        # Wiki summary (same as akm wiki s
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
 | vault | `keys`, `comments` (values are never returned) |
-| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. |
+| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
 | lesson | `content` plus `when_to_use` from frontmatter — read both before applying the lesson |
 
 `akm show wiki:<name>` returns the same summary as `akm wiki show <name>`: path,
@@ -61,9 +62,11 @@ entries.
 ```sh
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
+akm remember "note" --target my-stash          # Route write to a named writable stash source
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL into knowledge/
+akm import ./doc.md --target my-stash          # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
 akm workflow validate workflow:ship-release    # Validate a workflow file or ref; lists every error
 akm workflow next workflow:ship-release        # Resume the active run or start a new one
@@ -74,33 +77,41 @@ akm feedback agent:reviewer --negative         # Record that an asset missed the
 Use `akm feedback` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
 
-## Proposals & reflection (0.7.0+)
+## Proposals & improvement (0.8.0+)
 
 Reflective edits, new asset drafts, and feedback-distilled lessons land
-in a durable proposal queue first — `akm proposal accept` is the only
+in a durable proposal queue first — `akm accept` is the only
 path that mutates the live stash.
 
 ```sh
-akm reflect <ref>                              # Produce a reflection proposal for an existing asset
-akm reflect <ref> --task "tighten the description"
-akm propose <type> <name> --task "..."         # Draft a new asset proposal from a description
-akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
-akm distill <ref>                              # Summarise feedback events into a lesson proposal
+akm improve <ref>                              # Produce an improvement proposal for an existing asset
+akm improve <ref> --task "tighten the description"
+akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
+akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
 akm proposal list                              # List pending proposals
 akm proposal list --status pending|accepted|rejected
-akm proposal show <id>                         # Render the proposal body and metadata
-akm proposal diff <id>                         # Show the proposed delta vs. the live ref
-akm proposal accept <id>                       # Validate and promote via writeAssetToSource
-akm proposal reject <id> --reason "..."        # Archive with a reason; body is preserved
+akm proposal show <id>                          # Render the proposal body and metadata
+akm proposal diff <ref-or-id>                   # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
+akm proposal diff skill:akm-dream               # diff accepts full asset ref
+akm proposal accept 7c115132                    # Accept by UUID prefix
+akm proposal accept <id>                        # Validate and promote via writeAssetToSource
+akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject <id> --reason "..."         # Archive with a reason; body is preserved
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history                                    # Per-asset (or stash-wide) state-change trail
 akm history --ref <ref>
 ```
 
-`akm distill` is gated by `llm.features.feedback_distillation` — when the
-flag is `false` (the default), the command exits with a `ConfigError`.
-The five `proposal` subcommands are `list`, `show`, `diff`, `accept`, and
-`reject`.
+The `akm improve` command replaces both `akm reflect` and `akm distill` workflows.
+The six proposal subcommands are now accessed via the `proposal` noun group:
+- `akm proposal list` (was `akm proposals`)
+- `akm proposal show` (was `akm show proposal`)
+- `akm proposal diff` (was `akm diff`)
+- `akm proposal accept` (was `akm accept`)
+- `akm proposal reject` (was `akm reject`)
+- `akm proposal revert` (was `akm revert`)
+
+The flat verbs remain as deprecated aliases that warn on stderr (removed in 0.9.0).
 
 ## Wikis
 
@@ -117,15 +128,20 @@ akm wiki pages research                        # Page refs + descriptions (exclu
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
 akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
 akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug>.md
+akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index, broken sources
-akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
+akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
+akm wiki ingest research --profile claude --model sonnet  # Override agent profile and model
+akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout
 akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
 akm wiki remove research --force --with-sources # Full nuke, including raw/
 ```
 
-**For any wiki task, start with `akm wiki list`, then `akm wiki ingest <name>`
-to get the step-by-step workflow.** Wiki pages are also addressable as
+**For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`
+dispatches the configured agent (defaults.agent or `--profile`) to execute
+the wiki's ingest workflow end-to-end — schema read, source dedup, search,
+page create/update, log entry, lint, reindex.** Wiki pages are also addressable as
 `wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
 `type: wiki`. Files under `raw/` and the wiki root infrastructure files
 `schema.md`, `index.md`, and `log.md` are not indexed and do not appear in
@@ -163,11 +179,13 @@ akm clone <ref> --force                       # Overwrite existing
 akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 ```
 
-When `--dest` is provided, `akm init` is not required first.
+When `--dest` is provided, `akm setup` is not required first.
 
-## Save
+## Sync
 
-Commit local changes in a git-backed stash. Behaviour adapts automatically:
+Commit local changes in a git-backed stash. Behaviour adapts automatically.
+(`akm save` is the deprecated 0.7 spelling — it still works but warns; removed
+in 0.9.0.)
 
 - **Not a git repo** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default stash always falls here)
@@ -175,10 +193,11 @@ Commit local changes in a git-backed stash. Behaviour adapts automatically:
 - **Git repo, has remote, `writable: true`** — stage, commit, and push
 
 ```sh
-akm save                                      # Save primary stash (timestamp message)
-akm save -m "Add deploy skill"               # Save with explicit message
-akm save my-skills                            # Save a named writable git stash
-akm save my-skills -m "Update patterns"      # Save named stash with message
+akm sync                                      # Sync primary stash (timestamp message)
+akm sync -m "Add deploy skill"               # Sync with explicit message
+akm sync --no-push                            # Commit only; never push
+akm sync my-skills                            # Sync a named writable git stash
+akm sync my-skills -m "Update patterns"      # Sync named stash with message
 ```
 
 The `--writable` flag on `akm add` opts a remote git stash into push-on-save:
@@ -222,20 +241,37 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 ```sh
-akm setup                                     # Guided config, init, and index
-akm init                                      # Initialize working stash
-akm init --dir ~/custom-stash                 # Initialize at a custom path
+akm setup                                     # Interactive setup (creates stash + configures connections)
+akm setup --dir ~/custom-stash                # Initialize at a custom path
+akm setup --yes                               # Non-interactive, accepts all defaults
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm list                                      # List all sources
+akm lint                                      # Structural lint over the stash; exits 0 on findings (use --fail-on-flagged for CI)
+akm lint --fix                                # Auto-fix Tier 1 issues
+akm lint --fail-on-flagged                    # Exit non-zero when summary.flagged > 0 (CI-friendly)
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference
 ```
 
+## Tasks — Per-task timeoutMs
+
+Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
+(set under `profiles.agent.<name>.timeoutMs`) for a single task:
+
+- `timeoutMs: null` — disable the agent kill timer (useful for long-running local-model tasks)
+- `timeoutMs: 120000` — override with a specific value in milliseconds
+
+## Events — Accepted Types
+
+`akm events list --type <type>` accepts: `add`, `remove`, `update`, `remember`,
+`import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`,
+`select`, `improve_skipped`, `reflect_completed`.
+
 ## Output Control
 
-All commands accept `--format` and `--detail` flags:
+All commands accept `--format`, `--detail`, and `--shape` flags:
 
 - `--format json` (default) — structured JSON
 - `--format jsonl` — one JSON object per line (streaming-friendly)
@@ -244,9 +280,20 @@ All commands accept `--format` and `--detail` flags:
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
-- `--detail summary` — metadata only (no content/template/prompt), under 200 tokens
+- `--shape human` (default) — standard projection
+- `--shape agent` — agent-optimized output: strips non-actionable fields
+- `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only valid on `akm show`
 
 Run `akm -h` or `akm <command> -h` for per-command help.
+
+### Piping JSON to jq
+
+For any akm command emitting more than ~64KB of JSON, prefer
+`akm <cmd> --json | cat | jq …` over the direct pipe. A known Bun
+stdout chunking interaction with `jq 1.6` can truncate the stream
+mid-document on direct pipes; `cat` re-buffers and presents a clean
+pipe to jq. `jq 1.7+` tolerates the chunked writes without the
+workaround.
 
 ## Error Shapes and Exit Codes
 
@@ -257,8 +304,8 @@ On failure, every command emits:
 {"ok": false, "error": "<message>", "hint": "<optional remediation hint>"}
 ```
 
-The `hint` field is present only when there is an actionable next step (e.g.
-`"Run akm add <source> --trust to bypass the audit for this source."`).
+The `hint` field is present only when there is an actionable next step (a
+suggested flag or alternate command).
 
 Exit codes:
 

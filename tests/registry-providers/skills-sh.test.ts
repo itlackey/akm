@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
+import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/registry/providers/skills-sh";
@@ -28,7 +29,7 @@ const FIXTURE_RESPONSE = {
 const createdTmpDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
 
-function createTmpDir(prefix = "akm-skills-sh-"): string {
+function _createTmpDir(prefix = "akm-skills-sh-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;
@@ -86,10 +87,11 @@ function makeProvider(url: string, name = "skills.sh"): RegistryProvider {
   return factory({ url, name });
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-skills-cache-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 });
 
 afterEach(() => {
@@ -101,12 +103,8 @@ afterEach(() => {
     }
   }
   servers.length = 0;
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

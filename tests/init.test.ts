@@ -12,36 +12,26 @@ import os from "node:os";
 import path from "node:path";
 
 import { akmInit } from "../src/commands/init";
-
-const tempDirs: string[] = [];
-const savedEnv = {
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  HOME: process.env.HOME,
-};
+import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+let cleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-init-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-init-config-");
-  process.env.HOME = makeTempDir("akm-init-home-");
+  process.env.AKM_FORCE_INIT_TMP_STASH = "1";
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const homeResult = sandboxHome(cfgResult.cleanup);
+  cleanup = homeResult.cleanup;
 });
 
 afterEach(() => {
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  if (savedEnv.HOME === undefined) delete process.env.HOME;
-  else process.env.HOME = savedEnv.HOME;
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  delete process.env.AKM_FORCE_INIT_TMP_STASH;
+  cleanup();
+  cleanup = () => {};
 });
 
 describe("akm init", () => {

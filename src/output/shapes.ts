@@ -1,589 +1,103 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Pure shaping functions that select and trim fields from command result
  * objects according to the active detail level / agent mode.
  *
  * Every function in this module is side-effect free and operates on plain
  * `Record<string, unknown>` shapes, which makes them trivial to unit test.
+ *
+ * Output shapes are registered via `registerOutputShape` — see the per-command
+ * modules in `src/output/shapes/` for individual registrations. The central
+ * `shapeForCommand` dispatcher looks up the registry and throws for unknown
+ * commands (v1 spec §9 — exhaustive registry, no silent fallback).
  */
 
-import type { DetailLevel } from "./context";
+import { UsageError } from "../core/errors";
+import type { DetailLevel, ShapeMode } from "./context";
+import { getOutputShapeHandler } from "./shapes/registry";
 
-const NORMAL_DESCRIPTION_LIMIT = 250;
+// Re-export helpers so existing imports from `shapes.ts` keep working.
+export {
+  capDescription,
+  NORMAL_DESCRIPTION_LIMIT,
+  pickFields,
+  shapeAssetHit,
+  shapeDistillOutput,
+  shapeEventEntry,
+  shapeEventsOutput,
+  shapeHistoryEntry,
+  shapeHistoryOutput,
+  shapeProposalAcceptOutput,
+  shapeProposalDiffOutput,
+  shapeProposalEntry,
+  shapeProposalListOutput,
+  shapeProposalProducerOutput,
+  shapeProposalRejectOutput,
+  shapeProposalShowOutput,
+  shapeRegistrySearchOutput,
+  shapeSearchHit,
+  shapeSearchHitForAgent,
+  shapeSearchOutput,
+  shapeShowOutput,
+  truncateDescription,
+} from "./shapes/helpers";
+export type { OutputShapeHandler } from "./shapes/registry";
+// Re-export registry API so callers can use this module as the single entry
+// point (backward compat).
+export { deregisterOutputShape, registerOutputShape } from "./shapes/registry";
 
-export function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
-  switch (command) {
-    case "search":
-      return shapeSearchOutput(result as Record<string, unknown>, detail, forAgent);
-    case "registry-search":
-      return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
-    case "show":
-      return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
-    // Output shape registration for `akm history` — paired with the textRenderer in text.ts.
-    case "history":
-      return shapeHistoryOutput(result as Record<string, unknown>, detail);
-    // Output shape registration for `akm events list` and `akm events tail`
-    // (#204). Both share the same envelope; the renderer in text.ts uses
-    // distinct command names so it can format streaming differently.
-    case "events-list":
-    case "events-tail":
-      return shapeEventsOutput(result as Record<string, unknown>, detail);
-    // Output shape registration for `akm proposal {list,show,accept,reject,diff}`
-    // (#225). Each verb gets its own arm so the registry stays exhaustive (no
-    // silent JSON.stringify fallback). The proposal payload is reshaped per
-    // detail level — `brief` omits the full content body, while some proposal
-    // shapers still retain normal-level metadata such as review details;
-    // `full`/`agent` includes everything.
-    case "proposal-list":
-      return shapeProposalListOutput(result as Record<string, unknown>, detail);
-    case "proposal-show":
-      return shapeProposalShowOutput(result as Record<string, unknown>, detail);
-    case "proposal-accept":
-      return shapeProposalAcceptOutput(result as Record<string, unknown>, detail);
-    case "proposal-reject":
-      return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
-    case "proposal-diff":
-      return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
-    // Output shape registration for `akm reflect` and `akm propose` (#226).
-    // Both share the proposal-producer envelope shape (success carries a
-    // proposal entry; failure carries an AgentFailureReason discriminant).
-    case "reflect":
-    case "propose":
-      return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
-    // Output shape registration for `akm distill <ref>` (#228). The shape is
-    // simple — outcome + ids + optional payload — so `brief` strips the full
-    // proposal blob, `normal` keeps the headline fields, and `full` projects
-    // everything for downstream automation.
-    case "distill":
-      return shapeDistillOutput(result as Record<string, unknown>, detail);
-    // Identity-passthrough commands — registered here so the registry stays
-    // exhaustive (v1 spec §9). Each result object is already shaped at the
-    // command boundary; the registry just confirms there's no surprise
-    // command name slipping through.
-    case "add":
-    case "clone":
-    case "config":
-    case "curate":
-    case "disable":
-    case "enable":
-    case "feedback":
-    case "import":
-    case "index":
-    case "info":
-    case "init":
-    case "list":
-    case "registry-add":
-    case "registry-build-index":
-    case "registry-list":
-    case "registry-remove":
-    case "remember":
-    case "remove":
-    case "save":
-    case "update":
-    case "upgrade":
-    case "vault-create":
-    case "vault-list":
-    case "vault-set":
-    case "vault-unset":
-    case "wiki-create":
-    case "wiki-ingest":
-    case "wiki-lint":
-    case "wiki-list":
-    case "wiki-pages":
-    case "wiki-register":
-    case "wiki-remove":
-    case "wiki-show":
-    case "wiki-stash":
-    case "workflow-complete":
-    case "workflow-create":
-    case "workflow-list":
-    case "workflow-next":
-    case "workflow-resume":
-    case "workflow-start":
-    case "workflow-status":
-    case "workflow-validate":
-      return result;
-    default:
-      // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
-      // fallback. A missing case here is a registration bug — fail loudly so
-      // the caller (or its tests) sees the missing command name.
-      throw new Error(`output shape not registered for command: ${command}`);
-  }
-}
+// ── Per-command shape modules (self-register at import time) ──────────────────
+// Importing these modules triggers their `registerOutputShape(...)` calls.
+// These imports must come AFTER the registry module has been loaded (guaranteed
+// by the import order above).
+import "./shapes/search";
+import "./shapes/curate";
+import "./shapes/registry-search";
+import "./shapes/show";
+import "./shapes/history";
+import "./shapes/events";
+import "./shapes/proposal-list";
+import "./shapes/proposal-show";
+import "./shapes/proposal-accept";
+import "./shapes/proposal-reject";
+import "./shapes/proposal-diff";
+import "./shapes/proposal-producer";
+import "./shapes/distill";
+import "./shapes/env-list";
+import "./shapes/vault-list";
+import "./shapes/secret-list";
+import "./shapes/passthrough";
+
+// ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
- * Shape the result of `akm reflect` / `akm propose`. On success we surface
- * the queued proposal entry (using the standard proposal-entry shaper so
- * detail levels behave uniformly with `akm proposal show`). On failure we
- * surface the structured failure-reason envelope as-is — the failure
- * surface is small and the reason / error text is always load-bearing.
+ * Commands whose shape handler implements the `summary` projection. For every
+ * other command, `--shape summary` is a usage error (v1 §5 — honest rejection
+ * for a soon-frozen contract, not a silent fallback to `human`).
  */
-export function shapeProposalProducerOutput(
-  result: Record<string, unknown>,
+const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
+
+export function shapeForCommand(
+  command: string,
+  result: unknown,
   detail: DetailLevel,
-): Record<string, unknown> {
-  if (result.ok === false) {
-    const base: Record<string, unknown> = {
-      ok: false,
-      reason: result.reason,
-      error: result.error,
-      ...(result.ref !== undefined ? { ref: result.ref } : {}),
-      ...(result.type !== undefined ? { type: result.type } : {}),
-      ...(result.name !== undefined ? { name: result.name } : {}),
-      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-    };
-    if (detail === "full") {
-      return {
-        schemaVersion: result.schemaVersion ?? 1,
-        ...base,
-        ...(result.stdout !== undefined ? { stdout: result.stdout } : {}),
-        ...(result.stderr !== undefined ? { stderr: result.stderr } : {}),
-      };
-    }
-    return base;
-  }
-  const proposal = (result.proposal as Record<string, unknown>) ?? {};
-  const base: Record<string, unknown> = {
-    ok: true,
-    ref: result.ref,
-    ...(result.agentProfile !== undefined ? { agentProfile: result.agentProfile } : {}),
-    ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
-    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") {
-    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
-  }
-  if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
-  }
-  // full / agent: project everything including the payload.
-  return pickFields(entry, [
-    "id",
-    "ref",
-    "status",
-    "source",
-    "sourceRun",
-    "createdAt",
-    "updatedAt",
-    "payload",
-    "review",
-  ]);
-}
-
-export function shapeProposalListOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const proposals = Array.isArray(result.proposals) ? (result.proposals as Record<string, unknown>[]) : [];
-  const shaped = proposals.map((p) => shapeProposalEntry(p, detail));
-  const base: Record<string, unknown> = {
-    totalCount: result.totalCount ?? shaped.length,
-    proposals: shaped,
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeProposalShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const proposal = (result.proposal as Record<string, unknown>) ?? {};
-  const validation = result.validation as Record<string, unknown> | undefined;
-  const base: Record<string, unknown> = {
-    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
-    ...(validation ? { validation } : {}),
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeProposalAcceptOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-): Record<string, unknown> {
-  const proposal = (result.proposal as Record<string, unknown>) ?? {};
-  const base: Record<string, unknown> = {
-    ok: result.ok ?? true,
-    id: result.id,
-    ref: result.ref,
-    assetPath: result.assetPath,
-    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeProposalRejectOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-): Record<string, unknown> {
-  const proposal = (result.proposal as Record<string, unknown>) ?? {};
-  const base: Record<string, unknown> = {
-    ok: result.ok ?? true,
-    id: result.id,
-    ref: result.ref,
-    ...(result.reason !== undefined ? { reason: result.reason } : {}),
-    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeDistillOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const proposal = result.proposal as Record<string, unknown> | undefined;
-  if (detail === "brief") {
-    return pickFields(result, ["ok", "outcome", "inputRef", "lessonRef", "proposalId", "message"]);
-  }
-  const base: Record<string, unknown> = {
-    ok: result.ok ?? true,
-    outcome: result.outcome,
-    inputRef: result.inputRef,
-    lessonRef: result.lessonRef,
-    ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}),
-    ...(result.message !== undefined ? { message: result.message } : {}),
-    ...(Array.isArray(result.findings) && result.findings.length > 0 ? { findings: result.findings } : {}),
-    ...(proposal ? { proposal: shapeProposalEntry(proposal, detail === "summary" ? "normal" : detail) } : {}),
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeProposalDiffOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const base: Record<string, unknown> = {
-    id: result.id,
-    ref: result.ref,
-    isNew: result.isNew,
-    unified: result.unified,
-    ...(result.targetPath !== undefined ? { targetPath: result.targetPath } : {}),
-  };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const events = Array.isArray(result.events) ? (result.events as Record<string, unknown>[]) : [];
-  const shapedEvents = events.map((event) => shapeEventEntry(event, detail));
-  const base: Record<string, unknown> = {
-    ...(result.ref !== undefined ? { ref: result.ref } : {}),
-    ...(result.type !== undefined ? { type: result.type } : {}),
-    ...(result.since !== undefined ? { since: result.since } : {}),
-    ...(typeof result.sinceOffset === "number" ? { sinceOffset: result.sinceOffset } : {}),
-    totalCount: result.totalCount ?? shapedEvents.length,
-    events: shapedEvents,
-  };
-  if (typeof result.nextOffset === "number") {
-    base.nextOffset = result.nextOffset;
-  }
-  if (typeof result.reason === "string") {
-    base.reason = result.reason;
-  }
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
-}
-
-export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") {
-    return pickFields(entry, ["eventType", "ref", "ts"]);
-  }
-  if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["eventType", "ref", "ts"]);
-  }
-  // full / agent: project everything the reader emits.
-  return pickFields(entry, ["id", "schemaVersion", "eventType", "ref", "ts", "metadata"]);
-}
-
-export function shapeHistoryOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const entries = Array.isArray(result.entries) ? (result.entries as Record<string, unknown>[]) : [];
-  const shapedEntries = entries.map((entry) => shapeHistoryEntry(entry, detail));
-  if (detail === "full") {
-    return {
-      schemaVersion: result.schemaVersion ?? 1,
-      ...(result.ref !== undefined ? { ref: result.ref } : {}),
-      ...(result.since !== undefined ? { since: result.since } : {}),
-      totalCount: result.totalCount ?? shapedEntries.length,
-      entries: shapedEntries,
-      // `sources` lists the event sources included in this response.
-      // Always contains "usage_events"; also "events.jsonl" when
-      // --include-proposals was specified.
-      ...(Array.isArray(result.sources) ? { sources: result.sources } : {}),
-      ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-    };
-  }
-  return {
-    ...(result.ref !== undefined ? { ref: result.ref } : {}),
-    ...(result.since !== undefined ? { since: result.since } : {}),
-    totalCount: result.totalCount ?? shapedEntries.length,
-    entries: shapedEntries,
-    ...(Array.isArray(result.sources) ? { sources: result.sources } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-  };
-}
-
-export function shapeHistoryEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") {
-    // signal is load-bearing for feedback rows (positive/negative) so we
-    // project it even at brief — without it the entry is ambiguous.
-    return pickFields(entry, ["eventType", "ref", "signal", "createdAt"]);
-  }
-  if (detail === "normal" || detail === "summary") {
-    return pickFields(entry, ["eventType", "ref", "signal", "query", "createdAt"]);
-  }
-  // full / agent: return everything the reader emits.
-  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "metadata", "createdAt"]);
-}
-
-export function shapeSearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  forAgent = false,
-): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
-  const shapedHits = forAgent
-    ? hits.map((hit) => shapeSearchHitForAgent(hit))
-    : hits.map((hit) => shapeSearchHit(hit, detail));
-  const shapedRegistryHits = forAgent
-    ? registryHits.map((hit) => shapeSearchHitForAgent(hit))
-    : registryHits.map((hit) => shapeSearchHit(hit, detail));
-
-  if (forAgent) {
-    return {
-      hits: shapedHits,
-      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-      ...(result.tip ? { tip: result.tip } : {}),
-    };
-  }
-
-  if (detail === "full") {
-    return {
-      schemaVersion: result.schemaVersion,
-      stashDir: result.stashDir,
-      source: result.source,
-      hits: shapedHits,
-      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-      ...(result.semanticSearch ? { semanticSearch: result.semanticSearch } : {}),
-      ...(result.tip ? { tip: result.tip } : {}),
-      ...(result.warnings ? { warnings: result.warnings } : {}),
-      ...(result.timing ? { timing: result.timing } : {}),
-    };
-  }
-
-  return {
-    hits: shapedHits,
-    ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-    ...(result.tip ? { tip: result.tip } : {}),
-  };
-}
-
-export function shapeRegistrySearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
-
-  // Shape stash hits as registry type
-  const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
-
-  // Shape asset hits by detail level
-  const shapedAssetHits = assetHits.map((hit) => shapeAssetHit(hit, detail));
-
-  const shaped: Record<string, unknown> = {
-    hits: shapedKitHits,
-    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-  };
-
-  if (detail === "full") {
-    shaped.query = result.query;
-  }
-
-  return shaped;
-}
-
-export function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
-  if (detail === "normal") {
-    return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "stash", "action", "estimatedTokens"]),
-      NORMAL_DESCRIPTION_LIMIT,
+  shape: ShapeMode = "human",
+): unknown {
+  if (shape === "summary" && !SHAPE_SUMMARY_COMMANDS.has(command)) {
+    throw new UsageError(
+      `'--shape summary' is not supported for 'akm ${command}'. It is only available on 'akm show'.`,
+      "INVALID_SHAPE_VALUE",
     );
   }
-  return hit;
-}
-
-export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (hit.type === "registry") {
-    if (detail === "brief") {
-      // RegistrySearchHit uses `title` (not `name`); always project installRef
-      // and score so callers can use the result without --detail full (QA #28).
-      const out = pickFields(hit, ["title", "name", "installRef", "score"]);
-      // Normalise: if only title exists, expose it as `name` for consistency
-      if (out.title && !out.name) out.name = out.title;
-      return out;
-    }
-    if (detail === "normal") {
-      // `curated` was removed in v1 (spec §4.2). Renderers project optional
-      // hit-level `warnings` instead so providers can surface non-fatal issues.
-      const out = capDescription(
-        pickFields(hit, ["title", "name", "description", "action", "installRef", "score", "warnings"]),
-        NORMAL_DESCRIPTION_LIMIT,
-      );
-      if (out.title && !out.name) out.name = out.title;
-      return out;
-    }
-    return hit;
+  const handler = getOutputShapeHandler(command);
+  if (handler) {
+    return handler(result, detail, shape);
   }
-
-  // Stash hit (local or remote)
-  // `ref` is included at `brief` so agents can run `akm show <ref>` without
-  // needing --detail full or --for-agent (REC-03).
-  if (detail === "brief") return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
-  if (detail === "normal") {
-    // `warnings` is projected at `normal` so non-fatal hit-level issues are
-    // visible without forcing callers up to `--detail full`. Optional
-    // `quality` (v1 spec §4.2) is also surfaced when present so callers
-    // can see why a `proposed` entry showed up under `--include-proposed`.
-    const shaped = capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings", "quality"]),
-      NORMAL_DESCRIPTION_LIMIT,
-    );
-    if (Array.isArray(hit.keys) && hit.keys.length > 0) shaped.keys = hit.keys;
-    return shaped;
-  }
-  return hit;
+  // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
+  // fallback. A missing case here is a registration bug — fail loudly so
+  // the caller (or its tests) sees the missing command name.
+  throw new Error(`output shape not registered for command: ${command}`);
 }
-
-/** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
-export function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens", "keys"]);
-  return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
-}
-
-export function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
-  if (typeof hit.description !== "string") return hit;
-  return { ...hit, description: truncateDescription(hit.description, limit) };
-}
-
-export function truncateDescription(description: string, limit: number): string {
-  const normalized = description.replace(/\s+/g, " ").trim();
-  if (normalized.length <= limit) return normalized;
-
-  const truncated = normalized.slice(0, limit - 1);
-  const lastSpace = truncated.lastIndexOf(" ");
-  const safe = lastSpace >= Math.floor(limit * 0.6) ? truncated.slice(0, lastSpace) : truncated;
-  return `${safe.trimEnd()}...`;
-}
-
-export function shapeShowOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  forAgent = false,
-): Record<string, unknown> {
-  if (forAgent) {
-    return pickFields(result, [
-      "type",
-      "name",
-      "description",
-      "action",
-      "content",
-      "template",
-      "prompt",
-      "run",
-      "setup",
-      "cwd",
-      "activeRun",
-      "toolPolicy",
-      "modelHint",
-      "agent",
-      "parameters",
-      "workflowTitle",
-      "workflowParameters",
-      "steps",
-      "keys",
-      "comments",
-    ]);
-  }
-  if (detail === "summary") {
-    return pickFields(result, [
-      "type",
-      "name",
-      "description",
-      "tags",
-      "parameters",
-      "workflowTitle",
-      "action",
-      "run",
-      "origin",
-      "keys",
-      "comments",
-    ]);
-  }
-
-  const base = pickFields(result, [
-    "type",
-    "name",
-    "origin",
-    "action",
-    "description",
-    "tags",
-    "content",
-    "template",
-    "prompt",
-    "toolPolicy",
-    "modelHint",
-    "agent",
-    "parameters",
-    "workflowTitle",
-    "workflowParameters",
-    "steps",
-    "run",
-    "setup",
-    "cwd",
-    "activeRun",
-    "keys",
-    "comments",
-    // path and editable are always projected so JSON consumers can locate and
-    // edit the asset without needing --detail full (QA #7).
-    "path",
-    "editable",
-  ]);
-
-  if (detail !== "full") {
-    return base;
-  }
-
-  return {
-    schemaVersion: 1,
-    ...base,
-    ...pickFields(result, ["editHint"]),
-  };
-}
-
-export function pickFields(source: Record<string, unknown>, fields: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const field of fields) {
-    if (source[field] !== undefined) {
-      result[field] = source[field];
-    }
-  }
-  return result;
-}
-
-export { NORMAL_DESCRIPTION_LIMIT };

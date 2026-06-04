@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRgAvailable, resolveRg } from "../src/setup/ripgrep-resolve";
+import { type Cleanup, sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -21,8 +22,7 @@ afterAll(() => {
 });
 
 const origPath = process.env.PATH;
-const origXdgCacheHome = process.env.XDG_CACHE_HOME;
-const origHome = process.env.HOME;
+let envCleanup: Cleanup = () => {};
 
 afterEach(() => {
   if (origPath === undefined) {
@@ -30,21 +30,14 @@ afterEach(() => {
   } else {
     process.env.PATH = origPath;
   }
-  if (origXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = origXdgCacheHome;
-  }
-  if (origHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = origHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 /** Isolate cache so getBinDir() never finds a real rg binary. */
 function isolateCache(): void {
-  process.env.XDG_CACHE_HOME = makeTempDir();
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 }
 
 // ── resolveRg ───────────────────────────────────────────────────────────────

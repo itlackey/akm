@@ -98,7 +98,7 @@ describe("error hint rendering (#8)", () => {
   test("ConfigError with hint: true returns hint", () => {
     const err = new ConfigError("bad", "STASH_DIR_NOT_FOUND");
     expect(err.hint()).toBeDefined();
-    expect(err.hint()).toMatch(/akm init/);
+    expect(err.hint()).toMatch(/akm setup/);
   });
 
   test("ConfigError with explicit hint returns it", () => {
@@ -150,15 +150,16 @@ describe("config-cli parseConfigValue sources error message (#16)", () => {
     }
   });
 
-  test("invalid array element shows 'sources[0]' not 'stashes[0]'", () => {
+  test("invalid array element shows 'sources.0' not 'stashes.0'", () => {
+    // Post-rewrite: Zod uses dotted indexing in error paths (sources.0).
     try {
       parseConfigValue("sources", "[{}]");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       const msg = (err as UsageError).message;
-      expect(msg).toContain("sources[0]");
-      expect(msg).not.toContain("stashes[0]");
+      expect(msg).toContain("sources.0");
+      expect(msg).not.toContain("stashes.0");
     }
   });
 });

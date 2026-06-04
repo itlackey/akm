@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Source provider factory map.
  *
@@ -11,6 +15,7 @@
  */
 
 import type { AkmConfig } from "../core/config";
+import { getSources } from "../core/config";
 import { createProviderRegistry } from "../registry/create-provider-registry";
 import type { SourceProvider, SourceProviderFactory } from "./provider";
 
@@ -33,7 +38,7 @@ export function resolveSourceProviderFactory(type: string): SourceProviderFactor
 export function resolveSourceProviders(config: AkmConfig): SourceProvider[] {
   const providers: SourceProvider[] = [];
 
-  for (const entry of config.sources ?? config.stashes ?? []) {
+  for (const entry of getSources(config)) {
     if (entry.enabled === false) continue;
     const factory = registry.resolve(entry.type);
     if (factory) {

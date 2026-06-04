@@ -1,8 +1,9 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRgAvailable, resolveRg } from "../src/setup/ripgrep-resolve";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -24,6 +25,22 @@ afterAll(() => {
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── Environment isolation ───────────────────────────────────────────────────
+
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
+
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
 });
 
 function writeFile(filePath: string, content = "") {
@@ -152,34 +169,18 @@ test("search pipeline returns ranked results when index exists", async () => {
     }),
   );
 
-  // Isolation: ensure index cache and config are written to temp directories
-  const oldXdgCacheHome = process.env.XDG_CACHE_HOME;
-  const oldXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const oldAkmStashDir = process.env.AKM_STASH_DIR;
-  const tempCacheDir = tmpDir();
-  const tempConfigDir = tmpDir();
-  process.env.XDG_CACHE_HOME = tempCacheDir;
-  process.env.XDG_CONFIG_HOME = tempConfigDir;
+  // Use the sandbox stash dir for the index and search
+  process.env.AKM_STASH_DIR = stashDir;
 
-  try {
-    // Build index
-    process.env.AKM_STASH_DIR = stashDir;
-    const { akmIndex } = await import("../src/indexer/indexer");
-    await akmIndex({ stashDir });
+  // Build index
+  const { akmIndex } = await import("../src/indexer/indexer");
+  await akmIndex({ stashDir });
 
-    // Search — TF-IDF should rank docker-related results first
-    const { akmSearch } = await import("../src/commands/search");
-    const result = await akmSearch({ query: "docker", type: "any" });
+  // Search — TF-IDF should rank docker-related results first
+  const { akmSearch } = await import("../src/commands/search");
+  const result = await akmSearch({ query: "docker", type: "any" });
 
-    expect(result.hits.length).toBeGreaterThan(0);
-    // Docker-related result should be ranked first
-    expect(result.hits[0].name).toContain("docker");
-  } finally {
-    if (oldXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-    else process.env.XDG_CACHE_HOME = oldXdgCacheHome;
-    if (oldXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-    else process.env.XDG_CONFIG_HOME = oldXdgConfigHome;
-    if (oldAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-    else process.env.AKM_STASH_DIR = oldAkmStashDir;
-  }
+  expect(result.hits.length).toBeGreaterThan(0);
+  // Docker-related result should be ranked first
+  expect(result.hits[0].name).toContain("docker");
 });

@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * `akm history` — surfaces internal mutation/usage events for a single asset
  * (`--ref`) or stash-wide.
@@ -18,6 +22,8 @@ import type { Database } from "bun:sqlite";
 import { parseAssetRef } from "../core/asset-ref";
 import { UsageError } from "../core/errors";
 import { type EventsContext, readEvents } from "../core/events";
+import { listProposals } from "../core/proposals";
+import { isoToSqlite, parseSinceToIso } from "../core/time";
 import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import type { UsageEventRow } from "../indexer/usage-events";
 
@@ -30,8 +36,31 @@ export interface HistoryEntry {
   entryId: number | null;
   query: string | null;
   signal: string | null;
+  source: string | null;
   metadata: unknown;
   createdAt: string;
+}
+
+/**
+ * Per-source accept rate metrics for proposal-source aggregation (F-4 / #385).
+ *
+ * Provides the core self-measurement metric for recursive self-improvement:
+ * if reflect proposals are accepted at 20% and distill proposals at 60%,
+ * that guides resource allocation to higher-ROI generators.
+ */
+export interface AcceptRateEntry {
+  /** Proposal source (one of PROPOSAL_SOURCES or a custom value). */
+  source: string;
+  /** Total proposals seen (accepted + rejected). */
+  total: number;
+  /** Proposals accepted. */
+  accepted: number;
+  /** Proposals rejected. */
+  rejected: number;
+  /** Proposals still pending (not yet decided). */
+  pending: number;
+  /** Accept rate as a fraction [0, 1]. null when total decided = 0. */
+  acceptRate: number | null;
 }
 
 export interface HistoryResponse {
@@ -45,12 +74,23 @@ export interface HistoryResponse {
    * Also contains "events.jsonl" when `--include-proposals` was specified.
    */
   sources: string[];
+  /**
+   * Accept-rate per proposal source (F-4 / #385). Present only when
+   * `--accept-rate-by-source` flag is set. Enables self-measurement of
+   * generator ROI for the recursive self-improvement loop.
+   */
+  acceptRateBySource?: AcceptRateEntry[];
   warnings?: string[];
 }
 
 export interface HistoryOptions {
   ref?: string;
   since?: string;
+  /**
+   * Filter by event source: "user" for direct CLI invocations, "improve" for
+   * operations triggered by `akm improve`.
+   */
+  source?: "user" | "improve";
   /**
    * When true, proposal lifecycle events (`promoted`, `rejected`) from the
    * `events.jsonl` stream are merged into the history output alongside usage
@@ -60,6 +100,16 @@ export interface HistoryOptions {
    * for callers that do not need proposal lifecycle visibility.
    */
   includeProposals?: boolean;
+  /**
+   * When true, compute accept-rate-per-source metrics from the proposal store
+   * and include them in the response as `acceptRateBySource` (F-4 / #385).
+   *
+   * Requires access to the stash directory. Reads all proposals (pending,
+   * accepted, rejected) from the `.akm/proposals/` tree.
+   */
+  acceptRateBySource?: boolean;
+  /** Override stash directory for proposal store access. */
+  stashDir?: string;
   /** Test seam — caller-supplied DB. Defaults to opening the cache DB. */
   db?: Database;
   /** Test seam — overrides events.jsonl path and clock for proposal events. */
@@ -70,38 +120,6 @@ export interface HistoryOptions {
 const PROPOSAL_EVENT_TYPES = new Set(["promoted", "rejected"]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function normalizeSince(since: string): string {
-  // Accept "YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SSZ", epoch ms, or anything Date can parse.
-  const trimmed = since.trim();
-  if (!trimmed) {
-    throw new UsageError("--since cannot be empty.", "INVALID_FLAG_VALUE");
-  }
-  // Pure-digit input → epoch milliseconds
-  if (/^\d+$/.test(trimmed)) {
-    const ms = Number.parseInt(trimmed, 10);
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) {
-      throw new UsageError(`Invalid --since value: ${since}`, "INVALID_FLAG_VALUE");
-    }
-    return d
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d+Z$/, "");
-  }
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new UsageError(
-      `Invalid --since value: ${since}. Expected ISO timestamp (e.g. 2026-04-01T00:00:00Z) or epoch ms.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  // Match the "YYYY-MM-DD HH:MM:SS" format SQLite's datetime('now') stores.
-  return parsed
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d+Z$/, "");
-}
 
 function parseMetadata(raw: string | null): unknown {
   if (!raw) return null;
@@ -120,6 +138,7 @@ function toEntry(row: UsageEventRow): HistoryEntry {
     entryId: row.entry_id,
     query: row.query,
     signal: row.signal,
+    source: row.source,
     metadata: parseMetadata(row.metadata),
     createdAt: row.created_at,
   };
@@ -162,7 +181,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     normalizedRef = trimmed;
   }
 
-  const sinceNormalized = options.since !== undefined ? normalizeSince(options.since) : undefined;
+  const sinceNormalized = options.since !== undefined ? isoToSqlite(parseSinceToIso(options.since)) : undefined;
 
   const db = options.db ?? openExistingDatabase();
   const ownsDb = options.db === undefined;
@@ -177,8 +196,12 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
       conditions.push("created_at >= ?");
       params.push(sinceNormalized);
     }
+    if (options.source !== undefined) {
+      conditions.push("source = ?");
+      params.push(options.source);
+    }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, created_at
+    const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
                  FROM usage_events ${where}
                  ORDER BY id ASC`;
 
@@ -190,7 +213,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     const proposalEntries: HistoryEntry[] = [];
 
     if (options.includeProposals === true) {
-      sources.push("events.jsonl");
+      sources.push("state.db");
 
       // Convert sinceNormalized ("YYYY-MM-DD HH:MM:SS") to ISO for readEvents
       // which uses `ts >= since` where `ts` is ISO-8601.
@@ -220,6 +243,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
           entryId: null,
           query: null,
           signal: null,
+          source: null,
           metadata: event.metadata ?? null,
           createdAt,
         });
@@ -235,6 +259,46 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
       return a.id - b.id;
     });
 
+    // ── Accept-rate-per-source (F-4 / #385) ─────────────────────────────────
+    let acceptRateBySource: AcceptRateEntry[] | undefined;
+    if (options.acceptRateBySource) {
+      const stashDir = options.stashDir;
+      if (stashDir) {
+        const bySource = new Map<string, { accepted: number; rejected: number; pending: number }>();
+
+        const countProposals = (statuses: Array<"pending" | "accepted" | "rejected">, includeArchive: boolean) => {
+          for (const status of statuses) {
+            const proposals = listProposals(stashDir, { status, includeArchive });
+            for (const p of proposals) {
+              const src = p.source || "(unknown)";
+              const entry = bySource.get(src) ?? { accepted: 0, rejected: 0, pending: 0 };
+              if (status === "accepted") entry.accepted++;
+              else if (status === "rejected") entry.rejected++;
+              else entry.pending++;
+              bySource.set(src, entry);
+            }
+          }
+        };
+
+        countProposals(["pending"], false);
+        countProposals(["accepted", "rejected"], true);
+
+        acceptRateBySource = Array.from(bySource.entries())
+          .map(([source, counts]) => {
+            const decided = counts.accepted + counts.rejected;
+            return {
+              source,
+              total: decided + counts.pending,
+              accepted: counts.accepted,
+              rejected: counts.rejected,
+              pending: counts.pending,
+              acceptRate: decided > 0 ? counts.accepted / decided : null,
+            } satisfies AcceptRateEntry;
+          })
+          .sort((a, b) => b.total - a.total); // Most active source first
+      }
+    }
+
     const response: HistoryResponse = {
       schemaVersion: 1,
       ...(normalizedRef !== undefined ? { ref: normalizedRef } : {}),
@@ -242,6 +306,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
       totalCount: entries.length,
       entries,
       sources,
+      ...(acceptRateBySource !== undefined ? { acceptRateBySource } : {}),
     };
     return response;
   } finally {

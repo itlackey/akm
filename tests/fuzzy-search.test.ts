@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { closeDatabase, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -29,23 +30,17 @@ afterAll(() => {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const savedEnv: Record<string, string | undefined> = {};
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  savedEnv.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
-  savedEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CACHE_HOME = tmpDir("cache");
-  process.env.XDG_CONFIG_HOME = tmpDir("config");
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
 });
 
 afterEach(() => {
-  for (const [key, val] of Object.entries(savedEnv)) {
-    if (val === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = val;
-    }
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

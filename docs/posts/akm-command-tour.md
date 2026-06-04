@@ -21,7 +21,7 @@ That's the big idea. The practical question is how the command surface fits toge
 
 This post walks through the CLI by job-to-be-done, with real examples of when you'd use each command.
 
-> This command-family framing reflects `akm` v0.7.0.
+> This command-family framing reflects `akm` v0.8.0.
 
 ## The Short Version
 
@@ -32,7 +32,7 @@ You can think about `akm` in seven layers:
 3. **Find and inspect assets** — `curate`, `search`, `show`
 4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
 5. **Run repeatable procedures** — `workflow`
-6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
+6. **Continuously improve the stash** — `feedback`, `history`, `events`, `improve`, `propose`, `proposals`, `accept`, `reject`
 7. **Operate the CLI comfortably** — `help`, `hints`, `completions`, `upgrade`
 
 If you only remember one mental model, make it this:
@@ -363,12 +363,12 @@ akm events tail --format jsonl
 
 Real-world use: another process is watching `akm` activity and reacting when new feedback, imports, or proposals land.
 
-### `akm reflect`
+### `akm improve`
 
-Ask an external agent to propose improvements to an existing asset.
+Ask an external agent to propose improvements to an existing asset or to generate a new asset proposal.
 
 ```sh
-akm reflect skill:code-review --task "make this stricter about test coverage"
+akm improve skill:code-review --task "make this stricter about test coverage"
 ```
 
 Real-world use: you have a decent review skill, but you want an agent to improve it based on how it's actually being used.
@@ -383,7 +383,7 @@ akm propose workflow incident-rollback --task "Rollback procedure for failed pro
 
 Real-world use: repeated gaps in your stash show up in `history` and `events`, so you create a first draft for the missing workflow or skill.
 
-### `akm proposal`
+### Proposal Queue
 
 Review, diff, accept, or reject queued proposals.
 
@@ -395,12 +395,12 @@ akm proposal accept 42
 
 Real-world use: keep human review in the loop before generated assets become part of the live stash.
 
-### `akm distill`
+### `akm improve`
 
 Summarize feedback into a reusable lesson proposal.
 
 ```sh
-akm distill skill:code-review
+akm improve skill:code-review
 ```
 
 Real-world use: repeated feedback on a skill gets turned into a lesson asset that captures what people learned from using it.

@@ -31,6 +31,7 @@ import {
 } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
 import { cosineSimilarity } from "../src/llm/embedder";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -105,43 +106,17 @@ function makeNormalizedVec(dim: number, val = 1): number[] {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-vec-cache-");
-  testConfigDir = createTmpDir("akm-vec-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── Test a: tryVecScores runs when status is ready ─────────────────────────

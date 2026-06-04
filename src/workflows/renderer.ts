@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Show + indexing renderer for workflow assets.
  *
@@ -11,6 +15,7 @@ import { makeAssetRef } from "../core/asset-ref";
 import { UsageError } from "../core/errors";
 import type { AssetRenderer, RenderContext } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
+import { registerMetadataContributor } from "../indexer/metadata-contributors";
 import type { ShowResponse } from "../sources/types";
 import { cacheWorkflowDocument } from "./document-cache";
 import { parseWorkflow } from "./parser";
@@ -63,9 +68,13 @@ export const workflowMdRenderer: AssetRenderer = {
       })),
     };
   },
+};
 
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    const doc = loadDocument(ctx);
+registerMetadataContributor({
+  name: "workflow-document-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "workflow-md",
+  contribute(entry: StashEntry, { renderContext }: { renderContext: RenderContext }) {
+    const doc = loadDocument(renderContext);
     const hints = new Set<string>(entry.searchHints ?? []);
     hints.add(doc.title);
     for (const step of doc.steps) {
@@ -85,4 +94,4 @@ export const workflowMdRenderer: AssetRenderer = {
     }
     cacheWorkflowDocument(entry, doc);
   },
-};
+});

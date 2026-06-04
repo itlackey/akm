@@ -1,49 +1,44 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addStash, listStashes, removeStash } from "../src/commands/source-manage";
 import { loadConfig, saveConfig } from "../src/core/config";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-const createdTmpDirs: string[] = [];
+const fixtureDirs: string[] = [];
 
 function createTmpDir(prefix = "akm-src-mgmt-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
+  fixtureDirs.push(dir);
   return dir;
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
 let testStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-src-cache-");
-  testConfigDir = createTmpDir("akm-src-config-");
-  testStashDir = createTmpDir("akm-src-stash-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.AKM_STASH_DIR = testStashDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  testStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
   // Write initial config so loadConfig doesn't return defaults with stale caches
   saveConfig({ semanticSearchMode: "auto" });
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
-  for (const dir of createdTmpDirs) {
+  envCleanup();
+  envCleanup = () => {};
+  testStashDir = "";
+});
+
+afterAll(() => {
+  for (const dir of fixtureDirs.splice(0)) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch {}
   }
-  createdTmpDirs.length = 0;
 });
 
 // ── addStash ──────────────────────────────────────────────────────────

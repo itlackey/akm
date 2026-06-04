@@ -235,27 +235,6 @@ Only the listed paths are copied into the install cache. Paths must be
 relative to the package root and cannot escape it. The `.git` directory is
 always excluded.
 
-### Install Audit Controls
-
-Install-time auditing is enabled by default. You can configure it in
-`config.json` or via `akm config`:
-
-```sh
-akm config set security.installAudit.enabled false
-akm config set security.installAudit.blockOnCritical false
-akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
-akm config set security.installAudit.blockUnlistedRegistries true
-```
-
-- `security.installAudit.enabled` disables auditing entirely.
-- `security.installAudit.blockOnCritical` reports critical findings without
-  blocking the install when set to `false`.
-- `security.installAudit.registryAllowlist` allows only named registries or
-  hosts (for example `npm`, `github.com`, `gitlab.com`) when allowlisting is
-  enabled.
-- `security.installAudit.blockUnlistedRegistries` blocks installs whose source
-  does not match the allowlist.
-
 ## Managing Managed Sources
 
 ```bash
@@ -326,8 +305,8 @@ akm uses a pluggable provider system for registries. Each registry entry can
 specify a `provider` type that determines how it is searched. When omitted,
 the provider defaults to `"static-index"`.
 
-Registries discover *kits* (installable source bundles). They never store
-asset content directly — installing a kit creates a regular `sources[]`
+Registries discover *stashes* (installable source bundles). They never store
+asset content directly — installing a stash creates a regular `sources[]`
 entry that the indexer walks like any other source.
 
 ### Built-in Providers
@@ -358,7 +337,7 @@ Key behaviors:
 - Per-query response caching with 15-minute TTL
 - Stale cache fallback (up to 24 hours) on network failure
 - No authentication required
-- Toggle on/off via `akm enable skills.sh` / `akm disable skills.sh`
+- Toggle on/off via `akm config enable skills.sh` / `akm config disable skills.sh` (the bare `akm enable` / `akm disable` spellings still work in 0.8 but are deprecated and removed in 0.9.0)
 
 To install a skill found via skills.sh, use the `ref` field (GitHub
 `owner/repo`) with `akm add`:

@@ -12,51 +12,32 @@ import {
   resolveStashDir,
   toPosix,
 } from "../src/core/common";
+import { type Cleanup, sandboxHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── resolveStashDir ──────────────────────────────────────────────────────────
 
 describe("resolveStashDir", () => {
-  const origEnv = process.env.AKM_STASH_DIR;
-  const origXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const origHome = process.env.HOME;
+  let envCleanup: Cleanup = () => {};
   let testConfigHome: string;
 
   beforeEach(() => {
-    testConfigHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-config-"));
-    process.env.XDG_CONFIG_HOME = testConfigHome;
+    const homeResult = sandboxHome();
+    const cfgResult = sandboxXdgConfigHome(homeResult.cleanup);
+    testConfigHome = cfgResult.dir;
+    envCleanup = cfgResult.cleanup;
+    // Delete AKM_STASH_DIR so each test starts with a clean slate
+    delete process.env.AKM_STASH_DIR;
   });
 
   afterEach(() => {
-    if (origEnv === undefined) {
-      delete process.env.AKM_STASH_DIR;
-    } else {
-      process.env.AKM_STASH_DIR = origEnv;
-    }
-    if (origXdgConfigHome === undefined) {
-      delete process.env.XDG_CONFIG_HOME;
-    } else {
-      process.env.XDG_CONFIG_HOME = origXdgConfigHome;
-    }
-    if (origHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = origHome;
-    }
-    if (testConfigHome) {
-      fs.rmSync(testConfigHome, { recursive: true, force: true });
-    }
+    envCleanup();
+    envCleanup = () => {};
+    testConfigHome = "";
   });
 
   test("throws when no stash dir is configured and default does not exist", () => {
-    delete process.env.AKM_STASH_DIR;
-    // Point HOME to a tmp dir without an akm subdirectory
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-home-"));
-    process.env.HOME = tmpHome;
-    try {
-      expect(() => resolveStashDir()).toThrow("No stash directory found");
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    // HOME is already sandboxed (no akm subdir), AKM_STASH_DIR is deleted in beforeEach
+    expect(() => resolveStashDir()).toThrow("No stash directory found");
   });
 
   test("throws when AKM_STASH_DIR points to nonexistent path", () => {
@@ -101,17 +82,11 @@ describe("resolveStashDir", () => {
   });
 
   test("uses default stash dir when it exists", () => {
-    delete process.env.AKM_STASH_DIR;
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-home-"));
-    const defaultStash = path.join(tmpHome, "akm");
+    // HOME is already sandboxed to a fresh temp dir; create akm subdir there
+    const defaultStash = path.join(process.env.HOME as string, "akm");
     fs.mkdirSync(defaultStash, { recursive: true });
-    process.env.HOME = tmpHome;
-    try {
-      const result = resolveStashDir();
-      expect(result).toBe(defaultStash);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    const result = resolveStashDir();
+    expect(result).toBe(defaultStash);
   });
 
   test("env var takes precedence over config.json stashDir", () => {

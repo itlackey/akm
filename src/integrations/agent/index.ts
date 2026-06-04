@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Internal entry point for the `agent` integration. CLI-only project — no
  * public exports map. Other akm modules import from this barrel for the
@@ -7,10 +11,12 @@
  *   • Types: AgentProfile, AgentConfig, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
  *   • Config: parseAgentConfig, resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
- *   • Spawn: runAgent.
+ *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
 
+export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
+export { getCommandBuilder } from "./builders";
 export type {
   AgentConfig,
   AgentProfileConfig,
@@ -30,6 +36,8 @@ export type {
   WhichFn,
 } from "./detect";
 export { defaultWhich, detectAgentCliProfiles, pickDefaultAgentProfile } from "./detect";
+export type { PlatformModelMap } from "./model-aliases";
+export { listBuiltinModelAliases, resolveModel } from "./model-aliases";
 export type {
   AgentParseMode,
   AgentProfile,
@@ -40,8 +48,16 @@ export {
   getBuiltinAgentProfile,
   listBuiltinAgentProfiles,
 } from "./profiles";
-export type { AgentProposalPayload, ProposePromptInput, ReflectPromptInput } from "./prompts";
-export { buildProposePrompt, buildReflectPrompt, parseAgentProposalPayload, stripJsonFences } from "./prompts";
+export type { AgentProposalPayload, ProposePromptInput, ReflectPromptInput, SchemaRepairPromptInput } from "./prompts";
+export {
+  buildProposePrompt,
+  buildReflectPrompt,
+  buildSchemaRepairPrompt,
+  extractDraftConfidence,
+  parseAgentProposalPayload,
+  stripJsonFences,
+} from "./prompts";
+export { runAgentSdk } from "./sdk-runner";
 export type {
   AgentFailureReason,
   AgentRunResult,

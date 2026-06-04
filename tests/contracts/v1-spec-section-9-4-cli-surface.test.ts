@@ -25,6 +25,7 @@ const SHIPPED_COMMANDS = [
   "workflow",
   "vault",
   "wiki",
+  "graph",
   "enable",
   "disable",
   "completions",
@@ -35,7 +36,15 @@ const SHIPPED_COMMANDS = [
   "config",
 ] as const;
 
-const PLANNED_FOR_V1 = ["agent", "reflect", "propose", "proposal", "distill"] as const;
+// The proposal queue is now exposed as the `proposal` noun group (0.8 CLI
+// stabilization). The flat verbs (`proposals` / `accept` / `reject`) survive as
+// deprecated aliases (removed 0.9.0), so the spec still names them, but the
+// canonical v1 surface is `proposal <verb>`.
+const PLANNED_FOR_V1 = ["agent", "improve", "propose", "proposal"] as const;
+
+// Spec §9.4 still enumerates the deprecated flat verbs alongside the canonical
+// group; assert they remain documented as the alias surface.
+const PLANNED_FOR_V1_SPEC = [...PLANNED_FOR_V1, "proposals", "accept", "reject"] as const;
 
 describe("v1 spec §9.4 — CLI command surface", () => {
   const spec = readDoc(SPEC_PATH);
@@ -57,7 +66,7 @@ describe("v1 spec §9.4 — CLI command surface", () => {
   });
 
   test("§9.4 declares each planned-for-v1 command", () => {
-    for (const cmd of PLANNED_FOR_V1) {
+    for (const cmd of PLANNED_FOR_V1_SPEC) {
       // accept either `cmd` or `cmd <args>` patterns
       const re = new RegExp(`\`${cmd}\\b`);
       expect(re.test(section)).toBe(true);
@@ -72,8 +81,8 @@ describe("v1 spec §9.4 — CLI command surface", () => {
 describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   const cli = readDoc(CLI_DOC_PATH);
 
-  test("cli.md has an Available-since-0.7.0 section listing the 0.7.0 commands", () => {
-    const planned = extractSection(cli, "## Agent reflection and proposal queue (0.7.0+)");
+  test("cli.md has a 0.8.0 improvement section listing the new command family", () => {
+    const planned = extractSection(cli, "## Improvement Flow (0.8.0+)");
     expect(planned).not.toBe("");
     for (const cmd of PLANNED_FOR_V1) {
       expect(planned).toContain(`### ${cmd}`);
@@ -81,6 +90,6 @@ describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   });
 
   test("cli.md uses the documented status legend", () => {
-    expect(cli).toMatch(/Available since 0\.7\.0/);
+    expect(cli).toMatch(/Available since 0\.8\.0/);
   });
 });

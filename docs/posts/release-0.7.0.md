@@ -75,7 +75,7 @@ Every bounded in-tree LLM call site is now gated behind exactly one feature flag
 | `feedback_distillation` | `akm distill <ref>` |
 | `embedding_fallback_score` | Scorer fallback when embeddings unavailable |
 | `memory_inference` | Indexer split of pending memories into atomic facts |
-| `graph_extraction` | Indexer entity/relation extraction → `graph.json` |
+| `graph_extraction` | Indexer entity/relation extraction → SQLite graph tables |
 
 Turn on what you want:
 

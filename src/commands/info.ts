@@ -1,7 +1,11 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { getAssetTypes } from "../core/asset-spec";
-import { loadConfig } from "../core/config";
+import { getSources, loadConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../indexer/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../indexer/semantic-status";
@@ -40,7 +44,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   // Stash providers — prefer `sources[]`; fall back to `stashDir` when the
   // user has not yet migrated to the sources[] config shape so that info
   // always reflects at least one provider when a stash is configured.
-  const configuredSources = config.sources ?? config.stashes ?? [];
+  const configuredSources = getSources(config);
   const stashesList =
     configuredSources.length === 0 && config.stashDir
       ? [{ type: "filesystem", path: config.stashDir, name: "primary" }]

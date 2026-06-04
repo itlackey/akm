@@ -3,13 +3,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  applyCuratedFrontmatter,
   extractCommentMetadata,
   extractDescriptionFromComments,
   extractPackageMetadata,
   extractTagsFromPath,
   fileNameToDescription,
   generateMetadata,
+  isEnrichmentComplete,
   loadStashFile,
+  type StashEntry,
   type StashFile,
   validateStashEntry,
   writeStashFile,
@@ -462,7 +465,7 @@ test("generateMetadata applies curated frontmatter fields for markdown assets", 
       "  input: service name",
       "  output: deployment status",
       "scope:",
-      "  user: founder3",
+      "  user: alice",
       "  agent: opencode",
       "---",
       "Deploy $1",
@@ -485,7 +488,7 @@ test("generateMetadata applies curated frontmatter fields for markdown assets", 
       input: "service name",
       output: "deployment status",
     },
-    scope: { user: "founder3", agent: "opencode" },
+    scope: { user: "alice", agent: "opencode" },
     source: "frontmatter",
   });
   expect(stash.entries[0].aliases).toEqual(expect.arrayContaining(["release service", "deploy production"]));
@@ -500,4 +503,156 @@ test("generateMetadata preserves curated aliases from comment metadata", async (
   expect(stash.entries[0].aliases).toEqual(
     expect.arrayContaining(["release workflow", "ship service", "deploy service"]),
   );
+});
+
+// ── isEnrichmentComplete ────────────────────────────────────────────────────
+
+test("isEnrichmentComplete returns true when description, tags, and searchHints are all populated", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: ["deploy", "production"],
+    searchHints: ["deploy a service to production", "roll out new code"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(true);
+});
+
+test("isEnrichmentComplete returns false when description is missing", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    tags: ["deploy", "production"],
+    searchHints: ["deploy a service to production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when description is an empty string", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "   ",
+    tags: ["deploy"],
+    searchHints: ["deploy a service"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when tags array is empty", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: [],
+    searchHints: ["deploy a service to production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when tags is missing", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    searchHints: ["deploy a service to production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when searchHints is missing", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: ["deploy", "production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when searchHints array is empty", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: ["deploy", "production"],
+    searchHints: [],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+// ── Wave 1: captureMode / whenToUse / lessonStrength / evidenceSources ──────
+
+test("applyCuratedFrontmatter extracts captureMode='hot' and 'background'", () => {
+  const hotEntry: StashEntry = { name: "m", type: "memory" };
+  applyCuratedFrontmatter(hotEntry, { captureMode: "hot" });
+  expect(hotEntry.captureMode).toBe("hot");
+
+  const bgEntry: StashEntry = { name: "m", type: "memory" };
+  applyCuratedFrontmatter(bgEntry, { captureMode: "background" });
+  expect(bgEntry.captureMode).toBe("background");
+});
+
+test("applyCuratedFrontmatter ignores unknown captureMode values", () => {
+  const entry: StashEntry = { name: "m", type: "memory" };
+  applyCuratedFrontmatter(entry, { captureMode: "freeform-bogus" });
+  expect(entry.captureMode).toBeUndefined();
+});
+
+test("applyCuratedFrontmatter maps when_to_use frontmatter to whenToUse field", () => {
+  const entry: StashEntry = { name: "skill", type: "skill" };
+  applyCuratedFrontmatter(entry, { when_to_use: "When provisioning a new tenant cluster" });
+  expect(entry.whenToUse).toBe("When provisioning a new tenant cluster");
+});
+
+test("applyCuratedFrontmatter ignores blank when_to_use values", () => {
+  const entry: StashEntry = { name: "skill", type: "skill" };
+  applyCuratedFrontmatter(entry, { when_to_use: "   " });
+  expect(entry.whenToUse).toBeUndefined();
+});
+
+test("applyCuratedFrontmatter sets lessonStrength from an array's length", () => {
+  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  applyCuratedFrontmatter(entry, { lessonStrength: ["memory:a", "memory:b", "memory:c"] });
+  expect(entry.lessonStrength).toBe(3);
+});
+
+test("applyCuratedFrontmatter sets lessonStrength from a numeric value", () => {
+  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  applyCuratedFrontmatter(entry, { lessonStrength: 7 });
+  expect(entry.lessonStrength).toBe(7);
+});
+
+test("applyCuratedFrontmatter clamps negative lessonStrength to zero", () => {
+  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  applyCuratedFrontmatter(entry, { lessonStrength: -3 });
+  expect(entry.lessonStrength).toBe(0);
+});
+
+test("applyCuratedFrontmatter omits lessonStrength when absent", () => {
+  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  applyCuratedFrontmatter(entry, {});
+  expect(entry.lessonStrength).toBeUndefined();
+});
+
+test("applyCuratedFrontmatter extracts evidenceSources as a string list", () => {
+  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  applyCuratedFrontmatter(entry, { evidenceSources: ["memory:a", "memory:b"] });
+  expect(entry.evidenceSources).toEqual(["memory:a", "memory:b"]);
+});
+
+test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evidenceSources", () => {
+  const result = validateStashEntry({
+    name: "m",
+    type: "memory",
+    captureMode: "hot",
+    whenToUse: "for triage",
+    lessonStrength: 4,
+    evidenceSources: ["memory:x"],
+  });
+  expect(result).not.toBeNull();
+  expect(result?.captureMode).toBe("hot");
+  expect(result?.whenToUse).toBe("for triage");
+  expect(result?.lessonStrength).toBe(4);
+  expect(result?.evidenceSources).toEqual(["memory:x"]);
 });

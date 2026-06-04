@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# akm-eval-compare — diff two eval runs.
+#
+# Thin wrapper around scripts/akm-eval/src/compare.ts. Forwards every
+# argument unchanged; compare.ts owns argument parsing.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/compare.ts" "$@"

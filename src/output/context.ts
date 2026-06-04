@@ -1,7 +1,11 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Process-level output mode singleton.
  *
- * Output mode (format + detail + forAgent) is parsed once at startup from
+ * Output mode (format + detail + shape) is parsed once at startup from
  * `process.argv` and the persisted user config. All subsequent `output()`
  * calls read from this in-memory singleton instead of re-scanning argv and
  * re-loading config on every call.
@@ -11,22 +15,28 @@
 
 import { UsageError } from "../core/errors";
 
-export type OutputFormat = "json" | "yaml" | "text" | "jsonl";
-export type DetailLevel = "brief" | "normal" | "full" | "summary" | "agent";
+export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
+/** Verbosity axis. `--detail` is verbosity ONLY (v1 §3.2). */
+export type DetailLevel = "brief" | "normal" | "full";
+/** Output-projection axis. `--shape` selects how a result is projected. */
+export type ShapeMode = "human" | "agent" | "summary";
 
 export interface OutputMode {
   format: OutputFormat;
   detail: DetailLevel;
+  shape: ShapeMode;
+  /** Derived convenience: true when shape === "agent". */
   forAgent: boolean;
 }
 
 export interface OutputDefaults {
   format?: OutputFormat | "json" | "yaml" | "text";
-  detail?: DetailLevel | "brief" | "normal" | "full" | "agent";
+  detail?: DetailLevel | "brief" | "normal" | "full";
 }
 
-export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
-export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary", "agent"];
+export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
+export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
+export const SHAPE_MODES: ShapeMode[] = ["human", "agent", "summary"];
 
 export function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
@@ -43,6 +53,15 @@ export function parseDetailLevel(value: string | undefined): DetailLevel | undef
   throw new UsageError(
     `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_LEVELS.join("|")}`,
     "INVALID_DETAIL_VALUE",
+  );
+}
+
+export function parseShapeMode(value: string | undefined): ShapeMode | undefined {
+  if (!value) return undefined;
+  if ((SHAPE_MODES as string[]).includes(value)) return value as ShapeMode;
+  throw new UsageError(
+    `Invalid value for --shape: ${value}. Expected one of: ${SHAPE_MODES.join("|")}`,
+    "INVALID_SHAPE_VALUE",
   );
 }
 
@@ -85,12 +104,57 @@ export function getHyphenatedBoolean(args: unknown, key: string): boolean {
 export function resolveOutputMode(argv: string[], defaults: OutputDefaults | undefined = {}): OutputMode {
   const format =
     parseOutputFormat(parseFlagValue(argv, "--format")) ?? (defaults?.format as OutputFormat | undefined) ?? "json";
-  const detail =
-    parseDetailLevel(parseFlagValue(argv, "--detail")) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
-  // `--detail=agent` is the preferred preset. `--for-agent` is kept for one
-  // release cycle as an alias so existing scripts and docs keep working.
-  const forAgent = detail === "agent" || hasBooleanFlag(argv, "--for-agent");
-  return { format, detail, forAgent };
+
+  const rawDetail = parseFlagValue(argv, "--detail");
+  const rawShape = parseFlagValue(argv, "--shape");
+  const usedForAgent = hasBooleanFlag(argv, "--for-agent");
+
+  // Back-compat: the projection presets `summary`/`agent` used to live on
+  // `--detail`. They moved to `--shape` in 0.8 (removed from `--detail` in
+  // 0.9.0). Map the legacy spellings onto `--shape` + warn, and treat the
+  // verbosity axis as `normal` (the prior effective behaviour).
+  let detailForVerbosity: string | undefined = rawDetail;
+  let shapeFromLegacyDetail: ShapeMode | undefined;
+  if (rawDetail === "summary" || rawDetail === "agent") {
+    // Only nudge toward `--shape` when the caller did not already pass an
+    // explicit `--shape` (which wins below). Otherwise the "use --shape <x>"
+    // advice would name a projection the caller did not request.
+    if (rawShape === undefined) emitDetailShapeDeprecation(rawDetail);
+    shapeFromLegacyDetail = rawDetail;
+    detailForVerbosity = "normal";
+  } else if (rawDetail === "per-run") {
+    // Legacy `akm health --detail per-run` (→ `--group-by run`). The health
+    // command owns the back-compat warning + mapping; the global singleton must
+    // not reject the value here, so fall through to the default verbosity.
+    detailForVerbosity = undefined;
+  }
+
+  if (usedForAgent) {
+    emitForAgentDeprecation();
+  }
+
+  const detail = parseDetailLevel(detailForVerbosity) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
+
+  // Precedence: explicit `--shape` wins; then legacy `--detail summary|agent`;
+  // then legacy `--for-agent`; default `human`.
+  const shape: ShapeMode = parseShapeMode(rawShape) ?? shapeFromLegacyDetail ?? (usedForAgent ? "agent" : "human");
+
+  return { format, detail, shape, forAgent: shape === "agent" };
+}
+
+/** Suppress deprecation warnings under `--quiet` (mirrors the rest of the CLI). */
+function isQuietArgv(): boolean {
+  return process.argv.includes("--quiet") || process.argv.includes("-q");
+}
+
+function emitDetailShapeDeprecation(value: string): void {
+  if (isQuietArgv()) return;
+  process.stderr.write(`warning: '--detail ${value}' is deprecated; use '--shape ${value}'. Removed in 0.9.0.\n`);
+}
+
+function emitForAgentDeprecation(): void {
+  if (isQuietArgv()) return;
+  process.stderr.write("warning: '--for-agent' is deprecated; use '--shape agent'. Removed in 0.9.0.\n");
 }
 
 let _mode: OutputMode | undefined;

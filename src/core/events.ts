@@ -1,33 +1,37 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
- * Append-only events stream — `events.jsonl` (#204).
+ * Append-only events stream — backed by state.db (#204, Phase 3).
  *
  * Every mutating CLI verb funnels through `appendEvent` so external
  * observers (sync, replication, audit, dashboards) can react to stash
- * changes by tailing a single file. The file is plain newline-delimited
- * JSON; each line is a self-contained event envelope.
+ * changes. Events are stored in the `events` table in `state.db`
+ * (SQLite, WAL mode) instead of a flat `events.jsonl` file.
  *
- * The helper is the only thing in akm that writes to events.jsonl. It
- * accepts injectable `now()` and `path` so tests can pin time and use a
+ * The helper is the only thing in akm that writes to the events table. It
+ * accepts an injectable `dbPath` (via `EventsContext`) so tests can pin a
  * tmpdir without any global mutation.
  *
- * Format (each line):
+ * Format (each EventEnvelope):
  *   { "schemaVersion": 1, "id": <number>, "ts": "<ISO>",
  *     "eventType": "<verb>", "ref"?: "<asset-ref>", ... }
  *
- * - `id` is a monotonic integer per file. We use the file's pre-write
- *   byte length as a durable cursor for `--since` (stable across processes
- *   because every appender holds an O_APPEND write). Callers can also pass
- *   a string ISO timestamp to `--since` and we filter by `ts >= since`.
+ * - `id` is a monotonic SQLite AUTOINCREMENT rowid. Callers can persist it
+ *   as a durable cursor for `--since` resumption (replaces the old byte-offset
+ *   cursor). The public API still surfaces this as `nextOffset` (an opaque
+ *   number) for backward compatibility with callers that stored byte-offset
+ *   cursors.
  * - `ts` is ISO-8601 (UTC, millisecond precision).
- *
- * The event `id` is derived at read time (line index) — the file itself
- * is the source of truth, so the writer never has to coordinate with a
- * counter. Tail consumers can persist a byte offset (durable cursor).
  */
 
-import fs from "node:fs";
+import type { Database } from "bun:sqlite";
 import path from "node:path";
-import { getCacheDir } from "./paths";
+import { rethrowIfTestIsolationError } from "./errors";
+import { getDataDir } from "./paths";
+import { insertEvent, openStateDatabase, readStateEvents } from "./state-db";
+import { error } from "./warn";
 
 /**
  * Stable, machine-readable event types. New types may be added freely.
@@ -60,6 +64,22 @@ export type EventType =
   | "workflow_finished"
   | "search"
   | "show"
+  // Phase 4 Team C event gaps:
+  /** Emitted when `akm show <ref>` follows a recent `akm search` that returned the same ref. */
+  | "select"
+  /** Emitted when a cooldown guard or budget exhaustion in `akm improve` skips an asset. */
+  | "improve_skipped"
+  /** Emitted after `createProposal()` succeeds in `akm reflect`. */
+  | "reflect_completed"
+  | "improve_completed"
+  /** Emitted by `runImproveMaintenancePasses` after rejecting proposals whose target assets no longer exist on disk. */
+  | "proposal_orphan_purge"
+  /** Emitted by `runImproveMaintenancePasses` after running `purgeOldEvents()` on state.db. Metadata: `{purgedCount, retentionDays}`. */
+  | "events_purged"
+  /** Emitted by `createProposal()` when input validation fails before write — metadata carries `reason` and `source`. */
+  | "proposal_creation_rejected"
+  /** Emitted by the improve loop after each per-asset reflect call — carries `ok`, `durationMs`, `reason`. */
+  | "improve_reflect_outcome"
   | string;
 
 export interface AppendEventInput {
@@ -82,26 +102,44 @@ export interface EventEnvelope {
 export interface EventsContext {
   /** Returns ms since epoch. Defaults to `Date.now`. */
   now?: () => number;
-  /** Override the events.jsonl path. Defaults to `<cacheDir>/events.jsonl`. */
-  filePath?: string;
+  /**
+   * Override the state.db path. Defaults to `<dataDir>/state.db`.
+   *
+   * This is the primary test seam for isolating events to a tmpdir.
+   */
+  dbPath?: string;
+  /**
+   * I1: optional long-lived pre-opened state.db connection.
+   *
+   * When provided, `appendEvent` uses this handle directly without opening
+   * or closing the database — eliminating per-event open/migrate/close overhead
+   * for callers that emit many events in a single run (e.g. `akmImprove`).
+   *
+   * The caller is responsible for closing this connection in a `finally` block
+   * after all events have been appended.
+   *
+   * NOTE: `dbPath` is ignored when `db` is provided.
+   */
+  db?: Database;
 }
 
 /**
- * Default events.jsonl location: `<cacheDir>/events.jsonl`.
- *
- * Env-isolation caveat: `getCacheDir()` reads `XDG_CACHE_HOME` at the time of
- * each call. Two cooperating processes (e.g. one writing events, one tailing)
- * MUST inherit the same `XDG_CACHE_HOME` or they will read/write different
- * `events.jsonl` files. This is the same env-isolation behaviour as the rest
- * of akm — config, indexes, and caches all key off XDG paths — so set
- * `XDG_CACHE_HOME` consistently across processes that share the events bus.
+ * Legacy events.jsonl path — used only by the migration script
+ * (`scripts/migrate-storage.ts`) to import existing event history into
+ * state.db. No events are written here by akm v0.9+.
  */
 export function getEventsPath(): string {
-  return path.join(getCacheDir(), "events.jsonl");
+  return path.join(getDataDir(), "events.jsonl");
 }
 
-function resolvePath(ctx?: EventsContext): string {
-  return ctx?.filePath ?? getEventsPath();
+/**
+ * Resolve the state.db path from context:
+ *   1. `ctx.dbPath` — explicit override (test seam)
+ *   2. default      — `<dataDir>/state.db`
+ */
+function resolveDbPath(ctx?: EventsContext): string {
+  if (ctx?.dbPath) return ctx.dbPath;
+  return path.join(getDataDir(), "state.db");
 }
 
 function resolveNow(ctx?: EventsContext): () => number {
@@ -112,36 +150,52 @@ function resolveNow(ctx?: EventsContext): () => number {
  * Append a single event. Best-effort: a write failure is logged once to
  * stderr but never propagates — observability must not break mutation.
  *
- * The id field is intentionally omitted on write (the line index is the
- * id; the reader assigns it). Keeping it off the wire avoids a coordination
- * step between concurrent appenders.
+ * Events are written exclusively to the `events` table in `state.db`.
+ *
+ * I1: when `ctx.db` is provided (a pre-opened long-lived connection), the
+ * function writes directly to that handle without opening or closing the DB.
+ * This eliminates per-event open/migrate/close overhead for high-frequency
+ * callers such as `akmImprove`.
  */
 export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void {
-  const filePath = resolvePath(ctx);
   const now = resolveNow(ctx);
   const ts = new Date(now()).toISOString();
 
-  const envelope: Omit<EventEnvelope, "id"> = {
-    schemaVersion: 1,
-    ts,
-    eventType: input.eventType,
-    ...(input.ref !== undefined ? { ref: input.ref } : {}),
-    ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
-  };
+  // Fast path: caller provided a long-lived connection — use it directly.
+  if (ctx?.db) {
+    try {
+      insertEvent(ctx.db, {
+        eventType: input.eventType,
+        ts,
+        ref: input.ref,
+        metadata: input.metadata,
+      });
+    } catch (err) {
+      error(`akm: appendEvent failed: ${String(err)}`);
+    }
+    return;
+  }
 
-  const line = `${JSON.stringify(envelope)}\n`;
+  // Default path: open, insert, close.
+  const dbPath = resolveDbPath(ctx);
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    // O_APPEND guarantees atomic appends ≤ PIPE_BUF (4 KiB on Linux); our
-    // events are well under that ceiling, so concurrent processes can write
-    // safely without locking. `appendFileSync` opens with `'a'` which sets
-    // O_APPEND.
-    fs.appendFileSync(filePath, line, { encoding: "utf8" });
+    const db = openStateDatabase(dbPath);
+    try {
+      insertEvent(db, {
+        eventType: input.eventType,
+        ts,
+        ref: input.ref,
+        metadata: input.metadata,
+      });
+    } finally {
+      db.close();
+    }
   } catch (err) {
+    // Never mask the bun-test isolation guard as a silent "events failed".
+    rethrowIfTestIsolationError(err);
     // Best-effort: events stream failures must not break the mutating verb.
     // Surface once to stderr so operators can diagnose.
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`akm: events.jsonl append failed (${message})\n`);
+    error(`akm: appendEvent failed: ${String(err)}`);
   }
 }
 
@@ -150,7 +204,13 @@ export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void 
 export interface ReadEventsOptions {
   /** ISO timestamp lower bound (`ts >= since`). */
   since?: string;
-  /** Byte-offset lower bound (`offset > sinceOffset`) — durable cursor. */
+  /**
+   * Monotonic id lower bound — durable cursor.
+   *
+   * The SQLite AUTOINCREMENT rowid of the last seen event. Treat as an opaque
+   * non-negative integer. Callers migrating from the old JSONL implementation
+   * should reset any persisted byte-offset cursor to 0.
+   */
   sinceOffset?: number;
   /** Filter to a single event type. */
   type?: string;
@@ -164,85 +224,52 @@ export interface ReadEventsOptions {
 
 export interface ReadEventsResult {
   events: EventEnvelope[];
-  /** End-of-file byte offset (use as the next `sinceOffset`). */
+  /**
+   * The maximum rowid seen (use as the next `sinceOffset`).
+   *
+   * The SQLite AUTOINCREMENT id of the last row returned, or `sinceOffset`
+   * when no rows matched. Monotonically increasing non-negative integer.
+   */
   nextOffset: number;
 }
 
 /**
  * Read all events matching the filter. Returns a `nextOffset` that callers
- * can persist between processes for monotonic resumption — `sinceOffset`
- * is the durable cursor referenced in the acceptance criteria.
+ * can persist between processes for monotonic resumption.
  */
 export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext): ReadEventsResult {
-  const filePath = resolvePath(ctx);
-  if (!fs.existsSync(filePath)) {
+  const dbPath = resolveDbPath(ctx);
+
+  let db: import("bun:sqlite").Database | undefined;
+  try {
+    db = openStateDatabase(dbPath);
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "no events".
+    rethrowIfTestIsolationError(err);
+    // DB does not exist yet or cannot be opened — return empty result.
     return { events: [], nextOffset: 0 };
   }
-  const stat = fs.statSync(filePath);
-  const startOffset = options.sinceOffset && options.sinceOffset > 0 ? options.sinceOffset : 0;
-  if (startOffset >= stat.size) {
-    return { events: [], nextOffset: stat.size };
-  }
-  const fd = fs.openSync(filePath, "r");
+
   try {
-    const length = stat.size - startOffset;
-    const buf = Buffer.alloc(length);
-    fs.readSync(fd, buf, 0, length, startOffset);
-    const text = buf.toString("utf8");
-    const events = parseEventLines(text, options, startOffset);
-    return { events, nextOffset: stat.size };
+    const { events: rawEvents, nextId } = readStateEvents(db, {
+      sinceId: options.sinceOffset,
+      since: options.since,
+      type: options.type,
+      ref: options.ref,
+    });
+
+    // Apply tag filters in application code (same as the old JSONL implementation).
+    const events = rawEvents.filter((envelope) => {
+      const tags = (envelope.metadata?.tags as string[] | undefined) ?? [];
+      if (options.excludeTags?.some((t) => tags.includes(t))) return false;
+      if (options.includeTags && !options.includeTags.every((t) => tags.includes(t))) return false;
+      return true;
+    });
+
+    return { events, nextOffset: nextId };
   } finally {
-    fs.closeSync(fd);
+    db.close();
   }
-}
-
-function parseEventLines(text: string, options: ReadEventsOptions, startOffset: number): EventEnvelope[] {
-  // Each line that ends with \n is a complete event. A trailing partial
-  // line (no terminating \n) is ignored — the next read will pick it up
-  // once it is fully written.
-  const out: EventEnvelope[] = [];
-  let lineStart = 0;
-  // The envelope id is the 1-based line index across the whole file. We
-  // approximate that here as the line index from the start of the read
-  // window plus a synthetic offset — for callers using `--since`, the
-  // absolute id is less useful than the byte cursor anyway. To keep ids
-  // monotonic across reads we use absolute byte position as a stable
-  // surrogate identifier.
-  for (let i = 0; i < text.length; i += 1) {
-    if (text.charCodeAt(i) !== 10 /* \n */) continue;
-    const line = text.slice(lineStart, i);
-    const absStart = startOffset + lineStart;
-    lineStart = i + 1;
-    if (!line.trim()) continue;
-    let parsed: Record<string, unknown> | undefined;
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      // Skip malformed lines — better than crashing the read pipeline.
-      continue;
-    }
-    const envelope: EventEnvelope = {
-      schemaVersion: 1,
-      id: absStart,
-      ts: typeof parsed.ts === "string" ? parsed.ts : "",
-      eventType: typeof parsed.eventType === "string" ? parsed.eventType : "unknown",
-      ...(typeof parsed.ref === "string" ? { ref: parsed.ref } : {}),
-      ...(parsed.metadata !== undefined ? { metadata: parsed.metadata as Record<string, unknown> } : {}),
-    };
-    if (!matchesFilter(envelope, options)) continue;
-    out.push(envelope);
-  }
-  return out;
-}
-
-function matchesFilter(envelope: EventEnvelope, options: ReadEventsOptions): boolean {
-  if (options.type && envelope.eventType !== options.type) return false;
-  if (options.ref && envelope.ref !== options.ref) return false;
-  if (options.since && envelope.ts && envelope.ts < options.since) return false;
-  const tags = (envelope.metadata?.tags as string[] | undefined) ?? [];
-  if (options.excludeTags?.some((t) => tags.includes(t))) return false;
-  if (options.includeTags && !options.includeTags.every((t) => tags.includes(t))) return false;
-  return true;
 }
 
 // ─── Tailing ─────────────────────────────────────────────────────────────────
@@ -270,13 +297,13 @@ export interface TailResult {
 }
 
 /**
- * Follow events.jsonl. Polls at `intervalMs` (default 75ms) and emits
- * every new event to `onEvent`. Resolves when `signal` aborts, when
+ * Follow the events table in state.db. Polls at `intervalMs` (default 75ms)
+ * and emits every new event to `onEvent`. Resolves when `signal` aborts, when
  * `maxEvents` events have been observed, or when `maxDurationMs` elapses.
  *
- * The polling cursor is byte-offset based, so concurrent writers cannot
- * cause skips: between two reads we always pick up everything appended
- * since the last `nextOffset`.
+ * The polling cursor is a monotonic SQLite rowid so concurrent writers cannot
+ * cause skips: between two reads we always pick up everything inserted since
+ * the last `nextOffset`.
  */
 export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext): Promise<TailResult> {
   const intervalMs = options.intervalMs ?? 75;
@@ -335,7 +362,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
         cursor = result.nextOffset;
         for (const event of result.events) {
           // Apply --since filter inside the polling loop too — the cursor is
-          // byte-offset so it can hand us events the user filtered out.
+          // rowid-based so it can hand us events the user filtered out.
           if (options.since && event.ts && event.ts < options.since) continue;
           collected.push(event);
           options.onEvent?.(event);

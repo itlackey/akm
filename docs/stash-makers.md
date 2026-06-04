@@ -19,7 +19,7 @@ my-stash/
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
   agents/         # .md files with model, tools, or toolPolicy frontmatter
   knowledge/      # .md reference documents
-  vaults/         # .env environment vaults (mode-0600 files)
+  env/            # .env environment files (mode-0600; vaults/ is the deprecated alias)
   workflows/      # .md step-by-step workflow documents
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
   lessons/        # .md distilled feedback lessons
@@ -174,8 +174,8 @@ requiring explicit prompts.
 
 ## Step 3: Add Metadata
 
-Metadata makes your stash searchable. In this pre-release project, prefer
-metadata that travels with the asset itself.
+Metadata makes your stash searchable. Prefer metadata that travels with the
+asset itself.
 
 ### Preferred: inline metadata
 
@@ -206,11 +206,9 @@ for most stashes and keeps descriptions close to the asset body.
 
 ### Legacy: `.stash.json`
 
-`.stash.json` is still supported so older curated stashes keep working in the
-0.7.x line, but it should be treated as a deprecated legacy format during the
-pre-release cycle. It will be removed in v0.8.0. Do not start new stashes with
-it unless you are maintaining an older repo that already depends on
-directory-level sidecars and are actively migrating away.
+`.stash.json` support was removed in v0.8.0. Do not create new stashes with
+it. If you are upgrading from v0.7, migrate any existing `.stash.json` sidecars
+to inline metadata using the guidance below before indexing.
 
 If you still have `.stash.json`, migrate the fields into the asset whenever
 possible:
@@ -247,9 +245,7 @@ Legacy example:
 }
 ```
 
-Use `.stash.json` only as a short-lived compatibility bridge while migrating an
-existing curated stash before v0.8.0. See
-[technical/filesystem.md](technical/filesystem.md) for the legacy field reference.
+See [technical/filesystem.md](technical/filesystem.md) for the legacy field reference.
 
 ## Step 4: Test Locally
 
@@ -403,6 +399,48 @@ stashes.
 You can mount multiple directories. They are searched in the order listed,
 after the working stash.
 
+## Vault Security
+
+> **`vault` is deprecated (use `env`).** The guidance below applies equally to
+> `env/` files; `vault`/`vaults/` are the deprecated aliases, removed in 0.9.0.
+> See the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md).
+
+If your stash includes env files under `env/` (or legacy `vaults/`), be aware of
+how `akm` handles them during install.
+
+**Dangerous key detection.** `akm add` and `akm lint` scan env files for
+environment variable names that can be used to hijack process execution when
+the file is loaded via `akm env run`. The flagged names include `LD_PRELOAD`,
+`PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and 20 others. When these keys
+are found, `akm add` pauses in interactive mode and asks the user to confirm
+before continuing. In non-interactive (CI) mode the install fails unless the
+user passes `--allow-insecure`. `akm env run` applies the same scan at run time:
+a third-party-sourced stash is refused outright; a first-party stash warns and
+proceeds.
+
+This is not a ban — it is a speed bump. If your stash legitimately needs one
+of these keys (for example, a `PATH` override for a hermetic toolchain), do
+the following before publishing:
+
+1. Document the reason clearly in your `README.md`. Explain which key is set,
+   why it is needed, and what the value does.
+2. Run `akm lint` against your stash locally to see the `dangerous-vault-key`
+   findings before your users do:
+
+   ```sh
+   akm lint
+   ```
+
+3. Consider whether the value can be set by the user after install rather than
+   shipped in the env file. Env files that ship without values — just key names
+   and comments — do not trigger the audit.
+
+**Key names are metadata, not secrets.** Env key names appear in `akm env list`
+and search results by design. Only values are protected. The `--sensitive` flag
+on `akm env create` hides a file from `env list` but does not prevent key names
+from appearing in search results or agent context when the file is shown
+directly.
+
 ## Stash Structure Tips
 
 - **Keep it focused.** A stash with 5 great scripts is more useful than one with
@@ -414,13 +452,11 @@ after the working stash.
 
 - **Use frontmatter in markdown assets.** A `description` in frontmatter is
   extracted automatically with high confidence (0.9), making your commands,
-  agents, and knowledge documents more discoverable without needing a legacy
-  `.stash.json` sidecar.
+  agents, and knowledge documents more discoverable.
 
 - **Use structured header comments for scripts.** `.sh`, `.ts`, `.py`, etc. get
   strong results from good filenames plus leading comments and tags like
-  `@param`, `@run`, `@setup`, and `@cwd`. Treat `.stash.json` as a last-resort
-  legacy fallback.
+  `@param`, `@run`, `@setup`, and `@cwd`.
 
 - **Test the search experience.** After installing your stash, search for it
   using the terms you expect users to try. If results are poor, improve the

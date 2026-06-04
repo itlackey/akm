@@ -10,10 +10,8 @@
  *   - Legacy memories without scope keys still match unfiltered queries.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/search";
@@ -23,16 +21,14 @@ import { NotFoundError, UsageError } from "../../src/core/errors";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
+import { runCliCapture } from "../_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
-
-const createdTmpDirs: string[] = [];
-
-function createTmpDir(prefix = "akm-scope-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
-}
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts). The preload (tests/_preload.ts) sandboxes HOME / XDG
+// dirs per test, and beforeEach re-sandboxes the stash/config/cache through the
+// allowlisted sandbox helpers. Both former spawns are pure read/write against
+// the sandboxed stash/config, so they migrate cleanly.
 
 function writeFile(filePath: string, content = "") {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -40,39 +36,24 @@ function writeFile(filePath: string, content = "") {
 }
 
 function tmpStash(): string {
-  const dir = createTmpDir("akm-scope-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts", "memories"]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
-  return dir;
+  return currentStashDir;
 }
 
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let currentStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-scope-cache-");
-  testConfigDir = createTmpDir("akm-scope-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  currentStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  envCleanup();
+  envCleanup = () => {};
+  currentStashDir = "";
 });
 
 // ── Pure-function tests (no spawn) ────────────────────────────────────────
@@ -117,7 +98,7 @@ describe("parseScopeFilterFlags", () => {
     expect(filters).toEqual({ user: "alice", channel: "ops" });
   });
 
-  test("rejects unknown keys with UsageError", () => {
+  test("rejects unknown keys with UsageError", async () => {
     let captured: unknown;
     try {
       parseScopeFilterFlags(["foo=bar"], "--filter");
@@ -127,17 +108,8 @@ describe("parseScopeFilterFlags", () => {
     expect(captured).toBeInstanceOf(UsageError);
     expect((captured as UsageError).message).toMatch(/Unknown scope key/);
     // Spec: UsageError → exit 2 and {ok:false, error, code} envelope on stderr.
-    const result = spawnSync("bun", [CLI, "search", "foo", "--filter", "foo=bar"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      env: {
-        ...process.env,
-        AKM_STASH_DIR: tmpStash(),
-        AKM_CONFIG_DIR: path.join(createTmpDir("akm-scope-config-"), "akm"),
-        XDG_CACHE_HOME: createTmpDir("akm-scope-cache-"),
-      },
-    });
-    expect(result.status).toBe(2); // EXIT_USAGE
+    const result = await runCliCapture(["search", "foo", "--filter", "foo=bar"]);
+    expect(result.code).toBe(2); // EXIT_USAGE
     const envelope = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(envelope.ok).toBe(false);
     expect(typeof envelope.error).toBe("string");
@@ -180,7 +152,6 @@ describe("entryMatchesScopeFilters", () => {
 describe("akm search --filter narrows by scope", () => {
   test("filter user=alice returns only alice's memory", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(
@@ -218,7 +189,6 @@ describe("akm search --filter narrows by scope", () => {
 
   test("legacy memories without scope still match unfiltered queries", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(
@@ -235,7 +205,6 @@ describe("akm search --filter narrows by scope", () => {
 
   test("scope filter on a key the entry lacks excludes it", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(
@@ -258,7 +227,6 @@ describe("akm search --filter narrows by scope", () => {
 describe("akm show --scope narrows resolution", () => {
   test("returns the asset when scope matches", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(
@@ -277,7 +245,6 @@ describe("akm show --scope narrows resolution", () => {
 
   test("throws NotFoundError when scope does not match and body content is not leaked", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const SECRET_BODY = "ALICE_SECRET_DEPLOY_TOKEN_XYZ123";
@@ -308,7 +275,6 @@ describe("akm show --scope narrows resolution", () => {
 
   test("throws NotFoundError when asset has no scope but a scope filter is supplied", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(path.join(stashDir, "memories", "legacy.md"), "---\ntags: [legacy]\n---\nLegacy\n");
@@ -324,39 +290,21 @@ describe("akm show --scope narrows resolution", () => {
 // ── CLI smoke test ────────────────────────────────────────────────────────
 
 describe("akm remember --user / --agent / --run / --channel (CLI)", () => {
-  test("persists all four scope_* keys to frontmatter", () => {
-    const stashDir = tmpStash();
-    const configDir = createTmpDir("akm-scope-config-");
-    const xdgCache = createTmpDir("akm-scope-cache-");
+  test("persists all four scope_* keys to frontmatter", async () => {
+    const result = await runCliCapture([
+      "remember",
+      "Multi-tenant memory",
+      "--user",
+      "alice",
+      "--agent",
+      "claude",
+      "--run",
+      "run-42",
+      "--channel",
+      "#ops",
+    ]);
 
-    const result = spawnSync(
-      "bun",
-      [
-        CLI,
-        "remember",
-        "Multi-tenant memory",
-        "--user",
-        "alice",
-        "--agent",
-        "claude",
-        "--run",
-        "run-42",
-        "--channel",
-        "#ops",
-      ],
-      {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          AKM_STASH_DIR: stashDir,
-          AKM_CONFIG_DIR: path.join(configDir, "akm"),
-          XDG_CACHE_HOME: xdgCache,
-        },
-      },
-    );
-
-    expect(result.status).toBe(0);
+    expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as { ok: boolean; path: string };
     expect(parsed.ok).toBe(true);
 

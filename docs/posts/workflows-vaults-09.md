@@ -248,6 +248,44 @@ akm save team-skills -m "Improve staging health check step"
 
 The team gets the improvement on next `akm update`.
 
+## Security Model
+
+Vault assets have a clear security contract. Understanding it prevents both
+false confidence and unnecessary alarm.
+
+**Values never leave disk via akm commands.** This is the core invariant.
+`akm show`, `akm vault list`, `akm search`, and every other structured output
+command expose only key names and comments — never values. The two supported
+paths that actually use values are `source "$(akm vault path vault:name)"` (the
+shell loads the file directly) and `akm vault run vault:name -- <command>`
+(values are injected into the child process environment). Neither path passes
+values through akm's structured output.
+
+**Key names are metadata — they are intentionally discoverable.** Key names
+appear in `vault list`, `vault show`, search results, and agent context by
+design. This is how an agent can confirm "yes, `DATABASE_URL` is configured in
+this vault" without seeing its value. Do not treat key names as secrets.
+
+**The `--sensitive` flag hides a vault from `vault list` only.** Creating a
+vault with `akm vault create prod --sensitive` prevents it from appearing in
+the default `vault list` output. It does not prevent key names from showing up
+in search results or when the vault is shown directly with `akm show
+vault:prod`. Use `--sensitive` to reduce noise, not to enforce secrecy.
+
+**Dangerous key detection.** Vault keys with names like `LD_PRELOAD`, `PATH`,
+`DYLD_INSERT_LIBRARIES`, or `NODE_OPTIONS` can be used to hijack process
+execution when the vault is loaded via `akm vault run`. `akm add` and
+`akm lint` both scan for these names. During install, `akm add` pauses and
+asks for confirmation when dangerous keys are found (non-interactive mode fails
+unless `--allow-insecure` is passed). The full list of 23 flagged key names is
+documented in the [CLI reference](https://github.com/itlackey/akm/blob/main/docs/cli.md#dangerous-vault-key-audit).
+
+**When to use `--allow-insecure`.** Pass `--allow-insecure` to `akm add` when
+you have reviewed a stash manually and confirmed that a dangerous vault key is
+legitimate (for example, a hermetic toolchain that overrides `PATH`). The flag
+also bypasses plain-HTTP source rejection. It is not a global config setting —
+it applies only to the single install invocation.
+
 ## Getting Started
 
 If you're on `akm` already, upgrade to the latest version:

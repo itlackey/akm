@@ -8,6 +8,13 @@ import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/index
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "../_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -58,13 +65,10 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
 
 /**
  * Create a stash directory with all required subdirectories.
+ * Returns the per-test sandboxed stash dir (AKM_STASH_DIR already set by beforeEach).
  */
 function tmpStash(): string {
-  const dir = createTmpDir("akm-search-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
-  return dir;
+  return currentStashDir;
 }
 
 /**
@@ -84,43 +88,22 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let currentStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-search-cache-");
-  testConfigDir = createTmpDir("akm-search-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  currentStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
+  currentStashDir = "";
 });
 
 // ── 2.1 Database search path (FTS scoring) ──────────────────────────────────
@@ -135,7 +118,6 @@ describe("Database search path (FTS scoring)", () => {
       "---\ndescription: Documentation getting started guide\n---\n# Start\n",
     );
 
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "off",
       sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
@@ -158,7 +140,6 @@ describe("Database search path (FTS scoring)", () => {
 
   test("stash-owned raw wiki pages are discoverable in global wiki search", async () => {
     const stashDir = tmpStash();
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
     createWiki(stashDir, "notes");
     stashRaw({
@@ -229,7 +210,6 @@ describe("Database search path (FTS scoring)", () => {
         }),
       );
 
-      process.env.AKM_STASH_DIR = stashDir;
       saveConfig({
         semanticSearchMode: "auto",
         embedding: {
@@ -245,7 +225,7 @@ describe("Database search path (FTS scoring)", () => {
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       expect(localHits.length).toBeGreaterThanOrEqual(1);
 
-      const db = openDatabase(path.join(testCacheDir, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
@@ -541,9 +521,20 @@ describe("Score boosts", () => {
   test("derived memories score above their raw parent notes", async () => {
     const stashDir = tmpStash();
 
+    // Parent has a longer searchHints to prevent its shorter document from
+    // dominating BM25 length normalization. This ensures the derived entry's
+    // richer metadata (tags, searchHints, +0.12 memory contributor) is
+    // decisive rather than TF-normalization artefacts.
     writeFile(
       path.join(stashDir, "memories", "deploy-debugging.md"),
-      "---\ndescription: Diagnose deploy issues\n---\n\nInvestigate deploy failures in production.\n",
+      [
+        "---",
+        "description: Diagnose deploy issues",
+        'searchHints: ["deploy debugging raw background context notes unprocessed source material reference log archive"]',
+        "---",
+        "",
+        "Investigate deploy failures in production.",
+      ].join("\n"),
     );
     writeFile(
       path.join(stashDir, "memories", "deploy-debugging.derived.md"),
@@ -569,7 +560,11 @@ describe("Score boosts", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await akmSearch({ query: "deploy-debugging", source: "local", type: "memory" });
+    // "deploy debugging" matches both entries. The derived entry scores at least
+    // as high as the parent because: (a) it has richer tag/hint coverage of the
+    // query tokens, and (b) the memory contributor gives +0.12 to .derived
+    // entries vs -0.08 for raw parent notes.
+    const result = await akmSearch({ query: "deploy debugging", source: "local", type: "memory", skipLogging: true });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     const parentHit = expectDefined(localHits.find((h) => h.name === "deploy-debugging"));
@@ -588,7 +583,6 @@ describe("Auto-index on stale", () => {
 
     // Do NOT call akmIndex — just create files on disk
     writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "deploy", source: "local" });
@@ -607,7 +601,6 @@ describe("Auto-index on stale", () => {
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "Deploy", "Deploy.sh"), "#!/bin/bash\necho deploy\n");
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     // Do NOT call akmIndex
@@ -626,7 +619,6 @@ describe("Auto-index on stale", () => {
       path.join(stashDir, "agents", "agentic-systems-architect.md"),
       "---\ndescription: Designs agent coordination patterns and context assembly\n---\nYou are an architect.\n",
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "coordination", type: "agent", source: "local" });
@@ -651,7 +643,6 @@ describe("Auto-index on stale", () => {
         "You are a blog topic discovery agent.",
       ].join("\n"),
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "blog topics", type: "agent", source: "local" });
@@ -682,7 +673,6 @@ describe("Auto-index on stale", () => {
         ],
       }),
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "diagnostics", source: "local" });
@@ -711,7 +701,6 @@ describe("Auto-index on stale", () => {
         ],
       }),
     );
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "legacy metadata", source: "local" });
@@ -767,7 +756,6 @@ describe("Source filtering", () => {
     const stashDir = createTmpDir();
     // Create a local tool so we know local hits would exist if local were searched
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
-    process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off", registries: [] });
 
     const result = await akmSearch({ query: "deploy", source: "registry" });

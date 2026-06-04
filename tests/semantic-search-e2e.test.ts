@@ -26,6 +26,7 @@ import {
 import { searchLocal } from "../src/indexer/db-search";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache } from "../src/llm/embedder";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Gate ───────────────────────────────────────────────────────────────────
 
@@ -256,21 +257,15 @@ echo "Database migration finished successfully."
 }
 
 // ── Environment isolation ──────────────────────────────────────────────────
-// Save and restore env vars at module scope to prevent leaking to other test files.
+// Sandbox env vars at module scope to prevent leaking to other test files.
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
+let moduleEnvCleanup: Cleanup = () => {};
 let testCacheDir = "";
 let testConfigDir = "";
 
 function restoreEnv(): void {
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  moduleEnvCleanup();
+  moduleEnvCleanup = () => {};
   resetConfigCache();
 }
 
@@ -285,10 +280,12 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
 
   beforeAll(async () => {
     // Set up isolated cache and config directories
-    testCacheDir = createTmpDir("akm-semantic-e2e-cache-");
-    testConfigDir = createTmpDir("akm-semantic-e2e-config-");
-    process.env.XDG_CACHE_HOME = testCacheDir;
-    process.env.XDG_CONFIG_HOME = testConfigDir;
+    const cacheResult = sandboxXdgCacheHome();
+    const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+    const stashResult = sandboxStashDir(cfgResult.cleanup);
+    moduleEnvCleanup = stashResult.cleanup;
+    testCacheDir = cacheResult.dir;
+    testConfigDir = cfgResult.dir;
     // Use the user's existing HuggingFace model cache to avoid re-downloading
     if (!process.env.HF_HOME) {
       process.env.HF_HOME = path.join(process.env.HOME ?? "/tmp", ".cache", "huggingface");

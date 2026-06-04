@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "retrieval-search-returns-hits",
+  "suite": "improve-smoke",
+  "type": "retrieval",
+  "description": "Search machinery returns at least one hit for a generic stash query.",
+  "input": {
+    "query": "akm",
+    "topK": 10
+  },
+  "expected": {
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "minHits": 1.0
+    },
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["retrieval", "smoke", "structural"]
+}

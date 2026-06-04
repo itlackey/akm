@@ -16,7 +16,8 @@ import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from "../src/indexer/db";
 import { akmIndex, recomputeUtilityScores } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
-import { recordUsageEvent } from "./helpers/usage-events";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { recordUsageEvent } from "./_helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -42,11 +43,10 @@ function writeFile(filePath: string, content = "") {
 }
 
 function tmpStash(): string {
-  const dir = createTmpDir("akm-utility-stash-");
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
-  return dir;
+  // Returns the per-test sandboxed stash dir (AKM_STASH_DIR is already set).
+  // Subdirs are created by sandboxStashDir; this function is kept for API
+  // compatibility with test bodies.
+  return currentStashDir;
 }
 
 async function buildTestIndex(stashDir: string, files: Record<string, string> = {}) {
@@ -55,7 +55,6 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, content);
   }
-  process.env.AKM_STASH_DIR = stashDir;
   saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
@@ -70,43 +69,21 @@ function expectDefined<T>(value: T | null | undefined): T {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let currentStashDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-utility-cache-");
-  testConfigDir = createTmpDir("akm-utility-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  currentStashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
+  currentStashDir = "";
 });
 
 // ── Test 1: utility_scores table is created by ensureSchema ─────────────────
@@ -607,6 +584,44 @@ describe("Production path end-to-end", () => {
         utility: number;
       }>;
       expect(scores.length).toBeGreaterThan(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  // Regression guard: 2026-05-26. usage_events has no FK to entries, so its
+  // entry_id can become stale after consolidation/deletion. recomputeUtilityScores
+  // used to aggregate by stale entry_id, then upsert into utility_scores (which
+  // DOES have an FK), tripping "FOREIGN KEY constraint failed" and rolling back
+  // the entire index finalize transaction.
+  test("recomputeUtilityScores ignores stale usage_events entry_ids (no FK rollback)", async () => {
+    writeFile(path.join(currentStashDir, "skills", "real-skill.md"), "---\nname: real-skill\n---\n\nA real skill.");
+    await buildTestIndex(currentStashDir, {});
+
+    const dbPath = getDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const entries = db.prepare("SELECT id FROM entries LIMIT 1").all() as Array<{ id: number }>;
+      const realId = entries[0]?.id;
+      expect(realId).toBeGreaterThan(0);
+
+      // One legitimate event, one stale event whose entry_id was deleted.
+      db.prepare(
+        "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+      ).run(realId, "skill:real-skill");
+      const staleId = 999999; // not in entries
+      db.prepare(
+        "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+      ).run(staleId, "skill:vaporware");
+
+      // This used to throw FOREIGN KEY constraint failed.
+      expect(() => recomputeUtilityScores(db)).not.toThrow();
+
+      // utility_scores should have the live entry but NOT the stale one.
+      const scores = db.prepare("SELECT entry_id FROM utility_scores").all() as Array<{ entry_id: number }>;
+      const ids = scores.map((s) => s.entry_id);
+      expect(ids).toContain(realId);
+      expect(ids).not.toContain(staleId);
     } finally {
       closeDatabase(db);
     }

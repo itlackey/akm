@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-02-queued-distill-skill-feedback",
+  "assetType": "memory",
+  "assetRef": "memory:probe-02-pr-review-checklist",
+  "asset": {
+    "frontmatter": {
+      "description": "A repeatable pre-review checklist used before opening any PR over 200 lines: regenerate the lockfile, run the integration suite locally, and re-verify the README quickstart.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["review", "process", "pr"],
+      "createdAt": "2026-04-28T08:15:00.000Z"
+    },
+    "body": "Pre-review checklist (PRs over ~200 lines):\n\n1. Regenerate the lockfile when any dependency was touched (`bun install --frozen-lockfile` to verify).\n2. Run the full integration suite locally; flakes here block the PR rather than the CI.\n3. Re-verify the README quickstart end-to-end on a fresh clone — README rot is the most common review-cycle blocker.\n4. Squash mechanical commits before requesting review; reviewers should not have to bisect mid-PR refactors.\n\nApplying this checklist before review consistently shaves one review round on average across the team.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-01T11:00:00.000Z",
+      "signal": "positive",
+      "reason": "Caught a missing lockfile entry before the reviewer did",
+      "note": "Saved a full round-trip on PR #412."
+    },
+    {
+      "ts": "2026-05-04T13:00:00.000Z",
+      "signal": "positive",
+      "reason": "Step 3 surfaced README rot in PR #418",
+      "note": "Reviewer commented that the proactive fix made the PR approvable on first pass."
+    },
+    {
+      "ts": "2026-05-08T16:00:00.000Z",
+      "signal": "positive",
+      "reason": "Used as the rubric for the new-hire PR-workflow doc"
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "queued",
+    "expectedScoreBand": [4.0, 5.0],
+    "rationale": "Stable, repeatable process knowledge with three independent positive signals. The judge should produce a clean lesson; queued is the correct outcome."
+  }
+}

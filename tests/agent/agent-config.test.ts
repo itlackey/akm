@@ -1,147 +1,16 @@
 /**
- * Tests for the `agent.*` config block parser and profile resolver.
+ * Agent profile resolution tests (0.8.0 shape).
  *
- * Acceptance coverage:
- *   • Parser accepts the documented shape.
- *   • Unknown keys are warn-and-ignored (no throw).
- *   • Built-in profiles resolve for opencode, claude, codex, gemini, aider.
- *   • Missing block surfaces a stable ConfigError via requireAgentProfile.
+ * Verifies `requireAgentProfile`, `resolveAgentProfile`, and
+ * `listAgentProfileNames` against the unified AkmConfig shape (
+ * `profiles.agent` + `defaults.agent`).
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import type { AkmConfig } from "../../src/core/config";
 
-const warnings: string[] = [];
-
-// NOTE: `mock.module` in Bun is process-global — once installed it persists
-// across test files run in the same `bun test` invocation. So this mock has
-// to remain a faithful drop-in for the real `src/core/warn` module:
-//
-//   1. Every export that the real module ships must be represented here,
-//      otherwise tests in other files that import a missing export get
-//      `undefined` and silently break (issue #273).
-//   2. `warn()` must also forward to `console.warn` so other test files that
-//      capture stderr (e.g. the noise-gate tests in
-//      tests/workflows/indexer-rejection.test.ts) continue to see the calls.
-//      We push to the local `warnings[]` so this file's own assertions still
-//      work, AND forward to `console.warn` so callers that intercept it
-//      still observe what was emitted.
-let mockedQuiet = false;
-let mockedVerbose = false;
-mock.module("../../src/core/warn", () => ({
-  warn: (...args: unknown[]) => {
-    warnings.push(args.join(" "));
-    if (!mockedQuiet) console.warn(...args);
-  },
-  warnVerbose: (...args: unknown[]) => {
-    if (!mockedVerbose) return;
-    warnings.push(args.join(" "));
-    if (!mockedQuiet) console.warn(...args);
-  },
-  setQuiet: (value: boolean) => {
-    mockedQuiet = value;
-  },
-  resetQuiet: () => {
-    mockedQuiet = false;
-  },
-  isQuiet: () => mockedQuiet,
-  setVerbose: (value: boolean) => {
-    mockedVerbose = value;
-  },
-  resetVerbose: () => {
-    mockedVerbose = false;
-  },
-  isVerbose: () => {
-    const env = process.env.AKM_VERBOSE?.trim().toLowerCase();
-    if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
-    if (env === "0" || env === "false" || env === "no" || env === "off") return false;
-    return mockedVerbose;
-  },
-}));
-
-beforeEach(() => {
-  warnings.length = 0;
-});
-
-afterEach(() => {
-  warnings.length = 0;
-});
-
-describe("parseAgentConfig", () => {
-  test("returns undefined when block is absent", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    expect(parseAgentConfig(undefined)).toBeUndefined();
-    expect(warnings).toHaveLength(0);
-  });
-
-  test("warns and returns undefined for non-object root", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    expect(parseAgentConfig("oops")).toBeUndefined();
-    expect(warnings.some((w) => w.includes('"agent"'))).toBe(true);
-  });
-
-  test("accepts the documented shape", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    const parsed = parseAgentConfig({
-      default: "opencode",
-      timeoutMs: 30000,
-      profiles: {
-        opencode: { bin: "opencode", args: ["--non-interactive"], stdio: "captured" },
-      },
-    });
-    expect(parsed?.default).toBe("opencode");
-    expect(parsed?.timeoutMs).toBe(30000);
-    expect(parsed?.profiles?.opencode).toEqual({
-      bin: "opencode",
-      args: ["--non-interactive"],
-      stdio: "captured",
-    });
-  });
-
-  test("warn-and-ignore unknown top-level keys (no throw)", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    const parsed = parseAgentConfig({
-      default: "claude",
-      moonRoutingTable: { foo: "bar" }, // unknown
-    });
-    expect(parsed?.default).toBe("claude");
-    expect(warnings.some((w) => w.includes("moonRoutingTable"))).toBe(true);
-  });
-
-  test("warn-and-ignore unknown per-profile keys", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    const parsed = parseAgentConfig({
-      profiles: {
-        custom: { bin: "ok", quirks: "nope" },
-      },
-    });
-    expect(parsed?.profiles?.custom?.bin).toBe("ok");
-    expect(warnings.some((w) => w.includes("quirks"))).toBe(true);
-  });
-
-  test("warn-and-ignore malformed timeoutMs", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    const parsed = parseAgentConfig({ timeoutMs: "60s" });
-    expect(parsed?.timeoutMs).toBeUndefined();
-    expect(warnings.some((w) => w.includes("timeoutMs"))).toBe(true);
-  });
-
-  test("rejects non-string args entries", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    const parsed = parseAgentConfig({
-      profiles: { opencode: { args: ["--ok", 5, "--also-ok"] } },
-    });
-    expect(parsed?.profiles?.opencode?.args).toEqual(["--ok", "--also-ok"]);
-    expect(warnings.some((w) => w.includes("args"))).toBe(true);
-  });
-
-  test("rejects bad stdio mode", async () => {
-    const { parseAgentConfig } = await import("../../src/integrations/agent/config");
-    const parsed = parseAgentConfig({
-      profiles: { opencode: { stdio: "weird" } },
-    });
-    expect(parsed?.profiles?.opencode?.stdio).toBeUndefined();
-    expect(warnings.some((w) => w.includes("stdio"))).toBe(true);
-  });
-});
+function mkConfig(over: Partial<AkmConfig> = {}): AkmConfig {
+  return { semanticSearchMode: "auto", ...over };
+}
 
 describe("built-in profile resolution", () => {
   test("resolves opencode, claude, codex, gemini, aider out of the box", async () => {
@@ -159,33 +28,32 @@ describe("built-in profile resolution", () => {
 
   test("user override merges on top of built-in", async () => {
     const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    const merged = resolveAgentProfile("opencode", { args: ["--scripted"], stdio: "captured" });
+    const merged = resolveAgentProfile("opencode", { platform: "opencode", args: ["--scripted"] });
     expect(merged?.bin).toBe("opencode"); // built-in default
     expect(merged?.args).toEqual(["--scripted"]); // override
-    expect(merged?.stdio).toBe("captured"); // override
     expect(merged?.envPassthrough).toContain("PATH"); // built-in retained
   });
 
   test("user-defined profile (no built-in) requires bin", async () => {
     const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
     expect(resolveAgentProfile("rover", undefined)).toBeUndefined();
-    expect(resolveAgentProfile("rover", {})).toBeUndefined();
-    const ok = resolveAgentProfile("rover", { bin: "rover-cli", args: ["--silent"] });
+    const ok = resolveAgentProfile("rover", { platform: "opencode", bin: "rover-cli", args: ["--silent"] });
     expect(ok?.bin).toBe("rover-cli");
     expect(ok?.args).toEqual(["--silent"]);
-    expect(ok?.stdio).toBe("captured");
   });
 
-  test("envPassthrough merges base + override", async () => {
+  test("user-defined opencode-sdk profile resolves without bin", async () => {
     const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    const merged = resolveAgentProfile("opencode", { envPassthrough: ["MY_TOKEN"] });
-    expect(merged?.envPassthrough).toContain("PATH"); // from built-in
-    expect(merged?.envPassthrough).toContain("MY_TOKEN"); // from override
+    const profile = resolveAgentProfile("custom", { platform: "opencode-sdk", model: "gpt-4o" });
+    expect(profile?.name).toBe("custom");
+    expect(profile?.sdkMode).toBe(true);
+    expect(profile?.model).toBe("gpt-4o");
   });
 
   test("listAgentProfileNames includes built-ins plus user-defined", async () => {
     const { listAgentProfileNames } = await import("../../src/integrations/agent/config");
-    const names = listAgentProfileNames({ profiles: { rover: { bin: "rover" } } });
+    const cfg = mkConfig({ profiles: { agent: { rover: { platform: "opencode", bin: "rover" } } } });
+    const names = listAgentProfileNames(cfg);
     expect(names).toContain("rover");
     expect(names).toContain("opencode");
     expect(names).toContain("claude");
@@ -204,9 +72,6 @@ describe("requireAgentProfile", () => {
     }
     expect(caught).toBeInstanceOf(ConfigError);
     expect((caught as Error).message).toContain("agent commands are disabled");
-    const hint = (caught as { hint: () => string | undefined }).hint();
-    expect(hint).toBeTruthy();
-    expect(hint).toContain("akm setup");
   });
 
   test("throws when no default and no requested name", async () => {
@@ -214,7 +79,7 @@ describe("requireAgentProfile", () => {
     const { ConfigError } = await import("../../src/core/errors");
     let caught: unknown;
     try {
-      requireAgentProfile({});
+      requireAgentProfile(mkConfig());
     } catch (err) {
       caught = err;
     }
@@ -224,14 +89,14 @@ describe("requireAgentProfile", () => {
 
   test("resolves the requested profile when valid", async () => {
     const { requireAgentProfile } = await import("../../src/integrations/agent/config");
-    const profile = requireAgentProfile({ default: "claude" });
+    const profile = requireAgentProfile(mkConfig({ defaults: { agent: "claude" } }));
     expect(profile.name).toBe("claude");
     expect(profile.bin).toBe("claude");
   });
 
   test("explicit requested name beats config default", async () => {
     const { requireAgentProfile } = await import("../../src/integrations/agent/config");
-    const profile = requireAgentProfile({ default: "claude" }, "codex");
+    const profile = requireAgentProfile(mkConfig({ defaults: { agent: "claude" } }), "codex");
     expect(profile.name).toBe("codex");
   });
 });

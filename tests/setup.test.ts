@@ -1,22 +1,23 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { type Cleanup, sandboxHome } from "./_helpers/sandbox";
 
 // ── detect.ts tests ─────────────────────────────────────────────────────────
 
 describe("detectAgentPlatforms", () => {
   let testHome: string;
-  const originalHome = process.env.HOME;
+  let envCleanup: Cleanup = () => {};
 
   beforeEach(() => {
-    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-detect-"));
-    process.env.HOME = testHome;
+    const homeResult = sandboxHome();
+    testHome = homeResult.dir;
+    envCleanup = homeResult.cleanup;
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
-    fs.rmSync(testHome, { recursive: true, force: true });
+    envCleanup();
+    envCleanup = () => {};
   });
 
   test("returns empty array when no platforms found", async () => {

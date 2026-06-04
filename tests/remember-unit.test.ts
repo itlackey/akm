@@ -90,6 +90,48 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
   });
 });
 
+describe("buildMemoryFrontmatter — captureMode + beliefState (Phase 1B / Rec 7)", () => {
+  test("emits captureMode: hot when explicitly passed", () => {
+    const out = buildMemoryFrontmatter({ tags: ["ops"], captureMode: "hot" });
+    const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;
+    expect(parsed.captureMode).toBe("hot");
+  });
+
+  test("emits beliefState when passed", () => {
+    const out = buildMemoryFrontmatter({ tags: ["ops"], beliefState: "asserted" });
+    const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;
+    expect(parsed.beliefState).toBe("asserted");
+  });
+
+  test("emits captureMode + beliefState together (the hot-path CLI contract)", () => {
+    const out = buildMemoryFrontmatter({
+      description: "VPN required for staging deploys",
+      tags: ["ops"],
+      captureMode: "hot",
+      beliefState: "asserted",
+    });
+    const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;
+    expect(parsed.captureMode).toBe("hot");
+    expect(parsed.beliefState).toBe("asserted");
+  });
+
+  test("omits captureMode + beliefState when not passed (default-safe)", () => {
+    const out = buildMemoryFrontmatter({ tags: ["ops"] });
+    const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;
+    expect(parsed.captureMode).toBeUndefined();
+    expect(parsed.beliefState).toBeUndefined();
+  });
+
+  test("rejects unknown captureMode values silently (frontmatter omits the key)", () => {
+    const out = buildMemoryFrontmatter({
+      tags: ["ops"],
+      captureMode: "unknown-mode" as unknown as "hot",
+    });
+    const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;
+    expect(parsed.captureMode).toBeUndefined();
+  });
+});
+
 describe("runAutoHeuristics", () => {
   test("detects a fenced code block as the `code` tag", () => {
     const result = runAutoHeuristics("Found this:\n```sh\necho hi\n```");

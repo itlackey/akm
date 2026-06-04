@@ -17,16 +17,26 @@ import * as websiteIngest from "../src/sources/website-ingest";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let stashDir = "";
 
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-config-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-state-"));
   stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-stash-"));
   for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  // Pair AKM_STASH_DIR mutations with XDG_DATA_HOME / XDG_STATE_HOME so the
+  // write-guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 });
 
@@ -37,7 +47,19 @@ afterEach(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (testConfigDir) fs.rmSync(testConfigDir, { recursive: true, force: true });
+  if (testDataDir) fs.rmSync(testDataDir, { recursive: true, force: true });
+  if (testStateDir) fs.rmSync(testStateDir, { recursive: true, force: true });
   if (stashDir) fs.rmSync(stashDir, { recursive: true, force: true });
 });
 
@@ -286,8 +308,13 @@ describe("ensureSourceCaches", () => {
         },
       ],
     };
-    // Should resolve (not reject) — failures are warn-only
-    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    try {
+      await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+      expect(gitSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      gitSpy.mockRestore();
+    }
   });
 
   test("reads from sources[] not stashes[] — website entries in sources[] are processed", async () => {
@@ -300,21 +327,6 @@ describe("ensureSourceCaches", () => {
           type: "website",
           url: "https://example.invalid/docs",
           name: "test-website",
-        },
-      ],
-    };
-    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
-  });
-
-  test("stashes[] entries are still processed for one-release backwards compat", async () => {
-    // stashes[] is deprecated but still accepted in the runtime shape for one release.
-    const config: AkmConfig = {
-      semanticSearchMode: "off",
-      stashes: [
-        {
-          type: "git",
-          url: "https://github.com/example/nonexistent-repo.git",
-          name: "legacy-git",
         },
       ],
     };

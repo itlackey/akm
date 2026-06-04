@@ -263,3 +263,41 @@ describe("wikiMatcher", () => {
     expect(wikiMatcher(ctx({ relPath: "knowledge/page.md" }))).toBeNull();
   });
 });
+
+// ── README.md in typed dirs is not the typed asset ──────────────────────────
+//
+// Regression for the indexer rule that skips README.md (case-insensitive) in
+// typed asset directories. Without the skip, `workflows/README.md` was being
+// parsed as a workflow and tripping the workflow metadata validator with a
+// "Skipped workflow …" warning on every index run.
+
+describe("README.md is never the typed asset for surrounding typed dir", () => {
+  test("workflows/README.md is not classified as a workflow by directoryMatcher", () => {
+    expect(directoryMatcher(ctx({ relPath: "workflows/README.md" }))).toBeNull();
+  });
+
+  test("agents/README.md is not classified as an agent", () => {
+    expect(directoryMatcher(ctx({ relPath: "agents/README.md" }))).toBeNull();
+  });
+
+  test("commands/readme.md (lower-case) is also skipped", () => {
+    expect(directoryMatcher(ctx({ relPath: "commands/readme.md" }))).toBeNull();
+  });
+
+  test("smartMdMatcher routes workflows/README.md to knowledge even when body looks like a workflow", () => {
+    const body = `# Workflow: Deploy
+## Step: Validate
+Step ID: validate
+
+### Instructions
+Do the thing.
+`;
+    const result = smartMdMatcher(ctx({ relPath: "workflows/README.md", content: body }));
+    expect(result).toEqual({ type: "knowledge", specificity: 5, renderer: "knowledge-md" });
+  });
+
+  test("non-README .md in workflows/ is still a workflow", () => {
+    // Sanity: the skip is narrow — only README.md, not arbitrary docs.
+    expect(directoryMatcher(ctx({ relPath: "workflows/deploy.md" }))?.type).toBe("workflow");
+  });
+});

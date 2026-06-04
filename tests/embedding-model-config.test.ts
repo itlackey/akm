@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../src/core/config";
+import { setQuiet } from "../src/core/warn";
+import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 mock.module("@huggingface/transformers", () => ({
   pipeline: async () => {
@@ -197,6 +201,9 @@ describe("dimension consistency on model change", () => {
     // Simulate a 384-dim vector (old model) vs 768-dim vector (new model)
     const vec384 = Array(384).fill(1 / Math.sqrt(384));
     const vec768 = Array(768).fill(1 / Math.sqrt(768));
+    // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
+    // warn() calls from cosineSimilarity reach the patched console.warn.
+    setQuiet(false);
     try {
       console.warn = (...args: unknown[]) => {
         warnings.push(args.map(String).join(" "));
@@ -206,6 +213,7 @@ describe("dimension consistency on model change", () => {
       expect(warnings.some((warning) => warning.includes("vector dimension mismatch"))).toBe(true);
     } finally {
       console.warn = originalWarn;
+      setQuiet(true); // restore harness default
     }
   });
 
@@ -252,13 +260,24 @@ describe("dimension consistency on model change", () => {
 // ── Test 7: Config parsing roundtrip for localModel via loadConfig ────────
 
 describe("config file parsing for localModel", () => {
+  let cfgCleanup: Cleanup = () => {};
+  let cfgDir = "";
+
+  beforeEach(() => {
+    const cfgResult = sandboxXdgConfigHome();
+    cfgDir = cfgResult.dir;
+    cfgCleanup = cfgResult.cleanup;
+  });
+
+  afterEach(() => {
+    cfgCleanup();
+    cfgCleanup = () => {};
+    cfgDir = "";
+  });
+
   test("parseEmbeddingConfig preserves localModel from raw config object", async () => {
     const { loadConfig } = await import("../src/core/config");
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const path = await import("node:path");
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
       semanticSearchMode: "auto",
       embedding: {
@@ -268,40 +287,22 @@ describe("config file parsing for localModel", () => {
       },
     };
 
-    // Save and restore environment
-    const origXDG = process.env.XDG_CONFIG_HOME;
-    try {
-      // Point config to our temp directory
-      process.env.XDG_CONFIG_HOME = tmpDir;
+    // Create the akm subdirectory structure expected by getConfigPath
+    const akmDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmDir, { recursive: true });
+    fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
-      // Create the akm subdirectory structure expected by getConfigPath
-      const akmDir = path.join(tmpDir, "akm");
-      fs.mkdirSync(akmDir, { recursive: true });
-      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
-
-      // Actually call loadConfig to test the parsing path
-      const config = loadConfig();
-      expect(config.embedding).toBeDefined();
-      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
-      expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
-      expect(config.embedding?.model).toBe("nomic-embed-text");
-    } finally {
-      if (origXDG === undefined) {
-        delete process.env.XDG_CONFIG_HOME;
-      } else {
-        process.env.XDG_CONFIG_HOME = origXDG;
-      }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    // Actually call loadConfig to test the parsing path
+    const config = loadConfig();
+    expect(config.embedding).toBeDefined();
+    expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+    expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+    expect(config.embedding?.model).toBe("nomic-embed-text");
   });
 
-  test("parseEmbeddingConfig returns local-only config for localModel without endpoint", async () => {
+  test("local-only config: endpoint and model are undefined when only localModel is set", async () => {
     const { loadConfig } = await import("../src/core/config");
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const path = await import("node:path");
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
       semanticSearchMode: "auto",
       embedding: {
@@ -309,40 +310,42 @@ describe("config file parsing for localModel", () => {
       },
     };
 
-    const origXDG = process.env.XDG_CONFIG_HOME;
-    try {
-      process.env.XDG_CONFIG_HOME = tmpDir;
-      const akmDir = path.join(tmpDir, "akm");
-      fs.mkdirSync(akmDir, { recursive: true });
-      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+    const akmDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmDir, { recursive: true });
+    fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
-      const config = loadConfig();
-      expect(config.embedding).toBeDefined();
-      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
-      // Sentinel empty strings for local-only config
-      expect(config.embedding?.endpoint).toBe("");
-      expect(config.embedding?.model).toBe("");
-    } finally {
-      if (origXDG === undefined) {
-        delete process.env.XDG_CONFIG_HOME;
-      } else {
-        process.env.XDG_CONFIG_HOME = origXDG;
-      }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    const config = loadConfig();
+    expect(config.embedding).toBeDefined();
+    expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+    // sentinel "" injection was removed in 393de77; fields stay undefined
+    expect(config.embedding?.endpoint).toBeUndefined();
+    expect(config.embedding?.model).toBeUndefined();
   });
 });
 
 // ── Test 8: endpoint+localModel+no-model warns and uses local-only ────────
 
 describe("parseEmbeddingConfig edge cases", () => {
-  test("warns when endpoint present but model missing with localModel set", async () => {
-    const { loadConfig } = await import("../src/core/config");
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const path = await import("node:path");
+  let cfgCleanup: Cleanup = () => {};
+  let cfgDir = "";
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
+  beforeEach(() => {
+    const cfgResult = sandboxXdgConfigHome();
+    cfgDir = cfgResult.dir;
+    cfgCleanup = cfgResult.cleanup;
+  });
+
+  afterEach(() => {
+    cfgCleanup();
+    cfgCleanup = () => {};
+    cfgDir = "";
+  });
+
+  test("endpoint+localModel without model passes through as-is (no sentinel, no warn)", async () => {
+    // warn-and-drop preprocessing was removed in 393de77; partial embedding
+    // configs are now passed through by Zod as-is.
+    const { loadConfig } = await import("../src/core/config");
+
     const configData = {
       semanticSearchMode: "auto",
       embedding: {
@@ -352,47 +355,24 @@ describe("parseEmbeddingConfig edge cases", () => {
       },
     };
 
-    const origXDG = process.env.XDG_CONFIG_HOME;
-    const origWarn = console.warn;
-    const warnings: string[] = [];
-    try {
-      console.warn = (...args: unknown[]) => {
-        warnings.push(args.map(String).join(" "));
-      };
-      process.env.XDG_CONFIG_HOME = tmpDir;
-      const akmDir = path.join(tmpDir, "akm");
-      fs.mkdirSync(akmDir, { recursive: true });
-      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+    const akmDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmDir, { recursive: true });
+    fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
-      const config = loadConfig();
-
-      // Should return local-only config (endpoint discarded)
-      expect(config.embedding).toBeDefined();
-      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
-      expect(config.embedding?.endpoint).toBe("");
-      expect(config.embedding?.model).toBe("");
-
-      // Should have emitted a warning about the ignored endpoint
-      const relevantWarning = warnings.find((w) => w.includes("ignored") && w.includes("model is required"));
-      expect(relevantWarning).toBeDefined();
-    } finally {
-      console.warn = origWarn;
-      if (origXDG === undefined) {
-        delete process.env.XDG_CONFIG_HOME;
-      } else {
-        process.env.XDG_CONFIG_HOME = origXDG;
-      }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    const config = loadConfig();
+    expect(config.embedding).toBeDefined();
+    expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+    expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+    // model stays undefined since it was not set
+    expect(config.embedding?.model).toBeUndefined();
   });
 
-  test("returns undefined when endpoint present but model and localModel both missing", async () => {
+  test("endpoint-only config passes through (no undefined coercion)", async () => {
+    // The old parseEmbeddingConfig returned undefined when only endpoint was
+    // set (no model/localModel). That helper was deleted in 393de77; the Zod
+    // schema now accepts any combination of optional fields.
     const { loadConfig } = await import("../src/core/config");
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const path = await import("node:path");
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
       semanticSearchMode: "auto",
       embedding: {
@@ -401,23 +381,14 @@ describe("parseEmbeddingConfig edge cases", () => {
       },
     };
 
-    const origXDG = process.env.XDG_CONFIG_HOME;
-    try {
-      process.env.XDG_CONFIG_HOME = tmpDir;
-      const akmDir = path.join(tmpDir, "akm");
-      fs.mkdirSync(akmDir, { recursive: true });
-      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+    const akmDir = path.join(cfgDir, "akm");
+    fs.mkdirSync(akmDir, { recursive: true });
+    fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
-      const config = loadConfig();
-      // parseEmbeddingConfig returns undefined => no embedding config set
-      expect(config.embedding).toBeUndefined();
-    } finally {
-      if (origXDG === undefined) {
-        delete process.env.XDG_CONFIG_HOME;
-      } else {
-        process.env.XDG_CONFIG_HOME = origXDG;
-      }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    const config = loadConfig();
+    expect(config.embedding).toBeDefined();
+    expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+    expect(config.embedding?.model).toBeUndefined();
+    expect(config.embedding?.localModel).toBeUndefined();
   });
 });

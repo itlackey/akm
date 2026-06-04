@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Memory-specific helpers for `akm remember`.
  *
@@ -6,13 +10,14 @@
  * CLI entry point stays focused on argument parsing + output routing.
  */
 
-import { stringify as yamlStringify } from "yaml";
+import { serializeFrontmatter } from "../core/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
-import { loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/metadata";
 import { SCOPE_KEYS } from "../indexer/metadata";
+import { parseFlagValue } from "../output/context";
 
 /**
  * Fields the CLI collects via `--tag`, `--expires`, `--source`, `--auto`,
@@ -33,6 +38,19 @@ export interface MemoryFrontmatterFields {
   expires?: string;
   subjective?: boolean;
   scope?: StashEntryScope;
+  /**
+   * Capture-mode marker (Phase 1B / Rec 7). `hot` marks memories written via
+   * the `akm remember` CLI; `background` is reserved for derived/inferred
+   * memories. Persisted as the `captureMode:` frontmatter key.
+   */
+  captureMode?: "hot" | "background";
+  /**
+   * Belief state marker (Phase 1B). Hot-path memories are written as
+   * `asserted`; the value is persisted verbatim into the `beliefState:`
+   * frontmatter key for downstream consumers. Phase 1A widens the indexer's
+   * union; until then, the indexer simply passes the string through.
+   */
+  beliefState?: string;
 }
 
 /**
@@ -70,6 +88,12 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
+  if (fields.captureMode === "hot" || fields.captureMode === "background") {
+    obj.captureMode = fields.captureMode;
+  }
+  if (typeof fields.beliefState === "string" && fields.beliefState.trim()) {
+    obj.beliefState = fields.beliefState.trim();
+  }
   // Scope keys are emitted as flat top-level keys (`scope_user`, …) so the
   // existing one-level frontmatter parser can read them without nesting.
   // A scope object with no populated values is dropped.
@@ -84,7 +108,7 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   // No fields populated → emit a bare delimiter pair so callers don't
   // produce `---\n{}\n---` (the YAML serializer's empty-object form).
   if (Object.keys(obj).length === 0) return "---\n---";
-  const serialized = yamlStringify(obj).trimEnd();
+  const serialized = serializeFrontmatter(obj);
   return `---\n${serialized}\n---`;
 }
 
@@ -188,12 +212,11 @@ const LLM_ENRICH_TIMEOUT_MS = 10_000;
  */
 export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
   const config = loadConfig();
-  if (!config.llm) {
-    warn("Warning: --enrich requires an LLM to be configured. Run `akm config set llm` to configure one.");
+  const llmConfig = getDefaultLlmConfig(config);
+  if (!llmConfig) {
+    warn("Warning: --enrich requires an LLM to be configured. Run `akm setup` to configure one.");
     return { tags: [] };
   }
-
-  const llmConfig = config.llm;
   const { chatCompletion, parseEmbeddedJsonResponse: parseJsonResponse } = await import("../llm/client");
 
   const prompt = `You are a memory tagger for a developer knowledge base.
@@ -254,4 +277,71 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);
     return { tags: [] };
   }
+}
+
+// ── Content-arg disambiguation ───────────────────────────────────────────────
+
+/**
+ * Guard against citty consuming a global flag value as the `content` positional.
+ *
+ * When the user runs `akm remember --format json` without a content argument,
+ * citty may assign `"json"` to the `content` positional because of how it
+ * handles flag order. This helper detects that case and returns `undefined`
+ * so `readMemoryContent` falls through to stdin.
+ */
+export function resolveRememberContentArg(content: string | undefined): string | undefined {
+  if (content === undefined) return undefined;
+
+  const parsedFormat = parseFlagValue(process.argv, "--format");
+  if (
+    parsedFormat !== undefined &&
+    content === parsedFormat &&
+    wasRememberFlagValueConsumedAsContent(content, parsedFormat, "--format")
+  ) {
+    return undefined;
+  }
+
+  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  if (
+    parsedDetail !== undefined &&
+    content === parsedDetail &&
+    wasRememberFlagValueConsumedAsContent(content, parsedDetail, "--detail")
+  ) {
+    return undefined;
+  }
+
+  return content;
+}
+
+function wasRememberFlagValueConsumedAsContent(
+  content: string,
+  flagValue: string,
+  flagName: "--format" | "--detail",
+): boolean {
+  const argv = process.argv.slice(2);
+  const rememberIndex = argv.indexOf("remember");
+  const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
+
+  let flagIndex = -1;
+  let flagConsumesNextToken = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === flagName) {
+      flagIndex = i;
+      flagConsumesNextToken = true;
+      break;
+    }
+    if (token === `${flagName}=${flagValue}`) {
+      flagIndex = i;
+      break;
+    }
+  }
+
+  if (flagIndex === -1) return false;
+  if (tokens.slice(0, flagIndex).includes(content)) return false;
+
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
+  if (tokens.slice(firstTokenAfterFlag).includes(content)) return false;
+
+  return true;
 }

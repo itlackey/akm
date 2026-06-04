@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "judge-calibration-suite",
+  "suite": "judge-calibration",
+  "type": "judge-calibration",
+  "description": "Distill judge agreement against hand-graded probes. Runs each probe in an isolated sandbox `samplesPerProbe` times to measure MT-Bench-style across-resample variance (D-5 / #388).",
+  "input": {
+    "probesDir": "probes",
+    "samplesPerProbe": 3,
+    "improveArgs": []
+  },
+  "expected": {
+    "minAgreement": 0.5,
+    "maxVariance": 0.5
+  },
+  "scoring": {
+    "deterministic": false,
+    "passThreshold": 0.8
+  },
+  "requires": {
+    "features": ["feedback_distillation"],
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["judge", "calibration", "r3", "phase4"]
+}

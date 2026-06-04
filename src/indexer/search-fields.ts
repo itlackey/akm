@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Per-field search text extraction for FTS5 indexing.
  *
@@ -47,6 +51,7 @@ export function buildSearchFields(entry: StashEntry): {
   }
   if (entry.xrefs) hintParts.push(entry.xrefs.join(" "));
   if (entry.pageKind) hintParts.push(entry.pageKind);
+  if (entry.whenToUse) hintParts.push(entry.whenToUse);
   const hints = hintParts.join(" ").toLowerCase();
 
   const contentParts: string[] = [];

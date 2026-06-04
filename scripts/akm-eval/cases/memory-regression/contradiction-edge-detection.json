@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "contradiction-edge-detection",
+  "suite": "memory-regression",
+  "type": "memory-safety",
+  "description": "Verifies M-1 / #367 — contradiction edges written to memory frontmatter survive akm improve and remain visible to the SCC resolver. The fixture seeds a contradictedBy edge on the older policy memory; after improve, the edge must still be present (at least 1 contradictedBy entry across surviving files).",
+  "input": {
+    "fixture": "fixtures/contradiction-edge-detection"
+  },
+  "expected": {
+    "minContradictionEdges": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["memory", "safety", "contradictions"]
+}

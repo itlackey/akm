@@ -93,7 +93,7 @@ describe("enhanceMetadata", () => {
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
       const entry: StashEntry = { name: "test", type: "script" };
-      await expect(enhanceMetadata(config, entry)).rejects.toThrow("LLM request failed (500)");
+      await expect(enhanceMetadata(config, entry)).rejects.toThrow("LLM provider error (500)");
     } finally {
       server.stop();
     }

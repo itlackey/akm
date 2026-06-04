@@ -12,8 +12,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { listEntries } from "../src/commands/env";
 import { buildMemoryFrontmatter } from "../src/commands/remember";
-import { listEntries } from "../src/commands/vault";
 import { shapeSearchHit, shapeShowOutput } from "../src/output/shapes";
 
 // ── #7: show shape includes path + editable ───────────────────────────────────
@@ -53,7 +53,7 @@ describe("shapeShowOutput — path + editable always included (#7)", () => {
   });
 
   test("agent mode does NOT expose path (security: keep in non-agent shape only)", () => {
-    const out = shapeShowOutput(showResult as Record<string, unknown>, "normal", /* forAgent */ true);
+    const out = shapeShowOutput(showResult as Record<string, unknown>, "normal", /* shape */ "agent");
     // Agent mode picks a minimal subset; path is not in that subset
     expect(out.editable).toBeUndefined();
     expect(out.path).toBeUndefined();

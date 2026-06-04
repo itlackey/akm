@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "reflect-failure-breakdown",
+  "suite": "improve-smoke",
+  "type": "reflect-quality",
+  "description": "Snapshot of reflect outcomes across recent improve runs — succeeded vs schema-shape vs content-policy vs gate-refused, with the LLM-touched denominator (gate-refused excluded). Always passes; the breakdown is the deliverable. Replaces the hand-rolled jq-on-improve-result.json classification.",
+  "input": {
+    "windowRuns": 20
+  },
+  "expected": {},
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0",
+    "requiresStateDb": true
+  },
+  "tags": ["reflect", "smoke", "metrics-only"]
+}

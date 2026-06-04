@@ -45,19 +45,29 @@ afterAll(() => {
 });
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let stashDir = "";
 
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-qa-cache-");
   testConfigDir = createTmpDir("akm-qa-config-");
+  testDataDir = createTmpDir("akm-qa-data-");
+  testStateDir = createTmpDir("akm-qa-state-");
   stashDir = createTmpDir("akm-qa-stash-");
   makeStashDir(stashDir);
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  // Pair AKM_STASH_DIR with XDG_DATA_HOME / XDG_STATE_HOME so the
+  // test-isolation guard in src/core/paths.ts stays inert.
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 });
 
@@ -67,6 +77,12 @@ afterEach(() => {
 
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
 
   if (originalStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalStashDir;
@@ -78,6 +94,14 @@ afterEach(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 
@@ -97,7 +121,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
 
     // Config should persist the name
     const config = loadConfig();
-    const sources = config.sources ?? config.stashes ?? [];
+    const sources = config.sources ?? [];
     const added = sources.find((s) => s.type === "filesystem" && s.path === path.resolve(extraStash));
     expect(added).toBeDefined();
     expect(added?.name).toBe("extra");
@@ -112,7 +136,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
 
     // Verify the name is in the config
     const configBefore = loadConfig();
-    const sources = configBefore.sources ?? configBefore.stashes ?? [];
+    const sources = configBefore.sources ?? [];
     expect(sources.some((s) => s.name === "extra")).toBe(true);
   });
 
@@ -124,7 +148,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
     await akmAdd({ ref: someStash });
 
     const config = loadConfig();
-    const sources = config.sources ?? config.stashes ?? [];
+    const sources = config.sources ?? [];
     const added = sources.find((s) => s.type === "filesystem" && s.path === path.resolve(someStash));
     expect(added).toBeDefined();
     // Name should NOT be the raw path (it's the readable form), but should not be empty

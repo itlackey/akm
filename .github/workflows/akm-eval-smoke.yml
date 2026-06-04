@@ -1,0 +1,113 @@
+name: akm-eval smoke
+
+# Runs the akm-eval read-only smoke suite against docs/example-stash on
+# every PR that touches the toolkit, akm internals, or the example stash.
+# Phase 8 of the akm-eval implementation plan.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main, "release/*", "fix/*"]
+    paths:
+      - "scripts/akm-eval/**"
+      - "src/**"
+      - "docs/example-stash/**"
+      - ".github/workflows/akm-eval-smoke.yml"
+  pull_request:
+    branches: [main, "release/*"]
+    paths:
+      - "scripts/akm-eval/**"
+      - "src/**"
+      - "docs/example-stash/**"
+      - ".github/workflows/akm-eval-smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+
+      - name: Typecheck akm-eval
+        run: bunx tsc -p scripts/akm-eval/tsconfig.json
+
+      - name: Build akm
+        run: |
+          bun run build
+          chmod +x dist/cli.js
+
+      - name: Seed example-stash index
+        env:
+          AKM_STASH_DIR: ${{ github.workspace }}/docs/example-stash
+          AKM_DATA_DIR: ${{ runner.temp }}/akm-data
+          HOME: ${{ runner.temp }}/akm-home
+        run: |
+          mkdir -p "$AKM_DATA_DIR" "$HOME"
+          ./dist/cli.js index
+
+      - name: akm-eval smoke (baseline)
+        env:
+          AKM_STASH_DIR: ${{ github.workspace }}/docs/example-stash
+          AKM_DATA_DIR: ${{ runner.temp }}/akm-data
+          HOME: ${{ runner.temp }}/akm-home
+        run: |
+          scripts/akm-eval/bin/akm-eval-run \
+            --suite improve-smoke \
+            --stash "$AKM_STASH_DIR" \
+            --akm ./dist/cli.js \
+            --format json \
+            --fail-below-score 0.75 \
+            > /tmp/eval-summary.json
+
+      - name: akm-eval smoke (deterministic replay)
+        env:
+          AKM_STASH_DIR: ${{ github.workspace }}/docs/example-stash
+          AKM_DATA_DIR: ${{ runner.temp }}/akm-data
+          HOME: ${{ runner.temp }}/akm-home
+        run: |
+          scripts/akm-eval/bin/akm-eval-run \
+            --suite improve-smoke \
+            --stash "$AKM_STASH_DIR" \
+            --akm ./dist/cli.js \
+            --format none \
+            --record
+          scripts/akm-eval/bin/akm-eval-replay latest \
+            --stash "$AKM_STASH_DIR" \
+            --format json \
+            > /tmp/replay-summary.json
+          # Fail if replay was non-deterministic.
+          jq -e '.deterministic == true' /tmp/replay-summary.json
+
+      - name: akm-eval memory-regression suite
+        env:
+          AKM_DATA_DIR: ${{ runner.temp }}/akm-mem-data
+          HOME: ${{ runner.temp }}/akm-mem-home
+        run: |
+          mkdir -p "$AKM_DATA_DIR" "$HOME"
+          scripts/akm-eval/bin/akm-eval-run \
+            --suite memory-regression \
+            --akm ./dist/cli.js \
+            --cases-dir scripts/akm-eval/cases \
+            --format json \
+            --fail-below-score 0.5 \
+            > /tmp/mem-summary.json
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: akm-eval-smoke
+          path: |
+            /tmp/eval-summary.json
+            /tmp/replay-summary.json
+            /tmp/mem-summary.json
+            docs/example-stash/.akm/evals/runs/
+          if-no-files-found: ignore
+          retention-days: 7

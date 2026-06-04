@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "proposal-validation-floor",
+  "suite": "improve-smoke",
+  "type": "proposal-quality",
+  "description": "Validation pass rate (created proposals vs proposal_creation_rejected events) is at least 0.7 over a recent window. The window decouples this gate from volatile live-queue state — accepted/rejected proposals get cleaned out post-decision while rejection events accumulate for the lifetime of the stash, so a lifetime ratio collapses to 0/(0+N)=0 once any rejection burst happens. Set `since: null` to opt back into lifetime mode. Skipped when no proposal traffic is recorded.",
+  "input": {
+    "since": "24h"
+  },
+  "expected": {
+    "minValidationPassRate": 0.7
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["proposal", "smoke", "quality"]
+}

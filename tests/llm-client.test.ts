@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/core/config";
-import { chatCompletion, parseEmbeddedJsonResponse, redactErrorBody } from "../src/llm/client";
+import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse, redactErrorBody } from "../src/llm/client";
 
 // ── redactErrorBody ─────────────────────────────────────────────────────────
 
@@ -121,28 +121,93 @@ describe("chatCompletion error redaction", () => {
     }
   });
 
-  test("uses configured timeoutMs when provided", async () => {
-    const started = Date.now();
-    const server = Bun.serve({
-      port: 0,
-      async fetch(_req) {
-        await new Promise((resolve) => setTimeout(resolve, 80));
-        return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    });
+  // The configured timeoutMs is honored via an AbortController whose abort
+  // timer is scheduled for exactly that many milliseconds. These tests assert
+  // that wiring deterministically with fake timers + a fetch stub that mirrors
+  // real fetch semantics (resolve while the signal is live, reject with an
+  // AbortError once it aborts). No real server, no wall-clock race — so the
+  // result is identical regardless of how the parallel suite is scheduled.
+  test("uses configured timeoutMs when provided (request faster than timeout succeeds)", async () => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      // Resolve immediately: the request completes well before the 250ms abort
+      // timer would fire, so the configured timeout must NOT cancel it.
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
     try {
       const config: LlmConnectionConfig = {
-        endpoint: `http://localhost:${server.port}`,
+        endpoint: "http://localhost:0/v1/chat/completions",
         model: "test-model",
         timeoutMs: 250,
       };
       const out = await chatCompletion(config, [{ role: "user", content: "hi" }]);
       expect(out).toBe("ok");
-      expect(Date.now() - started).toBeGreaterThanOrEqual(80);
+      // The abort signal was wired in but never tripped for a fast response.
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(capturedSignal?.aborted).toBe(false);
     } finally {
-      server.stop();
+      globalThis.fetch = originalFetch;
+      jest.useRealTimers();
+    }
+  });
+
+  test("aborts at the configured timeoutMs, not before", async () => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      // Mirror real fetch: a pending request stays unresolved until its signal
+      // aborts, at which point it rejects with an AbortError DOMException.
+      return new Promise<Response>((_resolve, reject) => {
+        if (!signal) return;
+        signal.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")), {
+          once: true,
+        });
+      });
+    }) as typeof fetch;
+    try {
+      const config: LlmConnectionConfig = {
+        endpoint: "http://localhost:0/v1/chat/completions",
+        model: "test-model",
+        timeoutMs: 250,
+      };
+      const pending = chatCompletion(config, [{ role: "user", content: "hi" }]);
+      // Settle the rejection so the floating promise can't crash the run, and
+      // capture whichever outcome occurs.
+      let outcome: { ok: true } | { ok: false; err: unknown } | undefined;
+      pending.then(
+        () => {
+          outcome = { ok: true };
+        },
+        (err) => {
+          outcome = { ok: false, err };
+        },
+      );
+
+      // Just before the configured timeout: still pending, no abort.
+      jest.advanceTimersByTime(249);
+      await Promise.resolve();
+      expect(outcome).toBeUndefined();
+
+      // Crossing 250ms fires the abort timer and rejects the request.
+      jest.advanceTimersByTime(1);
+      // Flush the microtask chain (abort -> fetch reject -> mapped error).
+      await pending.catch(() => {});
+
+      expect(outcome).toBeDefined();
+      expect(outcome?.ok).toBe(false);
+      const err = (outcome as { ok: false; err: unknown }).err;
+      expect(err).toBeInstanceOf(LlmCallError);
+      expect((err as LlmCallError).code).toBe("timeout");
+      expect((err as LlmCallError).message).toContain("250ms");
+    } finally {
+      globalThis.fetch = originalFetch;
+      jest.useRealTimers();
     }
   });
 });

@@ -13,6 +13,7 @@ Current layout:
 ```text
 docs/example-stash/
   commands/    # command prompt templates that help launch workflows
+  skills/      # reusable guidance for recurring tasks and cleanup styles
   workflows/   # resumable multi-step procedures
 ```
 
@@ -52,6 +53,13 @@ engineering work:
   `akm feedback` to signal reviewer-persona quality.
 - `workflows/ship-feature-from-spec.md` — spec-to-PR delivery loop with
   test-first discipline and ADR-style decision capture.
+- `workflows/architecture-cleanup.md` — behavior-preserving refactor loop for
+  reducing architectural duplication without changing functionality.
+
+### Skills
+
+- `skills/architecture-cleanup/SKILL.md` — guardrails, patterns, and local
+  references for narrow architectural cleanup work.
 
 ### Nested workflow example
 

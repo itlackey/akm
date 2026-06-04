@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Local @huggingface/transformers embedder.
  *
@@ -40,6 +44,29 @@ const LOCAL_EMBEDDER_FALLBACK_DTYPE = "auto";
  */
 function resolveLocalModelName(overrideModel?: string): string {
   return overrideModel || DEFAULT_LOCAL_MODEL;
+}
+
+/**
+ * Detect whether the current process is running from a Bun-compiled binary
+ * (i.e. `bun build --compile` produced a single executable). Bun marks the
+ * compiled binary with a synthesized `process.execPath` that ends in the
+ * binary name rather than `bun`, AND sets a flag we can probe.
+ *
+ * Used to gate the "install @huggingface/transformers" hint — that advice
+ * is impossible to follow from a single-binary install, so we replace it
+ * with the only working remediation (switch to npm/Bun install, or turn
+ * semantic search off). See #482.
+ */
+function isCompiledBinary(): boolean {
+  try {
+    const flag = (Bun as unknown as { embeddedFiles?: unknown; main?: string }).embeddedFiles;
+    if (flag !== undefined) return true;
+  } catch {
+    // Bun not available (under Node tests, for example) — treat as not-binary.
+  }
+  const exec = (process.execPath || "").toLowerCase();
+  if (exec.endsWith("/akm") || exec.endsWith("\\akm.exe")) return true;
+  return false;
 }
 
 export class LocalEmbedder implements Embedder {
@@ -112,9 +139,20 @@ export class LocalEmbedder implements Embedder {
         } catch (importError) {
           const msg = importError instanceof Error ? importError.message : String(importError);
           if (/Cannot find module|MODULE_NOT_FOUND|Cannot resolve/i.test(msg)) {
-            throw new Error(
-              "Semantic search requires @huggingface/transformers. Install it with: bun add @huggingface/transformers",
-            );
+            // #482: the prebuilt binary build is invoked with
+            // `bun install --omit optional` (release.yml), so binary users
+            // can NEVER load @huggingface/transformers. Telling them to
+            // `bun add` it is a dead-end — there is no install target.
+            // Detect the binary execution path and give the only working
+            // remediation: switch to the npm/Bun install of akm-cli, or
+            // turn off semantic search.
+            const isBinary = isCompiledBinary();
+            const hint = isBinary
+              ? "You are running the prebuilt akm binary, which cannot load optional native dependencies. " +
+                "To enable semantic search, install akm-cli via Bun: `curl -fsSL https://bun.sh/install | bash && bun install -g akm-cli`. " +
+                "To keep using the binary, set `semanticSearchMode: off` in your config and use keyword-only FTS."
+              : "Install it with: `bun add @huggingface/transformers` (or `npm install @huggingface/transformers`).";
+            throw new Error(`Semantic search requires @huggingface/transformers. ${hint}`);
           }
           throw new Error(`Failed to load embedding runtime: ${msg}. Check platform compatibility.`);
         }

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "planner-waste-rate-ceiling",
+  "suite": "improve-smoke",
+  "type": "planner-waste",
+  "description": "Gate: the proportion of planner actions across the window that ended in a no-op upfront refuse (e.g. `Distill refuses lesson inputs — lessons are the distilled form, not a source.`) is at most 0.05. Above that the planner has demonstrably lost track of which inputs the underlying command cannot service — that's a planner-memory bug, not a transient blip. Skipped when fewer than 50 total actions are present across the window (sample too small to gate on).",
+  "input": {
+    "windowRuns": 20
+  },
+  "expected": {
+    "maxNoOpRefuseRate": 0.05
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0",
+    "minActions": 50,
+    "requiresStateDb": true
+  },
+  "tags": ["planner-waste", "smoke", "quality", "gate"]
+}

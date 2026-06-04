@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Flexible asset resolution system.
  *
@@ -10,7 +14,6 @@ import path from "node:path";
 import { toPosix } from "../core/common";
 import { parseFrontmatter } from "../core/frontmatter";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
-import type { StashEntry } from "./metadata";
 
 // ── FileContext ──────────────────────────────────────────────────────────────
 
@@ -167,8 +170,6 @@ export interface AssetRenderer {
   buildShowResponse(ctx: RenderContext): ShowResponse;
   /** Optionally enrich a SourceSearchHit with renderer-specific fields */
   enrichSearchHit?(hit: SourceSearchHit, stashDir: string): void;
-  /** Optionally extract/augment metadata for a StashEntry */
-  extractMetadata?(entry: StashEntry, ctx: RenderContext): void;
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────

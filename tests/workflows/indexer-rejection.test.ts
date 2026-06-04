@@ -6,17 +6,14 @@ import { getDbPath } from "../../src/core/paths";
 import { resetQuiet, resetVerbose, setVerbose } from "../../src/core/warn";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-let testConfigDir = "";
-let testCacheDir = "";
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-idx-config-"));
-  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-idx-cache-"));
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.XDG_CACHE_HOME = testCacheDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -35,18 +32,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
   resetVerbose();
   delete process.env.AKM_VERBOSE;
 });
@@ -123,7 +110,9 @@ test("indexer rejects broken workflows and surfaces every error in IndexResponse
   writeWorkflow(stashDir, "good", VALID_WORKFLOW);
   const brokenPath = writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
 
-  const result = await akmIndex({ stashDir, full: true });
+  // Use captureStderr to prevent the noise-gate summary warn() from leaking
+  // to the test runner output. This test only cares about result.warnings.
+  const { result } = await captureStderr(() => akmIndex({ stashDir, full: true }));
   expect(result.totalEntries).toBe(1); // only the good one
   expect(result.warnings ?? []).toBeDefined();
 

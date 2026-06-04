@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "proposal-accept-rate-floor",
+  "suite": "improve-smoke",
+  "type": "proposal-quality",
+  "description": "Of decided proposals (accepted + rejected), accept rate is at least 0.4. Skipped when no decisions are recorded.",
+  "input": {},
+  "expected": {
+    "minAcceptRate": 0.4
+  },
+  "scoring": {
+    "deterministic": true,
+    "passThreshold": 1.0
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": ["proposal", "smoke", "quality"]
+}

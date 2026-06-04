@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -5,7 +10,7 @@ import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset-spec";
 import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config";
-import { loadConfig } from "../../core/config";
+import { getSources, loadConfig } from "../../core/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../../core/paths";
 import { sanitizeCommitMessage } from "../../core/write-source";
@@ -30,7 +35,16 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 /** Maximum stale age allowed when refresh fails (7 days). */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
-const GIT_STASH_TYPES = new Set(["git"]);
+function runGit(
+  args: string[],
+  options?: Omit<SpawnSyncOptionsWithStringEncoding, "encoding">,
+): SpawnSyncReturns<string> {
+  return spawnSync("git", args, {
+    encoding: "utf8",
+    ...options,
+    env: { ...process.env, ...options?.env, GIT_TERMINAL_PROMPT: "0" },
+  });
+}
 
 interface ParsedRepoUrl {
   cloneUrl: string;
@@ -266,10 +280,9 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
     }
     cloneArgs.push(parsed.url, cloneDir);
 
-    const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 });
+    const cloneResult = runGit(cloneArgs, { timeout: 120_000 });
     if (cloneResult.status !== 0) {
-      const err = cloneResult.stderr?.trim() || cloneResult.error?.message || "unknown error";
-      throw new Error(`Failed to clone ${parsed.url}: ${err}`);
+      throw new Error(classifyCloneFailure(parsed.url, cloneResult.stderr, cloneResult.error));
     }
 
     // Copy contents to extracted dir without .git
@@ -318,12 +331,11 @@ export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string,
   if (ref) args.push("--branch", ref);
   args.push(cloneUrl, tmpDir);
 
-  const result = spawnSync("git", args, { encoding: "utf8", timeout: 120_000 });
+  const result = runGit(args, { timeout: 120_000 });
   if (result.status !== 0) {
     // Clean up the (possibly partial) temp dir but leave destDir untouched.
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    const err = result.stderr?.trim() || result.error?.message || "unknown error";
-    throw new Error(`Failed to clone ${cloneUrl}: ${err}`);
+    throw new Error(classifyCloneFailure(cloneUrl, result.stderr, result.error));
   }
 
   try {
@@ -344,8 +356,7 @@ export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string,
 }
 
 function pullRepo(repoDir: string): void {
-  const result = spawnSync("git", ["-C", repoDir, "pull", "--ff-only"], {
-    encoding: "utf8",
+  const result = runGit(["-C", repoDir, "pull", "--ff-only"], {
     timeout: 120_000,
   });
   if (result.status !== 0) {
@@ -440,12 +451,36 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
 
 // ── Save support ─────────────────────────────────────────────────────────────
 
+/**
+ * Recognize a stash directory as git-backed by the presence of a `.git` entry.
+ *
+ * Recognition is deliberately by `.git` presence — NOT by a configured remote.
+ * `akm init` git-inits the primary stash (see init.ts `ensureGitRepo`), so a
+ * freshly-initialized local stash with no remote is still git-backed. This is
+ * the single source of truth used both by `saveGitStash` (below) and by the
+ * end-of-run improve auto-sync gate.
+ */
+export function isGitBackedStash(stashDir: string): boolean {
+  return fs.existsSync(path.join(stashDir, ".git"));
+}
+
 export interface SaveGitStashResult {
   committed: boolean;
   pushed: boolean;
   skipped: boolean;
   reason?: string;
   output: string;
+}
+
+/**
+ * Resolve the writable-override flag for an end-of-run / `akm sync` commit on
+ * the primary stash. Returns `true` when the root config explicitly marks the
+ * primary stash writable, otherwise `undefined` (leave the per-stash default
+ * untouched). Extracted so `akm sync`, `akm improve`'s end-of-run sync, and the
+ * CLI body all derive this identically instead of re-copying the expression.
+ */
+export function resolveWritableOverride(config: { writable?: boolean }): true | undefined {
+  return config.writable === true ? true : undefined;
 }
 
 /**
@@ -459,8 +494,23 @@ export interface SaveGitStashResult {
  *
  * When `name` is omitted the primary stash directory is used.
  * When `message` is omitted a timestamp is used.
+ *
+ * `options.repoDir` overrides the primary-stash directory the commit targets
+ * (only honoured when `name` is omitted). Callers that already resolved the
+ * primary stash dir (e.g. `akm improve`'s end-of-run sync, whose pre-commit
+ * gate validates that exact directory) pass it here so the gate and the commit
+ * operate on the SAME directory instead of independently calling
+ * `resolveStashDir({ readOnly: true })`. When absent, behaviour is unchanged.
  */
-export function saveGitStash(name?: string, message?: string, writableOverride?: boolean): SaveGitStashResult {
+export function saveGitStash(
+  name?: string,
+  message?: string,
+  writableOverride?: boolean,
+  options?: { push?: boolean; repoDir?: string },
+): SaveGitStashResult {
+  // `push: false` (from `akm sync --no-push`) commits but never pushes, even
+  // when the stash is writable with a remote configured.
+  const allowPush = options?.push !== false;
   const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
   // Sanitize the user-supplied message: strip CR/LF/NUL, collapse whitespace,
   // clamp length. An attacker can otherwise pass `--message "subject\n\n\
@@ -474,9 +524,9 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
 
   if (name) {
     const config = loadConfig();
-    const stash = findGitStashByTarget(config.sources ?? config.stashes ?? [], name);
+    const stash = findGitStashByTarget(getSources(config), name);
     if (!stash) throw new UsageError(`No git stash found with name "${name}"`);
-    if (!GIT_STASH_TYPES.has(stash.type)) {
+    if (stash.type !== "git") {
       throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
     }
     if (!stash.url) throw new UsageError(`Stash "${name}" has no URL configured`);
@@ -484,7 +534,9 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
     repoDir = getCachePaths(repo.canonicalUrl).repoDir;
     writable = stash.writable === true;
   } else {
-    repoDir = resolveStashDir({ readOnly: true });
+    // Honour an explicit primary-stash dir override (keeps the improve gate and
+    // the commit on the same directory); otherwise resolve the default.
+    repoDir = options?.repoDir ?? resolveStashDir({ readOnly: true });
     // Allow caller to override writable for the primary stash (e.g. from root config.writable)
     if (writableOverride !== undefined) {
       writable = writableOverride;
@@ -492,12 +544,12 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
   }
 
   // No-op: not a git repo
-  if (!fs.existsSync(path.join(repoDir, ".git"))) {
+  if (!isGitBackedStash(repoDir)) {
     return { committed: false, pushed: false, skipped: true, reason: "not a git repository", output: "" };
   }
 
   // Nothing to commit?
-  const statusResult = spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" });
+  const statusResult = runGit(["-C", repoDir, "status", "--porcelain"]);
   if (statusResult.error || statusResult.status !== 0) {
     throw new Error(
       `git status failed: ${statusResult.error?.message || statusResult.stderr?.trim() || "unknown error"}`,
@@ -507,33 +559,58 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
     return { committed: false, pushed: false, skipped: false, output: "nothing to commit, working tree clean" };
   }
 
+  // Safety check (#476): when the stash dir is shared with a non-akm project
+  // (stash root == project repo root), `git add -A` would stage every dirty
+  // file in the user's working tree and push their unrelated WIP to the
+  // stash's remote. Refuse if any dirty path is outside the known akm-
+  // managed subtrees (TYPE_DIRS + `.akm/` state).
+  const nonAkmDirty = collectNonAkmDirtyPaths(statusResult.stdout);
+  if (nonAkmDirty.length > 0) {
+    const sample = nonAkmDirty.slice(0, 10);
+    const more = nonAkmDirty.length > sample.length ? `\n  ...and ${nonAkmDirty.length - sample.length} more` : "";
+    throw new Error(
+      `refusing to push: stash repo at ${repoDir} has uncommitted non-akm changes:\n` +
+        sample.map((p) => `  ${p}`).join("\n") +
+        more +
+        `\nCommit or stash these manually before running an akm push. ` +
+        `Akm-managed paths are: ${Object.values(TYPE_DIRS).join(", ")}, .akm/`,
+    );
+  }
+
   // Stage and commit — supply fallback identity so fresh environments without
   // user.name/user.email configured can always commit to the default stash.
-  const addResult = spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
+  // `add -A` is safe here because nonAkmDirty was just verified empty.
+  const addResult = runGit(["-C", repoDir, "add", "-A"]);
   if (addResult.status !== 0) {
     throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
   }
-  const commitResult = spawnSync(
-    "git",
-    ["-C", repoDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", commitMessage],
-    { encoding: "utf8" },
-  );
+  const commitResult = runGit([
+    "-C",
+    repoDir,
+    "-c",
+    "user.name=akm",
+    "-c",
+    "user.email=akm@local",
+    "commit",
+    "-m",
+    commitMessage,
+  ]);
   if (commitResult.status !== 0) {
     throw new Error(`git commit failed: ${commitResult.stderr?.trim() || "unknown error"}`);
   }
 
   // Push only when there is a remote AND the stash is marked writable
-  const remoteResult = spawnSync("git", ["-C", repoDir, "remote"], { encoding: "utf8" });
+  const remoteResult = runGit(["-C", repoDir, "remote"]);
   if (remoteResult.status !== 0) {
     throw new Error(`git remote failed: ${remoteResult.stderr?.trim() || "unknown error"}`);
   }
   const hasRemote = remoteResult.stdout.trim().length > 0;
 
-  if (!hasRemote || !writable) {
+  if (!hasRemote || !writable || !allowPush) {
     return { committed: true, pushed: false, skipped: false, output: commitResult.stdout.trim() };
   }
 
-  const pushResult = spawnSync("git", ["-C", repoDir, "push"], { encoding: "utf8", timeout: 120_000 });
+  const pushResult = runGit(["-C", repoDir, "push"], { timeout: 120_000 });
   if (pushResult.status !== 0) {
     throw new Error(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`);
   }
@@ -551,7 +628,7 @@ function findGitStashByTarget(stashes: SourceConfigEntry[], target: string): Sou
 }
 
 function matchesGitStashTarget(stash: SourceConfigEntry, target: string): boolean {
-  if (!GIT_STASH_TYPES.has(stash.type)) return false;
+  if (stash.type !== "git") return false;
   if (stash.name === target || stash.url === target) return true;
   if (!stash.url) return false;
 
@@ -588,6 +665,110 @@ function buildGithubTargetAliases(canonicalUrl: string): Set<string> {
   }
 }
 
+// ── Clone-failure classification (#487) ─────────────────────────────────────
+
+/**
+ * Translate git's stderr into an actionable message. Without this, a user
+ * who passes a nonexistent or private repo to `akm add` sees:
+ *
+ *   "could not read Username for 'https://github.com': No such device or
+ *    address"
+ *
+ * That is git falling through to its auth-prompt path — the actual cause
+ * is "repo doesn't exist (or is private)". We classify the common patterns
+ * and emit a message that names the cause and the fix.
+ */
+export function classifyCloneFailure(
+  url: string,
+  stderr: string | undefined | null,
+  spawnError: NodeJS.ErrnoException | Error | undefined,
+): string {
+  const raw = (stderr ?? "").trim();
+  const spawnMsg = spawnError?.message ?? "";
+
+  // `git` binary not on PATH.
+  if ((spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+    return `Failed to clone ${url}: 'git' is not installed or not on PATH. Install git, then re-run.`;
+  }
+
+  // Auth-prompt fall-through (the headline #487 case).
+  if (/could not read Username|terminal prompts disabled|Authentication failed|fatal: Authentication/i.test(raw)) {
+    return (
+      `Failed to clone ${url}: repository not found or private. ` +
+      `If the repository is public, double-check the URL and try again. ` +
+      `If it is private, set GH_TOKEN (or configure a git credential helper) before re-running.`
+    );
+  }
+
+  // 404-style messages from git http.
+  if (/repository '.*' not found|HTTP 404|fatal: remote error|not found:|Not Found/i.test(raw)) {
+    return (
+      `Failed to clone ${url}: repository not found. ` +
+      `Check the URL — for GitHub, the form is 'owner/repo' or 'github:owner/repo'.`
+    );
+  }
+
+  // SSH connection issues.
+  if (
+    /Permission denied \(publickey\)|kex_exchange_identification|Connection refused|Connection timed out/i.test(raw)
+  ) {
+    return (
+      `Failed to clone ${url}: network or SSH failure. ` +
+      `Check connectivity, your SSH agent, and the remote host's availability.`
+    );
+  }
+
+  // Branch / ref-specific failures.
+  if (/Remote branch .* not found in upstream origin|couldn't find remote ref/i.test(raw)) {
+    return (
+      `Failed to clone ${url}: the requested branch/tag does not exist on the remote. ` +
+      `Verify the ref name and re-run.`
+    );
+  }
+
+  const detail = raw || spawnMsg || "unknown error";
+  return `Failed to clone ${url}: ${detail}`;
+}
+
+// ── Stash-safety helpers (#476) ──────────────────────────────────────────────
+
+/**
+ * Inspect `git status --porcelain` output and return every dirty path that is
+ * NOT inside an akm-managed subtree. Used by `runUpstreamPush` to refuse
+ * pushing unrelated WIP when a writable stash shares its root with a project
+ * repo.
+ *
+ * Porcelain v1 format: `XY <path>` or `XY <orig> -> <new>` for renames. We
+ * key off the post-rename path (or the only path) — that is the working-tree
+ * file at risk of being staged by `git add -A`.
+ */
+function collectNonAkmDirtyPaths(porcelainOutput: string): string[] {
+  const akmDirs = new Set<string>(Object.values(TYPE_DIRS));
+  const result: string[] = [];
+  for (const rawLine of porcelainOutput.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.length === 0) continue;
+    // Skip the 2-char status code + 1 space.
+    let p = line.length > 3 ? line.slice(3) : "";
+    // Renames / copies: `from -> to`. Stage decision applies to `to`.
+    const arrow = p.lastIndexOf(" -> ");
+    if (arrow !== -1) {
+      p = p.slice(arrow + 4);
+    }
+    // Strip surrounding quotes for paths with special chars.
+    if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
+      p = p.slice(1, -1);
+    }
+    if (!p) continue;
+    const segments = p.split("/");
+    const top = segments[0];
+    if (top === ".akm" || akmDirs.has(top)) continue;
+    result.push(p);
+  }
+  return result;
+}
+
 // ── Exports ─────────────────────────────────────────────────────────────────
 
-export { ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };
+export { collectNonAkmDirtyPaths, ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };
+// resolveWritableOverride is exported at its declaration above.

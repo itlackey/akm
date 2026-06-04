@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# akm-lint-current — current lint flags grouped by issue type.
+#
+# Usage:
+#   akm-lint-current [--stash <path>] [--sample N]
+#
+# --sample shows N representative entries per issue class (default 0).
+#
+# Moved from scripts/improve-stats/lint-current when the rest of that
+# toolkit was retired in favor of `akm health` (May 2026). The remaining
+# helper this script depended on (resolve_stash) is inlined below.
+
+set -euo pipefail
+
+# Resolve the stash directory. Priority: --stash flag, $AKM_STASH_DIR
+# env, ~/akm fallback. Sets STASH_DIR and pushes unknown args back into
+# REMAINING_ARGS so the caller can continue parsing.
+resolve_stash() {
+  STASH_DIR="${AKM_STASH_DIR:-$HOME/akm}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --stash)
+        STASH_DIR="$2"
+        shift 2
+        ;;
+      --stash=*)
+        STASH_DIR="${1#--stash=}"
+        shift
+        ;;
+      *)
+        REMAINING_ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
+
+SAMPLE=0
+REMAINING_ARGS=()
+# Pull --sample out before resolve_stash sees it.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sample)
+      SAMPLE="$2"
+      shift 2
+      ;;
+    --sample=*)
+      SAMPLE="${1#--sample=}"
+      shift
+      ;;
+    *)
+      REMAINING_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+REMAINING_ARGS=()
+resolve_stash "$@"
+
+if ! command -v akm >/dev/null 2>&1; then
+  echo "akm CLI not on PATH" >&2
+  exit 1
+fi
+
+# akm lint reads the stash from $AKM_STASH_DIR, not the working dir.
+export AKM_STASH_DIR="$STASH_DIR"
+
+# Note on the `| cat |` workaround below:
+#
+# `akm lint --json` emits ~80KB for a real stash. Piping the output
+# directly to `jq` causes jq 1.6 to see a truncated read (~64-69KB)
+# because Bun's stdout pipe-close races with jq's libc fread.
+# Buffering through `cat` between the two processes resolves it;
+# `cat | jq` works, `direct | jq` doesn't. Same data, same byte count,
+# different jq read behavior. Affects any Bun process producing >64KB
+# of stdout piped to a libc-fread consumer.
+
+echo "# lint flags grouped by issue (stash: $STASH_DIR)"
+echo
+
+akm lint --json 2>/dev/null | cat | jq '
+  {
+    total: (.flagged | length),
+    by_issue: (
+      [.flagged[].issue]
+      | group_by(.)
+      | map({issue: .[0], count: length})
+      | sort_by(-.count)
+    )
+  }
+'
+
+if [[ "$SAMPLE" -gt 0 ]]; then
+  echo
+  echo "## samples per issue (limit $SAMPLE)"
+  akm lint --json 2>/dev/null | cat | jq --argjson n "$SAMPLE" '
+    .flagged
+    | group_by(.issue)
+    | map({issue: .[0].issue, samples: (. | .[0:$n])})
+  '
+fi

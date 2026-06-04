@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Install-time types used by `syncFromRef` and the legacy install pipeline.
  *
@@ -12,7 +16,6 @@
  * architecture spec §2.1.
  */
 
-import type { InstallAuditReport } from "../../commands/install-audit";
 import type { SourceSpec } from "../../core/config";
 
 export interface SyncOptions {
@@ -20,8 +23,6 @@ export interface SyncOptions {
   force?: boolean;
   /** Override "now" — used by tests to make `syncedAt` deterministic. */
   now?: Date;
-  /** Skip blocking install audit for this single sync (`--trust`). */
-  trustThisInstall?: boolean;
   /** Treat the cloned repo as writable (keeps `.git` and pulls instead of re-cloning). */
   writable?: boolean;
   /** Override cache root directory — primarily for tests. */
@@ -51,8 +52,6 @@ export interface SourceLockData {
   extractedDir: string;
   /** Whether the synced cache should be treated as writable. */
   writable?: boolean;
-  /** Audit report when the post-sync hook is invoked by the orchestrator. */
-  audit?: InstallAuditReport;
   /** ISO timestamp at which the sync resolved. */
   syncedAt: string;
 }

@@ -14,6 +14,13 @@ import { saveConfig } from "../src/core/config";
 import { buildDbHit, buildWhyMatched } from "../src/indexer/db-search";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "./_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -67,43 +74,25 @@ function expectDefined<T>(value: T | null | undefined): T {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-scoring-cache-");
-  testConfigDir = createTmpDir("akm-scoring-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  // Sandbox XDG_DATA_HOME so the index DB (getDbPath() →
+  // $XDG_DATA_HOME/akm/index.db) is isolated per-test. Without this, under
+  // `bun test --parallel` (which runs test files concurrently in the SAME
+  // process, sharing process.env), another file mutating process.env.XDG_DATA_HOME
+  // between this test's akmIndex() and akmSearch() calls would make the search
+  // read a different (empty/wrong) DB than the one just indexed.
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stashResult = sandboxStashDir(dataResult.cleanup);
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── Issue #1: Two-phase boost causes score/rank inconsistency ───────────────
@@ -610,7 +599,7 @@ describe("Issue #14: Deterministic sort on tied scores", () => {
     // Run the search multiple times to verify determinism
     const results: string[][] = [];
     for (let i = 0; i < 5; i++) {
-      const result = await akmSearch({ query: "widget factory", source: "local" });
+      const result = await akmSearch({ query: "widget factory", source: "local", skipLogging: true });
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       const order = localHits.filter((h) => names.includes(h.name)).map((h) => h.name);
       results.push(order);

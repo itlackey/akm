@@ -1,5 +1,9 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { toErrorMessage } from "../core/common";
-import { DEFAULT_CONFIG, loadConfig, type RegistryConfigEntry } from "../core/config";
+import { DEFAULT_CONFIG, type RegistryConfigEntry } from "../core/config";
 import { warn } from "../core/warn";
 import { resolveProviderFactory } from "../registry/factory";
 import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../registry/types";
@@ -164,7 +168,7 @@ export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): Reg
     return entries;
   }
 
-  const registries = configRegistries ?? loadConfig().registries ?? DEFAULT_CONFIG.registries ?? [];
+  const registries = configRegistries ?? DEFAULT_CONFIG.registries ?? [];
   return registries.filter((r) => r.enabled !== false);
 }
 

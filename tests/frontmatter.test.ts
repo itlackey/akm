@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar, toStringOrUndefined } from "../src/core/frontmatter";
+import { asNonEmptyString } from "../src/core/common";
+import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar } from "../src/core/frontmatter";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
 
@@ -142,6 +143,25 @@ describe("parseFrontmatter", () => {
     const result = parseFrontmatter(raw);
     expect(result.data.tags).toEqual(["solo"]);
   });
+
+  test("plain-style multi-line scalar folds continuation lines into one string", () => {
+    // YAML plain scalars wrap with 2-space indent; the parser must fold them.
+    const raw =
+      "---\ndescription: Use 4-colon outer containers when mixing\n  nesting depths in markdown-it-container plugins.\ntags:\n- markdown\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe(
+      "Use 4-colon outer containers when mixing nesting depths in markdown-it-container plugins.",
+    );
+    expect(result.data.tags).toEqual(["markdown"]);
+    expect(result.content).toBe("Body\n");
+  });
+
+  test("plain-style scalar continuation: multiple continuation lines all folded", () => {
+    const raw = "---\ndescription: First line\n  second line\n  third line.\ntitle: After\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe("First line second line third line.");
+    expect(result.data.title).toBe("After");
+  });
 });
 
 // ── parseFrontmatterBlock ───────────────────────────────────────────────────
@@ -204,26 +224,26 @@ describe("parseYamlScalar", () => {
   });
 });
 
-// ── toStringOrUndefined ─────────────────────────────────────────────────────
+// ── asNonEmptyString (was: toStringOrUndefined) ──────────────────────────────
 
-describe("toStringOrUndefined", () => {
+describe("asNonEmptyString", () => {
   test("returns string for non-empty string", () => {
-    expect(toStringOrUndefined("hello")).toBe("hello");
+    expect(asNonEmptyString("hello")).toBe("hello");
   });
 
   test("returns undefined for empty string", () => {
-    expect(toStringOrUndefined("")).toBeUndefined();
+    expect(asNonEmptyString("")).toBeUndefined();
   });
 
   test("returns undefined for whitespace-only string", () => {
-    expect(toStringOrUndefined("   ")).toBeUndefined();
+    expect(asNonEmptyString("   ")).toBeUndefined();
   });
 
   test("returns undefined for non-string values", () => {
-    expect(toStringOrUndefined(42)).toBeUndefined();
-    expect(toStringOrUndefined(null)).toBeUndefined();
-    expect(toStringOrUndefined(undefined)).toBeUndefined();
-    expect(toStringOrUndefined(true)).toBeUndefined();
-    expect(toStringOrUndefined({})).toBeUndefined();
+    expect(asNonEmptyString(42)).toBeUndefined();
+    expect(asNonEmptyString(null)).toBeUndefined();
+    expect(asNonEmptyString(undefined)).toBeUndefined();
+    expect(asNonEmptyString(true)).toBeUndefined();
+    expect(asNonEmptyString({})).toBeUndefined();
   });
 });

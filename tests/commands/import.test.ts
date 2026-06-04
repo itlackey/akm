@@ -9,16 +9,24 @@
  *   - resolves to a configured filesystem source by name
  *   - errors on unknown target names (UsageError)
  *   - errors on non-writable targets (ConfigError)
+ *
+ * Migrated from per-test spawnSync/spawn("bun", ["src/cli.ts", ...]) to the
+ * shared in-process harness (tests/_helpers/cli.ts). Every case here imports
+ * from a file path or a URL (never the "-" stdin source), so none needs to feed
+ * process.stdin — they all run in-process. The URL case still performs a real
+ * fetch against a local HTTP server, which the in-process CLI does natively.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { resetGraphBoostCache } from "../../src/indexer/graph-boost";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
+import { runCliCapture } from "../_helpers/cli";
+import { withEnv } from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -33,60 +41,35 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
   fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(body, null, 2), "utf8");
 }
 
-function runCli(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
+/**
+ * In-process CLI runner. Pins the test's isolated stash + config dirs for the
+ * duration of the call (via the allowlisted withEnv helper) and resets the
+ * embedder/graph singletons so the run reads the pinned env, matching what a
+ * fresh subprocess got for free. runCliCapture resets the config and
+ * output-mode singletons itself.
+ */
+async function runCli(args: string[], options: { stashDir?: string; configDir: string }) {
   const stashDir = options.stashDir ?? makeTempDir("akm-import-stash-");
   const xdgCache = makeTempDir("akm-import-cache-");
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    input: options.input,
-    env: {
-      ...process.env,
+  const xdgData = makeTempDir("akm-import-data-");
+  const xdgState = makeTempDir("akm-import-state-");
+  const result = await withEnv(
+    {
       AKM_STASH_DIR: stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: xdgCache,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
-  });
+    async () => {
+      clearEmbeddingCache();
+      resetLocalEmbedder();
+      resetGraphBoostCache();
+      const { stdout, stderr, code } = await runCliCapture(args);
+      return { status: code, stdout, stderr };
+    },
+  );
   return { stashDir, result };
-}
-
-async function runCliAsync(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
-  const stashDir = options.stashDir ?? makeTempDir("akm-import-stash-");
-  const xdgCache = makeTempDir("akm-import-cache-");
-  const child = spawn("bun", [CLI, ...args], {
-    stdio: ["pipe", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
-      XDG_CACHE_HOME: xdgCache,
-    },
-  });
-  let stdout = "";
-  let stderr = "";
-  if (options.input !== undefined) child.stdin.end(options.input);
-  else child.stdin.end();
-  child.stdout.on("data", (chunk) => {
-    stdout += String(chunk);
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  const status = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("CLI timed out after 30000ms"));
-    }, 30_000);
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve(code ?? 1);
-    });
-  });
-  return { stashDir, result: { status, stdout, stderr } };
 }
 
 function makeKnowledgeFile(name: string, body: string): string {
@@ -103,7 +86,7 @@ afterEach(() => {
 });
 
 describe("import --target", () => {
-  test("--target resolves to a configured filesystem source", () => {
+  test("--target resolves to a configured filesystem source", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
@@ -112,7 +95,7 @@ describe("import --target", () => {
     });
     const sourcePath = makeKnowledgeFile("auth-flow.md", "# Auth flow\n\nOAuth2 walk-through.\n");
 
-    const { stashDir, result } = runCli(["import", sourcePath, "--target", "writable-target"], { configDir });
+    const { stashDir, result } = await runCli(["import", sourcePath, "--target", "writable-target"], { configDir });
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -125,7 +108,7 @@ describe("import --target", () => {
     expect(fs.existsSync(path.join(stashDir, "knowledge", "auth-flow.md"))).toBe(false);
   });
 
-  test("--target with an unknown source name throws a usage error", () => {
+  test("--target with an unknown source name throws a usage error", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
@@ -134,7 +117,7 @@ describe("import --target", () => {
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
-    const { result } = runCli(["import", sourcePath, "--target", "ghost"], { configDir });
+    const { result } = await runCli(["import", sourcePath, "--target", "ghost"], { configDir });
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
@@ -142,7 +125,7 @@ describe("import --target", () => {
     expect(json.error).toContain("--target must reference a source name");
   });
 
-  test("--target on a non-writable source throws a config error", () => {
+  test("--target on a non-writable source throws a config error", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
@@ -151,11 +134,83 @@ describe("import --target", () => {
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
-    const { result } = runCli(["import", sourcePath, "--target", "read-only"], { configDir });
+    const { result } = await runCli(["import", sourcePath, "--target", "read-only"], { configDir });
     expect(result.status).not.toBe(0);
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("source read-only is not writable");
+  });
+
+  test("--target routes to a configured filesystem source", async () => {
+    const configDir = makeTempDir("akm-import-config-");
+    const targetDir = makeTempDir("akm-import-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "secondary-stash", path: targetDir, writable: true }],
+    });
+    const sourcePath = makeKnowledgeFile("overview.md", "# Overview\n\nSome content.\n");
+
+    const { stashDir, result } = await runCli(["import", sourcePath, "--target", "secondary-stash"], { configDir });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+    expect(json.ok).toBe(true);
+    expect(json.ref).toBe("knowledge:overview");
+
+    const expectedPath = path.join(targetDir, "knowledge", "overview.md");
+    expect(json.path).toBe(expectedPath);
+    expect(fs.existsSync(expectedPath)).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "knowledge", "overview.md"))).toBe(false);
+  });
+
+  test("default stash is used when --target is omitted", async () => {
+    const configDir = makeTempDir("akm-import-config-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+    const sourcePath = makeKnowledgeFile("default-stash.md", "# Default stash\n\nContent.\n");
+
+    const { stashDir, result } = await runCli(["import", sourcePath], { configDir });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+    expect(json.ok).toBe(true);
+    expect(json.ref).toBe("knowledge:default-stash");
+
+    const expectedPath = path.join(stashDir, "knowledge", "default-stash.md");
+    expect(json.path).toBe(expectedPath);
+    expect(fs.existsSync(expectedPath)).toBe(true);
+  });
+
+  test("--target with an unknown source name throws a usage error", async () => {
+    const configDir = makeTempDir("akm-import-config-");
+    const targetDir = makeTempDir("akm-import-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
+    });
+    const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
+
+    const { result } = await runCli(["import", sourcePath, "--target", "no-such-stash"], { configDir });
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain('No source named "no-such-stash" is configured');
+    expect(json.error).toContain("--target must reference a source name");
+  });
+
+  test("--target on a non-writable source throws a config error", async () => {
+    const configDir = makeTempDir("akm-import-config-");
+    const targetDir = makeTempDir("akm-import-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "locked-stash", path: targetDir, writable: false }],
+    });
+    const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
+
+    const { result } = await runCli(["import", sourcePath, "--target", "locked-stash"], { configDir });
+    expect(result.status).not.toBe(0);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("source locked-stash is not writable");
   });
 
   test("imports a URL into knowledge using a URL-path-derived name", async () => {
@@ -174,7 +229,7 @@ describe("import --target", () => {
 
     try {
       const url = `http://127.0.0.1:${address.port}/docs/guide`;
-      const { stashDir, result } = await runCliAsync(["import", url], { configDir });
+      const { stashDir, result } = await runCli(["import", url], { configDir });
       expect(result.status).toBe(0);
 
       const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };

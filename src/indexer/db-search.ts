@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Database-backed (SQLite + FTS5/vector) source search implementation.
  *
@@ -13,29 +17,37 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
+import { buildActionFromContributors, defaultActionContributors } from "../core/action-contributors";
 import { makeAssetRef } from "../core/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-registry";
-import type { AkmConfig } from "../core/config";
+import type { AkmConfig, ImproveConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import type { AkmSearchType, SearchHitSize, SourceSearchHit } from "../sources/types";
+import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../sources/types";
+import { getCurrentWorkflowScopeKey } from "../workflows/scope-key";
 import {
   closeDatabase,
-  type DbSearchResult,
   getAllEntries,
   getEntryById,
   getEntryCount,
   getMeta,
-  getUtilityScoresByIds,
+  getPositiveFeedbackCountsByIds,
   openExistingDatabase,
   sanitizeFtsQuery,
   searchFts,
   searchVec,
 } from "./db";
 import { ensureIndex } from "./ensure-index";
-import { getRenderer } from "./file-context";
-import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
+import {
+  collectGraphRelatedHit,
+  computeGraphBoost,
+  type GraphBoostContext,
+  loadGraphBoostContext,
+} from "./graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
+import { resolveProjectContext } from "./project-context";
+import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
+import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,
@@ -44,18 +56,12 @@ import {
   readSemanticStatus,
 } from "./semantic-status";
 
-export async function rendererForType(type: string, registry: RendererRegistry = defaultRendererRegistry) {
-  const name = registry.rendererNameFor(type);
-  return name ? getRenderer(name) : undefined;
-}
-
 export function buildLocalAction(
   type: string,
   ref: string,
   registry: RendererRegistry = defaultRendererRegistry,
 ): string {
-  const builder = registry.actionBuilderFor(type);
-  return builder ? builder(ref) : `akm show ${ref}`;
+  return buildActionFromContributors({ type, ref }, defaultActionContributors(registry)) ?? `akm show ${ref}`;
 }
 
 function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
@@ -67,6 +73,23 @@ function resolveSearchHitRef(entry: StashEntry, refName: string, source?: Search
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {
   return source?.wikiName ? null : (source?.registryId ?? null);
+}
+
+/**
+ * Phase 2A / Rec 5: gate for the per-search `getPositiveFeedbackCountsByIds`
+ * lookup. Returns `true` only when the user has explicitly opted into
+ * `improve.utilityDecay` AND configured a `feedbackStabilityBoost > 1.0`.
+ * Either condition being false makes the DB query pure overhead (the ranking
+ * contributor ignores `positiveFeedbackCounts` when `utilityDecayConfig` is
+ * absent, and `1.0^count == 1` collapses the boost into a no-op).
+ *
+ * Exported for unit testing — keeps the gate decision pinned so a future edit
+ * can't quietly broaden the hot path.
+ */
+export function shouldQueryPositiveFeedbackCounts(utilityDecayRaw: ImproveConfig["utilityDecay"]): boolean {
+  if (utilityDecayRaw === undefined) return false;
+  const boost = utilityDecayRaw.feedbackStabilityBoost ?? 1.5;
+  return boost > 1.0;
 }
 
 // ── Main search entrypoint ───────────────────────────────────────────────────
@@ -94,16 +117,29 @@ export async function searchLocal(input: {
    * scoring pipeline.
    */
   includeProposed?: boolean;
+  beliefFilter?: BeliefFilterMode;
+  /**
+   * When true, hits are restricted to entries whose file path lives under one of
+   * the provided `sources`. Set by callers that narrowed `sources` via a
+   * `--source <name>` filter so the FTS index (which spans all sources) does
+   * not leak hits from sources the caller did not request. Default false
+   * preserves prior behavior for the unnamed default search path.
+   */
+  restrictToSources?: boolean;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
   warnings?: string[];
   embedMs?: number;
   rankMs?: number;
+  /** Whether embedding-based ranking was used (`'semantic'`) or keyword-only (`'keyword'`). */
+  mode: "semantic" | "keyword";
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const filters = input.filters;
   const includeProposed = input.includeProposed === true;
+  const beliefFilter = input.beliefFilter ?? "all";
+  const restrictToSources = input.restrictToSources === true;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -115,9 +151,20 @@ export async function searchLocal(input: {
       warnings.push(
         "Embedding config changed. Run 'akm index --full' to rebuild the semantic index with the new provider.",
       );
+    } else if (!config.embedding?.endpoint || !config.embedding?.model) {
+      // #480: when semantic mode is `auto` but no embedding provider is
+      // configured (e.g. `akm setup --yes` ran without picking one), telling
+      // the user to "run akm setup" is misleading — they just did. Surface
+      // the actual remediation: configure an embedding endpoint OR switch
+      // semanticSearchMode to `off` to silence the warning.
+      warnings.push(
+        "Semantic search is enabled (semanticSearchMode='auto') but no embedding provider is configured. " +
+          'Either: (a) `akm config set embedding \'{"endpoint":"...","model":"..."}\'`, or ' +
+          "(b) `akm config set semanticSearchMode off` to use keyword-only search.",
+      );
     } else {
       warnings.push(
-        "Semantic search is pending verification. Run 'akm setup' or 'akm index --full' to enable semantic search.",
+        "Semantic search is pending verification. Run 'akm index --full' to build the semantic index now, or wait for the next background index pass.",
       );
     }
   }
@@ -136,6 +183,7 @@ export async function searchLocal(input: {
       hits: [],
       tip: "No search index available. Run 'akm index' to build one.",
       warnings: warnings.length > 0 ? warnings : undefined,
+      mode: "keyword",
     };
   }
 
@@ -147,6 +195,7 @@ export async function searchLocal(input: {
         hits: [],
         tip: "Index is empty. Run 'akm index' to populate it.",
         warnings: warnings.length > 0 ? warnings : undefined,
+        mode: "keyword",
       };
     }
 
@@ -162,6 +211,8 @@ export async function searchLocal(input: {
       rendererRegistry,
       filters,
       includeProposed,
+      beliefFilter,
+      restrictToSources,
     );
     return {
       hits,
@@ -172,6 +223,7 @@ export async function searchLocal(input: {
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
+      mode: embedMs !== undefined && embedMs > 0 ? "semantic" : "keyword",
     };
   } finally {
     closeDatabase(db);
@@ -192,6 +244,8 @@ async function searchDatabase(
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
   filters?: StashEntryScope,
   includeProposed = false,
+  beliefFilter: BeliefFilterMode = "all",
+  restrictToSources = false,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -212,18 +266,28 @@ async function searchDatabase(
       seenFilePaths.add(ie.filePath);
       return true;
     });
+    // Source filter: when the caller narrowed `sources` via `--source <name>`,
+    // drop entries whose filePath does not live under any of the requested
+    // sources. The FTS index spans every configured source, so without this
+    // filter a narrowed --source request would still leak results.
+    const sourceFiltered = restrictToSources
+      ? uniqueEntries.filter((ie) => findSourceForPath(ie.filePath, sources) !== undefined)
+      : uniqueEntries;
     // Scope filter: drop entries whose stored scope does not satisfy every
     // supplied scope key. Filtering happens BEFORE the limit slice so a
     // restrictive filter still returns up to `limit` results.
     const scopeFiltered = filters
-      ? uniqueEntries.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
-      : uniqueEntries;
+      ? sourceFiltered.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
+      : sourceFiltered;
     // Proposed-quality filter (v1 spec §4.2): exclude entries with
     // `quality: "proposed"` unless the caller explicitly opts in.
     const qualityFiltered = includeProposed
       ? scopeFiltered
       : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
-    const selected = qualityFiltered.slice(0, limit);
+    const beliefFiltered = qualityFiltered.filter((ie) =>
+      matchBeliefFilter(ie.entry.type, ie.entry.beliefState, beliefFilter),
+    );
+    const selected = beliefFiltered.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
         buildDbHit({
@@ -237,6 +301,7 @@ async function searchDatabase(
           sources,
           config,
           rendererRegistry,
+          db,
         }),
       ),
     );
@@ -257,24 +322,7 @@ async function searchDatabase(
   // ── Score normalization ──────────────────────────────────────────────
   // Normalized BM25 + cosine similarity with weighted addition
   // (FTS 0.7, vector 0.3) for well-differentiated combined scores.
-
-  // Normalize FTS BM25 scores to 0-1 range
-  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
-  if (ftsResults.length > 0) {
-    // BM25 scores are negative; most negative = best match
-    const bestBm25 = ftsResults[0].bm25Score; // most negative (best)
-    const worstBm25 = ftsResults[ftsResults.length - 1].bm25Score; // least negative (worst)
-    const range = bestBm25 - worstBm25; // negative range
-
-    for (const r of ftsResults) {
-      // Normalize: best match = 1.0, worst match approaches 0
-      // When range is 0 (all same score), all get 1.0
-      const normalized = range !== 0 ? (r.bm25Score - worstBm25) / range : 1.0;
-      // Scale to 0.3-1.0 range so even the worst FTS hit has a meaningful base score
-      const ftsScore = 0.3 + normalized * 0.7;
-      ftsScoreMap.set(r.id, { score: ftsScore, result: r });
-    }
-  }
+  const ftsScoreMap = normalizeFtsScores(ftsResults);
 
   // Build embedding score map (cosine similarities already 0-1)
   const embedScoreMap = new Map<number, number>();
@@ -285,53 +333,12 @@ async function searchDatabase(
   }
 
   // ── Combine FTS + vector scores ──────────────────────────────────────
-  const FTS_WEIGHT = 0.7;
-  const VEC_WEIGHT = 0.3;
-  const MAX_BOOST_SUM = 3.0;
-
-  const scored: Array<{
-    id: number;
-    entry: StashEntry;
-    filePath: string;
-    score: number;
-    rankingMode: "hybrid" | "semantic" | "fts";
-    utilityBoosted?: boolean;
-  }> = [];
-  const seenIds = new Set<number>();
-
-  // Process FTS results
-  for (const [id, { score: ftsScore, result }] of ftsScoreMap) {
-    seenIds.add(id);
-    const embedScore = embedScoreMap.get(id);
-    let combinedScore: number;
-    let rankingMode: "hybrid" | "fts";
-    if (embedScore !== undefined) {
-      combinedScore = ftsScore * FTS_WEIGHT + embedScore * VEC_WEIGHT;
-      rankingMode = "hybrid";
-    } else {
-      combinedScore = ftsScore;
-      rankingMode = "fts";
-    }
-    scored.push({ id, entry: result.entry, filePath: result.filePath, score: combinedScore, rankingMode });
-  }
-
-  // Add vec-only results not already in FTS results
-  if (embeddingScores) {
-    for (const [id, cosine] of embeddingScores) {
-      if (seenIds.has(id)) continue;
-      const found = getEntryById(db, id);
-      if (found) {
-        if (typeFilter && found.entry.type !== typeFilter) continue;
-        scored.push({
-          id,
-          entry: found.entry,
-          filePath: found.filePath,
-          score: cosine * VEC_WEIGHT, // Only vector score, no FTS
-          rankingMode: "semantic",
-        });
-      }
-    }
-  }
+  const scored = combineSearchScores({
+    ftsScoreMap,
+    embedScoreMap,
+    getEntryById: (id) => getEntryById(db, id) ?? undefined,
+    typeFilter,
+  });
 
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
@@ -341,9 +348,6 @@ async function searchDatabase(
   // user's intent. An exact name match is the strongest signal. Actionable
   // asset types (skills, commands, agents) are more useful than passive
   // reference docs. Curated metadata is more reliable than auto-generated.
-  const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const queryLower = query.toLowerCase().trim();
-
   // Graph boost context (#207). Built once per query and reused across
   // every scored entry so the disk read + JSON parse only happens once
   // per search invocation. `null` when no graph file is present, when
@@ -356,183 +360,53 @@ async function searchDatabase(
     // Search across all source dirs; the graph file lives next to the
     // primary source root. Cache misses are silent — the helper handles
     // missing files internally and returns `null` instead of throwing.
-    const primaryDir = allSourceDirs[0];
-    if (!primaryDir) return null;
-    return loadGraphBoostContext(primaryDir, query);
+    if (allSourceDirs.length === 0) return null;
+    return loadGraphBoostContext(allSourceDirs, query, config, db);
   })();
 
-  for (const item of scored) {
-    const entry = item.entry;
-    let boostSum = 0;
+  // Resolve project-context tokens from the current working directory once
+  // per search invocation. Returns null when running from home dir / /tmp,
+  // or when the caller has set AKM_DISABLE_PROJECT_CONTEXT=1.
+  const projectContext = process.env.AKM_DISABLE_PROJECT_CONTEXT === "1" ? null : resolveProjectContext(process.cwd());
 
-    // ── 1. Exact / near-exact name match (strongest signal) ──
-    // If the query IS the asset name (or very close), this is almost certainly
-    // what the user wants. This is the single most important ranking signal.
-    const nameLower = entry.name.toLowerCase();
-    const rawNameBase = nameLower.split("/").pop() ?? nameLower; // last segment for path-based names
-    const nameBase =
-      entry.type === "memory" && rawNameBase.endsWith(".derived")
-        ? rawNameBase.slice(0, -".derived".length)
-        : rawNameBase;
-    if (nameBase === queryLower || nameLower === queryLower) {
-      // Exact match: massive boost
-      boostSum += 2.0;
-    } else if (nameBase.includes(queryLower) || queryLower.includes(nameBase)) {
-      // Near-exact: query is substring of name or vice versa
-      boostSum += 1.0;
-    } else {
-      // Token overlap: how many query tokens appear in the base name?
-      const nameTokens = nameBase.split(/[-_\s]+/).filter(Boolean);
-      const matchCount = queryTokens.filter((qt) => nameTokens.some((nt) => nt === qt || nt.includes(qt))).length;
-      if (matchCount > 0) {
-        // Proportional to how many query tokens match (0.3 per token, max 0.9)
-        boostSum += Math.min(0.9, matchCount * 0.3);
-      }
-    }
+  // Phase 2A / Rec 5: resolve forgetting-curve config and skip the feedback
+  // count query when the boost cannot make a difference (default ≤ 1.0 means
+  // boost^count == 1 — zero overhead for the common case).
+  const utilityDecayRaw = config.improve?.utilityDecay;
+  const halfLifeDays = utilityDecayRaw?.halfLifeDays ?? 30;
+  const feedbackStabilityBoost = utilityDecayRaw?.feedbackStabilityBoost ?? 1.5;
+  const utilityDecayConfig = utilityDecayRaw !== undefined ? { halfLifeDays, feedbackStabilityBoost } : undefined;
+  // Gate the feedback-count query on the user having explicitly opted into
+  // utilityDecay. Without an opt-in, `utilityDecayConfig` is undefined and the
+  // ranking contributor ignores `positiveFeedbackCounts` — so running the DB
+  // query here would be pure overhead. The boost > 1.0 sub-gate then skips the
+  // query when the configured boost is a no-op (1.5^count when boost==1 is 1).
+  const positiveFeedbackCounts = shouldQueryPositiveFeedbackCounts(utilityDecayRaw)
+    ? getPositiveFeedbackCountsByIds(
+        db,
+        scored.map((item) => item.id),
+      )
+    : undefined;
 
-    // ── 2. Type relevance boost ──
-    // Actionable assets (skills, commands, agents) are generally more useful
-    // than passive reference material when the user is searching for something
-    // to use. Knowledge docs are reference — valuable but secondary.
-    const TYPE_BOOST: Record<string, number> = {
-      skill: 0.4,
-      command: 0.35,
-      workflow: 0.35,
-      agent: 0.3,
-      script: 0.2,
-      memory: 0.1,
-      knowledge: 0,
-    };
-    boostSum += TYPE_BOOST[entry.type] ?? 0;
-
-    // ── 2.5. Derived-vs-raw memory preference ──
-    // Raw memories are user notes and may be incomplete or unvetted. Compressed
-    // `.derived` memories are the higher-signal retrieval target, but the
-    // preference should stay modest so stronger relevance signals still dominate.
-    if (entry.type === "memory") {
-      if (entry.name.toLowerCase().endsWith(".derived")) {
-        boostSum += 0.18;
-      } else {
-        boostSum -= 0.08;
-      }
-    }
-
-    // ── 3. Tag exact match ──
-    // Exact tag equality is a strong signal — the author explicitly tagged
-    // this asset with the user's search term.
-    if (entry.tags) {
-      let tagBoost = 0;
-      for (const tag of entry.tags) {
-        if (queryTokens.some((t) => tag.toLowerCase() === t)) {
-          tagBoost += 0.15;
-        }
-      }
-      boostSum += Math.min(0.3, tagBoost);
-    }
-
-    // ── 4. Search hint match ──
-    // Hints are author-curated retrieval cues (e.g. "use when deploying to k8s").
-    if (entry.searchHints) {
-      let hintBoost = 0;
-      for (const hint of entry.searchHints) {
-        const hintLower = hint.toLowerCase();
-        for (const token of queryTokens) {
-          if (hintLower.includes(token)) {
-            hintBoost += 0.12;
-            break;
-          }
-        }
-      }
-      boostSum += Math.min(0.24, hintBoost);
-    }
-
-    // ── 5. Alias match ──
-    // Aliases are alternate names the author defined for discovery.
-    if (entry.aliases) {
-      for (const alias of entry.aliases) {
-        const aliasLower = alias.toLowerCase();
-        if (aliasLower === queryLower) {
-          boostSum += 1.5; // Nearly as strong as exact name match
-          break;
-        }
-        if (queryTokens.some((t) => aliasLower.includes(t))) {
-          boostSum += 0.3;
-        }
-      }
-    }
-
-    // ── 6. Description relevance ──
-    // All query tokens appearing in description suggests strong relevance.
-    if (entry.description) {
-      const descLower = entry.description.toLowerCase();
-      const descMatchCount = queryTokens.filter((t) => descLower.includes(t)).length;
-      if (descMatchCount === queryTokens.length && queryTokens.length > 1) {
-        // All query tokens found in description — high relevance
-        boostSum += 0.25;
-      } else if (descMatchCount > 0) {
-        boostSum += 0.1;
-      }
-    }
-
-    // ── 7. Metadata quality signals ──
-    // Curated metadata is the only boost-bearing quality marker. `generated`
-    // and `proposed` (and unknown values) get no boost. `proposed` is also
-    // filtered out by default downstream (v1 spec §4.2).
-    const qualityBoost = entry.quality === "curated" ? 0.05 : 0;
-    boostSum += qualityBoost;
-
-    const confidenceBoost =
-      typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
-    boostSum += confidenceBoost;
-
-    // ── 8. Graph signal (opt-in, #207) ──
-    // When the graph-extraction pass has produced a `graph.json`,
-    // contribute an additive boost based on how many of this entry's
-    // extracted entities match the query (or are one hop away from a
-    // match). Computed inside the same loop so all boosts are in one
-    // place and the per-call cost is one map lookup when the graph is
-    // absent. There is no parallel scoring track — `boostSum` is the
-    // single accumulator and the existing `MAX_BOOST_SUM` cap below
-    // applies to graph contributions exactly as it does to every other
-    // boost.
-    if (graphContext) {
-      boostSum += computeGraphBoost(graphContext, item.filePath);
-    }
-
-    const cappedBoost = Math.min(boostSum, MAX_BOOST_SUM);
-    item.score = item.score * (1 + cappedBoost);
+  // Resolve per-project scope key for scoped utility scoring.
+  // AKM_DISABLE_SCOPED_UTILITY=1 opts out (e.g. for registry searches or tests).
+  let scopeKey: string | undefined;
+  try {
+    scopeKey = process.env.AKM_DISABLE_SCOPED_UTILITY === "1" ? undefined : getCurrentWorkflowScopeKey();
+  } catch {
+    // Non-fatal — ranking proceeds without scoped utility on any error.
   }
 
-  // Utility-based re-ranking (MemRL pattern).
-  // After the FTS+boost scoring pass, apply a multiplicative
-  // utility factor based on aggregated usage telemetry.
-  // Batch-load all utility scores in one query to avoid N+1.
-  const UTILITY_WEIGHT = 0.5;
-  const UTILITY_MAX_BOOST = 1.5; // Cap at 1.5x multiplier
-  const RECENCY_DECAY_DAYS = 30;
-  const utilScoresMap = getUtilityScoresByIds(
+  applyRankingRules({
     db,
-    scored.map((s) => s.id),
-  );
-  for (const item of scored) {
-    const utilScore = utilScoresMap.get(item.id);
-    if (utilScore && utilScore.utility > 0) {
-      // Compute recency factor: exponential decay based on days since last use
-      let recencyFactor = 1;
-      if (utilScore.lastUsedAt) {
-        const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
-        const daysSinceLastUse = Number.isNaN(lastUsedMs)
-          ? Infinity
-          : Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
-        recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_DECAY_DAYS);
-      }
-      // Compute raw utility boost and cap it
-      const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
-      const cappedBoost = Math.min(rawBoost, UTILITY_MAX_BOOST);
-      item.score = item.score * cappedBoost;
-      item.utilityBoosted = true;
-    }
-  }
+    query,
+    items: scored,
+    graphContext,
+    projectContext,
+    utilityDecayConfig,
+    positiveFeedbackCounts,
+    scopeKey,
+  });
 
   // ── minScore floor ──────────────────────────────────────────────────────
   // Drop semantic-only hits (cosine-only, no FTS match) whose score falls
@@ -542,8 +416,21 @@ async function searchDatabase(
   const preFilter =
     minScore > 0 ? scored.filter((item) => item.rankingMode !== "semantic" || item.score >= minScore) : scored;
 
-  // Deterministic tiebreaker on equal scores
-  preFilter.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
+  // Deterministic tiebreaker on equal scores.
+  //
+  // CRITICAL: sort on the SAME clamped+rounded value the user sees (see the
+  // `finalScore`/round-to-4dp logic below at buildDbHit), NOT the raw pre-clamp
+  // `item.score`. The boost loop can push scores above 1.0 (utility, graph,
+  // project boosts) and carries ~15 significant digits. Two entries that DISPLAY
+  // an identical score (e.g. both clamp to 1.0000) can still differ in their raw
+  // pre-clamp score by a timing-dependent epsilon — utility recency uses
+  // `Date.now()` and `last_used_at`, so the same query run twice in one process
+  // can yield raw scores that diverge at the 6th decimal. Sorting on the raw
+  // value lets that invisible epsilon decide the order, so the visible name
+  // tiebreaker never engages and the order flips run-to-run (Issue #14). Quantize
+  // to the display value first; only then does `localeCompare` break true ties.
+  const displayScore = (s: number): number => Math.round(Math.min(1, Math.max(0, s)) * 10000) / 10000;
+  preFilter.sort((a, b) => displayScore(b.score) - displayScore(a.score) || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
   // Multiple .stash.json entries can map to the same file (e.g. entries without
@@ -551,10 +438,21 @@ async function searchDatabase(
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
 
+  // Source filter: when the caller narrowed `sources` via `--source <name>`,
+  // drop hits whose filePath does not live under any of the requested
+  // sources. The FTS/vector index spans every configured source, so without
+  // this filter a narrowed --source request would still leak results from
+  // other sources that happened to match the query text.
+  const sourceFiltered = restrictToSources
+    ? deduped.filter((item) => findSourceForPath(item.filePath, sources) !== undefined)
+    : deduped;
+
   // Scope filter: drop hits whose stored scope does not satisfy every supplied
   // key. Applied AFTER ranking — filtering narrows the result set without
   // touching the single FTS5+boosts scoring pipeline.
-  const scopeFiltered = filters ? deduped.filter((item) => entryMatchesScope(item.entry.scope, filters)) : deduped;
+  const scopeFiltered = filters
+    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
+    : sourceFiltered;
 
   // Proposed-quality filter (v1 spec §4.2): exclude entries with
   // `quality: "proposed"` unless the caller passed `--include-proposed`.
@@ -562,10 +460,13 @@ async function searchDatabase(
   const qualityFiltered = includeProposed
     ? scopeFiltered
     : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
+  const beliefFiltered = qualityFiltered.filter((item) =>
+    matchBeliefFilter(item.entry.type, item.entry.beliefState, beliefFilter),
+  );
 
   const rankMs = Date.now() - tRank0;
 
-  const selected = qualityFiltered.slice(0, limit);
+  const selected = beliefFiltered.slice(0, limit);
   const hits = await Promise.all(
     selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
       // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
@@ -585,12 +486,31 @@ async function searchDatabase(
         sources,
         config,
         utilityBoosted,
+        graphContext,
         rendererRegistry,
+        db,
       });
     }),
   );
 
   return { embedMs, rankMs, hits };
+}
+
+function matchBeliefFilter(type: string, beliefState: string | undefined, filter: BeliefFilterMode): boolean {
+  if (filter === "all") return true;
+  if (type !== "memory") return true;
+  if (filter === "current") {
+    // Phase 1A: `asserted` is a "current" state (stronger authority than `active`);
+    // `deprecated` is excluded from current results.
+    return beliefState === undefined || beliefState === "active" || beliefState === "asserted";
+  }
+  // historical
+  return (
+    beliefState === "contradicted" ||
+    beliefState === "superseded" ||
+    beliefState === "deprecated" ||
+    beliefState === "archived"
+  );
 }
 
 // ── Vector scorer ───────────────────────────────────────────────────────────
@@ -638,8 +558,16 @@ export async function buildDbHit(input: {
   sources: SearchSource[];
   config?: AkmConfig;
   utilityBoosted?: boolean;
+  graphContext?: GraphBoostContext | null;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
+  /**
+   * Phase 5A / Advantage D5: open DB connection threaded into the search-hit
+   * enricher pipeline so the derived-memory enricher can resolve parent→child
+   * via the `entries.derived_from` index. Absent for unit tests / call sites
+   * that build hits without a DB — the enricher then becomes a no-op.
+   */
+  db?: Database;
 }): Promise<SourceSearchHit> {
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
@@ -656,6 +584,8 @@ export async function buildDbHit(input: {
   // Round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
+  const graphBoost = input.graphContext ? computeGraphBoost(input.graphContext, input.path) : 0;
+
   const whyMatched = buildWhyMatched(
     input.entry,
     input.query,
@@ -663,7 +593,10 @@ export async function buildDbHit(input: {
     qualityBoost,
     confidenceBoost,
     input.utilityBoosted,
+    graphBoost,
   );
+
+  const graphHit = input.graphContext ? collectGraphRelatedHit(input.graphContext, input.path) : null;
 
   const source = findSourceForPath(input.path, input.sources);
   const ref = resolveSearchHitRef(input.entry, input.entry.name, source);
@@ -691,12 +624,17 @@ export async function buildDbHit(input: {
     // Surface optional quality (v1 spec §4.2). Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
+    ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),
+    ...(input.entry.currentBeliefRefs ? { currentBeliefRefs: input.entry.currentBeliefRefs } : {}),
+    ...(graphHit ? { graph: { entities: graphHit.entities, relations: graphHit.relations } } : {}),
   };
 
-  const renderer = await rendererForType(input.entry.type, rendererRegistry);
-  if (renderer?.enrichSearchHit) {
-    renderer.enrichSearchHit(hit, entryStashDir);
-  }
+  await enrichSearchHit(hit, {
+    type: input.entry.type,
+    stashDir: entryStashDir,
+    rendererRegistry,
+    db: input.db,
+  });
 
   return hit;
 }
@@ -709,6 +647,7 @@ export function buildWhyMatched(
   qualityBoost: number,
   confidenceBoost: number,
   utilityBoosted?: boolean,
+  graphBoost?: number,
 ): string[] {
   const reasons: string[] = [
     rankingMode === "hybrid"
@@ -747,7 +686,16 @@ export function buildWhyMatched(
   if (tokens.some((t) => desc.includes(t))) reasons.push("matched description");
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
+  if (entry.beliefState === "active") reasons.push("active belief state");
+  if (entry.beliefState === "asserted") reasons.push("asserted belief state");
+  if (entry.beliefState === "contradicted") reasons.push("contradicted belief state");
+  if (entry.beliefState === "superseded") reasons.push("superseded belief state");
+  if (entry.beliefState === "deprecated") reasons.push("deprecated belief state");
+  if (entry.beliefState === "archived") reasons.push("archived belief state");
   if (utilityBoosted) reasons.push("usage history boost");
+  if (typeof graphBoost === "number" && graphBoost > 0) {
+    reasons.push(`graph boost +${graphBoost.toFixed(2)}`);
+  }
 
   return reasons;
 }
@@ -767,7 +715,7 @@ export function deriveSize(bytes?: number): SearchHitSize | undefined {
  * precondition is always met regardless of caller.
  */
 function deduplicateByPath<T extends { filePath: string; score?: number }>(items: T[]): T[] {
-  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.filePath.localeCompare(b.filePath));
   const seen = new Set<string>();
   return sorted.filter((item) => {
     if (seen.has(item.filePath)) return false;

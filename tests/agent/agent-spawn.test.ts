@@ -150,13 +150,14 @@ describe("runAgent — timeout", () => {
 
   test("real timeout against `bun -e` sleeping past the deadline (deterministic & fast)", async () => {
     const profile = makeProfile({ bin: "bun", args: ["-e", "await new Promise(r => setTimeout(r, 5000))"] });
-    const start = Date.now();
     const result = await runAgent(profile, undefined, { timeoutMs: 250 });
-    const elapsed = Date.now() - start;
+    // The observable result proves the deadline fired: had the 250ms timeout
+    // NOT aborted the child, runAgent would have waited the full 5s sleep and
+    // returned ok:true (or a non-timeout reason). Asserting reason === "timeout"
+    // is the deterministic signal — a wall-clock `elapsed < 2000` upper bound
+    // only adds scheduler-dependent flake risk under a loaded CI box.
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("timeout");
-    // Should bail well before the 5-second sleep would complete.
-    expect(elapsed).toBeLessThan(2000);
   });
 });
 

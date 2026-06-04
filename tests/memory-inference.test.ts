@@ -37,7 +37,6 @@ type Draft = {
 };
 
 let compressor: (body: string) => Draft | undefined = () => undefined;
-
 mock.module("../src/llm/memory-infer", () => ({
   compressMemoryToDerivedMemory: async (_config: unknown, body: string) => compressor(body),
 }));
@@ -62,6 +61,7 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+  mock.restore();
 });
 
 function writeMemory(name: string, frontmatter: Record<string, unknown>, body: string): string {
@@ -85,14 +85,16 @@ const SAMPLE_LLM = {
 function configWithLlm(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    llm: { ...SAMPLE_LLM },
+    profiles: { llm: { default: { ...SAMPLE_LLM } } },
+    defaults: { llm: "default" },
   };
 }
 
 function configOptedOut(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    llm: { ...SAMPLE_LLM },
+    profiles: { llm: { default: { ...SAMPLE_LLM } } },
+    defaults: { llm: "default" },
     index: { memory: { llm: false } },
   };
 }
@@ -130,6 +132,22 @@ describe("isPendingMemory", () => {
     expect(isPendingMemory({ inferred: "yes" })).toBe(true);
     expect(isPendingMemory({ inferenceProcessed: 1 })).toBe(true);
   });
+
+  test("name-based guard: .derived suffix blocks re-walk regardless of frontmatter", () => {
+    expect(isPendingMemory({}, "/stash/memories/auth-tips.derived.md")).toBe(false);
+    expect(isPendingMemory({ description: "anything" }, "/stash/memories/auth-tips.derived.md")).toBe(false);
+    expect(isPendingMemory({ inferred: false }, "/stash/memories/auth-tips.derived.md")).toBe(false);
+  });
+
+  test("name-based guard: non-.derived path is not affected", () => {
+    expect(isPendingMemory({ description: "anything" }, "/stash/memories/auth-tips.md")).toBe(true);
+    expect(isPendingMemory({}, "/stash/memories/nested/note.md")).toBe(true);
+  });
+
+  test("name-based guard: absent filePath falls back to frontmatter-only check", () => {
+    expect(isPendingMemory({})).toBe(true);
+    expect(isPendingMemory({ inferred: true })).toBe(false);
+  });
 });
 
 // ── collectPendingMemories ──────────────────────────────────────────────────
@@ -165,7 +183,16 @@ describe("runMemoryInferencePass — disabled by default", () => {
     writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
     const result = await runMemoryInferencePass({ semanticSearchMode: "auto" }, sources());
-    expect(result).toEqual({ considered: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(result).toEqual({
+      considered: 0,
+      cacheHits: 0,
+      splitParents: 0,
+      writtenFacts: 0,
+      skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
+    });
   });
 
   test("returns no-op when index.memory.llm = false", async () => {
@@ -205,7 +232,11 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     compressor = () => sampleDraft();
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { memoryInference: { enabled: true } } } },
+      },
+      defaults: { llm: "default" },
       // index.memory.llm omitted → defaults to enabled.
     };
     const result = await runMemoryInferencePass(cfg, sources());
@@ -222,11 +253,24 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { memory_inference: false } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { memoryInference: { enabled: false } } } },
+      },
+      defaults: { llm: "default" },
       index: { memory: { llm: true } },
     };
     const result = await runMemoryInferencePass(cfg, sources());
-    expect(result).toEqual({ considered: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(result).toEqual({
+      considered: 0,
+      cacheHits: 0,
+      splitParents: 0,
+      writtenFacts: 0,
+      skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
+    });
     expect(invocations).toBe(0);
     // Parent is not mutated when the feature gate blocks.
     const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
@@ -242,7 +286,11 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
+      profiles: {
+        llm: { default: { ...SAMPLE_LLM } },
+        improve: { default: { processes: { memoryInference: { enabled: true } } } },
+      },
+      defaults: { llm: "default" },
       index: { memory: { llm: false } },
     };
     const result = await runMemoryInferencePass(cfg, sources());
@@ -250,6 +298,25 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     expect(invocations).toBe(0);
     const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
     expect(fm.data.inferenceProcessed).toBeUndefined();
+  });
+});
+
+describe("runMemoryInferencePass — progress", () => {
+  test("emits per-memory progress events", async () => {
+    writeMemory("one", {}, "Body one.");
+    writeMemory("two", {}, "Body two.");
+    compressor = () => sampleDraft();
+
+    const events: Array<{ processed: number; total: number; currentRef?: string }> = [];
+    const result = await runMemoryInferencePass(configWithLlm(), sources(), undefined, undefined, false, (event) => {
+      events.push({ processed: event.processed, total: event.total, currentRef: event.currentRef });
+    });
+
+    expect(result.writtenFacts).toBe(2);
+    expect(events[0]).toEqual({ processed: 0, total: 2, currentRef: undefined });
+    expect(events.some((event) => event.processed === 1 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.currentRef === "memory:one" || event.currentRef === "memory:two")).toBe(true);
   });
 });
 
@@ -270,13 +337,21 @@ describe("runMemoryInferencePass — enabled", () => {
 
     expect(result).toEqual({
       considered: 1,
+      cacheHits: 0,
       splitParents: 1,
       writtenFacts: 1,
       skippedNoFacts: 0,
+      skippedChildExists: 0,
+      skippedAborted: 0,
+      unaccounted: 0,
     });
 
     const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));
     expect(derived.data.inferred).toBe(true);
+    // Phase 1B / Rec 7: derived memories must be tagged as background-captured
+    // so ranking does not give them the hot-capture boost reserved for the
+    // user-driven `akm remember` write path.
+    expect(derived.data.captureMode).toBe("background");
     expect(derived.data.source).toBe("memory:parent");
     expect(derived.data.description).toBe("A higher-signal summary of the parent.");
     expect(derived.data.tags).toEqual(["one", "two", "three"]);
@@ -370,5 +445,47 @@ describe("runMemoryInferencePass — enabled", () => {
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
+  });
+
+  // Regression guard for the 2026-05-26 yield-leak investigation: when a
+  // parent already has its `<parent>.derived.md` on disk but is NOT marked
+  // `inferenceProcessed: true` (crash mid-write, manual edit, etc.), the
+  // LLM is still re-invoked. Pre-fix that attempt vanished into the
+  // `freshAttempts` denominator. Now it must surface as
+  // `skippedChildExists`.
+  test("counts skippedChildExists when derived file already exists on disk", async () => {
+    writeMemory("parent", {}, "Body.");
+    // Seed the derived child on disk so writeDerivedMemory short-circuits.
+    fs.writeFileSync(
+      path.join(tmpStash, "memories", "parent.derived.md"),
+      "---\ninferred: true\n---\n\nPre-existing child.\n",
+      "utf8",
+    );
+    compressor = () => sampleDraft();
+
+    const result = await runMemoryInferencePass(configWithLlm(), sources());
+
+    expect(result.considered).toBe(1);
+    expect(result.skippedChildExists).toBe(1);
+    expect(result.skippedNoFacts).toBe(0);
+    expect(result.splitParents).toBe(0);
+    expect(result.writtenFacts).toBe(0);
+    expect(result.unaccounted).toBe(0);
+  });
+
+  test("counts skippedAborted when the signal aborts before the LLM call", async () => {
+    writeMemory("parent-a", {}, "Body A.");
+    writeMemory("parent-b", {}, "Body B.");
+    const controller = new AbortController();
+    controller.abort();
+    compressor = () => sampleDraft();
+
+    const result = await runMemoryInferencePass(configWithLlm(), sources(), controller.signal);
+
+    expect(result.considered).toBe(2);
+    expect(result.skippedAborted).toBe(2);
+    expect(result.splitParents).toBe(0);
+    expect(result.writtenFacts).toBe(0);
+    expect(result.unaccounted).toBe(0);
   });
 });

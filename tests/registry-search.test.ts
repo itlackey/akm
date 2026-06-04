@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../src/commands/registry-search";
 import { searchRegistry } from "../src/commands/registry-search";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ const FIXTURE_INDEX: RegistryIndex = {
 
 const createdTmpDirs: string[] = [];
 
-function createTmpDir(prefix = "akm-search-"): string {
+function _createTmpDir(prefix = "akm-search-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;
@@ -111,21 +112,28 @@ afterAll(() => {
   }
 });
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
+let envCleanup: Cleanup = () => {};
+
 beforeEach(() => {
-  // Isolate cache per test
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-search-cache-");
+  // Isolate cache per test.
+  const cacheResult = sandboxXdgCacheHome();
+  // Also isolate the data dir per test. The registry-index cache lives in
+  // index.db under getDataDir() (XDG_DATA_HOME/HOME), NOT XDG_CACHE_HOME. That
+  // cache is keyed solely on the registry URL with a 1-hour TTL. Test servers
+  // bind random ports that the OS reuses across tests, so without a fresh data
+  // dir a later test whose serveIndex() lands on a previously-used port reads a
+  // stale, unrelated index out of the shared real ~/.local/share/akm/index.db —
+  // making queries like "openkit" return zero hits and flaking hits[0] reads.
+  const dataResult = sandboxXdgDataHome(cacheResult.cleanup);
+  envCleanup = dataResult.cleanup;
   delete process.env.AKM_REGISTRY_URL;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
   if (originalRegistryUrl === undefined) {
     delete process.env.AKM_REGISTRY_URL;
   } else {

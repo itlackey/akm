@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import fs from "node:fs";
 import path from "node:path";
 import { resolveAssetPathFromName } from "../core/asset-spec";
@@ -6,6 +10,7 @@ import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { parseWorkflow } from "./parser";
 import type { WorkflowError } from "./schema";
+import workflowTemplate from "./workflow-template.md" with { type: "text" };
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
   title: "Example Workflow",
@@ -167,29 +172,8 @@ export function validateWorkflowSource(target: string): {
 }
 
 function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {
-  return `---
-description: Describe what this workflow accomplishes
-tags:
-  - example
-params:
-  example_param: Explain this parameter
----
-
-# Workflow: ${input.title}
-
-## Step: ${input.firstStepTitle}
-Step ID: ${input.firstStepId}
-
-### Instructions
-Describe what to do in this step.
-
-### Completion Criteria
-- Confirm the first step is complete
-
-## Step: Second Step
-Step ID: second-step
-
-### Instructions
-Describe what happens next.
-`;
+  return workflowTemplate
+    .replace("{{TITLE}}", input.title)
+    .replace("{{FIRST_STEP_TITLE}}", input.firstStepTitle)
+    .replace("{{FIRST_STEP_ID}}", input.firstStepId);
 }

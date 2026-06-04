@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Low-level OpenAI-compatible chat completions client and capability probing.
  *
@@ -9,7 +13,18 @@
  */
 
 import { fetchWithTimeout } from "../core/common";
-import type { LlmConnectionConfig } from "../core/config";
+import { type LlmConnectionConfig, resolveSecret } from "../core/config";
+import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+
+// Re-export shared parse utilities so existing importers of `client.ts` continue
+// to resolve `parseJsonResponse` and `parseEmbeddedJsonResponse` from this module.
+export {
+  escapeJsonStringControls,
+  parseEmbeddedJsonResponse,
+  parseJsonResponse,
+  stripCodeFences,
+  stripThinkBlocks,
+} from "../core/parse";
 
 /** Maximum length of an LLM error response body included in thrown errors. */
 const ERROR_BODY_MAX_LEN = 200;
@@ -42,6 +57,26 @@ export function redactErrorBody(input: string): string {
   return out;
 }
 
+// ── Typed error class ───────────────────────────────────────────────────────
+
+export type LlmCallErrorCode =
+  | "rate_limited" // HTTP 429
+  | "provider_error" // HTTP 5xx
+  | "network_error" // fetch failed / timeout
+  | "parse_error" // response received but JSON parse failed
+  | "timeout"; // request exceeded timeoutMs
+
+export class LlmCallError extends Error {
+  constructor(
+    message: string,
+    public readonly code: LlmCallErrorCode,
+    public readonly statusCode?: number,
+  ) {
+    super(message);
+    this.name = "LlmCallError";
+  }
+}
+
 // ── OpenAI-compatible chat completions ──────────────────────────────────────
 
 export interface ChatMessage {
@@ -50,11 +85,21 @@ export interface ChatMessage {
 }
 
 interface ChatCompletionResponse {
-  choices: Array<{ message: { content: string } }>;
+  choices: Array<{
+    message: {
+      content: string;
+      reasoning_content?: string; // thinking models route output here
+    };
+  }>;
 }
 
 export interface ChatCompletionOptions {
-  /** Override the config's max_tokens for this call (used by ingest/lint which need longer outputs). */
+  /**
+   * Override the config's max_tokens for this call. When absent AND
+   * `config.maxTokens` is also absent, the field is omitted from the request
+   * body entirely — the model/API uses its own default limit. Only set this
+   * explicitly when you have a strong reason (e.g. capability probes).
+   */
   maxTokens?: number;
   /** Override the config's temperature for this call. */
   temperature?: number;
@@ -62,157 +107,107 @@ export interface ChatCompletionOptions {
   timeoutMs?: number;
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
+  /**
+   * JSON Schema for structured output. When provided AND the connection has
+   * `supportsJsonSchema: true`, sends `response_format: { type: "json_schema",
+   * json_schema: { schema, strict: true } }`. Otherwise the schema is ignored
+   * and callers rely on prompt-contract JSON.
+   */
+  responseSchema?: Record<string, unknown>;
+  /** Override the config's enableThinking for this call. */
+  enableThinking?: boolean;
 }
 
 export async function chatCompletion(
-  config: LlmConnectionConfig,
+  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (config.apiKey) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
+  const resolvedKey = resolveSecret(config.apiKey);
+  if (resolvedKey) {
+    headers.Authorization = `Bearer ${resolvedKey}`;
   }
 
-  const response = await fetchWithTimeout(
-    config.endpoint,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: options?.temperature ?? config.temperature ?? 0.3,
-        max_tokens: options?.maxTokens ?? config.maxTokens ?? 512,
-        ...config.extraParams,
-      }),
-    },
-    timeoutMs,
-    options?.signal,
-  );
+  // Only include max_tokens when explicitly set. The model/API knows its own
+  // limits; a hardcoded default creates silent truncation failures when the
+  // guess is wrong. Users who need a cap can set llm.maxTokens in config.
+  const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
+  const responseFormat =
+    options?.responseSchema && config.supportsJsonSchema
+      ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
+      : {};
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      config.endpoint,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: config.model,
+          messages,
+          temperature: options?.temperature ?? config.temperature ?? 0.3,
+          ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
+          ...responseFormat,
+          ...(options?.enableThinking !== undefined
+            ? { enable_thinking: options.enableThinking }
+            : config.enableThinking !== undefined
+              ? { enable_thinking: config.enableThinking }
+              : {}),
+          ...config.extraParams,
+        }),
+      },
+      timeoutMs,
+      options?.signal,
+    );
+  } catch (err) {
+    // fetchWithTimeout throws a plain Error with a message containing
+    // "timed out" for AbortController-driven timeouts, or "aborted" for
+    // caller-driven cancellations. Map both to typed LlmCallError.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new LlmCallError(`Request timed out after ${timeoutMs}ms`, "timeout");
+    }
+    if (msg.includes("timed out")) {
+      throw new LlmCallError(`Request timed out after ${timeoutMs}ms`, "timeout");
+    }
+    throw new LlmCallError(`Network error: ${msg}`, "network_error");
+  }
 
   if (!response.ok) {
     const rawBody = await response.text().catch(() => "");
     const safeBody = redactErrorBody(rawBody);
-    throw new Error(`LLM request failed (${response.status}) ${config.endpoint}: ${safeBody}`);
+    const status = response.status;
+    if (status === 429) {
+      throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
+    }
+    if (status >= 500) {
+      throw new LlmCallError(
+        `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
+        "provider_error",
+        status,
+      );
+    }
+    throw new LlmCallError(`LLM request failed (${status}) ${config.endpoint}: ${safeBody}`, "provider_error", status);
   }
 
   const json = (await response.json()) as ChatCompletionResponse;
-  return json.choices?.[0]?.message?.content?.trim() ?? "";
-}
-
-/** Strip leading/trailing markdown code fences from an LLM response. */
-export function stripJsonFences(raw: string): string {
-  const repaired = raw
-    .trim()
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/^```(?:json)?\s*\n?/i, "")
-    .replace(/\n?```\s*$/i, "")
-    .trim();
-
-  let out = "";
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < repaired.length; i++) {
-    const ch = repaired[i];
-    if (escaped) {
-      out += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\" && inString) {
-      out += ch;
-      escaped = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      out += ch;
-      continue;
-    }
-    if (inString) {
-      if (ch === "\n") {
-        out += "\\n";
-        continue;
-      }
-      if (ch === "\r") {
-        out += "\\r";
-        continue;
-      }
-      if (ch === "\t") {
-        out += "\\t";
-        continue;
-      }
-    }
-    out += ch;
-  }
-  return out;
-}
-
-/** Parse a possibly-fenced JSON response. Returns undefined if invalid. */
-export function parseJsonResponse<T = unknown>(raw: string): T | undefined {
-  try {
-    return JSON.parse(stripJsonFences(raw)) as T;
-  } catch {
-    return undefined;
-  }
+  const content = (json.choices?.[0]?.message?.content ?? "").trim();
+  const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
+  return content || reasoning;
 }
 
 /**
- * Best-effort recovery for providers that wrap JSON in extra prose or fenced
- * blocks. Extracts the first balanced top-level object/array and parses it.
+ * Strip `<think>` blocks, code fences, and escape control characters in JSON
+ * strings. Thin wrapper kept for backward compatibility with call sites that
+ * import `stripJsonFences` from this module. New code should prefer the
+ * granular helpers from `../core/parse`.
  */
-export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefined {
-  const direct = parseJsonResponse<T>(raw);
-  if (direct !== undefined) return direct;
-
-  const text = stripJsonFences(raw);
-  let arrayFallback: T | undefined;
-  for (let start = 0; start < text.length; start++) {
-    const opener = text[start];
-    if (opener !== "{" && opener !== "[") continue;
-
-    const closer = opener === "{" ? "}" : "]";
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (ch === "\\") {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-      if (ch === opener) depth += 1;
-      if (ch === closer) {
-        depth -= 1;
-        if (depth === 0) {
-          try {
-            const parsed = JSON.parse(text.slice(start, i + 1)) as T;
-            if (!Array.isArray(parsed)) {
-              return parsed;
-            }
-            arrayFallback ??= parsed;
-            break;
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return arrayFallback;
+export function stripJsonFences(raw: string): string {
+  return escapeJsonStringControls(stripCodeFences(stripThinkBlocks(raw)));
 }
 
 // ── Availability check ──────────────────────────────────────────────────────

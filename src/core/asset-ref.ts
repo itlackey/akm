@@ -1,11 +1,15 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import path from "node:path";
-import { isAssetType } from "./common";
+import { type AkmAssetType, isAssetType } from "./common";
 import { UsageError } from "./errors";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface AssetRef {
-  type: string;
+  type: AkmAssetType;
   name: string;
   /**
    * Where to find this asset.
@@ -16,6 +20,11 @@ export interface AssetRef {
    */
   origin?: string;
 }
+
+/** Accepted spelling aliases mapping to a canonical asset type. */
+const TYPE_ALIASES: Record<string, AkmAssetType> = {
+  environment: "env",
+};
 
 // ── Construction ────────────────────────────────────────────────────────────
 
@@ -70,14 +79,19 @@ export function parseAssetRef(ref: string): AssetRef {
   const rawType = body.slice(0, colon);
   const rawName = body.slice(colon + 1);
 
-  if (!isAssetType(rawType)) {
+  // Type aliases: `environment:` is an accepted spelling of the canonical
+  // `env:` type. (`vault:` remains its own deprecated type so the frozen
+  // `vaults/` copy keeps resolving through the 0.8.x window.)
+  const resolvedType = TYPE_ALIASES[rawType] ?? rawType;
+
+  if (!isAssetType(resolvedType)) {
     throw new UsageError(`Invalid asset type: "${rawType}".`, "MISSING_REQUIRED_ARGUMENT");
   }
 
   validateName(rawName);
   const name = normalizeName(rawName);
 
-  return { type: rawType, name, origin: origin || undefined };
+  return { type: resolvedType, name, origin: origin || undefined };
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────
@@ -92,6 +106,10 @@ function validateName(name: string): void {
     throw new UsageError("Absolute path in asset name.", "MISSING_REQUIRED_ARGUMENT");
   if (normalized === ".." || normalized.startsWith("../")) {
     throw new UsageError("Path traversal in asset name.", "MISSING_REQUIRED_ARGUMENT");
+  }
+  const segments = normalized.split("/");
+  if (segments.some((seg) => seg === "." || seg === "..")) {
+    throw new UsageError("Asset name cannot contain relative path segments.", "MISSING_REQUIRED_ARGUMENT");
   }
 }
 

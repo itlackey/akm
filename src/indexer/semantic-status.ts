@@ -1,8 +1,12 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import fs from "node:fs";
-import path from "node:path";
+import { writeFileAtomic } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config";
 import { getCacheDir, getSemanticStatusPath } from "../core/paths";
-import { DEFAULT_LOCAL_MODEL } from "../llm/embedder";
+import { DEFAULT_LOCAL_MODEL } from "../llm/embedders/local";
 
 export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "ready-vec" | "blocked";
 export type SemanticSearchEffectiveStatus = "disabled" | SemanticSearchRuntimeStatus;
@@ -71,19 +75,7 @@ export function readSemanticStatus(): SemanticSearchStatus | undefined {
 export function writeSemanticStatus(status: SemanticSearchStatus): void {
   const dir = getCacheDir();
   fs.mkdirSync(dir, { recursive: true });
-  const filePath = getSemanticStatusPath();
-  const tmpPath = path.join(dir, `semantic-status.json.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`);
-  fs.writeFileSync(tmpPath, `${JSON.stringify(status, null, 2)}\n`, "utf8");
-  try {
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(getSemanticStatusPath(), `${JSON.stringify(status, null, 2)}\n`);
 }
 
 export function clearSemanticStatus(): void {

@@ -18,9 +18,11 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
+import { setQuiet } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { _resetUnknownQualityWarnings, isProposedQuality, validateStashEntry } from "../src/indexer/metadata";
 import type { SourceSearchHit } from "../src/sources/types";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -59,44 +61,19 @@ async function buildTestIndex(stashDir: string) {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-issue224-cache-");
-  testConfigDir = createTmpDir("akm-issue224-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
   _resetUnknownQualityWarnings();
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -202,6 +179,9 @@ describe("Issue #224: unknown quality values warn once and remain searchable", (
     console.warn = (...args: unknown[]) => {
       calls.push(args.map(String).join(" "));
     };
+    // setQuiet(false): harness sets quiet=true by default; opt into noisy mode
+    // so warn() calls from production code reach the patched console.warn.
+    setQuiet(false);
     try {
       _resetUnknownQualityWarnings();
 
@@ -230,6 +210,7 @@ describe("Issue #224: unknown quality values warn once and remain searchable", (
       expect(stillTwo).toBe(2);
     } finally {
       console.warn = originalWarn;
+      setQuiet(true); // restore harness default
     }
   });
 

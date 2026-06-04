@@ -5,7 +5,9 @@ import path from "node:path";
 import type { RegistryIndex } from "../src/commands/registry-search";
 import { resolveRegistries, searchRegistry } from "../src/commands/registry-search";
 import type { RegistryConfigEntry } from "../src/core/config";
-import { getConfigPath, loadConfig, saveConfig } from "../src/core/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config";
+import { getConfigPath } from "../src/core/paths";
+import { runCliCapture } from "./_helpers/cli";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ function writeConfig(configPath: string, config: Record<string, unknown>): void 
 
 function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
   const body = JSON.stringify(index);
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const server = Bun.serve({
     port: 0,
     fetch() {
@@ -33,7 +36,7 @@ function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
     },
   });
   return {
-    url: `http://localhost:${server.port}/index.json`,
+    url: `http://localhost:${server.port}/index.json?test=${token}`,
     close: () => server.stop(true),
   };
 }
@@ -46,11 +49,20 @@ afterAll(() => {
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
 beforeEach(() => {
   process.env.XDG_CONFIG_HOME = createTmpDir("akm-reg-config-");
   process.env.XDG_CACHE_HOME = createTmpDir("akm-reg-cache-");
+  // Pair with XDG_DATA_HOME / XDG_STATE_HOME so the bun-test isolation
+  // guard in src/core/paths.ts (tightened in 35ec047) does not fire when
+  // searchRegistry's static-index provider tries to open the DB cache.
+  // Without these the guard throws TEST_ISOLATION_MISSING, which surfaces
+  // as a warning + zero hits — see tests/test-isolation-no-swallow.test.ts.
+  process.env.XDG_DATA_HOME = createTmpDir("akm-reg-data-");
+  process.env.XDG_STATE_HOME = createTmpDir("akm-reg-state-");
   delete process.env.AKM_REGISTRY_URL;
 });
 
@@ -64,6 +76,16 @@ afterEach(() => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
   if (originalRegistryUrl === undefined) {
     delete process.env.AKM_REGISTRY_URL;
@@ -156,6 +178,54 @@ describe("registry add/remove/list via config", () => {
     const final = loadConfig();
     expect(final.registries?.length).toBe(1);
     expect(final.registries?.[0].name).toBe("beta");
+  });
+});
+
+// ── registry remove safety guard (WS0) ──────────────────────────────────────
+
+describe("registry remove confirmation guard (WS0)", () => {
+  function seedRegistries(): void {
+    const config = loadConfig();
+    const registries: RegistryConfigEntry[] = [
+      { url: "https://example.com/a.json", name: "alpha" },
+      { url: "https://example.com/b.json", name: "beta" },
+    ];
+    saveConfig({ ...config, registries });
+    resetConfigCache();
+  }
+
+  test("remove without --yes aborts in non-interactive mode (exit 2) and keeps the registry", async () => {
+    seedRegistries();
+    const result = await runCliCapture(["registry", "remove", "alpha", "--format=json"]);
+    // confirmDestructive throws NON_INTERACTIVE_REQUIRES_YES (UsageError → exit 2)
+    expect(result.code).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+    // Registry must NOT have been removed.
+    resetConfigCache();
+    const after = loadConfig();
+    expect(after.registries?.some((r) => r.name === "alpha")).toBe(true);
+  });
+
+  test("remove with --yes proceeds and removes the registry", async () => {
+    seedRegistries();
+    const result = await runCliCapture(["registry", "remove", "alpha", "--yes", "--format=json"]);
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.removed).toBe(true);
+    expect(parsed.entry.name).toBe("alpha");
+    resetConfigCache();
+    const after = loadConfig();
+    expect(after.registries?.some((r) => r.name === "alpha")).toBe(false);
+    expect(after.registries?.some((r) => r.name === "beta")).toBe(true);
+  });
+
+  test("remove of a non-existent registry is a no-op and needs no confirmation", async () => {
+    seedRegistries();
+    const result = await runCliCapture(["registry", "remove", "does-not-exist", "--format=json"]);
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.removed).toBe(false);
   });
 });
 
@@ -308,7 +378,7 @@ describe("config roundtrip", () => {
     expect(loaded.registries?.[1]).toEqual({ url: "https://b.com/index.json", name: "beta", enabled: false });
   });
 
-  test("invalid registry entries are filtered during load", () => {
+  test("invalid registry entries reject at load time (no silent filtering)", () => {
     const configPath = getConfigPath();
     writeConfig(configPath, {
       semanticSearchMode: "auto",
@@ -321,8 +391,6 @@ describe("config roundtrip", () => {
       ],
     });
 
-    const loaded = loadConfig();
-    expect(loaded.registries?.length).toBe(1);
-    expect(loaded.registries?.[0].url).toBe("https://valid.com/index.json");
+    expect(() => loadConfig()).toThrow();
   });
 });

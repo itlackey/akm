@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "probe-01-queued-clear-lesson",
+  "assetType": "memory",
+  "assetRef": "memory:probe-01-deploy-secret-rotation",
+  "asset": {
+    "frontmatter": {
+      "description": "After a staging deploy silently dropped retry credentials, the team added a regression test in tests/deploy-secret-rotation.test.ts so the failure cannot recur.",
+      "captureMode": "hot",
+      "beliefState": "asserted",
+      "tags": ["incident", "deploy", "secrets"],
+      "createdAt": "2026-05-10T10:00:00.000Z"
+    },
+    "body": "On 2026-05-10 the staging deploy pipeline silently dropped retry credentials.\nThe team manually re-applied the secret and added a regression test in\n`tests/deploy-secret-rotation.test.ts`.\n\nKey takeaways for next time:\n\n- Always verify that the secret-rotation cron has run before promoting a deploy.\n- The retry credential lives in the `deploy-retry` vault — confirm presence with `akm vault show deploy-retry` before kicking off a release.\n- When a deploy silently no-ops, check the credential-rotation log first; do not assume the orchestrator is at fault.\n"
+    },
+  "feedback": [
+    {
+      "ts": "2026-05-11T09:00:00.000Z",
+      "signal": "positive",
+      "reason": "Saved the on-call engineer 40 minutes during the post-rotation incident",
+      "note": "Followed the takeaways verbatim; would have wasted time blaming the orchestrator otherwise."
+    },
+    {
+      "ts": "2026-05-13T14:30:00.000Z",
+      "signal": "positive",
+      "reason": "Used during the May 13 deploy retro to anchor the action items",
+      "note": "Three engineers cited it in their RCA writeups."
+    }
+  ],
+  "humanGrade": {
+    "expectedOutcome": "queued",
+    "expectedScoreBand": [4.0, 5.0],
+    "rationale": "Concrete asset with clear takeaways and unambiguous positive signal. A well-calibrated judge should distil this into a valid lesson and queue the proposal. MT-Bench bands say score in [4, 5] for this kind of high-signal input."
+  }
+}

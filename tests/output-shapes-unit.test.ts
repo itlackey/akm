@@ -243,8 +243,8 @@ describe("shapeShowOutput", () => {
     extra: "should-not-appear-in-agent-mode",
   };
 
-  test("forAgent picks the agent-action field set", () => {
-    const out = shapeShowOutput(fullShow, "full", true);
+  test("shape=agent picks the agent-action field set", () => {
+    const out = shapeShowOutput(fullShow, "full", "agent");
     expect(out).toMatchObject({
       type: "skill",
       name: "deploy",
@@ -254,8 +254,15 @@ describe("shapeShowOutput", () => {
     expect(out).not.toHaveProperty("extra");
   });
 
-  test("forAgent=false at full picks the show field set + adds schemaVersion", () => {
-    const out = shapeShowOutput(fullShow, "full", false);
+  test("shape=summary picks the compact metadata field set", () => {
+    const out = shapeShowOutput(fullShow, "normal", "summary");
+    expect(out).toMatchObject({ type: "skill", name: "deploy", description: "Deploy" });
+    // summary omits content (compact metadata only).
+    expect(out).not.toHaveProperty("content");
+  });
+
+  test("shape=human at full picks the show field set + adds schemaVersion", () => {
+    const out = shapeShowOutput(fullShow, "full", "human");
     expect(out.schemaVersion).toBe(1);
     expect(out).toMatchObject({
       type: "skill",
@@ -269,8 +276,8 @@ describe("shapeShowOutput", () => {
     expect(out).not.toHaveProperty("extra");
   });
 
-  test("forAgent=false at brief omits schemaVersion (only added at full)", () => {
-    const out = shapeShowOutput(fullShow, "brief", false);
+  test("shape=human at brief omits schemaVersion (only added at full)", () => {
+    const out = shapeShowOutput(fullShow, "brief", "human");
     expect(out).not.toHaveProperty("schemaVersion");
     expect(out.name).toBe("deploy");
   });
@@ -282,7 +289,7 @@ describe("shapeForCommand", () => {
       "search",
       { hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1 }], registryHits: [] },
       "brief",
-      false,
+      "human",
     ) as Record<string, unknown>;
     expect(Array.isArray(out.hits)).toBe(true);
     expect((out.hits as unknown[])[0]).toEqual({
@@ -293,19 +300,31 @@ describe("shapeForCommand", () => {
     });
   });
 
-  test("routes show results through shapeShowOutput at full + forAgent=true", () => {
+  test("routes show results through shapeShowOutput at full + shape=agent", () => {
     const out = shapeForCommand(
       "show",
       { type: "skill", name: "deploy", action: "a", extra: "drop me" },
       "full",
-      true,
+      "agent",
     ) as Record<string, unknown>;
     expect(out).not.toHaveProperty("extra");
   });
 
   test("non-search/show commands pass through unmodified", () => {
     const result = { something: "untouched" };
-    expect(shapeForCommand("info", result, "full", false)).toEqual(result);
+    expect(shapeForCommand("info", result, "full", "human")).toEqual(result);
+    expect(shapeForCommand("health", result, "full", "human")).toEqual(result);
+  });
+
+  test("--shape summary on a non-show command throws INVALID_SHAPE_VALUE", () => {
+    expect(() => shapeForCommand("search", { hits: [], registryHits: [] }, "normal", "summary")).toThrow(
+      /not supported for 'akm search'/,
+    );
+    expect(() => shapeForCommand("info", { x: 1 }, "normal", "summary")).toThrow(/only available on 'akm show'/);
+  });
+
+  test("--shape summary on show is allowed", () => {
+    expect(() => shapeForCommand("show", { type: "skill", name: "deploy" }, "normal", "summary")).not.toThrow();
   });
 });
 
@@ -315,13 +334,13 @@ describe("shapeSearchOutput", () => {
       hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1, description: "desc" }],
       registryHits: [],
     };
-    const brief = shapeSearchOutput(result, "brief", false) as { hits: Record<string, unknown>[] };
-    const normal = shapeSearchOutput(result, "normal", false) as { hits: Record<string, unknown>[] };
+    const brief = shapeSearchOutput(result, "brief", "human") as { hits: Record<string, unknown>[] };
+    const normal = shapeSearchOutput(result, "normal", "human") as { hits: Record<string, unknown>[] };
     expect((brief.hits[0] as Record<string, unknown>).description).toBeUndefined();
     expect((normal.hits[0] as Record<string, unknown>).description).toBe("desc");
   });
 
-  test("forAgent overrides detail and uses the agent shape", () => {
+  test("shape=agent overrides detail and uses the agent shape", () => {
     const result = {
       hits: [
         {
@@ -336,7 +355,7 @@ describe("shapeSearchOutput", () => {
       ],
       registryHits: [],
     };
-    const out = shapeSearchOutput(result, "brief", true) as { hits: Record<string, unknown>[] };
+    const out = shapeSearchOutput(result, "brief", "agent") as { hits: Record<string, unknown>[] };
     expect((out.hits[0] as Record<string, unknown>).ref).toBe("skill:x");
   });
 });

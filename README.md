@@ -1,271 +1,215 @@
-# Agent Kit Manager
-
-> **akm** — Agent Kit Manager
+# akm — Agent Knowledge Management
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
 [![CI](https://github.com/itlackey/akm/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/akm/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
-A package manager for AI agent capabilities -- scripts, skills, commands,
-agents, knowledge, workflows, vaults, wikis, lessons, and memories -- that
-works with any AI coding assistant that can run shell commands.
+**A package manager for AI agent capabilities** — scripts, skills, commands, agents, knowledge, memories, workflows, wikis, vaults, lessons, and scheduled tasks — that works with any AI coding assistant that can run shell commands.
 
-## Why akm?
-
-AI agent skills, commands, and knowledge are scattered across different tools --
-Claude Code, OpenCode, Cursor, Windsurf -- with no unified way to manage, share,
-or discover them. Each tool has its own format and its own silo. akm gives you a
-single CLI to manage all your agent assets regardless of which coding assistant
-you use, so you can build a personal library once and take it everywhere.
-
-At a high level, `akm` helps agents work the way good human operators work:
-
-1. **connect the sources of truth**
-2. **start with a curated shortlist for the task at hand**
-3. **load only the relevant instructions or knowledge**
-4. **go deeper only when broader discovery is needed**
-5. **capture what worked so the system improves over time**
-
-That means `akm` is not just a search tool. It is the layer that helps agents:
-
-- **discover the right capability on demand** instead of front-loading a giant prompt
-- **reuse knowledge across tools and projects** instead of rebuilding the same library in every assistant
-- **keep local knowledge structured** with memories, imported docs, wikis, workflows, and vaults
-- **improve continuously** with feedback, history, events, reflection, proposals, and distilled lessons
-- **share and version agent assets like code** through git, npm, registries, and writable stashes
-
-## What you get
-
-> This command model reflects the v0.7.0 workflow framing.
-
-Think about `akm` in seven layers:
-
-1. **Set up the workspace** — `setup`, `init`, `config`, `info`, `index`
-2. **Connect sources and discover new ones** — `add`, `list`, `update`, `remove`, `clone`, `save`, `registry`
-3. **Find and inspect assets** — `curate`, `search`, `show`
-4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
-5. **Run repeatable procedures** — `workflow`
-6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
-7. **Operate the CLI comfortably** — `help`, `hints`, `completions`, `upgrade`
-
-If you only remember one mental model, make it this:
-
-- `akm add` tells akm where content lives
-- `akm index` makes that content searchable
-- `akm curate` gives the best first shortlist for a prompt or request
-- `akm search` broadens discovery when you need more assets beyond the curated set
-- `akm show` loads the full thing
-
-Everything else supports one of those steps.
+akm gives agents a curated, searchable library built from local directories, GitHub repos, npm packages, and websites. Instead of front-loading a giant prompt, agents pull exactly what they need, when they need it, and feed results back so the library improves over time.
 
 ## Install
 
+**Option 1 — Prebuilt binary (recommended, no runtime required):**
+
 ```sh
-# Standalone binary (no runtime dependencies)
+# Linux / macOS
 curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
-# Or via Bun
-bun install -g akm-cli
-
-# Or via npm / pnpm
-npm install -g akm-cli
-pnpm add -g akm-cli
-
-# Or via skills
-npx skills add itlackey/akm
-
+# Windows (PowerShell)
+irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
-Upgrade in place with `akm upgrade` for binary, npm, bun, and pnpm installs.
-Preview release notes and migration guidance with `akm help migrate <version>`.
-
-This project is still pre-release. Treat `.stash.json` as a deprecated legacy
-compatibility format for older stashes, not the recommended authoring path. It
-will be removed in v0.8.0. Prefer frontmatter for markdown assets and
-structured header comments for scripts.
-
-## Quick Start
+**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
 
 ```sh
-akm setup                         # Guided setup: configure, initialize, and index
-akm add ~/.claude/skills          # Add your existing local skills
-akm add github:owner/repo         # Add a stash from GitHub
-akm curate "deploy"               # Start with a curated shortlist
-akm show workflow:deploy          # Load the best matching asset
-akm remember "Deployment needs VPN access"
-akm import ./notes/release.md
-akm wiki create architecture
-akm feedback skill:deploy --positive
+bun install -g akm-cli
 ```
 
-If you want to skip the wizard, `akm init --dir ~/custom-stash` initializes the
-working stash at a custom path.
+Upgrade in place: `akm upgrade`
 
-### Why this workflow matters
+> **AKM 0.8 requires the Bun runtime or the prebuilt binary. Node.js is not supported in this release.** Cross-runtime compatibility is planned for 0.9.0. See [Privacy & data](docs/data-and-telemetry.md) for details on what akm stores locally.
 
-This quick start is doing more than showing random commands:
+### From source (contributors only)
 
-- `setup` / `init` create the local workspace
-- `add` connects existing sources of agent knowledge
-- `curate` gives the agent the strongest first list for the task
-- `search` is there when the agent needs deeper discovery beyond the curated shortlist
-- `show` loads only what is relevant
-- `remember`, `import`, and `wiki` turn local discoveries into reusable team context
-- `feedback` starts the continuous-improvement loop that helps good assets rise over time
+```sh
+git clone https://github.com/itlackey/akm.git
+cd akm
+bun install
+bun run build
+```
 
-## Features
+## What akm does
 
-### Works with Any AI Agent
+- **Manage sources** — add local dirs, git repos, npm packages, and websites as searchable asset sources [(details)](docs/features/sources-registries.md)
+  ```sh
+  akm add github:owner/stash        # GitHub
+  akm add https://docs.example.com  # crawled website
+  ```
+- **Search a unified index** — one FTS5 index across all your sources [(details)](docs/features/search-discovery.md)
+  ```sh
+  akm search "deploy" --type script --limit 5
+  ```
+- **Curate a shortlist** — get the best-match assets for a task without knowing exact names [(details)](docs/features/search-discovery.md)
+  ```sh
+  akm curate "set up a kubernetes deployment"
+  ```
+- **Load assets on demand** — show the full content of any asset by ref [(details)](docs/features/search-discovery.md)
+  ```sh
+  akm show workflow:ship-release
+  ```
+- **Capture local knowledge** — save discoveries as memories, imported docs, or wiki pages [(details)](docs/features/knowledge-management.md)
+  ```sh
+  akm remember "Staging deploys require VPN"
+  akm import ./notes/runbook.md --wiki ops
+  ```
+- **Run structured workflows** — parse, start, step through, and resume multi-step procedures [(details)](docs/features/workflows.md)
+  ```sh
+  akm workflow start workflow:onboarding
+  ```
+- **Improve continuously** — feedback drives proposals; proposals drive asset quality [(details)](docs/features/improvement-loop.md)
+  ```sh
+  akm feedback skill:code-review --positive
+  akm improve && akm proposal list
+  ```
 
-Any model that can run shell commands can use `akm`. Add this to your
-`AGENTS.md`, `CLAUDE.md`, or system prompt (see `docs/agents/AGENTS.full.md` for a
-more detailed version with advanced usage):
+## Quick start
 
-~~~markdown
+```sh
+akm setup                             # guided first-time setup
+akm add github:itlackey/akm-stash     # install the official onboarding stash
+akm index                             # build the search index
+akm curate "deploy"                   # get a curated shortlist
+akm show workflow:deploy              # load the best match
+akm remember "Deployment needs VPN"  # capture a memory
+akm feedback workflow:deploy --positive
+```
+
+For non-interactive setup: `akm setup --yes` (or `--dir ~/custom-stash` for a custom path).
+
+See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
+
+## Asset types
+
+| Type | What it is | Example ref |
+| --- | --- | --- |
+| **script** | Executable shell or code automation | `script:deploy.sh` |
+| **skill** | A set of agent instructions | `skill:code-review` |
+| **command** | A prompt template with placeholders | `command:summarize` |
+| **agent** | System prompt + model + tool policy | `agent:reviewer` |
+| **knowledge** | A reference document | `knowledge:api-guide` |
+| **vault** | Key/value environment config (keys only, never secrets) | `vault:prod-env` |
+| **workflow** | Structured multi-step procedure with resumable run state | `workflow:ship-release` |
+| **wiki** | A page inside a multi-wiki knowledge base | `wiki:ops/runbook` |
+| **lesson** | Distilled feedback insight | `lesson:prefer-dry-run` |
+| **memory** | Recalled context from a previous session | `memory:vpn-note` |
+
+See [docs/concepts.md](docs/concepts.md) for classification rules and the ref format.
+
+## Key workflows
+
+**Add and search a stash**
+```sh
+akm add github:owner/team-stash
+akm index
+akm search "database migration" --type script
+akm show script:migrate.sh
+```
+
+**Capture and route knowledge**
+```sh
+akm remember "Hot-fix deploys skip staging" --target team-stash
+akm import ./incident-report.md --wiki ops
+akm wiki create ops
+```
+
+**Build a living wiki (Karpathy LLM wiki pattern)**
+```sh
+akm wiki create research                   # scaffold wikis/research/ with schema/index/log/raw/
+akm wiki stash research https://arxiv.org/abs/2404.01744  # fetch raw source into raw/
+akm wiki stash research ./notes/meeting.md # stash local notes as immutable raw
+akm wiki ingest research                   # dispatch defaults.agent to run the ingest workflow end-to-end
+```
+
+akm implements [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: raw sources live in `raw/` (immutable), the agent writes synthesized pages alongside them, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. akm surfaces paths and invariants; your agent does the writing. See [docs/wikis.md](docs/wikis.md).
+
+**Improvement loop**
+```sh
+akm feedback skill:planner --negative --reason "Doesn't account for merge conflicts"
+akm improve                   # generate proposals from feedback + history
+akm proposal list             # review pending proposals
+akm proposal accept <uuid-or-ref>   # apply a proposal
+akm proposal reject <uuid-or-ref>   # discard it
+```
+
+**Clone and customize an asset**
+```sh
+akm clone workflow:ship-release --dest ./project/.claude
+# edit the local copy — it wins in subsequent searches automatically
+```
+
+## The improvement loop
+
+akm tracks which assets agents actually use (`select` events) and what agents think of them (`akm feedback`). Running `akm improve` processes that signal to generate proposals — suggested edits, promotions, or deprecations. Review with `akm proposal list`, then `akm proposal accept` or `akm proposal reject`. Accepted changes write back to your writable sources. Distilled lessons surface via `akm improve --distill`.
+
+## Tell your agent about akm
+
+Add this to your `AGENTS.md`, `CLAUDE.md`, or system prompt:
+
+```markdown
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, workflows, vaults, wikis, lessons, and memories via the `akm` CLI. Use `akm -h` for details.
-~~~
-
-No plugins, SDKs, or integration code required. Platform-specific plugins
-(e.g., [OpenCode](https://github.com/itlackey/akm-plugins?tab=readme-ov-file#opencode))
-are available for tighter integration but purely optional.
-
-When your agent uses an asset, have it record whether that asset helped:
-
-```sh
-akm feedback <ref> --positive
-akm feedback <ref> --negative --note "Outdated for the current repo layout"
+knowledge, workflows, vaults, wikis, lessons, and memories via the `akm` CLI.
+Use `akm -h` for details.
 ```
 
-### Clone Assets Anywhere
+No plugins or SDKs required. Platform-specific integrations are available in [akm-plugins](https://github.com/itlackey/akm-plugins).
 
-`akm clone` copies any asset from your stash or a remote source into a
-target directory for local editing:
+## Ecosystem
 
-```sh
-akm clone script:deploy.sh                              # Clone to your stash
-akm clone script:deploy.sh --dest ./project/.claude     # Clone to a specific directory
-akm clone script:deploy.sh --name my-deploy.sh          # Clone with a new name
-akm clone "npm:@scope/pkg//script:deploy.sh" --force    # Clone from a remote package
-```
-
-Key behaviors:
-- Type subdirectories are appended automatically (e.g., `--dest ./project/.claude` becomes `./project/.claude/scripts/deploy.sh`)
-- Skills clone as entire directories; scripts/commands clone as single files
-- Remote packages are fetched on-demand without registering as managed sources
-- `--force` overwrites existing assets
-
-### skills.sh Integration
-
-`akm` includes [skills.sh](https://skills.sh) as a built-in registry. Community
-skills from skills.sh are searchable out of the box alongside the official
-registry -- no setup required:
-
-```sh
-akm search "code review"             # Searches skills.sh and official registry
-akm registry search "code review"    # Search registries directly
-```
-
-Results include install counts and link back to skills.sh for details. The
-provider caches queries for 15 minutes with a 24-hour stale fallback.
-
-### Registries and Private Registry Support
-
-Registries are indexes of available stashes. The official
-[akm-registry](https://github.com/itlackey/akm-registry) is pre-configured.
-
-```sh
-akm registry search "code review"                                        # Search registries
-akm registry add https://example.com/registry/index.json --name team     # Add a registry
-akm registry list                                                        # List configured registries
-akm show knowledge:my-doc                                                # Show indexed content
-```
-
-Private access is supported through:
-- **GitHub tokens** -- Set `GITHUB_TOKEN` to access private GitHub repos when installing stashes
-- **Provider options** -- `--options` flag accepts JSON for provider-specific configuration (refs, custom headers)
-- **Pluggable providers** -- Built-in registry providers: `static-index`, `skills-sh`. Built-in source providers: `filesystem`, `git`, `website`, `npm`. Custom providers can be added via the SDK
-
-See the [Registry docs](docs/registry.md) for hosting your own registry and
-the index format.
-
-### Add Sources from Anywhere
-
-```sh
-akm add ~/.claude/skills                    # Local directory
-akm add --type wiki --name docs ~/team/wiki # Register an existing wiki source
-akm add @scope/my-stash                       # npm
-akm add github:owner/repo#v1.2.3            # GitHub with tag
-akm add github:owner/private-stash --trust    # One-off trusted install
-akm add git+https://gitlab.com/org/stash      # Any git repo
-akm add https://docs.example.com --name docs  # Website as knowledge
-```
-
-Manage sources with `akm list`, `akm update --all`, and `akm remove`. Registered
-external wikis also appear in `akm list`, and `akm wiki register` / `akm wiki remove`
-refresh wiki search results immediately.
-
-### Website Sources
-
-Add any site as a searchable knowledge source. Pages are crawled,
-converted to markdown, and indexed:
-
-```sh
-akm add https://docs.example.com --name my-docs
-akm add https://www.agentic-patterns.com/ --name agent-patterns
-akm add https://docs.example.com --name docs --max-pages 100 --max-depth 5
-```
-
-### Publish Your Own Stash
-
-1. Organize your assets into a directory
-2. Add `"akm-stash"` to `keywords` in `package.json` or the `akm-stash` topic to your GitHub repo
-3. Optionally add `akm.include` in `package.json` to control what gets installed
-4. Publish to npm or push to GitHub
-
-See the [Stash Maker's Guide](docs/stash-makers.md) for a full walkthrough.
-If you are updating an older stash, see the legacy metadata migration guidance in
-that guide and the [v1 migration guide](docs/migration/v1.md).
-
-### Official Onboarding Stash
-
-Want a ready-made set of akm assets? Install the official onboarding stash —
-[itlackey/akm-stash](https://github.com/itlackey/akm-stash) — which ships
-skills, commands, knowledge, workflows, and a librarian subagent for
-working with akm:
-
-```sh
-akm add github:itlackey/akm-stash
-akm index
-akm show skill:akm-quickstart
-```
-
-## Official Ecosystem Repositories
-
-The core CLI lives in this repo, with a few companion repos for the broader akm
-ecosystem:
-
-- [itlackey/akm-stash](https://github.com/itlackey/akm-stash) -- the official onboarding stash with ready-made skills, workflows, commands, and knowledge assets
-- [itlackey/akm-registry](https://github.com/itlackey/akm-registry) -- the official searchable registry index that `akm` uses for discovery
-- [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional editor and agent integrations, including the OpenCode plugin referenced above
-- [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- the dedicated benchmark and evaluation repo for measuring agent performance with akm
+| Repo | What it is |
+| --- | --- |
+| [itlackey/akm-stash](https://github.com/itlackey/akm-stash) | Official stash — ready-made skills, workflows, commands, and knowledge |
+| [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) | Optional editor and agent integrations (OpenCode, etc.) |
+| [itlackey/akm-registry](https://github.com/itlackey/akm-registry) | Official registry index — pre-configured in every akm install |
+| [itlackey/akm-bench](https://github.com/itlackey/akm-bench) | Benchmark harness for measuring agent performance with akm |
+| [itlackey/akm-eval](https://github.com/itlackey/akm-eval) | Eval framework and tools for akm asset quality |
 
 ## Documentation
 
+### Features
+
+| Feature | Description |
+| --- | --- |
+| [Search & Discovery](docs/features/search-discovery.md) | Build the index, search, curate a shortlist, and load assets by ref |
+| [Knowledge Management](docs/features/knowledge-management.md) | Capture memories, import docs, manage wikis, and store config in vaults |
+| [Sources & Registries](docs/features/sources-registries.md) | Connect local dirs, git repos, npm packages, and websites; browse the registry |
+| [Workflows](docs/features/workflows.md) | Structured multi-step procedures with resumable run state |
+| [The Improvement Loop](docs/features/improvement-loop.md) | Feedback, history, proposals, and automated asset improvement |
+| [Agent Integration](docs/features/agent-integration.md) | Wire akm into Claude Code, OpenCode, Cursor, and other coding assistants |
+
+### Reference docs
+
 | Doc | Description |
 | --- | --- |
-| [Getting Started](docs/getting-started.md) | Quick setup guide |
+| [Getting Started](docs/getting-started.md) | Install, first-time setup, add sources, search, show |
+| [Concepts](docs/concepts.md) | Sources, registries, asset types, refs, and the stash |
 | [CLI Reference](docs/cli.md) | All commands and flags |
-| [Configuration](docs/configuration.md) | Settings, providers, and Ollama setup |
-| [Concepts](docs/concepts.md) | Sources, registries, asset types |
-| [Stash Maker's Guide](docs/stash-makers.md) | Build and share assets |
-| [Registry](docs/registry.md) | Registries, search, and the v3 index format |
-| [Wikis](docs/wikis.md) | Multi-wiki knowledge bases (Karpathy-style) |
-| [v1 Migration Guide](docs/migration/v1.md) | The path from 0.x to v1.0 |
-| [Release Notes — 0.7.0](docs/migration/release-notes/0.7.0.md) | Latest release notes |
-| [Blog Posts](docs/posts/) | Articles and posts about akm |
+| [Configuration](docs/configuration.md) | Settings, providers, embedding, and Ollama setup |
+| [Stash Maker's Guide](docs/stash-makers.md) | Build, publish, and share your own stashes |
+| [Registry](docs/registry.md) | Registries, the index format, and private registry setup |
+| [Wikis](docs/wikis.md) | Multi-wiki knowledge bases |
+| [Release Notes — 0.8.0](docs/migration/release-notes/0.8.0.md) | Latest release notes and migration guide |
+| [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
+| [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
+| [Changelog](CHANGELOG.md) | Per-release behavior changes |
+
+## Privacy & data
+
+AKM stores data locally and has **no remote telemetry**. Events, proposals, and improve history are written to `~/.local/share/akm/state.db`. Registry packages and config backups go to `~/.cache/akm/`. Nothing leaves your machine except requests to sources you explicitly configure (GitHub, npm, your own LLM endpoint).
+
+See [docs/data-and-telemetry.md](docs/data-and-telemetry.md) for the complete on-disk inventory, event type reference, and instructions for inspecting or clearing local data.
 
 ## License
 

@@ -9,11 +9,6 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-> All configuration keys documented below are accepted by the current
-> pre-release build. The `agent.*` and `llm.features.*` blocks shipped in
-> 0.7.0 (see [release notes](migration/release-notes/0.7.0.md)). Unknown
-> top-level keys are warn-and-ignore.
-
 When akm runs inside a project, it also looks for project config files named
 `.akm/config.json` in the current directory and each parent directory, then
 merges them on top of the user config. Closer project directories win for
@@ -33,39 +28,440 @@ akm config                          # Show current config
 akm config list                     # List current config
 akm config get embedding            # Read a single key
 akm config get output.format        # Read one nested key
-akm config set llm '{"endpoint":"...","model":"llama3.2"}'  # Set a key
 akm config set output.detail full   # Set one scalar key
-akm config set security.installAudit.enabled false
-akm config unset llm                # Remove an optional key
+akm config unset embedding          # Remove an optional key
+akm config migrate --dry-run        # Preview config v2 migration
+akm config migrate                  # Apply config v2 migration
 ```
 
-`akm config set` / `unset` still write the user config in your platform config
+`akm config set` / `unset` write the user config in your platform config
 directory. Project config files are meant to be edited directly in the project.
+
+## 0.8.0 Config Shape
+
+0.8.0 finalises the unified config shape (`configVersion: "0.8.0"`). The
+legacy top-level `llm`, `agent`, and `features` blocks have been **removed**.
+LLM and agent connections live exclusively under `profiles.*`, and per-process
+gating lives under `profiles.improve.<name>.processes.*`. Non-improve feature
+sections (`index.metadataEnhance`, `index.stalenessDetection`,
+`search.curateRerank`) are first-class top-level entries.
+
+Configs without `configVersion` (or with a pre-0.8.0 version) are
+auto-migrated at first run. A timestamped backup is written before any
+in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
+
+### Minimal working example
+
+```jsonc
+{
+  "configVersion": "0.8.0",
+  "$schema": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
+  "profiles": {
+    "llm": {
+      "openai-mini": {
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4o-mini",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.3,
+        "supportsJsonSchema": true
+      }
+    },
+    "agent": {
+      "opencode-default": { "platform": "opencode", "bin": "opencode", "args": ["run"] }
+    },
+    "improve": {
+      "default": {
+        "processes": {
+          "reflect": {
+            "enabled": true,
+            "mode": "llm",
+            "profile": "openai-mini",
+            "timeoutMs": 90000,
+            "cooldownByType": { "memory": 2, "lesson": 7, "knowledge": 30 }
+          },
+          "distill": { "enabled": true, "mode": "llm", "profile": "openai-mini" },
+          "consolidate": { "enabled": true, "mode": "llm", "profile": "openai-mini" },
+          "memoryInference": { "enabled": true },
+          "graphExtraction": { "enabled": true, "profile": "openai-mini" },
+          "feedbackDistillation": { "enabled": true }
+        }
+      }
+    }
+  },
+  "defaults": {
+    "llm": "openai-mini",
+    "agent": "opencode-default",
+    "improve": "default"
+  },
+  "index": {
+    "metadataEnhance": { "enabled": true },
+    "stalenessDetection": { "enabled": false }
+  },
+  "search": {
+    "curateRerank": { "enabled": false }
+  },
+  "embedding": {
+    "endpoint": "http://localhost:11434/v1/embeddings",
+    "model": "nomic-embed-text",
+    "dimension": 384
+  },
+  "stashDir": "~/akm"
+}
+```
 
 ## Config Reference
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. Legacy boolean values accepted. |
-| `embedding` | object | null (local) | Embedding connection settings |
-| `llm` | object | null (disabled) | LLM connection for metadata enhancement |
-| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`, `jsonl`) |
-| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`, `summary`, `agent`) |
-| `sources` | array | `[]` | Source entries — directories, git repos, websites, npm packages (managed via `akm add/remove`). One entry may set `primary: true` to mark it as the working stash |
-| `defaultWriteTarget` | string | — | Name of the source that should receive `akm remember` / `akm import` writes when no `--target` flag is given. Falls back to the working stash (`stashDir`) if unset |
-| `writable` | boolean | `false` | Root-level flag controlling whether the primary stash pushes on `akm save` (when a git remote is configured). Per-source `writable` lives inside each `sources[]` entry |
-| `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project sources compose with global ones. `merge` keeps both; `replace` hides globals when a project-level config is present |
-| `registries` | array | official + skills.sh | Configured registries (managed via `akm registry add/remove`) |
-| `stashDir` | string | platform default | Path to the working stash created by `akm init` |
-| `security.installAudit.enabled` | boolean | `true` | Enable or disable install-time auditing |
-| `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
-| `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
-| `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
+| `configVersion` | string | — | Version gate for load-time migration. Set to `"0.8.0"` for the current shape. Omitting it (or setting an older value) triggers auto-migration. |
+| `profiles.llm.<name>` | object | — | Named OpenAI-compatible chat-completion connection. See [Profile types](#profile-types). |
+| `profiles.agent.<name>` | object | — | Named agent profile (`platform: "opencode"\|"claude"\|"opencode-sdk"`). See [Profile types](#profile-types). |
+| `defaults.llm` | string | — | Default LLM profile name. Used when a features entry omits `profile`. Also the target for `AKM_LLM_API_KEY` injection. |
+| `defaults.agent` | string | — | Default agent profile name. Fallback for `mode: "agent"` or `mode: "sdk"` entries that omit `profile`. |
+| `defaults.improve` | string | `"default"` | Default improve profile name. Selects one of the built-ins (`default`, `quick`, `thorough`, `memory-focus`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
+| `profiles.improve.<name>` | object | — | Improve profile defining per-process gating, type filters, cooldowns, and run-level `autoAccept` / `limit` defaults. See [Improve profiles](#improve-profiles). |
+| `profiles.improve.<name>.processes.<process>` | object | — | Per-process binding (`reflect`, `distill`, `consolidate`, `memoryInference`, `graphExtraction`, `feedbackDistillation`, `validation`). Shape: `{ enabled, mode, profile, timeoutMs, qualityGate?, contradictionDetection?, cooldownByType?, allowedTypes? }`. |
+| `index.metadataEnhance.enabled` | boolean | `false` | Toggles the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` entry. |
+| `index.stalenessDetection.enabled` | boolean | `false` | Toggles the `akm index` staleness-detection pass. |
+| `index.stalenessDetection.thresholdDays` | integer | `90` | Days before a memory is re-evaluated for staleness. |
+| `search.curateRerank.enabled` | boolean | `false` | Toggles the `akm curate` LLM-rerank pass. Replaces the legacy `features.search.curate_rerank` entry. |
+| `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. |
+| `embedding` | object | null (local) | Embedding connection settings. Unchanged from v1. |
+| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`, `jsonl`). |
+| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`, `summary`, `agent`). |
+| `sources` | array | `[]` | Source entries — directories, git repos, websites, npm packages. |
+| `defaultWriteTarget` | string | — | Source name for `akm remember` / `akm import` writes when `--target` is omitted. |
+| `writable` | boolean | `false` | Whether the primary stash pushes on `akm save`. |
+| `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project sources compose with global ones. |
+| `registries` | array | official + skills.sh | Configured registries. |
+| `stashDir` | string | platform default | Path to the working stash. |
+| `search.minScore` | number | `0.2` | Minimum score floor for semantic-only hits. |
+| `search.graphBoost.directBoostPerEntity` | number | `0.25` | Additive direct-match graph boost per matched entity. |
+| `search.graphBoost.directBoostCap` | number | `0.75` | Maximum direct-match additive graph boost per hit. |
+| `search.graphBoost.hopBoostPerEntity` | number | `0.1` | Additive connected-entity graph boost per matched entity. |
+| `search.graphBoost.hopBoostCap` | number | `0.3` | Maximum connected-entity additive graph boost per hit. |
+| `search.graphBoost.maxHops` | integer | `1` | Max graph traversal depth (hard cap `3`). |
+| `search.graphBoost.confidenceMode` | `"off"` \| `"blend"` \| `"multiply"` | `"blend"` | How extraction confidence values affect graph boosts. |
+| `search.graphBoost.confidenceWeight` | number | `0.2` | Blend strength in `[0,1]` when `confidenceMode` is `"blend"`. |
 
-> **Legacy `stashes` key removed:** `sources` was previously named `stashes`.
-> The one-cycle compat shim is gone — configs that still use `stashes[]` will
-> not load. Rename the key to `sources[]` in your `config.json` before
-> upgrading.
+> **Removed in 0.8.0:** `config.llm` (top-level), `config.agent.*`, `config.features.*`, and `llm.features.*` flags. Auto-migration rewrites any of these on first load into the new locations described above. See [Migrating from 0.7.x to 0.8.0](migration/v0.7-to-v0.8.md) for the complete old → new mapping.
+
+## Profile types
+
+### LLM profiles (`profiles.llm.<name>`)
+
+Used by processes whose `mode` is `"llm"`. Each profile is an OpenAI-compatible
+chat-completion endpoint declared once and referenced by name.
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `endpoint` | yes | Chat completions URL (e.g. `https://api.openai.com/v1/chat/completions`) |
+| `model` | yes | Model identifier |
+| `apiKey` | no | API key. Use `${ENV_VAR}` syntax. Prefer `AKM_LLM_API_KEY` or `AKM_PROFILE_<NAME>_API_KEY` env vars. |
+| `temperature` | no | Sampling temperature (default provider default) |
+| `maxTokens` | no | Maximum tokens in the completion |
+| `contextLength` | no | Context window size — used for batch-size clamping in graph extraction |
+| `concurrency` | no | Max parallel requests for this profile |
+| `supportsJsonSchema` | no | When `true`, akm sends `response_format: {type: "json_schema"}` for structured outputs, eliminating JSON parse failures for capable providers |
+
+```jsonc
+"profiles": {
+  "llm": {
+    "openai-mini": {
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o-mini",
+      "apiKey": "${OPENAI_API_KEY}",
+      "temperature": 0.3,
+      "supportsJsonSchema": true
+    },
+    "openai-judge": {
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o",
+      "apiKey": "${OPENAI_API_KEY}",
+      "maxTokens": 4096,
+      "supportsJsonSchema": true
+    },
+    "ollama-local": {
+      "endpoint": "http://localhost:11434/v1/chat/completions",
+      "model": "qwen2.5-coder",
+      "temperature": 0.4,
+      "contextLength": 32768
+    }
+  }
+}
+```
+
+### Agent profiles (`profiles.agent.<name>`)
+
+Used by processes whose `mode` is `"agent"` (CLI subprocess) or `"sdk"`
+(in-process opencode). The required `platform` field selects the runtime:
+
+| `platform` | Runtime | Use case |
+| --- | --- | --- |
+| `"opencode"` | opencode CLI subprocess | Full opencode tool + plugin access; ~30s/call startup |
+| `"claude"` | Claude Code CLI (`--print` mode) | Claude tooling; ~30s/call startup |
+| `"opencode-sdk"` | In-process opencode programmatic API | Same tool surface as CLI, no subprocess startup (~10–15s/call) |
+
+The Anthropic / Claude Agent SDK is **not supported**. The `sdk` mode
+exclusively drives the opencode programmatic API.
+
+```jsonc
+"profiles": {
+  "agent": {
+    "opencode-default": {
+      "platform": "opencode",
+      "bin": "opencode",
+      "args": ["run"]
+    },
+    "claude-cli": {
+      "platform": "claude",
+      "bin": "claude",
+      "args": ["--print"]
+    },
+    "opencode-sdk": {
+      "platform": "opencode-sdk",
+      "workspace": "${PWD}",
+      "model": "anthropic/claude-sonnet-4-5"
+    }
+  }
+}
+```
+
+Agent profiles also accept the v1 fields (`bin`, `args`, `stdio`,
+`parseOutput`, `envPassthrough`, `timeoutMs`, `commandBuilder`,
+`modelAliases`) for CLI subprocess profiles. See
+[docs/configuration-agent-profiles.md](configuration-agent-profiles.md) for
+the full field reference and model alias documentation.
+
+## Process entry shape
+
+Every `features.<section>.<name>` entry uses the same unified shape. Three
+shorthand forms are accepted:
+
+```jsonc
+"X": true                    // enabled, all defaults resolved at load time
+"X": false                   // disabled — caller short-circuits (no runner resolved)
+"X": {
+  "enabled": true,           // optional; default true
+  "mode": "llm",             // "llm" | "agent" | "sdk" — optional, inferred if omitted
+  "profile": "<name>",       // optional; falls back to defaults.llm or defaults.agent
+  "timeoutMs": 60000,        // optional; null = unlimited
+  "options": { /* ... */ }   // optional; process-specific tuning
+}
+```
+
+**Mode resolution** (when `mode` is omitted):
+
+1. If `profile` is set, the mode is inferred from the profile's pool:
+   LLM profile → `"llm"`, `"opencode-sdk"` platform → `"sdk"`,
+   `"opencode"` / `"claude"` platform → `"agent"`.
+2. If neither is set: `defaults.llm` is set → `"llm"`; else `defaults.agent` → `"agent"`.
+
+**`options`** holds process-specific tuning that doesn't fit the generic fields.
+Unknown keys under `options` warn-and-ignore.
+
+Reflect/distill cooldowns, per-process type filters, and per-process gating
+all live under [`profiles.improve.<name>.processes.*`](#improve-profiles)
+in 0.8.0.
+
+## Known process names
+
+### `profiles.improve.<name>.processes.*`
+
+Each entry under `processes` is either absent (use the built-in default
+for the named profile) or an object of the form
+`{ enabled?, mode?, profile?, timeoutMs?, allowedTypes?, qualityGate?, contradictionDetection?, defaultSince?, maxTotalChars? }`.
+(Not all fields apply to all processes: `allowedTypes` is for reflect/distill; `qualityGate` and `contradictionDetection` for specific processes; `defaultSince` and `maxTotalChars` only for extract.)
+
+| Process | Default (built-in `default` profile) | Description |
+| --- | --- | --- |
+| `reflect` | enabled, all markdown types | Reflection pass — generates per-asset proposals. Optional `qualityGate.enabled` runs an LLM-as-judge check before queuing. |
+| `distill` | enabled, `memory` only | Turns feedback into lesson proposals. Optional `qualityGate.enabled`. |
+| `consolidate` | enabled, `memory` only | Memory deduplication / promotion. Optional `contradictionDetection.enabled` runs pairwise checks. |
+| `memoryInference` | enabled | Derives structured memories from pending memory files. |
+| `graphExtraction` | enabled | Extracts entities and relations for graph-boosted search. |
+| `extract` | enabled | Reads native session files (Claude Code JSONL, opencode logs) and extracts insight proposals via LLM. Configure `defaultSince` (discovery window, e.g. `"24h"`) and `maxTotalChars` (event-budget, default `80000`) to tune extraction scope. |
+| `validation` | unset → falls back to `defaults.llm` | Lower-tier classifier model used by staleness detection, confidence scoring, and lesson classification. Configure with a smaller/cheaper LLM profile to keep validation cycles cheap. |
+
+#### Configuring the extract process
+
+The `extract` process runs as part of `akm improve` to automatically derive memory, lesson, and knowledge proposals from native session logs (Claude Code JSONL, opencode storage). You can tune its behavior with two optional fields:
+
+```jsonc
+"processes": {
+  "extract": {
+    "enabled": true,                    // default: enabled
+    "defaultSince": "24h",              // session discovery window (default "24h")
+    "maxTotalChars": 80000              // event pre-filter budget (default 80000)
+  }
+}
+```
+
+- **`defaultSince`**: Sets the discovery window for session extraction when no explicit time range is given. Accepts ISO 8601 timestamps (`2026-05-20T00:00:00Z`) or duration strings (`24h`, `7d`, `30m`). Default: `"24h"` (most recent sessions only).
+  - Use `"7d"` to include a broader historical window.
+  - Use `"0"` to disable time-based filtering (extract all available sessions).
+
+- **`maxTotalChars`**: Pre-filter budget for kept events before sending to the extraction LLM. Once kept events exceed this many characters, older events are dropped (recency-bias) to keep the prompt within token limits. Default: `80000` (tuned for 32K-token models).
+  - Increase to `200000` for larger-context models (e.g., Opus with 200K tokens).
+  - Decrease to `30000` for smaller models (e.g., Haiku).
+
+Set `enabled: false` to skip extraction entirely during improve runs.
+
+#### Tuning the forgetting curve
+
+The recency-decay component of search ranking exposes two knobs under
+`improve.utilityDecay`:
+
+```jsonc
+{
+  "improve": {
+    "utilityDecay": {
+      "halfLifeDays": 30,            // default 30 — how fast unused assets fade
+      "feedbackStabilityBoost": 1.5  // default 1.5 — per positive-feedback event
+    }
+  }
+}
+```
+
+The effective half-life for an asset is
+`halfLifeDays × (feedbackStabilityBoost ^ positiveFeedbackCount)`, capped at
+`halfLifeDays × 4`. Assets with repeated positive feedback resist decay; assets
+with none decay at the base rate.
+
+Leave the section absent to use the previous fixed 30-day formula
+unchanged — the feedback-count query is skipped entirely when `utilityDecay`
+is not configured, so there's zero overhead on the search hot path.
+
+### `index.*`
+
+| Section | Default | Description |
+| --- | --- | --- |
+| `index.metadataEnhance.enabled` | `false` | LLM-driven description/tag enrichment during `akm index`. |
+| `index.stalenessDetection.enabled` | `false` | Run the staleness-detection validator pass during `akm index`. |
+| `index.stalenessDetection.thresholdDays` | `90` | Days before a memory is re-evaluated for staleness. |
+
+### `search.*`
+
+| Section | Default | Description |
+| --- | --- | --- |
+| `search.curateRerank.enabled` | `false` | LLM re-ranking during `akm curate`. |
+
+## Improve profiles
+
+`profiles.improve.<name>` defines a named bundle of settings for an
+`akm improve` run: which sub-processes are enabled, which asset types each
+processes, per-process runner / cooldown overrides, and run-level
+`autoAccept` / `limit` defaults. Pick a profile per invocation with
+`--profile <name>` or set the default with `defaults.improve: "<name>"`.
+
+### Built-in profiles
+
+| Name | Description | Sync behavior |
+| --- | --- | --- |
+| `default` | Standard improve pass — all sub-processes, markdown asset types. | Auto-commit + push |
+| `quick` | Reflect-only — distill, consolidate, memoryInference, graphExtraction all disabled. | Sync disabled |
+| `thorough` | All sub-processes enabled (currently identical to `default`; reserved for future divergence). | Auto-commit + push |
+| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. | Sync disabled |
+
+### Schema
+
+```jsonc
+"profiles": {
+  "improve": {
+    "<profile-name>": {
+      "description": "Human-readable summary (optional).",
+      "autoAccept": 90,             // optional — default proposal auto-accept threshold (0-100)
+      "limit": 25,                  // optional — default refs per run; overridden by --limit
+      "processes": {
+        "reflect": {
+          "enabled": true,
+          "mode": "llm",            // optional — "llm" | "agent" | "sdk"
+          "profile": "openai-mini", // optional — runner profile name (profiles.llm.* / profiles.agent.*)
+          "timeoutMs": 60000,       // optional
+          "allowedTypes": ["memory", "lesson"],      // optional — whitelist of asset types
+          "cooldownByType": { "memory": 1 },         // optional — per-type cooldown (days)
+          "cooldownDays": 7                          // optional — uniform cooldown
+        },
+        "distill": { "enabled": true, "allowedTypes": ["memory"] },
+        "consolidate": { "enabled": true },
+        "memoryInference": { "enabled": true },
+        "graphExtraction": { "enabled": true }
+      },
+      "sync": {
+        "enabled": true,       // optional — false disables end-of-run auto-commit
+        "push": true,          // optional — false commits only, no push
+        "message": "akm improve auto-sync {date}"  // optional — supports {token} placeholders
+      }
+    }
+  }
+}
+```
+
+`allowedTypes` is only honoured by `reflect` and `distill` (per-ref
+operations). Setting it on `consolidate`, `memoryInference`, or
+`graphExtraction` (full-pass operations) triggers a parse-time warning.
+
+### Configuring end-of-run sync
+
+The `sync` block controls whether `akm improve` commits (and optionally pushes)
+the git-backed primary stash at the end of a run. Detection is based on the
+presence of a `.git` directory in the stash — no remote is required.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | true (default/thorough), false (quick/memory-focus) | Whether to auto-commit at run end |
+| `push` | boolean | true | Whether to push after commit (only applies when `enabled: true` and stash is writable) |
+| `message` | string | `"akm improve auto-sync"` | Commit message template; supports `{token}` placeholders |
+
+**Commit message tokens:**
+
+| Token | Value |
+| --- | --- |
+| `{timestamp}` | `YYYY-MM-DD HH:MM:SS` (UTC) |
+| `{date}` | `YYYY-MM-DD` |
+| `{time}` | `HH:MM:SS` |
+| `{scope}` | Scope ref or type, or `all` for whole-stash runs |
+| `{refs}` | Number of planned refs this run processed |
+| `{accepted}` | Number of proposals auto-accepted by the confidence gate |
+
+Unknown tokens pass through verbatim so adding new tokens later never breaks
+an existing template. Example: `"akm improve {scope} on {date} ({refs} refs)"`.
+
+CLI flags `--sync` / `--no-sync` and `--push` / `--no-push` override the
+profile-level `sync` block for a single run. A sync failure is always
+non-fatal — it never fails a successful improve run.
+
+### Selection precedence
+
+1. `--profile <name>` CLI flag (this run only)
+2. `defaults.improve: "<name>"` in config
+3. Built-in `default`
+
+Profile name lookups search both built-ins and `profiles.improve.<name>`.
+An unknown name falls back to `default` with a warning.
+
+## Migration from pre-0.8.0
+
+If your config uses the old top-level `llm`, `agent`, or `features` blocks,
+run:
+
+```sh
+# Preview changes without writing
+akm config migrate --dry-run
+
+# Apply migration (writes a timestamped backup first)
+akm config migrate
+```
+
+Auto-migration also runs on the first command after upgrade (one-time notice
+printed). Set `AKM_NO_AUTO_MIGRATE=1` to suppress automatic rewrites — useful
+on read-only CI mounts where you want to run `akm config migrate` explicitly
+during deploy.
+
+See [docs/migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md) for the
+complete old-key-to-new-key mapping table and step-by-step instructions.
+
+---
 
 ### Source entry schema
 
@@ -110,7 +506,7 @@ and other write commands when `--target` is omitted. Resolution order:
 3. Working stash (`stashDir`)
 
 If none of those are configured, write commands raise a `ConfigError` that
-points at `akm init`.
+points at `akm setup`.
 
 ## Memory scope
 
@@ -143,16 +539,11 @@ Use staging cluster for blue-green deploys.
 - Memories without any `scope_*` key (legacy content written before 0.7.0)
   load and re-serialize unchanged. They match unfiltered `akm search`
   queries — but a query with any `--filter` excludes them, since they have
-  no scope key to satisfy the filter. See the
-  [0.7.0 release notes](migration/release-notes/0.7.0.md) for the rollout
-  detail on `scope_*` keys.
-- Each scope key is an opaque string (no validation beyond non-empty +
-  trimmed). Use whatever id shape your host system already uses (UUID,
-  email, `@handle`, etc.).
+  no scope key to satisfy the filter.
+- Each scope key is an opaque string (no validation beyond non-empty + trimmed).
 - The keys are stored flat (top-level) so the existing one-level frontmatter
   parser reads them without nested-object handling.
-- The four canonical keys are the locked v1 wire contract for scope. Adding
-  new scope keys after v1.0 is a major version bump.
+- The four canonical keys are the locked v1 wire contract for scope.
 
 ## Embedding Configuration
 
@@ -197,148 +588,33 @@ To revert to the built-in local provider:
 akm config unset embedding
 ```
 
-When using a remote provider, `dimension` must match the index vector size
-(384).
+When using a remote provider, `dimension` must match the index vector size (384).
 
-## LLM Configuration
+## Graph boost search tuning
 
-When configured, the indexer can use an LLM to generate richer descriptions,
-intent phrases, and tags during `akm index --enrich`.
-
-```sh
-akm config set llm '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3,"maxTokens":512}'
-```
-
-To disable:
-
-```sh
-akm config unset llm
-```
-
-Both `embedding` and `llm` accept an optional `apiKey` field, but API keys
-should preferably be provided via environment variables `AKM_EMBED_API_KEY`
-and `AKM_LLM_API_KEY` rather than stored in the config file.
-
-### Per-pass LLM opt-out (`index.<pass>.llm`)
-
-Every LLM-using pass inside `akm index --enrich` shares the same top-level `llm`
-block — there is exactly one provider/model configuration. To skip the LLM
-for a single pass while keeping it on for others, set
-`index.<passName>.llm = false`:
+`search.graphBoost` controls only the search-time graph boost component in the
+single FTS5+boosts pipeline. Default values preserve current ranking behavior.
 
 ```jsonc
 {
-  "llm": {
-    "endpoint": "http://localhost:11434/v1/chat/completions",
-    "model": "llama3.2"
-  },
-  "index": {
-    "enrichment": { "llm": false },  // skip LLM metadata enrichment
-    "memory": { "llm": false },      // skip memory inference (see below)
-    "graph": { "llm": false }        // skip graph extraction (see below)
-  }
-}
-```
-
-Per-pass entries only support the boolean `llm` flag. Supplying a parallel
-provider configuration under `index.<pass>` (e.g. `endpoint`, `model`,
-`apiKey`, `temperature`) is rejected at config-load time with
-`ConfigError("INVALID_CONFIG_FILE")` so that there is exactly one place to
-configure the LLM. To use a different model entirely, change the top-level
-`llm` block.
-
-### Memory inference pass (`index.memory`)
-
-When `akm.llm` is configured, `akm index --enrich` runs the memory inference
-pass that derives higher-signal memory artifacts from each pending memory in
-`<stashDir>/memories/`. The design direction is to prefer compact,
-information-dense derived memories with rich metadata and explicit provenance
-back to the source memory, rather than exploding one parent into many
-sentence-level child files. After a successful derivation, the parent is
-marked `inferenceProcessed: true` so subsequent index runs are idempotent.
-
-The pass is disabled when:
-
-- `--enrich` is not passed to `akm index`, or
-- No `akm.llm` block is configured (the default), or
-- `index.memory.llm = false` is set explicitly.
-
-Disabling the pass after a previous run never deletes previously derived
-artifacts — they remain on disk and continue to be searchable.
-
-### Graph extraction pass (`index.graph`)
-
-When `akm.llm` is configured, `akm index --enrich` runs the graph-extraction
-pass that walks the primary stash for `memory:` and `knowledge:` markdown
-files, asks the configured LLM to surface entities and relations from each
-body, and persists the result to `<stashRoot>/.akm/graph.json`. The
-search-time scorer reads this artifact and contributes a single additive
-boost component inside the existing FTS5+boosts loop.
-
-Three preconditions must ALL hold for the pass to run:
-
-- `--enrich` must be passed to `akm index`;
-- `akm.llm` must be configured (no provider configured → no extraction);
-- `llm.features.graph_extraction` must not be `false` (locked v1 spec §14
-  feature flag — defaults to `true`);
-- `index.graph.llm` must not be `false` (per-pass opt-out — defaults to
-  `true`).
-
-To skip just the graph pass while leaving other LLM-using passes enabled,
-set `index.graph.llm = false`. To block graph extraction entirely at the
-feature-flag layer (e.g. air-gapped environments), set
-`llm.features.graph_extraction = false`.
-
-Disabling either layer after a previous run never deletes the existing
-`<stashRoot>/.akm/graph.json` artifact — it stays on disk and continues to
-contribute to ranking, it just stops refreshing on subsequent index runs.
-
-## Install Security Audit
-
-akm audits managed installs before they are registered. The audit scans code,
-metadata, prompts, and install scripts for suspicious patterns such as prompt
-injection attempts, remote shell pipes, and risky lifecycle hooks.
-
-```sh
-akm config set security.installAudit.enabled true
-akm config set security.installAudit.blockOnCritical true
-akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
-akm config set security.installAudit.blockUnlistedRegistries true
-```
-
-Use `security.installAudit.enabled false` to disable the feature completely, or
-`security.installAudit.blockOnCritical false` to keep reporting findings without
-blocking the install.
-
-To allow a known false positive in user config without disabling the audit,
-add an exact finding waiver:
-
-```json
-{
-  "security": {
-    "installAudit": {
-      "allowedFindings": [
-        {
-          "id": "prompt-reveal-hidden-secrets",
-          "ref": "github:owner/repo",
-          "path": "skills/review/SKILL.md",
-          "reason": "Reviewed manually; benign system prompt reference"
-        }
-      ]
+  "search": {
+    "graphBoost": {
+      "directBoostPerEntity": 0.25,
+      "directBoostCap": 0.75,
+      "hopBoostPerEntity": 0.1,
+      "hopBoostCap": 0.3,
+      "maxHops": 1,
+      "confidenceMode": "blend",
+      "confidenceWeight": 0.2
     }
   }
 }
 ```
 
-`allowedFindings` uses exact matching on `id`, and optionally `ref` and `path`,
-so waivers stay narrowly scoped.
-
-For one-off installs you trust after manual review, use the CLI flag instead of
-persisting a waiver:
-
-```sh
-akm add github:owner/private-stash --trust
-```
+- `maxHops` is bounded to a conservative hard cap of `3`.
+- `confidenceMode` supports `off`, `blend`, and `multiply`.
+- `confidenceWeight` is clamped to `[0,1]` and only applies when
+  `confidenceMode` is `"blend"`.
 
 ## Using Ollama
 
@@ -348,14 +624,29 @@ API. After installing Ollama:
 ```sh
 # Pull models
 ollama pull nomic-embed-text
-ollama pull llama3.2
+ollama pull qwen2.5-coder
 
-# Configure akm
+# Configure embedding (unchanged)
 akm config set embedding '{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text","dimension":384}'
-akm config set llm '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3,"maxTokens":512}'
+```
 
-# Rebuild the index with enhanced metadata
-akm index --full
+For the LLM (v2 config — add to config.json directly):
+
+```jsonc
+{
+  "configVersion": "0.8.0",
+  "profiles": {
+    "llm": {
+      "ollama-local": {
+        "endpoint": "http://localhost:11434/v1/chat/completions",
+        "model": "qwen2.5-coder",
+        "temperature": 0.4,
+        "contextLength": 32768
+      }
+    }
+  },
+  "defaults": { "llm": "ollama-local" }
+}
 ```
 
 ## sqlite-vec Extension
@@ -366,10 +657,7 @@ binaries on macOS), semantic search falls back to a pure JS implementation
 that computes cosine similarity over BLOB-stored embeddings.
 
 The JS fallback works correctly at any scale but becomes noticeably slower
-above ~10,000 indexed entries. If you see this warning:
-
-> Semantic search is using JS fallback for N entries. Install sqlite-vec for
-> faster performance.
+above ~10,000 indexed entries.
 
 Install the extension to use the optimized path:
 
@@ -378,12 +666,6 @@ npm install sqlite-vec
 # or
 bun add sqlite-vec
 ```
-
-On macOS, the sqlite-vec native extension may not load if the platform binary
-is unavailable. Bun uses its own embedded SQLite (not the system one), so
-`brew install sqlite` will **not** help. When sqlite-vec cannot load, akm
-automatically falls back to a pure-JS cosine similarity search. This fallback
-is functionally correct but slower for large indexes (10,000+ entries).
 
 To check whether sqlite-vec is active, run:
 
@@ -394,121 +676,55 @@ akm info
 If `searchModes` includes `"semantic"` with `"ready-vec"`, the native extension
 is working. If it shows `"ready-js"`, the JS fallback is in use.
 
----
-
-## `agent.*` block
-
-**Status: Available since 0.7.0.**
-Configures external agent CLI integration (see
-[CLI: agent / reflect / propose](cli.md#agent-reflection-and-proposal-queue-070)
-and v1 spec §12).
-
-```jsonc
-{
-  "agent": {
-    "default": "opencode",
-    "timeoutMs": 60000,
-    "profiles": {
-      "opencode": {
-        "bin": "opencode",
-        "args": ["--non-interactive"],
-        "stdio": "captured",
-        "parseOutput": "text"
-      },
-      "claude": {
-        "bin": "claude",
-        "args": [],
-        "stdio": "interactive"
-      }
-    }
-  }
-}
-```
-
-Per-key contract:
-
-| Key | Required | Description |
-| --- | --- | --- |
-| `agent.default` | optional | Default profile name. If unset, agent commands require an explicit `--profile` flag |
-| `agent.timeoutMs` | optional | Hard timeout for spawned agent CLIs (default 60_000) |
-| `agent.profiles[<name>]` | optional | Per-profile overrides on top of built-in defaults for `opencode`, `claude`, `codex`, `gemini`, `aider` |
-| `agent.profiles[<name>].bin` | required if profile defined | Command to spawn |
-| `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
-| `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
-| `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
-| `agent.profiles[<name>].envPassthrough` | optional | Array of env-var names to pass through from the calling process to the spawned agent. Use this for profile-level secrets you do not want stored in config (e.g. `["ANTHROPIC_API_KEY"]`). |
-| `agent.profiles[<name>].timeoutMs` | optional | Per-profile override of `agent.timeoutMs` |
-| `agent.profiles[<name>].parseOutput` | optional | `"text"` or `"json"` |
-
-Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
-disables all agent commands with a `ConfigError` whose hint points at this
-section.
-
-## `llm.features.*` map
-
-**Status: Available since 0.7.0.**
-Gates the small set of bounded in-tree LLM call sites. All defaults are
-`false` — the v1 contract is "the in-tree LLM does nothing unless you opt
-in, per feature." See v1 spec §14 for the boundary rules.
-
-```jsonc
-{
-  "llm": {
-    "endpoint": "http://localhost:11434/v1/chat/completions",
-    "model": "llama3.2",
-    "temperature": 0.3,
-    "maxTokens": 512,
-    "features": {
-      "curate_rerank":         false,
-      "feedback_distillation": false,
-      "memory_inference":      true,
-      "graph_extraction":      false
-    }
-  }
-}
-```
-
-| Feature flag | Use site | Behaviour when disabled |
-| --- | --- | --- |
-| `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
-| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits 0 with `outcome: "skipped"` |
-| `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
-| `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
-
-Unknown keys under `llm.features` are warn-and-ignore. The keys above
-are locked and cannot be renamed after v1.0.
-
-**Statelessness invariant.** Every in-tree LLM call site is a single,
-bounded request/response cycle with a hard timeout. There are no caches
-keyed on prior responses, no streaming sessions, and no persistent
-connections. Long-lived state belongs in the agent path, not here.
-
-**Graceful-fallback contract.** Each gated feature uses the
-`tryLlmFeature(feature, config, fn, fallback)` wrapper from
-`src/llm/feature-gate.ts`. The wrapper returns `fallback` on disablement
-(`llm.features.<key>` not `true`), on timeout (default 30s; the wrapper
-raises `LlmFeatureTimeoutError`), or on any thrown error from `fn`. Call
-sites may pass an `onFallback` sink to surface a structured `warnings`
-entry per spec §14.2 — the gate itself never throws and never blocks the
-caller's command.
-
 ## Environment variables
 
 akm reads a small set of environment variables in addition to `config.json`.
-Variables with a literal-or-env config form (e.g. `apiKey: "${MY_KEY}"`) are
-documented inline next to the relevant config key; the table below covers
-the variables that are read directly by the CLI.
+
+### Public environment variables
+
+These variables are part of the supported surface — safe to set in scripts and
+CI. Variables not listed here (e.g. `AKM_FORCE_INIT_TMP_STASH`, `AKM_DEBUG*`,
+`AKM_DISABLE_*`) are internal test/debug hooks, are undocumented on purpose,
+and may change or be renamed without notice.
 
 | Variable | Purpose | Default | Notes |
 | --- | --- | --- | --- |
-| `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) / `%APPDATA%\akm` | Overrides the table at the top of this page. |
-| `AKM_CACHE_DIR` | Override the platform cache directory used for indexes, registry mirrors, and bench tmp roots. | `~/.cache/akm` (XDG) | Read at startup; takes precedence over `XDG_CACHE_HOME`. |
-| `AKM_STASH_DIR` | Override the working stash directory. | `config.stashDir` or `~/.akm` | Per-invocation override; never persisted. |
+| `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) | |
+| `AKM_DATA_DIR` | Override the platform data directory. | `~/.local/share/akm` (XDG) | Set explicitly in CI if you previously relied on `AKM_CONFIG_DIR` as a data-dir fallback (removed in 0.8.0). |
+| `AKM_STATE_DIR` | Override the platform state directory. | `~/.local/state/akm` (XDG) | |
+| `AKM_CACHE_DIR` | Override the platform cache directory. | `~/.cache/akm` (XDG) | |
+| `AKM_STASH_DIR` | Override the working stash directory. | `config.stashDir` or `~/.akm` | Per-invocation; never persisted. |
 | `AKM_EMBED_API_KEY` | API key applied to `embedding` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
-| `AKM_LLM_API_KEY` | API key applied to `llm` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
-| `AKM_NPM_REGISTRY` | npm registry used when resolving `npm:` install refs and tarballs. | `https://registry.npmjs.org` | Honour your private registry without rewriting refs. |
-| `AKM_REGISTRY_URL` | Comma-separated list of registry index URLs to use *instead of* the configured `registries[]`. | unset (use `config.registries`) | Intended as a CI / one-shot override; does not persist to `config.json`. |
-| `HF_HOME` | Hugging Face cache root for the local embedder (`@huggingface/transformers`). | `<AKM_CACHE_DIR>/hf` | akm sets this at process start when unset, so model downloads land in the akm cache rather than `~/.cache/huggingface`. Pre-set it in your environment to opt out. |
-| `GITHUB_TOKEN` | Token used for authenticated GitHub API calls (private repos, higher rate limits). | — | Read alongside `GH_TOKEN`. |
-| `GH_TOKEN` | Same as `GITHUB_TOKEN`; honoured for compatibility with the `gh` CLI. | — | Either name works; if both are set, `GITHUB_TOKEN` wins. |
-| `AKM_VERBOSE` | When truthy (`1`, `true`, `yes`, `on`), print verbose diagnostics. When falsy (`0`, `false`, `no`, `off`), force quiet even if `--verbose` is passed. | unset | Env wins over the `--verbose` / `--quiet` flags. |
+| `AKM_LLM_API_KEY` | API key injected into `profiles.llm[defaults.llm].apiKey` when `apiKey` is unset. | — | Legacy form still works in v2. |
+| `AKM_PROFILE_<NAME>_API_KEY` | Per-profile API key override. NAME is upper-cased profile key with hyphens replaced by underscores (e.g. `AKM_PROFILE_OPENAI_JUDGE_API_KEY`). | — | New in 0.8.0. |
+| `AKM_NO_AUTO_MIGRATE` | When set to `1`, suppresses the automatic config v2 rewrite at startup. | — | Use in CI on read-only mounts; run `akm config migrate` in deploy pipelines instead. |
+| `AKM_NPM_REGISTRY` | npm registry for `npm:` install refs. | `https://registry.npmjs.org` | |
+| `AKM_REGISTRY_URL` | Comma-separated registry index URLs to use instead of configured `registries[]`. | unset | CI / one-shot override; does not persist. |
+| `HF_HOME` | Hugging Face cache root for the local embedder. | `<AKM_CACHE_DIR>/hf` | akm sets this at process start when unset. |
+| `GITHUB_TOKEN` / `GH_TOKEN` | Token for authenticated GitHub API calls. | — | `GITHUB_TOKEN` wins if both are set. |
+| `AKM_VERBOSE` | When truthy, print verbose diagnostics. | unset | Env wins over `--verbose` / `--quiet` flags. |
+| `AKM_DB_BACKUP` | Set to `0`/`false`/`no`/`off` to skip the pre-upgrade data-dir snapshot. | unset (backups enabled) | The snapshot is a `fs.cpSync` of the data directory into `<dataDir>/backups/<timestamp>-pre-v<targetVersion>/` and only runs when the binary upgrades the on-disk `DB_VERSION`. Failures warn-and-proceed; they do not block the upgrade. |
+| `AKM_DB_BACKUP_RETAIN` | FIFO retention for pre-upgrade snapshots. | `5` | Older snapshots are pruned at backup time. Invalid values fall back to the default with a one-line warning. |
+| `AKM_BIN` | Absolute path to the `akm` binary used when scheduled tasks re-invoke akm. | resolved from `execPath`/PATH | Takes precedence over auto-detection. Set when akm is not on PATH for the scheduler. |
+| `AKM_NON_INTERACTIVE` | Set to `1` to force non-interactive behavior (treat as no TTY) for prompts and consolidation review. | unset | Useful in CI and headless agents. Also inferred when stdin is not a TTY. |
+| `AKM_EVENT_SOURCE` | Tags emitted events with their source (`user` or `improve`). | unset | Set automatically by `akm improve` for agent subprocesses so improve-driven events can be filtered out of user-facing history. |
+
+### Pre-upgrade data-directory backups
+
+Whenever the running binary detects a stored `DB_VERSION` that differs from
+its own (`src/indexer/db.ts` `handleVersionUpgrade()` path), it writes a
+recursive `fs.cpSync` snapshot of the entire data directory to
+`<dataDir>/backups/<timestamp>-pre-v<targetVersion>/` **before** dropping any
+tables. The snapshot includes a `backup.meta.json` sidecar with the source
+and target versions, total bytes copied, and the ISO-8601 creation time.
+
+Inspect existing snapshots with `akm db backups`. The CLI emits a JSON list;
+restoration is intentionally manual for the MVP — stop akm and run
+`scripts/migrations/restore-data-dir.sh <backup-dir> <live-data-dir>` to roll
+back. See `scripts/migrations/README.md` for the helper scripts that target
+specific schema transitions.
+
+The backup is best-effort: when free space is below 1.1× the source size, or
+the destination is unwritable, akm emits a stderr warning and proceeds with
+the upgrade. Set `AKM_DB_BACKUP=0` to opt out entirely (e.g. in CI where the
+data dir is ephemeral).

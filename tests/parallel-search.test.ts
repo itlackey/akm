@@ -18,6 +18,13 @@ import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import type { SourceSearchHit } from "../src/sources/types";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -100,44 +107,20 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-parallel-cache-");
-  testConfigDir = createTmpDir("akm-parallel-config-");
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
   clearEmbeddingCache();
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalAkmStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalAkmStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 // ── Test 1: Search results identical to sequential execution ────────────────
@@ -180,9 +163,11 @@ describe("Parallel search: result parity", () => {
 
     await buildTestIndex(stashDir, {});
 
-    // Run the same query twice and verify identical results
-    const result1 = await akmSearch({ query: "deploy", source: "local" });
-    const result2 = await akmSearch({ query: "deploy", source: "local" });
+    // Run the same query twice and verify identical results.
+    // skipLogging prevents utility-score bumps from the first call affecting
+    // the second call's ranking scores.
+    const result1 = await akmSearch({ query: "deploy", source: "local", skipLogging: true });
+    const result2 = await akmSearch({ query: "deploy", source: "local", skipLogging: true });
     const localHits1 = result1.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const localHits2 = result2.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 

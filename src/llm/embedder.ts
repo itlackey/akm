@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Backward-compatible facade for the embedder module.
  *
@@ -31,20 +35,28 @@ export { DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedders/local"
 export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 // ── Singleton local embedder ────────────────────────────────────────────────
-// `localEmbedder` is an intentional module-level singleton. The underlying
-// @huggingface/transformers pipeline is expensive to initialise (model download
-// + WASM compilation) and is safe to share across calls because it is
-// stateless once created. Storing it here avoids re-initialising on every
-// embed() call.
+// `_localEmbedder` is an intentional module-level singleton but constructed
+// lazily on first use. The underlying @huggingface/transformers pipeline is
+// expensive to initialise (model download + WASM compilation) and is safe to
+// share across calls because it is stateless once created. Deferring
+// construction to first call keeps the module side-effect-free at import time,
+// which matters for the test suite (single Bun process, ~120 test files).
 
-const localEmbedder = new LocalEmbedder();
+let _localEmbedder: LocalEmbedder | undefined;
+
+function getLocalEmbedder(): LocalEmbedder {
+  if (!_localEmbedder) {
+    _localEmbedder = new LocalEmbedder();
+  }
+  return _localEmbedder;
+}
 
 /**
  * Reset the cached local embedder pipeline. Used by tests that want a fresh
  * pipeline construction (e.g. to assert the dtype-fallback retry logic).
  */
 export function resetLocalEmbedder(): void {
-  localEmbedder.reset();
+  getLocalEmbedder().reset();
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -71,7 +83,7 @@ export async function embed(
   const result =
     embeddingConfig && hasRemoteEndpoint(embeddingConfig)
       ? await new RemoteEmbedder(embeddingConfig).embed(text, signal)
-      : await localEmbedder.embed(text, signal);
+      : await getLocalEmbedder().embed(text, signal);
 
   setCachedEmbedding(key, result);
   return result;
@@ -100,7 +112,7 @@ export async function embedBatch(
     if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
     }
-    results.push(await localEmbedder.embedWithModel(text, localModel));
+    results.push(await getLocalEmbedder().embedWithModel(text, localModel));
   }
   return results;
 }
@@ -142,7 +154,7 @@ export async function checkEmbeddingAvailability(
     };
   }
   try {
-    await localEmbedder.getPipeline(embeddingConfig?.localModel);
+    await getLocalEmbedder().getPipeline(embeddingConfig?.localModel);
     return { available: true };
   } catch (err) {
     return {

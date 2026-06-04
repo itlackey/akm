@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Npm-source stash provider.
  *
@@ -5,10 +9,6 @@
  * integrity, extracts it securely (via `extractTarGzSecure`), detects the
  * stash root inside the package, and applies any nested `.akm-include`
  * configuration. Cache hits short-circuit the fetch.
- *
- * Audit is intentionally NOT performed here — `akmAdd` calls
- * `auditInstallCandidate` after `sync()` so the policy decision lives at
- * the orchestrator layer where the `--trust` flag is known.
  */
 
 import fs from "node:fs";

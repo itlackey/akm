@@ -15,6 +15,7 @@ import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import type { ParsedGithubRef, ParsedNpmRef } from "../../src/registry/types";
+import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/registry/providers/static-index";
@@ -57,7 +58,7 @@ const FIXTURE_INDEX = {
 const createdTmpDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
 
-function createTmpDir(prefix = "akm-static-index-"): string {
+function _createTmpDir(prefix = "akm-static-index-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
   return dir;
@@ -85,10 +86,11 @@ function makeProvider(url: string, name = "official"): RegistryProvider {
   return factory({ url, name });
 }
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = createTmpDir("akm-si-cache-");
+  const cacheResult = sandboxXdgCacheHome();
+  envCleanup = cacheResult.cleanup;
 });
 
 afterEach(() => {
@@ -100,12 +102,8 @@ afterEach(() => {
     }
   }
   servers.length = 0;
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

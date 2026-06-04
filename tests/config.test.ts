@@ -4,16 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
-  getConfigDir,
-  getConfigPath,
+  getDefaultLlmConfig,
   loadConfig,
   loadUserConfig,
+  requireLlmConfig,
   resetConfigCache,
   saveConfig,
   updateConfig,
 } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
-import { getCacheDir } from "../src/core/paths";
+import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
+import { setQuiet } from "../src/core/warn";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -28,48 +29,27 @@ function writeRawConfig(configPath: string, content: string): void {
   fs.writeFileSync(configPath, content);
 }
 
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalHome = process.env.HOME;
-const originalStashDir = process.env.AKM_STASH_DIR;
-const originalCwd = process.cwd();
+// XDG_* / HOME / AKM_STASH_DIR / cwd snapshot+restore is provided by
+// tests/_preload.ts. This block only owns the per-test tmp-dir lifecycle
+// and the production-singleton reset.
 let testConfigHome = "";
 let testCacheHome = "";
+let testDataHome = "";
+let testStateHome = "";
 
 beforeEach(() => {
   testConfigHome = makeTmpDir();
   testCacheHome = makeTmpDir();
+  testDataHome = makeTmpDir();
+  testStateHome = makeTmpDir();
   process.env.XDG_CONFIG_HOME = testConfigHome;
   process.env.XDG_CACHE_HOME = testCacheHome;
-  process.chdir(originalCwd);
+  process.env.XDG_DATA_HOME = testDataHome;
+  process.env.XDG_STATE_HOME = testStateHome;
   resetConfigCache();
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
-
-  if (originalStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalStashDir;
-  }
-
   if (testConfigHome) {
     cleanup(testConfigHome);
     testConfigHome = "";
@@ -80,7 +60,16 @@ afterEach(() => {
     testCacheHome = "";
   }
 
-  process.chdir(originalCwd);
+  if (testDataHome) {
+    cleanup(testDataHome);
+    testDataHome = "";
+  }
+
+  if (testStateHome) {
+    cleanup(testStateHome);
+    testStateHome = "";
+  }
+
   resetConfigCache();
 });
 
@@ -94,6 +83,12 @@ describe("getConfigPath", () => {
   test("defaults to ~/.config/akm when XDG_CONFIG_HOME is unset", () => {
     const home = makeTmpDir();
     delete process.env.XDG_CONFIG_HOME;
+    // Defense against CI environments where AKM_STASH_DIR is inherited
+    // from outer test isolation: if it points at a transient path,
+    // getConfigDir's isolation rule fires and overrides the HOME-based
+    // fallback this test is verifying. See
+    // docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md.
+    delete process.env.AKM_STASH_DIR;
     process.env.HOME = home;
 
     expect(getConfigPath()).toBe(path.join(home, ".config", "akm", "config.json"));
@@ -149,47 +144,27 @@ describe("loadConfig", () => {
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
-  test("handles corrupted JSON gracefully", () => {
+  test("throws ConfigError on corrupted JSON (#458)", () => {
     writeRawConfig(getConfigPath(), "not valid json {{{");
-    expect(loadConfig()).toEqual(DEFAULT_CONFIG);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Failed to parse config JSON/);
   });
 
-  test("handles non-object JSON gracefully", () => {
+  test("throws ConfigError on non-object root (#458)", () => {
     writeRawConfig(getConfigPath(), '"just a string"');
-    expect(loadConfig()).toEqual(DEFAULT_CONFIG);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/must contain a JSON object/);
   });
 
-  test("handles JSON array gracefully", () => {
+  test("throws ConfigError on JSON array root (#458)", () => {
     writeRawConfig(getConfigPath(), "[1, 2, 3]");
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/must contain a JSON object/);
+  });
+
+  test("returns DEFAULT_CONFIG when file does not exist (legitimate cold start)", () => {
+    // Sanity: cold-start case is preserved. Only malformed CONTENT throws.
     expect(loadConfig()).toEqual(DEFAULT_CONFIG);
-  });
-
-  test("drops unknown keys", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", futureKey: "hello", anotherKey: 42 }));
-    const config = loadConfig();
-    expect(config.semanticSearchMode).toBe("off");
-    expect(config.sources).toBeUndefined();
-    expect(config.output).toEqual({ format: "json", detail: "brief" });
-    expect(config.registries).toEqual(DEFAULT_CONFIG.registries);
-    expect((config as unknown as Record<string, unknown>).futureKey).toBeUndefined();
-    expect((config as unknown as Record<string, unknown>).anotherKey).toBeUndefined();
-  });
-
-  test("ignores wrong types for known keys", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "yes", sources: "not-an-array" }));
-    const config = loadConfig();
-    expect(config.semanticSearchMode).toBe("auto");
-    expect(config.sources).toBeUndefined();
-  });
-
-  test("coerces boolean true to 'auto' for semanticSearchMode", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: true }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
-  });
-
-  test("coerces boolean false to 'off' for semanticSearchMode", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: false }));
-    expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
   test("passes through string 'auto' for semanticSearchMode", () => {
@@ -200,16 +175,6 @@ describe("loadConfig", () => {
   test("passes through string 'off' for semanticSearchMode", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
     expect(loadConfig().semanticSearchMode).toBe("off");
-  });
-
-  test("falls back to 'auto' for invalid semanticSearchMode values", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: 42 }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
-  });
-
-  test("ignores legacy semanticSearch boolean (compat shim retired)", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
   });
 
   test("ignores stash-root config.json files", () => {
@@ -224,160 +189,79 @@ describe("loadConfig", () => {
     }
   });
 
-  test("merges ancestor project config files on top of user config", () => {
-    const workspaceRoot = makeTmpDir();
-    const nestedProjectDir = path.join(workspaceRoot, "apps", "demo");
-    try {
-      fs.mkdirSync(nestedProjectDir, { recursive: true });
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          output: { format: "text" },
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(workspaceRoot, ".akm", "config.json"),
-        JSON.stringify({
-          output: { detail: "full" },
-          sources: [{ type: "filesystem", path: "/workspace-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(workspaceRoot, "apps", ".akm", "config.json"),
-        JSON.stringify({
-          semanticSearchMode: "off",
-          sources: [{ type: "filesystem", path: "/apps-stash" }],
-        }),
-      );
-
-      process.chdir(nestedProjectDir);
-
-      expect(loadConfig()).toEqual({
-        ...DEFAULT_CONFIG,
-        semanticSearchMode: "off",
-        output: { format: "text", detail: "full" },
-        sources: [
-          { type: "filesystem", path: "/user-stash" },
-          { type: "filesystem", path: "/workspace-stash" },
-          { type: "filesystem", path: "/apps-stash" },
-        ],
-      });
-    } finally {
-      cleanup(workspaceRoot);
-    }
-  });
-
-  test("project config can replace inherited sources while keeping project sources", () => {
+  test("project-level .akm/config.json is no longer merged (single-layer load)", () => {
+    // Multi-layer project config was removed; only the user-level config is
+    // read. A project-level file under cwd-ancestors emits a deprecation
+    // warning but does NOT contribute settings.
     const projectDir = makeTmpDir();
+    const restoreCwd = process.cwd();
     try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
+      writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
-          stashInheritance: "replace",
+          semanticSearchMode: "off",
           sources: [{ type: "filesystem", path: "/project-stash" }],
         }),
       );
-
       process.chdir(projectDir);
-
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      const loaded = loadConfig();
+      expect(loaded.semanticSearchMode).toBe("auto");
+      // sources from project config are ignored
+      expect(loaded.sources).toBeUndefined();
     } finally {
+      process.chdir(restoreCwd);
       cleanup(projectDir);
     }
   });
 
-  test("project config can replace inherited sources without defining replacements", () => {
-    const projectDir = makeTmpDir();
+  test("migrates legacy `stashes[]` to `sources[]` with a deprecation warning", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "filesystem", path: "/legacy-stash", name: "legacy" }],
+      }),
+    );
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          semanticSearchMode: "auto",
-          sources: [{ type: "filesystem", path: "/user-stash" }],
-        }),
-      );
-      writeRawConfig(
-        path.join(projectDir, ".akm", "config.json"),
-        JSON.stringify({
-          stashInheritance: "replace",
-        }),
-      );
-
-      process.chdir(projectDir);
-
-      expect(loadConfig().sources).toEqual([]);
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const config = loadConfig();
+      expect(config.sources?.[0]?.path).toBe("/legacy-stash");
+      expect((config as unknown as Record<string, unknown>).stashes).toBeUndefined();
     } finally {
-      cleanup(projectDir);
+      console.warn = originalWarn;
     }
+    expect(warnings.some((w) => w.includes("stashes[]") && w.includes("sources[]"))).toBe(true);
   });
 
-  test("throws ConfigError when config contains an openviking-typed source", () => {
+  test("drops openviking sources during migration with a warning", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        sources: [
+          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
+          { type: "filesystem", path: "/keep", name: "keep" },
+        ],
       }),
     );
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("openviking is not supported in akm v1");
-    expect(() => loadConfig()).toThrow("docs/migration/v1.md");
-  });
 
-  test("throws ConfigError with INVALID_CONFIG_FILE code for openviking source", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
-      }),
-    );
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     try {
-      loadConfig();
-      throw new Error("Expected loadConfig to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigError);
-      expect((err as ConfigError).code).toBe("INVALID_CONFIG_FILE");
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const config = loadConfig();
+      expect(config.sources?.length).toBe(1);
+      expect(config.sources?.[0]?.name).toBe("keep");
+    } finally {
+      console.warn = originalWarn;
     }
-  });
-
-  test("ConfigError for openviking source carries actionable hint with source name", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
-      }),
-    );
-    try {
-      loadConfig();
-      throw new Error("Expected loadConfig to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigError);
-      const hint = (err as ConfigError).hint();
-      expect(hint).toBeDefined();
-      // QA #38: hint now uses real commands (akm remove, not akm config sources remove)
-      expect(hint).toContain("my-ov");
-      expect(hint).toContain("akm remove");
-    }
-  });
-
-  test("throws ConfigError when config contains legacy stashes[]", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        stashes: [{ type: "filesystem", path: "/legacy-stash" }],
-      }),
-    );
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("legacy `stashes[]` config key");
+    expect(warnings.some((w) => w.includes("openviking") && w.includes("my-ov"))).toBe(true);
   });
 
   test("throws ConfigError when installed npm entry is marked writable", () => {
@@ -403,29 +287,36 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow("writable: true is only supported on filesystem and git sources");
   });
 
-  test("recomputes merged config when cwd changes", () => {
-    const firstProject = makeTmpDir();
-    const secondProject = makeTmpDir();
+  test("emits a one-time deprecation warning when a project-level config is discovered (#457)", () => {
+    const projectDir = makeTmpDir();
+    const restoreCwd = process.cwd();
     try {
       writeRawConfig(
-        path.join(firstProject, ".akm", "config.json"),
-        JSON.stringify({ sources: [{ type: "filesystem", path: "/first-project-stash" }] }),
-      );
-      writeRawConfig(
-        path.join(secondProject, ".akm", "config.json"),
-        JSON.stringify({ sources: [{ type: "filesystem", path: "/second-project-stash" }] }),
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({ sources: [{ type: "filesystem", path: "/project-stash" }] }),
       );
 
-      process.chdir(firstProject);
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
-
-      // Intentionally do not reset the cache here; loadConfig() should notice
-      // the cwd change because the discovered project config path set changes.
-      process.chdir(secondProject);
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
+      const messages: string[] = [];
+      const originalWarn = console.warn;
+      // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
+      // warn() inside warnIfProjectConfigPresent reaches the patched console.warn.
+      setQuiet(false);
+      console.warn = (...args: unknown[]) => {
+        messages.push(args.map(String).join(" "));
+      };
+      try {
+        process.chdir(projectDir);
+        loadConfig();
+      } finally {
+        console.warn = originalWarn;
+        setQuiet(true); // restore harness default
+      }
+      // Warning mentions deprecation + project-level + that the file is ignored.
+      expect(messages.some((m) => m.includes("DEPRECATED") && m.includes("project-level"))).toBe(true);
+      expect(messages.some((m) => m.includes("ignored"))).toBe(true);
     } finally {
-      cleanup(firstProject);
-      cleanup(secondProject);
+      process.chdir(restoreCwd);
+      cleanup(projectDir);
     }
   });
 });
@@ -483,6 +374,27 @@ describe("saveConfig", () => {
     const backups = fs.readdirSync(backupDir).filter((name) => name.startsWith("config-") && name.endsWith(".json"));
     expect(backups.length).toBeGreaterThan(0);
   });
+
+  test("prunes config backups to the 5 most-recent (#459)", () => {
+    // 10 saves → 10 distinct backup timestamps (but at most 5 should remain).
+    for (let i = 0; i < 10; i++) {
+      saveConfig({ semanticSearchMode: i % 2 === 0 ? "off" : "auto" });
+      // The timestamp is ISO-second-resolution; introduce a small delay so
+      // each backup gets a unique filename. mtimeMs is what we sort on.
+      const target = Date.now() + 10;
+      while (Date.now() < target) {
+        /* spin briefly */
+      }
+    }
+
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const timestamped = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("config-") && name.endsWith(".json") && name !== "config.latest.json");
+    expect(timestamped.length).toBeLessThanOrEqual(5);
+    // config.latest.json is always preserved
+    expect(fs.existsSync(path.join(backupDir, "config.latest.json"))).toBe(true);
+  });
 });
 
 // ── updateConfig ────────────────────────────────────────────────────────────
@@ -504,8 +416,12 @@ describe("updateConfig", () => {
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
 
-  test("writes only user config when project config is present", () => {
+  test("writes only user config and ignores any project-level .akm/config.json", () => {
+    // Project-level config files are no longer merged (single-layer load).
+    // updateConfig writes to the user-level file; project-level files are
+    // left untouched and their settings have no effect on loadConfig().
     const projectDir = makeTmpDir();
+    const restoreCwd = process.cwd();
     try {
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
@@ -515,11 +431,13 @@ describe("updateConfig", () => {
       process.chdir(projectDir);
       updateConfig({ semanticSearchMode: "off" });
 
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      // Project sources are NOT merged in.
+      expect(loadConfig().sources).toBeUndefined();
       expect(loadUserConfig().sources).toBeUndefined();
       expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
       expect(loadUserConfig().semanticSearchMode).toBe("off");
     } finally {
+      process.chdir(restoreCwd);
       cleanup(projectDir);
     }
   });
@@ -529,11 +447,6 @@ describe("output config", () => {
   test("loads valid output config", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "text", detail: "full" } }));
     expect(loadConfig().output).toEqual({ format: "text", detail: "full" });
-  });
-
-  test("ignores invalid output config values", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "xml", detail: "max" } }));
-    expect(loadConfig().output).toEqual({ format: "json", detail: "brief" });
   });
 });
 
@@ -590,30 +503,6 @@ describe("embedding config", () => {
     });
   });
 
-  test("ignores invalid embedding config (missing model)", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ embedding: { endpoint: "http://localhost:11434" } }));
-    expect(loadConfig().embedding).toBeUndefined();
-  });
-
-  test("ignores invalid embedding config with non-integer dimension", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        embedding: {
-          endpoint: "https://api.openai.com/v1/embeddings",
-          model: "text-embedding-3-small",
-          dimension: 384.5,
-        },
-      }),
-    );
-    expect(loadConfig().embedding).toBeUndefined();
-  });
-
-  test("ignores non-object embedding config", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ embedding: "not-an-object" }));
-    expect(loadConfig().embedding).toBeUndefined();
-  });
-
   test("defaults to no embedding config", () => {
     expect(loadConfig().embedding).toBeUndefined();
   });
@@ -651,10 +540,12 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm).toEqual({
+    const cfg = loadConfig();
+    expect(cfg.profiles?.llm?.default).toMatchObject({
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     });
+    expect(cfg.defaults?.llm).toBe("default");
   });
 
   test("loads llm config with apiKey", () => {
@@ -668,7 +559,7 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm?.apiKey).toBe("sk-key");
+    expect(loadConfig().profiles?.llm?.default?.apiKey).toBe("sk-key");
   });
 
   test("loads llm config with provider, temperature, and maxTokens", () => {
@@ -684,7 +575,7 @@ describe("llm config", () => {
         },
       }),
     );
-    expect(loadConfig().llm).toEqual({
+    expect(loadConfig().profiles?.llm?.default).toMatchObject({
       provider: "openai",
       endpoint: "https://api.openai.com/v1/chat/completions",
       model: "gpt-4o-mini",
@@ -693,50 +584,84 @@ describe("llm config", () => {
     });
   });
 
-  test("warns when llm endpoint does not end in /chat/completions", () => {
-    const originalWarn = console.warn;
-    const messages: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map(String).join(" "));
-    };
-    try {
-      writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost/v1", model: "gpt-4" } }));
-      loadConfig();
-      expect(messages.some((msg) => msg.includes("/chat/completions"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
-  test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
-    // After QA #36, `akm config set llm.endpoint <url>` persists a partial
-    // llm config with `model: ""`. The loader must accept this so the value
-    // round-trips; downstream callers decide if it's usable.
-    writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost" } }));
-    expect(loadConfig().llm).toEqual({ endpoint: "http://localhost", model: "" });
-  });
-
-  test("ignores llm config with non-integer maxTokens", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        llm: {
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          maxTokens: 256.5,
-        },
-      }),
-    );
-    expect(loadConfig().llm).toBeUndefined();
-  });
-
-  test("roundtrips llm config via updateConfig", () => {
+  test("roundtrips llm config via updateConfig profiles.llm", () => {
     const llmConfig = {
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     };
-    updateConfig({ llm: llmConfig });
-    expect(loadConfig().llm).toEqual(llmConfig);
+    updateConfig({
+      profiles: { llm: { default: llmConfig } },
+      defaults: { llm: "default" },
+    });
+    expect(loadConfig().profiles?.llm?.default).toMatchObject(llmConfig);
+  });
+
+  // Regression: on 2026-05-23 a config-rewrite dropped `defaults.llm` while
+  // leaving `profiles.llm.default` intact. `getDefaultLlmConfig` returned
+  // undefined, every pass that goes through it (memory-inference, distill's
+  // chat path) silently no-op'd for ~18h. Implicit fallback closes that hole.
+  describe("default LLM resolution (implicit profiles.llm.default fallback)", () => {
+    const llmConfig = {
+      endpoint: "http://localhost:11434/v1/chat/completions",
+      model: "llama3.2",
+    };
+
+    test("getDefaultLlmConfig honors explicit defaults.llm", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { llm: "primary" },
+        profiles: { llm: { primary: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toEqual(llmConfig);
+    });
+
+    test("getDefaultLlmConfig falls back to profiles.llm.default when defaults.llm is unset", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { default: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toEqual(llmConfig);
+    });
+
+    test("getDefaultLlmConfig returns undefined when neither defaults.llm nor profiles.llm.default is set", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { gemma: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toBeUndefined();
+    });
+
+    test("requireLlmConfig falls back to profiles.llm.default when defaults.llm is unset", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { default: llmConfig } },
+      };
+      expect(requireLlmConfig(cfg)).toEqual(llmConfig);
+    });
+
+    test("requireLlmConfig throws when neither defaults.llm nor profiles.llm.default is set", () => {
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { agent: "opencode" },
+        profiles: { llm: { gemma: llmConfig } },
+      };
+      expect(() => requireLlmConfig(cfg)).toThrow(ConfigError);
+      expect(() => requireLlmConfig(cfg)).toThrow(/LLM is not configured/);
+    });
+
+    test("explicit defaults.llm takes precedence over an unrelated profiles.llm.default", () => {
+      const explicit = { endpoint: "http://explicit/v1", model: "explicit-model" };
+      const cfg = {
+        ...DEFAULT_CONFIG,
+        defaults: { llm: "primary" },
+        profiles: { llm: { primary: explicit, default: llmConfig } },
+      };
+      expect(getDefaultLlmConfig(cfg)).toEqual(explicit);
+      expect(requireLlmConfig(cfg)).toEqual(explicit);
+    });
   });
 });
 
@@ -765,14 +690,358 @@ describe("stashDir config", () => {
     expect(parsed.stashDir).toBe("/my/stash");
     expect(loadConfig().stashDir).toBe("/my/stash");
   });
+});
 
-  test("ignores non-string stashDir", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: 42 }));
-    expect(loadConfig().stashDir).toBeUndefined();
+// ── search config ────────────────────────────────────────────────────────────
+
+describe("search config", () => {
+  test("loads search.graphBoost values", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          minScore: 0.15,
+          graphBoost: {
+            directBoostPerEntity: 0.2,
+            directBoostCap: 0.6,
+            hopBoostPerEntity: 0.08,
+            hopBoostCap: 0.24,
+            maxHops: 2,
+            confidenceMode: "multiply",
+            confidenceWeight: 0.4,
+          },
+        },
+      }),
+    );
+
+    expect(loadConfig().search).toEqual({
+      minScore: 0.15,
+      graphBoost: {
+        directBoostPerEntity: 0.2,
+        directBoostCap: 0.6,
+        hopBoostPerEntity: 0.08,
+        hopBoostCap: 0.24,
+        maxHops: 2,
+        confidenceMode: "multiply",
+        confidenceWeight: 0.4,
+      },
+    });
   });
 
-  test("ignores empty stashDir", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: "   " }));
-    expect(loadConfig().stashDir).toBeUndefined();
+  test("rejects search.graphBoost.confidenceWeight > 1 (no silent clamp)", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          graphBoost: {
+            confidenceMode: "blend",
+            confidenceWeight: 99,
+          },
+        },
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/confidenceWeight/);
+  });
+
+  test("rejects search.graphBoost.maxHops > 3 (no silent clamp)", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ search: { graphBoost: { maxHops: 99 } } }));
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/maxHops/);
+  });
+
+  test("rejects unknown search.graphBoost keys (typos surface at load time)", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          graphBoost: {
+            maxHops: 2,
+            unsupportedNested: "x",
+          },
+        },
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/unsupportedNested/);
+  });
+});
+
+describe("v2 config shape parsing", () => {
+  test("parses configVersion", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: 2 }));
+    const loaded = loadConfig();
+    expect(loaded.configVersion).toBe(2);
+  });
+
+  test("parses profiles.llm with supportsJsonSchema", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          llm: {
+            "openai-mini": {
+              endpoint: "https://api.openai.com/v1/chat/completions",
+              model: "gpt-4o-mini",
+              temperature: 0.3,
+              supportsJsonSchema: true,
+            },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.llm?.["openai-mini"]?.model).toBe("gpt-4o-mini");
+    expect(loaded.profiles?.llm?.["openai-mini"]?.supportsJsonSchema).toBe(true);
+  });
+
+  test("parses profiles.agent with platform field", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          agent: {
+            "opencode-default": { platform: "opencode", bin: "opencode", args: ["run"] },
+            "opencode-sdk": { platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.agent?.["opencode-default"]?.platform).toBe("opencode");
+    expect(loaded.profiles?.agent?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
+    expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
+  });
+
+  test("rejects agent profile with invalid platform (no silent drop)", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        profiles: { agent: { bad: { platform: "invalid-platform" } } },
+      }),
+    );
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/platform/);
+  });
+
+  test("parses defaults.llm, defaults.agent, defaults.improve", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        defaults: {
+          llm: "openai-mini",
+          agent: "opencode-default",
+          improve: "my-custom-profile",
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.defaults?.llm).toBe("openai-mini");
+    expect(loaded.defaults?.agent).toBe("opencode-default");
+    expect(loaded.defaults?.improve).toBe("my-custom-profile");
+  });
+
+  test("migrates legacy features.improve to profiles.improve.default.processes", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        features: {
+          improve: {
+            reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
+            memory_consolidation: false,
+            feedback_distillation: true,
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    const processes = loaded.profiles?.improve?.default?.processes;
+    expect(processes?.reflect?.mode).toBe("llm");
+    expect(processes?.reflect?.timeoutMs).toBe(60000);
+    expect(processes?.consolidate?.enabled).toBe(false);
+    // 0.8.0: feedback_distillation migrates into the unified distill gate.
+    expect(processes?.distill?.enabled).toBe(true);
+  });
+
+  test("migrates legacy features.index and features.search into new shape", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        features: {
+          index: { memory_inference: true, graph_extraction: { profile: "openai-mini" }, metadata_enhance: false },
+          search: { curate_rerank: true },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    expect(loaded.profiles?.improve?.default?.processes?.memoryInference?.enabled).toBe(true);
+    expect(loaded.index?.metadataEnhance?.enabled).toBe(false);
+    expect(loaded.search?.curateRerank?.enabled).toBe(true);
+  });
+
+  test("sanitizeConfigForWrite strips apiKey from profiles.llm entries", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: 2,
+        profiles: {
+          llm: {
+            myprofile: {
+              endpoint: "https://api.openai.com/v1/chat/completions",
+              model: "gpt-4o",
+              apiKey: "sk-secret",
+            },
+          },
+        },
+      }),
+    );
+    const loaded = loadConfig();
+    saveConfig(loaded);
+    // Re-read from disk to verify apiKey was stripped
+    const saved = JSON.parse(require("node:fs").readFileSync(getConfigPath(), "utf8"));
+    expect(saved.profiles?.llm?.myprofile?.apiKey).toBeUndefined();
+    expect(saved.profiles?.llm?.myprofile?.model).toBe("gpt-4o");
+  });
+});
+
+// ── Auto-migration hook ──────────────────────────────────────────────────────
+
+describe("auto-migration in loadConfig", () => {
+  const originalNoAutoMigrate = process.env.AKM_NO_AUTO_MIGRATE;
+
+  afterEach(() => {
+    // Restore env after each test
+    if (originalNoAutoMigrate === undefined) {
+      delete process.env.AKM_NO_AUTO_MIGRATE;
+    } else {
+      process.env.AKM_NO_AUTO_MIGRATE = originalNoAutoMigrate;
+    }
+    resetConfigCache();
+  });
+
+  test("auto-migrates a v1 config file (missing configVersion) and rewrites it to disk", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    // Write a pre-0.8.0 config: has llm.features block, no configVersion
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // loadConfig triggers auto-migration
+    const loaded = loadConfig();
+
+    // In-memory config should reflect the migrated shape
+    expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
+
+    // The file on disk should have been rewritten with configVersion
+    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(onDisk.configVersion).toBe("0.8.0");
+    expect(onDisk.llm).toBeUndefined();
+    expect(onDisk.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
+
+    // A backup should have been created in the cache dir
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const backupFiles = fs.readdirSync(backupDir);
+    expect(backupFiles.length).toBeGreaterThan(0);
+  });
+
+  test("does NOT rewrite the config file when AKM_NO_AUTO_MIGRATE=1", () => {
+    process.env.AKM_NO_AUTO_MIGRATE = "1";
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // loadConfig should NOT rewrite the file
+    loadConfig();
+
+    const onDisk = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(onDisk);
+    // File should still match v1 shape — no configVersion written
+    expect(parsed.configVersion).toBeUndefined();
+    expect(parsed.llm?.features?.memory_inference).toBe(true);
+  });
+
+  test("does not crash or backup when config file is already at 0.8.0", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    const currentConfig = {
+      configVersion: "0.8.0",
+      profiles: { llm: { default: { endpoint: "http://localhost:11434", model: "qwen3" } } },
+      defaults: { llm: "default" },
+    };
+    writeRawConfig(configPath, JSON.stringify(currentConfig));
+
+    const loaded = loadConfig();
+    expect(loaded.configVersion).toBe("0.8.0");
+
+    // No backup should be created since nothing needed migrating
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const backupFiles = fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : [];
+    expect(backupFiles.length).toBe(0);
+  });
+
+  test("auto-migration is applied in-memory even when AKM_NO_AUTO_MIGRATE=1", () => {
+    process.env.AKM_NO_AUTO_MIGRATE = "1";
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { graph_extraction: false },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // The LLM endpoint should still be available even though migration was suppressed
+    const loaded = loadConfig();
+    expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
+  });
+
+  test("throws ConfigError when migrated write fails (no infinite re-run loop) (#461)", () => {
+    delete process.env.AKM_NO_AUTO_MIGRATE;
+
+    const configPath = getConfigPath();
+    const v1Config = {
+      llm: {
+        endpoint: "http://localhost:11434",
+        model: "qwen3",
+        features: { memory_inference: true },
+      },
+    };
+    writeRawConfig(configPath, JSON.stringify(v1Config));
+
+    // Simulate write failure by making the config directory read-only just
+    // after the initial read but before the migration write. The simplest way
+    // is to make the config FILE read-only AND chmod the dir to drop write
+    // permission so the atomic rename can't replace it.
+    const configDir = path.dirname(configPath);
+    fs.chmodSync(configDir, 0o555);
+    try {
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(/Failed to write migrated config/);
+    } finally {
+      // Restore so cleanup() can rm -rf the tmp dir.
+      fs.chmodSync(configDir, 0o755);
+    }
   });
 });

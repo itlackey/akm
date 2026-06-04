@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   type LockfileEntry,
@@ -9,19 +8,16 @@ import {
   upsertLockEntry,
   writeLockfile,
 } from "../src/integrations/lockfile";
+import { type Cleanup, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-
-let testConfigDir = "";
-
-function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-lockfile-test-"));
-}
+// akm.lock lives in getDataDir() = $XDG_DATA_HOME/akm/akm.lock
+let testDataDir = "";
+let envCleanup: Cleanup = () => {};
 
 function getLockfilePath(): string {
-  return path.join(testConfigDir, "akm", "akm.lock");
+  return path.join(testDataDir, "akm", "akm.lock");
 }
 
 function writeRawLockfile(content: string): void {
@@ -40,20 +36,15 @@ function validEntry(overrides?: Partial<LockfileEntry>): LockfileEntry {
 }
 
 beforeEach(() => {
-  testConfigDir = makeTmpDir();
-  process.env.XDG_CONFIG_HOME = testConfigDir;
+  const dataResult = sandboxXdgDataHome();
+  testDataDir = dataResult.dir;
+  envCleanup = dataResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
+  testDataDir = "";
 });
 
 // ── readLockfile ────────────────────────────────────────────────────────────

@@ -1,7 +1,11 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import fs from "node:fs";
 import path from "node:path";
 
-const CHANGELOG_URL = "https://github.com/itlackey/akm/blob/main/.github/CHANGELOG.md";
+const CHANGELOG_URL = "https://github.com/itlackey/akm/blob/main/CHANGELOG.md";
 const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md";
 
 /**
@@ -17,7 +21,7 @@ function releaseNotesDir(): string {
 
 function loadChangelog(): string | undefined {
   try {
-    const changelogPath = path.resolve(import.meta.dir, "../../.github/CHANGELOG.md");
+    const changelogPath = path.resolve(import.meta.dir, "../../CHANGELOG.md");
     if (fs.existsSync(changelogPath)) {
       return fs.readFileSync(changelogPath, "utf8");
     }

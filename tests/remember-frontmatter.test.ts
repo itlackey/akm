@@ -8,7 +8,7 @@
  * - Required-field rejection before any file write
  * - --expires duration → ISO date computation
  * - Zero-flag remember still works (no frontmatter written)
- * - memoryMdRenderer.extractMetadata populates StashEntry fields
+ * - memory metadata contributors populate StashEntry fields
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -19,9 +19,24 @@ import path from "node:path";
 import { parseFrontmatter } from "../src/core/frontmatter";
 import { buildFileContext, buildRenderContext } from "../src/indexer/file-context";
 import type { StashEntry } from "../src/indexer/metadata";
-import { memoryMdRenderer } from "../src/output/renderers";
+import { applyMetadataContributors } from "../src/indexer/metadata-contributors";
+import { runCliCapture } from "./_helpers/cli";
+import { withEnv } from "./_helpers/sandbox";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
+//
+// Migrated the non-stdin `akm remember` invocations from spawnSync to the shared
+// in-process harness (tests/_helpers/cli.ts). `remember` resolves its target
+// from AKM_STASH_DIR (XDG), not process.cwd(), so it runs faithfully in-process.
+//
+// KEPT SPAWNING (harness gap): the two tests that pipe a body via stdin
+// (`spawnRunCli({ input })`). runCliCapture has no stdin support — the CLI's
+// `remember` reads process.stdin when no body arg is given (and when --format
+// json is present), which the in-process harness cannot supply. Those two tests
+// stay as real subprocesses so the stdin read path is exercised faithfully.
+//
+// Env mutation goes through the allowlisted withEnv wrapper; temp dirs are
+// created via makeTempDir (kept local) and tracked in tempDirs for cleanup.
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -32,20 +47,38 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-function runCli(args: string[], options?: { stashDir?: string; input?: string }) {
+function freshDirs(options?: { stashDir?: string }) {
   const stashDir = options?.stashDir ?? makeTempDir("akm-rmfm-stash-");
-  const xdgCache = makeTempDir("akm-rmfm-cache-");
-  const xdgConfig = makeTempDir("akm-rmfm-config-");
+  return {
+    stashDir,
+    env: {
+      AKM_STASH_DIR: stashDir,
+      XDG_CACHE_HOME: makeTempDir("akm-rmfm-cache-"),
+      XDG_CONFIG_HOME: makeTempDir("akm-rmfm-config-"),
+      XDG_DATA_HOME: makeTempDir("akm-rmfm-data-"),
+      XDG_STATE_HOME: makeTempDir("akm-rmfm-state-"),
+    } satisfies Record<string, string>,
+  };
+}
+
+/** In-process runner for the non-stdin `remember` paths. */
+async function runCli(args: string[], options?: { stashDir?: string }) {
+  const { stashDir, env } = freshDirs(options);
+  const { stdout, stderr, code } = await withEnv(env, () => runCliCapture(args));
+  return { stashDir, result: { status: code, stdout, stderr } };
+}
+
+/**
+ * Subprocess runner, retained ONLY for the stdin-driven tests. runCliCapture has
+ * no stdin support, so the CLI's stdin read path is exercised via a real process.
+ */
+function spawnRunCli(args: string[], options?: { stashDir?: string; input?: string }) {
+  const { stashDir, env } = freshDirs(options);
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     input: options?.input,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-    },
+    env: { ...process.env, ...env },
   });
   return { stashDir, result };
 }
@@ -59,29 +92,38 @@ afterEach(() => {
 // ── Zero-flag path (backward compatibility) ──────────────────────────────────
 
 describe("zero-flag remember", () => {
-  test("writes bare memory with no frontmatter", () => {
-    const { stashDir, result } = runCli(["remember", "Deployment needs VPN access"]);
+  test("writes memory with captureMode: hot + beliefState: asserted and nothing else", async () => {
+    const { stashDir, result } = await runCli(["remember", "Deployment needs VPN access"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
 
-    // No frontmatter delimiter present
-    expect(content.startsWith("---")).toBe(false);
-    expect(content).toContain("Deployment needs VPN access");
+    // Phase 1B / Rec 7: zero-flag hot-path emits captureMode + beliefState
+    expect(content.startsWith("---")).toBe(true);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    // No other frontmatter keys
+    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
+    expect(parsed.content).toContain("Deployment needs VPN access");
     expect(stashDir).toBeTruthy();
   });
 
-  test("writes bare memory when reading from stdin", () => {
-    const { result } = runCli(["remember"], { input: "VPN needed for staging deploys" });
+  test("stdin zero-flag path also writes captureMode: hot + beliefState: asserted", () => {
+    const { result } = spawnRunCli(["remember"], { input: "VPN needed for staging deploys" });
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
-    expect(content.startsWith("---")).toBe(false);
+    expect(content.startsWith("---")).toBe(true);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
   });
 
   test("reads stdin when --format json is present", () => {
-    const { result } = runCli(["remember", "--name", "from-stdin", "--format", "json"], { input: "stdin body" });
+    const { result } = spawnRunCli(["remember", "--name", "from-stdin", "--format", "json"], { input: "stdin body" });
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { path: string };
     expect(fs.readFileSync(json.path, "utf8")).toContain("stdin body");
@@ -92,8 +134,8 @@ describe("zero-flag remember", () => {
 // ── CLI args (Mode 1) ────────────────────────────────────────────────────────
 
 describe("remember --tag", () => {
-  test("single --tag writes frontmatter with tags array", () => {
-    const { result } = runCli(["remember", "VPN required for staging", "--tag", "ops"]);
+  test("single --tag writes frontmatter with tags array", async () => {
+    const { result } = await runCli(["remember", "VPN required for staging", "--tag", "ops"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -103,8 +145,8 @@ describe("remember --tag", () => {
     expect(parsed.content).toContain("VPN required for staging");
   });
 
-  test("multiple --tag flags write all tags", () => {
-    const { result } = runCli(["remember", "VPN required for staging", "--tag", "ops", "--tag", "networking"]);
+  test("multiple --tag flags write all tags", async () => {
+    const { result } = await runCli(["remember", "VPN required for staging", "--tag", "ops", "--tag", "networking"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -115,8 +157,8 @@ describe("remember --tag", () => {
 });
 
 describe("remember --source", () => {
-  test("--source stores a URL as-is", () => {
-    const { result } = runCli([
+  test("--source stores a URL as-is", async () => {
+    const { result } = await runCli([
       "remember",
       "Read the deployment guide",
       "--tag",
@@ -132,8 +174,15 @@ describe("remember --source", () => {
     expect(parsed.data.source).toBe("https://example.com/deploy");
   });
 
-  test("--source stores an asset ref", () => {
-    const { result } = runCli(["remember", "Deploy skill requires VPN", "--tag", "ops", "--source", "skill:deploy"]);
+  test("--source stores an asset ref", async () => {
+    const { result } = await runCli([
+      "remember",
+      "Deploy skill requires VPN",
+      "--tag",
+      "ops",
+      "--source",
+      "skill:deploy",
+    ]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -144,9 +193,16 @@ describe("remember --source", () => {
 });
 
 describe("remember --expires", () => {
-  test("--expires 30d resolves to a future ISO date ~30 days from now", () => {
+  test("--expires 30d resolves to a future ISO date ~30 days from now", async () => {
     const before = new Date();
-    const { result } = runCli(["remember", "Temp access token valid 30 days", "--tag", "security", "--expires", "30d"]);
+    const { result } = await runCli([
+      "remember",
+      "Temp access token valid 30 days",
+      "--tag",
+      "security",
+      "--expires",
+      "30d",
+    ]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -163,8 +219,8 @@ describe("remember --expires", () => {
     expect(expiresDate <= expectedMax).toBe(true);
   });
 
-  test("--expires 12h resolves to a future ISO date ~12h from now", () => {
-    const { result } = runCli(["remember", "Short-lived credential", "--tag", "security", "--expires", "12h"]);
+  test("--expires 12h resolves to a future ISO date ~12h from now", async () => {
+    const { result } = await runCli(["remember", "Short-lived credential", "--tag", "security", "--expires", "12h"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -173,8 +229,8 @@ describe("remember --expires", () => {
     expect(parsed.data.expires as string).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("--expires 6m resolves to a future ISO date ~6 months from now", () => {
-    const { result } = runCli(["remember", "Long-term access", "--tag", "access", "--expires", "6m"]);
+  test("--expires 6m resolves to a future ISO date ~6 months from now", async () => {
+    const { result } = await runCli(["remember", "Long-term access", "--tag", "access", "--expires", "6m"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -190,8 +246,8 @@ describe("remember --expires", () => {
     expect(expiresDate <= expectedMax).toBe(true);
   });
 
-  test("invalid --expires format produces an error", () => {
-    const { result } = runCli(["remember", "Some note", "--tag", "misc", "--expires", "invalid"]);
+  test("invalid --expires format produces an error", async () => {
+    const { result } = await runCli(["remember", "Some note", "--tag", "misc", "--expires", "invalid"]);
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("Invalid --expires format");
@@ -201,8 +257,8 @@ describe("remember --expires", () => {
 // ── Required-field rejection (before file write) ─────────────────────────────
 
 describe("required-field rejection", () => {
-  test("--source without --tag rejects with missing-fields error before writing", () => {
-    const { stashDir, result } = runCli(["remember", "Some note", "--source", "https://example.com"]);
+  test("--source without --tag rejects with missing-fields error before writing", async () => {
+    const { stashDir, result } = await runCli(["remember", "Some note", "--source", "https://example.com"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
@@ -215,8 +271,8 @@ describe("required-field rejection", () => {
     expect(written).toBe(false);
   });
 
-  test("--expires without --tag rejects with missing-fields error before writing", () => {
-    const { stashDir, result } = runCli(["remember", "Some note", "--expires", "30d"]);
+  test("--expires without --tag rejects with missing-fields error before writing", async () => {
+    const { stashDir, result } = await runCli(["remember", "Some note", "--expires", "30d"]);
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
@@ -231,9 +287,9 @@ describe("required-field rejection", () => {
 // ── --auto heuristics (Mode 2) ───────────────────────────────────────────────
 
 describe("remember --auto", () => {
-  test("body with fenced code block gets tag 'code'", () => {
+  test("body with fenced code block gets tag 'code'", async () => {
     const body = "Remember this pattern:\n```ts\nconst x = 1;\n```";
-    const { result } = runCli(["remember", body, "--auto"]);
+    const { result } = await runCli(["remember", body, "--auto"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -243,9 +299,9 @@ describe("remember --auto", () => {
     expect(tags).toContain("code");
   });
 
-  test("body with URL gets source set automatically", () => {
+  test("body with URL gets source set automatically", async () => {
     const body = "Found this resource https://example.com/guide useful for ops";
-    const { result } = runCli(["remember", body, "--auto", "--tag", "docs"]);
+    const { result } = await runCli(["remember", body, "--auto", "--tag", "docs"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -254,10 +310,10 @@ describe("remember --auto", () => {
     expect(parsed.data.source).toBe("https://example.com/guide");
   });
 
-  test("body with first-person pronoun gets subjective: true", () => {
+  test("body with first-person pronoun gets subjective: true", async () => {
     // Must supply --tag because heuristics add subjective but not tags for plain text.
     const body = "I noticed that staging requires VPN every time";
-    const { result } = runCli(["remember", body, "--auto", "--tag", "ops"]);
+    const { result } = await runCli(["remember", body, "--auto", "--tag", "ops"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -267,12 +323,12 @@ describe("remember --auto", () => {
     expect(parsed.data.tags as string[]).toContain("ops");
   });
 
-  test("body with ISO date gets observed_at set", () => {
+  test("body with ISO date gets observed_at set", async () => {
     const body = "The outage happened on 2026-01-15 and we fixed it quickly";
-    const { result } = runCli(["remember", body, "--auto"]);
+    const { result } = await runCli(["remember", body, "--auto"]);
     // Will fail required-field check if no tags derived from the body
     // Force a tag to ensure we get through
-    const { result: r2 } = runCli(["remember", body, "--auto", "--tag", "ops"]);
+    const { result: r2 } = await runCli(["remember", body, "--auto", "--tag", "ops"]);
     expect(r2.status).toBe(0);
 
     const json = JSON.parse(r2.stdout) as { path: string };
@@ -282,17 +338,17 @@ describe("remember --auto", () => {
     void result; // suppress unused variable warning
   });
 
-  test("--auto without any tags from heuristics or CLI still writes the memory", () => {
+  test("--auto without any tags from heuristics or CLI still writes the memory", async () => {
     // Plain text body — no code block, no URL. Heuristics won't derive any tags.
-    const { result } = runCli(["remember", "Plain text note without any tags derivable", "--auto"]);
+    const { result } = await runCli(["remember", "Plain text note without any tags derivable", "--auto"]);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { path: string };
     expect(fs.existsSync(json.path)).toBe(true);
   });
 
-  test("--auto + explicit --tag satisfies required-field check", () => {
+  test("--auto + explicit --tag satisfies required-field check", async () => {
     const body = "No special content here";
-    const { result } = runCli(["remember", body, "--auto", "--tag", "misc"]);
+    const { result } = await runCli(["remember", body, "--auto", "--tag", "misc"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -301,9 +357,9 @@ describe("remember --auto", () => {
     expect(parsed.data.tags as string[]).toContain("misc");
   });
 
-  test("--source CLI arg takes priority over auto-detected URL", () => {
+  test("--source CLI arg takes priority over auto-detected URL", async () => {
     const body = "See https://example.com/docs for reference";
-    const { result } = runCli(["remember", body, "--auto", "--tag", "docs", "--source", "explicit:source"]);
+    const { result } = await runCli(["remember", body, "--auto", "--tag", "docs", "--source", "explicit:source"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -314,12 +370,12 @@ describe("remember --auto", () => {
   });
 });
 
-// ── memoryMdRenderer.extractMetadata ─────────────────────────────────────────
+// ── memory metadata contributors ─────────────────────────────────────────────
 
 /** A static MatchResult for memory-md (avoids calling runMatchers and null assertions). */
 const MEMORY_MATCH = { type: "memory", specificity: 10, renderer: "memory-md" };
 
-describe("memoryMdRenderer.extractMetadata", () => {
+describe("memory metadata contributors", () => {
   const createdTmpDirs: string[] = [];
 
   afterEach(() => {
@@ -338,40 +394,40 @@ describe("memoryMdRenderer.extractMetadata", () => {
     return { filePath, stashRoot };
   }
 
-  test("populates tags from frontmatter", () => {
+  async function applyMemoryMetadata(entry: StashEntry, stashRoot: string, filePath: string): Promise<void> {
+    const ctx = buildFileContext(stashRoot, filePath);
+    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
+    await applyMetadataContributors(entry, { rendererName: "memory-md", renderContext: renderCtx });
+  }
+
+  test("populates tags from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops, networking]\n---\nDeployment needs VPN access\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
     expect(entry.tags).toContain("networking");
   });
 
-  test("populates description from frontmatter", () => {
+  test("populates description from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ndescription: VPN required for staging deploys\ntags: [ops]\n---\nBody content\n",
     );
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.description).toBe("VPN required for staging deploys");
   });
 
-  test("populates searchHints with source, observed_at, expires, subjective", () => {
+  test("populates searchHints with source, observed_at, expires, subjective", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ntags: [ops]\nsource: skill:deploy\nobserved_at: 2026-01-15\nexpires: 2026-04-15\nsubjective: true\n---\nVPN needed\n",
     );
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.searchHints).toBeDefined();
     expect(entry.searchHints).toContain("skill:deploy");
@@ -380,13 +436,11 @@ describe("memoryMdRenderer.extractMetadata", () => {
     expect(entry.searchHints).toContain("subjective");
   });
 
-  test("observed_at falls back to file mtime when not in frontmatter", () => {
+  test("observed_at falls back to file mtime when not in frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     // Should have an observed_at hint derived from mtime
     const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
@@ -396,28 +450,24 @@ describe("memoryMdRenderer.extractMetadata", () => {
     expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("works for bare memory with no frontmatter (no crash)", () => {
+  test("works for bare memory with no frontmatter (no crash)", async () => {
     const { filePath, stashRoot } = writeTmpMemory("Just a plain memory without any frontmatter.\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
 
     // Should not throw
-    expect(() => memoryMdRenderer.extractMetadata?.(entry, renderCtx)).not.toThrow();
+    await expect(applyMemoryMetadata(entry, stashRoot, filePath)).resolves.toBeUndefined();
 
     // mtime fallback should still fire
     const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
     expect(mtimeHint).toBeDefined();
   });
 
-  test("block-sequence tags in frontmatter are parsed correctly", () => {
+  test("block-sequence tags in frontmatter are parsed correctly", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags:\n- ops\n- networking\n- deploy\n---\nVPN required\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
     expect(entry.tags).toContain("networking");
@@ -432,25 +482,18 @@ describe("memoryMdRenderer.extractMetadata", () => {
 // against a non-existent endpoint and verify the graceful-degradation behaviour.
 
 describe("remember --enrich graceful degradation", () => {
-  test("when no LLM is configured, --enrich emits warning but still fails if no tags", () => {
-    // No LLM configured in the temp config dir — should warn and return empty tags
-    const { result } = runCli(["remember", "Some note about ops", "--enrich"]);
-    // Will fail because enrichment produces no tags and no CLI tags given.
-    // stderr may contain a warning line followed by a multi-line JSON error block.
-    if (result.status !== 0) {
-      // Extract the JSON portion (from first '{' to end of stderr)
-      const jsonStart = result.stderr.indexOf("{");
-      expect(jsonStart).toBeGreaterThanOrEqual(0);
-      const jsonStr = result.stderr.slice(jsonStart);
-      const json = JSON.parse(jsonStr) as { error: string };
-      expect(json.error).toContain("tags");
-    }
-    // Either path is acceptable: rejection (no tags) or success (if enrichment happened to work)
+  test("when no LLM is configured, --enrich emits warning and still writes the memory", async () => {
+    const { result } = await runCli(["remember", "Some note about ops", "--enrich"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    expect(content).toContain("Some note about ops");
   });
 
-  test("--enrich with --tag satisfies required-field check even if LLM fails", () => {
+  test("--enrich with --tag satisfies required-field check even if LLM fails", async () => {
     // Providing --tag means we don't depend on LLM for the required field
-    const { result } = runCli(["remember", "Some note", "--enrich", "--tag", "misc"]);
+    const { result } = await runCli(["remember", "Some note", "--enrich", "--tag", "misc"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -458,5 +501,31 @@ describe("remember --enrich graceful degradation", () => {
     const parsed = parseFrontmatter(content);
     // At minimum, the --tag value must be present
     expect(parsed.data.tags as string[]).toContain("misc");
+  });
+});
+
+// ── Phase 1B / Rec 7: hot-path captureMode + beliefState ────────────────────
+
+describe("remember writes captureMode: hot + beliefState: asserted (Phase 1B)", () => {
+  test("--tag path writes captureMode: hot and beliefState: asserted", async () => {
+    const { result } = await runCli(["remember", "VPN required for staging", "--tag", "ops"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+  });
+
+  test("--auto path writes captureMode: hot and beliefState: asserted", async () => {
+    const { result } = await runCli(["remember", "Plain text note", "--auto", "--tag", "misc"]);
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
   });
 });

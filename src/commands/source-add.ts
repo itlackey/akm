@@ -1,10 +1,13 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "../core/common";
 import type { SourceConfigEntry, SourceSpec } from "../core/config";
-import { loadConfig, loadUserConfig, saveConfig } from "../core/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
-import { warn } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
 import { upsertLockEntry } from "../integrations/lockfile";
 import { parseRegistryRef } from "../registry/resolve";
@@ -14,12 +17,6 @@ import { syncFromRef } from "../sources/providers/sync-from-ref";
 import type { AddResponse } from "../sources/types";
 import { ensureWebsiteMirror, validateWebsiteInputUrl } from "../sources/website-ingest";
 import { ensureWikiNameAvailable, validateWikiName } from "../wiki/wiki";
-import {
-  auditInstallCandidate,
-  deriveRegistryLabels,
-  enforceRegistryInstallPolicy,
-  formatInstallAuditFailure,
-} from "./install-audit";
 
 const VALID_OVERRIDE_TYPES = new Set(["wiki"]);
 
@@ -28,7 +25,6 @@ export async function akmAdd(input: {
   name?: string;
   overrideType?: string;
   options?: Record<string, unknown>;
-  trustThisInstall?: boolean;
   writable?: boolean;
 }): Promise<AddResponse> {
   const ref = input.ref.trim();
@@ -63,23 +59,19 @@ export async function akmAdd(input: {
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
-      if (input.trustThisInstall) {
-        warn("--trust has no effect on local directory sources; the install audit is not run for local paths.");
-      }
       return addLocalSource(ref, parsed.sourcePath, stashDir, wikiName, input.name);
     }
   } catch {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryStash(ref, stashDir, input.trustThisInstall, input.writable, wikiName);
+  return addRegistryStash(ref, stashDir, input.writable, wikiName);
 }
 
 export async function registerWikiSource(input: {
   ref: string;
   name?: string;
   options?: Record<string, unknown>;
-  trustThisInstall?: boolean;
   writable?: boolean;
 }): Promise<AddResponse> {
   const stashDir = resolveStashDir();
@@ -91,7 +83,6 @@ export async function registerWikiSource(input: {
     name,
     overrideType: "wiki",
     options: input.options,
-    trustThisInstall: input.trustThisInstall,
     writable: input.writable,
   });
 }
@@ -115,7 +106,7 @@ async function addLocalSource(
   const derivedName = explicitName ?? wikiName ?? toReadableId(resolvedPath);
 
   // Check for duplicates in sources[]
-  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const sources = [...getSources(config)];
   const existing = sources.find((s) => s.type === "filesystem" && s.path && path.resolve(s.path) === resolvedPath);
   let persistedEntry: SourceConfigEntry;
   if (!existing) {
@@ -126,7 +117,7 @@ async function addLocalSource(
       ...(wikiName ? { wikiName } : {}),
     };
     sources.push(persistedEntry);
-    saveConfig({ ...config, sources, stashes: undefined });
+    saveConfig({ ...config, sources });
   } else {
     let changed = false;
     // If --name was explicitly supplied, update the persisted name.
@@ -138,7 +129,7 @@ async function addLocalSource(
       existing.wikiName = wikiName;
       changed = true;
     }
-    if (changed) saveConfig({ ...config, sources, stashes: undefined });
+    if (changed) saveConfig({ ...config, sources });
     persistedEntry = existing;
   }
 
@@ -157,7 +148,7 @@ async function addLocalSource(
       ...(persistedEntry.wikiName ? { wiki: persistedEntry.wikiName } : {}),
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -179,7 +170,7 @@ async function addWebsiteSource(
 ): Promise<AddResponse> {
   const normalizedUrl = validateWebsiteInputUrl(ref);
   const config = loadUserConfig();
-  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const sources = [...getSources(config)];
   let entry = sources.find(
     (stash): stash is SourceConfigEntry => stash.type === "website" && stash.url === normalizedUrl,
   );
@@ -193,7 +184,7 @@ async function addWebsiteSource(
       ...(wikiName ? { wikiName } : {}),
     };
     sources.push(entry);
-    saveConfig({ ...config, sources, stashes: undefined });
+    saveConfig({ ...config, sources });
   } else {
     let changed = false;
     if (options && Object.keys(options).length > 0) {
@@ -204,7 +195,7 @@ async function addWebsiteSource(
       entry.wikiName = wikiName;
       changed = true;
     }
-    if (changed) saveConfig({ ...config, sources, stashes: undefined });
+    if (changed) saveConfig({ ...config, sources });
   }
 
   const cachePaths = await ensureWebsiteMirror(entry, { requireStashDir: true });
@@ -223,7 +214,7 @@ async function addWebsiteSource(
       ...(entry.wikiName ? { wiki: entry.wikiName } : {}),
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -238,13 +229,11 @@ async function addWebsiteSource(
 
 /**
  * Install a stash from a registry (npm, github, git) by dispatching to the
- * matching syncable provider, then running the post-sync install audit and
- * persisting the lock entry.
+ * matching syncable provider and persisting the lock entry.
  */
 async function addRegistryStash(
   ref: string,
   stashDir: string,
-  trustThisInstall?: boolean,
   writable?: boolean,
   wikiName?: string,
 ): Promise<AddResponse> {
@@ -253,31 +242,7 @@ async function addRegistryStash(
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
   }
 
-  // Pre-sync registry-policy enforcement uses just the parsed ref (no fetch needed),
-  // so we keep parity with the historical behavior where `enforceRegistryInstallPolicy`
-  // ran before `extractTarGzSecure` etc.
-  const config = loadConfig();
-  const synced = await syncFromRef(ref, { trustThisInstall, writable });
-  const registryLabels = deriveRegistryLabels({
-    source: synced.source,
-    ref: synced.ref,
-    artifactUrl: synced.artifactUrl,
-  });
-  enforceRegistryInstallPolicy(registryLabels, config, ref);
-
-  // Post-sync hook: install audit. Throws when blocked unless `--trust` is set
-  // (in which case the audit report still surfaces in the response).
-  const audit = auditInstallCandidate({
-    rootDir: synced.extractedDir,
-    source: synced.source,
-    ref: synced.ref,
-    registryLabels,
-    config,
-    trustThisInstall,
-  });
-  if (audit.blocked) {
-    throw new Error(formatInstallAuditFailure(synced.ref, audit));
-  }
+  const synced = await syncFromRef(ref, { writable });
 
   const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === synced.id);
   const updatedConfig = upsertInstalledRegistryEntry({
@@ -329,10 +294,9 @@ async function addRegistryStash(
       cacheDir: synced.cacheDir,
       extractedDir: synced.extractedDir,
       installedAt: synced.syncedAt,
-      audit,
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {

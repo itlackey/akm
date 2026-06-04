@@ -5,64 +5,38 @@ import path from "node:path";
 import { akmListSources, akmRemove, akmUpdate } from "../src/commands/installed-stashes";
 import { loadConfig, saveConfig } from "../src/core/config";
 import { createWiki } from "../src/wiki/wiki";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-const createdTmpDirs: string[] = [];
+// Generic fixture dirs (not AKM env paths) — raw mkdtempSync is fine here.
+const fixtureDirs: string[] = [];
 
 function createTmpDir(prefix = "akm-registry-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
+  fixtureDirs.push(dir);
   return dir;
 }
 
 afterAll(() => {
-  for (const dir of createdTmpDirs) {
+  for (const dir of fixtureDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalStashDir = process.env.AKM_STASH_DIR;
-let testCacheDir = "";
-let testConfigDir = "";
 let stashDir = "";
+let cleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  testCacheDir = createTmpDir("akm-registry-cache-");
-  testConfigDir = createTmpDir("akm-registry-config-");
-  stashDir = createTmpDir("akm-registry-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
-    fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
-  }
-  process.env.XDG_CACHE_HOME = testCacheDir;
-  process.env.XDG_CONFIG_HOME = testConfigDir;
-  process.env.AKM_STASH_DIR = stashDir;
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  cleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME;
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  }
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalStashDir === undefined) {
-    delete process.env.AKM_STASH_DIR;
-  } else {
-    process.env.AKM_STASH_DIR = originalStashDir;
-  }
-  if (testCacheDir) {
-    fs.rmSync(testCacheDir, { recursive: true, force: true });
-    testCacheDir = "";
-  }
-  if (testConfigDir) {
-    fs.rmSync(testConfigDir, { recursive: true, force: true });
-    testConfigDir = "";
-  }
+  cleanup();
+  cleanup = () => {};
+  stashDir = "";
 });
 
 // ── akmListSources ────────────────────────────────────────────────────

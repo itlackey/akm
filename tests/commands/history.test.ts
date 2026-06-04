@@ -1,29 +1,38 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { akmHistory } from "../../src/commands/history";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
+import { setQuiet } from "../../src/core/warn";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage-events";
+import { runCliCapture } from "../_helpers/cli";
+import { type Cleanup, makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts). The pure akmHistory tests use openDatabase(":memory:")
+// and are untouched. The CLI tests seed a stash (memories + akmIndex + feedback
+// events) in-process, then read it back through the in-process CLI — both share
+// the same sandboxed XDG dirs from the preload (tests/_preload.ts). Per-test
+// stash isolation uses the allowlisted sandboxStashDir helper; extra event
+// state.db dirs use makeSandboxDir, so the test-isolation lint stays satisfied.
 
-const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-};
+const disposers: Array<{ cleanup: Cleanup }> = [];
+let stashCleanup: Cleanup = () => {};
 
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
+function makeTempDir(_prefix: string): string {
+  const d: SandboxedDir = makeSandboxDir("akm-history-");
+  disposers.push(d);
+  return d.dir;
+}
+
+function sandboxStash(): string {
+  const stash = sandboxStashDir();
+  stashCleanup = stash.cleanup;
+  return stash.dir;
 }
 
 function writeFile(filePath: string, content: string): void {
@@ -31,17 +40,9 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content);
 }
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env },
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+async function runCli(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const { code, stdout, stderr } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
 }
 
 function parseJsonOutput(result: { stdout: string; stderr: string }): Record<string, unknown> {
@@ -49,21 +50,10 @@ function parseJsonOutput(result: { stdout: string; stderr: string }): Record<str
   return JSON.parse(payload) as Record<string, unknown>;
 }
 
-beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-history-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-history-config-");
-});
-
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  stashCleanup();
+  stashCleanup = () => {};
+  for (const d of disposers.splice(0)) d.cleanup();
 });
 
 describe("akmHistory programmatic API", () => {
@@ -180,19 +170,18 @@ describe("akmHistory programmatic API", () => {
 
 describe("akm history CLI", () => {
   test("emits a JSON envelope matching the existing CLI conventions", async () => {
-    const stashDir = makeTempDir("akm-history-stash-");
-    process.env.AKM_STASH_DIR = stashDir;
+    const stashDir = sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
     await akmIndex({ stashDir, full: true });
 
     // Generate a feedback event so history has something to surface.
-    const feedback = runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     // Per-asset history.
-    const perAsset = runCli(["history", "--ref", "memory:alpha", "--format=json"]);
+    const perAsset = await runCli(["history", "--ref", "memory:alpha", "--format=json"]);
     expect(perAsset.status).toBe(0);
     const perAssetJson = parseJsonOutput(perAsset);
     expect(perAssetJson.ref).toBe("memory:alpha");
@@ -202,7 +191,7 @@ describe("akm history CLI", () => {
     expect(entries.some((entry) => entry.eventType === "feedback" && entry.ref === "memory:alpha")).toBe(true);
 
     // Stash-wide history.
-    const stashWide = runCli(["history", "--format=json"]);
+    const stashWide = await runCli(["history", "--format=json"]);
     expect(stashWide.status).toBe(0);
     const stashWideJson = parseJsonOutput(stashWide);
     expect(stashWideJson.ref).toBeUndefined();
@@ -222,24 +211,23 @@ describe("akm history CLI", () => {
   });
 
   test("renders a human-friendly text report when --format=text", async () => {
-    const stashDir = makeTempDir("akm-history-text-stash-");
-    process.env.AKM_STASH_DIR = stashDir;
+    const stashDir = sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
     await akmIndex({ stashDir, full: true });
-    const feedback = runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
-    const text = runCli(["history", "--ref", "memory:alpha", "--format=text"]);
+    const text = await runCli(["history", "--ref", "memory:alpha", "--format=text"]);
     expect(text.status).toBe(0);
     expect(text.stdout).toContain("memory:alpha");
     expect(text.stdout).toContain("[feedback]");
     expect(text.stdout).toContain("signal: positive");
   });
 
-  test("rejects an invalid ref via the JSON error envelope", () => {
-    const result = runCli(["history", "--ref", "not-a-valid-ref", "--format=json"]);
+  test("rejects an invalid ref via the JSON error envelope", async () => {
+    const result = await runCli(["history", "--ref", "not-a-valid-ref", "--format=json"]);
     expect(result.status).not.toBe(0);
     const parsed = parseJsonOutput(result);
     expect(parsed.ok).toBe(false);
@@ -259,24 +247,24 @@ describe("akmHistory --include-proposals", () => {
     }
   });
 
-  test("sources field includes events.jsonl when includeProposals is true", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-events-"), "events.jsonl");
+  test("sources field includes state.db when includeProposals is true", async () => {
+    const dbFile = path.join(makeTempDir("akm-history-events-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: dbFile },
       });
-      expect(result.sources).toEqual(["usage_events", "events.jsonl"]);
+      expect(result.sources).toEqual(["usage_events", "state.db"]);
     } finally {
       closeDatabase(db);
     }
   });
 
   test("proposal accept event (promoted) appears in history with --include-proposals", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-proposal-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-proposal-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
@@ -287,13 +275,13 @@ describe("akmHistory --include-proposals", () => {
           ref: "skill:deploy",
           metadata: { proposalId: "prop-001", source: "reflect", assetPath: "/stash/skills/deploy.md" },
         },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.totalCount).toBe(1);
@@ -309,7 +297,7 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("proposal reject event (rejected) appears in history with --include-proposals", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-reject-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-reject-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
@@ -319,13 +307,13 @@ describe("akmHistory --include-proposals", () => {
           ref: "memory:old-draft",
           metadata: { proposalId: "prop-002", source: "reflect", reason: "outdated" },
         },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.totalCount).toBe(1);
@@ -338,24 +326,24 @@ describe("akmHistory --include-proposals", () => {
     }
   });
 
-  test("non-proposal events in events.jsonl are excluded even with --include-proposals", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-filter-"), "events.jsonl");
+  test("non-proposal events in state.db are excluded even with --include-proposals", async () => {
+    const stateDbPath = path.join(makeTempDir("akm-history-filter-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // These event types should NOT appear in history even with --include-proposals.
-      appendEvent({ eventType: "add", ref: "skill:deploy" }, { filePath: eventsFile });
-      appendEvent({ eventType: "reflect_invoked", ref: "memory:alpha" }, { filePath: eventsFile });
+      appendEvent({ eventType: "add", ref: "skill:deploy" }, { dbPath: stateDbPath });
+      appendEvent({ eventType: "reflect_invoked", ref: "memory:alpha" }, { dbPath: stateDbPath });
       // Only this one should appear.
       appendEvent(
         { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p1", source: "reflect" } },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.entries.every((e) => e.eventType === "promoted" || e.eventType === "rejected")).toBe(true);
@@ -367,7 +355,7 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("usage events and proposal events are merged chronologically", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-merge-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-merge-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
@@ -388,7 +376,7 @@ describe("akmHistory --include-proposals", () => {
       appendEvent(
         { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p3", source: "reflect" } },
         {
-          filePath: eventsFile,
+          dbPath: stateDbPath,
           now: () => new Date("2026-01-02T09:00:00Z").getTime(),
         },
       );
@@ -396,7 +384,7 @@ describe("akmHistory --include-proposals", () => {
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.totalCount).toBe(3);
@@ -409,25 +397,25 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("--include-proposals ref filter shows only matching ref events", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-ref-filter-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-ref-filter-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // Two proposal events for different refs.
       appendEvent(
         { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p1", source: "reflect" } },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
       appendEvent(
         { eventType: "rejected", ref: "memory:draft", metadata: { proposalId: "p2", source: "reflect" } },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         ref: "skill:deploy",
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       // Only the promoted event for skill:deploy should appear.
@@ -441,29 +429,20 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("akm history --include-proposals CLI flag surfaces proposal lifecycle events", async () => {
-    const stashDir = makeTempDir("akm-history-cli-proposals-");
-    process.env.AKM_STASH_DIR = stashDir;
-    const cacheDir = makeTempDir("akm-history-cli-cache-");
-    process.env.XDG_CACHE_HOME = cacheDir;
+    const stashDir = sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
     await akmIndex({ stashDir, full: true });
 
-    // We can't easily run a full accept without a real proposal, so instead
-    // write a promoted event directly to events.jsonl to verify the CLI flag.
-    const eventsFile = path.join(cacheDir, "akm", "events.jsonl");
-    fs.mkdirSync(path.dirname(eventsFile), { recursive: true });
-    const promoted = {
-      schemaVersion: 1,
-      ts: new Date().toISOString(),
+    // Write a promoted event to state.db (events now live in SQLite, not events.jsonl).
+    appendEvent({
       eventType: "promoted",
       ref: "memory:alpha",
       metadata: { proposalId: "p-cli-test", source: "reflect", assetPath: "memories/alpha.md" },
-    };
-    fs.appendFileSync(eventsFile, `${JSON.stringify(promoted)}\n`);
+    });
 
-    const result = runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=json"]);
+    const result = await runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=json"]);
     expect(result.status).toBe(0);
     const parsed = parseJsonOutput(result);
     const entries = parsed.entries as Array<Record<string, unknown>>;
@@ -472,14 +451,180 @@ describe("akmHistory --include-proposals", () => {
     const promotedEntry = entries.find((e) => e.eventType === "promoted");
     expect(promotedEntry).toBeDefined();
     expect(promotedEntry?.ref).toBe("memory:alpha");
-    // Sources should include events.jsonl.
+    // Sources should include state.db (Phase 3: events moved from events.jsonl to state.db).
     expect(Array.isArray(parsed.sources)).toBe(true);
-    expect((parsed.sources as string[]).includes("events.jsonl")).toBe(true);
+    expect((parsed.sources as string[]).includes("state.db")).toBe(true);
 
     // Verify text output also shows the proposal event.
-    const text = runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=text"]);
+    const text = await runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=text"]);
     expect(text.status).toBe(0);
     expect(text.stdout).toContain("[promoted]");
-    expect(text.stdout).toContain("events.jsonl");
+    expect(text.stdout).toContain("state.db");
+  });
+});
+
+describe("akmHistory --source filter", () => {
+  test("returns all events when source filter is not provided", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "deploy", source: "user" });
+      insertUsageEvent(db, { event_type: "search", query: "deploy", source: "improve" });
+
+      const result = await akmHistory({ db });
+      expect(result.totalCount).toBe(2);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("filters to only user events when source=user", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "user query", source: "user" });
+      insertUsageEvent(db, { event_type: "search", query: "improve query", source: "improve" });
+
+      const result = await akmHistory({ db, source: "user" });
+      expect(result.totalCount).toBe(1);
+      expect(result.entries[0]?.query).toBe("user query");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("filters to only improve events when source=improve", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "user query", source: "user" });
+      insertUsageEvent(db, { event_type: "search", query: "improve query", source: "improve" });
+
+      const result = await akmHistory({ db, source: "improve" });
+      expect(result.totalCount).toBe(1);
+      expect(result.entries[0]?.query).toBe("improve query");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("source field is present in history entries", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1, source: "improve" });
+
+      const result = await akmHistory({ db });
+      expect(result.entries[0]?.source).toBe("improve");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("source defaults to user when not specified in insert", async () => {
+    const db = openDatabase(":memory:");
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1 });
+
+      const result = await akmHistory({ db });
+      expect(result.entries[0]?.source).toBe("user");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+describe("akm history --generator CLI flag", () => {
+  test("filters by generator via CLI", async () => {
+    const stashDir = sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+
+    writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
+    await akmIndex({ stashDir, full: true });
+
+    // Generate a user feedback event.
+    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    expect(feedback.status).toBe(0);
+
+    // Insert an improve event directly.
+    const db = openDatabase(getDbPath());
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });
+    } finally {
+      closeDatabase(db);
+    }
+
+    // Filter to user events only.
+    const userOnly = await runCli(["history", "--generator", "user", "--format=json"]);
+    expect(userOnly.status).toBe(0);
+    const userJson = parseJsonOutput(userOnly);
+    const userEntries = userJson.entries as Array<Record<string, unknown>>;
+    expect(userEntries.every((e) => e.source === "user")).toBe(true);
+
+    // Filter to improve events only.
+    const improveOnly = await runCli(["history", "--generator", "improve", "--format=json"]);
+    expect(improveOnly.status).toBe(0);
+    const improveJson = parseJsonOutput(improveOnly);
+    const improveEntries = improveJson.entries as Array<Record<string, unknown>>;
+    expect(improveEntries.every((e) => e.source === "improve")).toBe(true);
+  });
+
+  test("rejects invalid generator value", async () => {
+    const result = await runCli(["history", "--generator", "invalid", "--format=json"]);
+    expect(result.status).not.toBe(0);
+    const parsed = parseJsonOutput(result);
+    expect(parsed.ok).toBe(false);
+    expect(typeof parsed.error).toBe("string");
+    expect(parsed.error).toContain("--generator");
+  });
+
+  test("invalid value via deprecated --source names --source in the error, not --generator", async () => {
+    const result = await runCli(["history", "--source", "bogus", "--format=json"]);
+    expect(result.status).not.toBe(0);
+    const parsed = parseJsonOutput(result);
+    expect(parsed.ok).toBe(false);
+    // The diagnostic must point at the flag the user actually typed.
+    expect(parsed.error).toContain('Invalid --source value: "bogus"');
+    expect(parsed.error).not.toContain("--generator");
+  });
+
+  test("--source still works as a deprecated alias and warns on stderr", async () => {
+    // The harness defaults to quiet=true (tests/_preload.ts); opt into noisy mode
+    // so the deprecation warning surfaces, as in a normal (non-`--quiet`) run.
+    setQuiet(false);
+    const stashDir = sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+
+    writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
+    await akmIndex({ stashDir, full: true });
+
+    const db = openDatabase(getDbPath());
+    try {
+      ensureUsageEventsSchema(db);
+      insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });
+    } finally {
+      closeDatabase(db);
+    }
+
+    const improveOnly = await runCli(["history", "--source", "improve", "--format=json"]);
+    expect(improveOnly.status).toBe(0);
+    expect(improveOnly.stderr).toContain("'--source' is deprecated");
+    expect(improveOnly.stderr).toContain("--generator");
+    const improveJson = parseJsonOutput(improveOnly);
+    const improveEntries = improveJson.entries as Array<Record<string, unknown>>;
+    expect(improveEntries.every((e) => e.source === "improve")).toBe(true);
+  });
+
+  test("deprecation warning is suppressed under --quiet", async () => {
+    // quiet defaults to true under the harness (mirrors `--quiet` in prod, which
+    // sets the same global via applyEarlyStderrFlags).
+    setQuiet(true);
+    sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+    const result = await runCli(["history", "--source", "user", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("deprecated");
   });
 });

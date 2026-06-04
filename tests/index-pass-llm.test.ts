@@ -1,37 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config";
-import { getConfigPath, loadUserConfig, resetConfigCache } from "../src/core/config";
+import { loadUserConfig, resetConfigCache } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
+import { getConfigPath } from "../src/core/paths";
 import { resolveIndexPassLLM } from "../src/llm/index-passes";
+import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // Tests for #208 — unified `akm.llm` config across all index-time passes.
 
-function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-index-pass-llm-"));
-}
-
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-let tmpHome = "";
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  tmpHome = makeTmpDir();
-  process.env.XDG_CONFIG_HOME = tmpHome;
+  const cfgResult = sandboxXdgConfigHome();
+  envCleanup = cfgResult.cleanup;
   resetConfigCache();
 });
 
 afterEach(() => {
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (tmpHome) {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
-    tmpHome = "";
-  }
+  envCleanup();
+  envCleanup = () => {};
   resetConfigCache();
 });
 
@@ -53,21 +42,100 @@ describe("resolveIndexPassLLM", () => {
     expect(resolveIndexPassLLM("graph", config)).toBeUndefined();
   });
 
-  test("returns the shared akm.llm by default for any pass", () => {
+  test("returns the default profile by default for any pass", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
     };
     expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
-    // A future pass plugs in for free — same default, no per-pass wiring.
     expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
     expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
+  });
+
+  // Regression guard: 2026-05-25 incident — graph and memory passes
+  // silently ignored profiles.improve.default.processes.<key>.profile
+  // and used the default LLM for everything. resolveIndexPassLLM now
+  // honors the per-process profile.
+  describe("honors profiles.improve.default.processes.<key>.profile", () => {
+    const PRIMARY = { endpoint: "http://localhost:11434/v1/chat/completions", model: "primary" };
+    const MINISTRAL = { endpoint: "http://localhost:11434/v1/chat/completions", model: "ministral-3b" };
+
+    test("memory pass uses processes.memoryInference.profile when set", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY }, ministral: { ...MINISTRAL } },
+          improve: {
+            default: {
+              processes: { memoryInference: { mode: "llm", profile: "ministral" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      expect(resolveIndexPassLLM("memory", config)).toEqual(MINISTRAL);
+      // Default LLM still wins for passes WITHOUT a per-process override.
+      expect(resolveIndexPassLLM("enrichment", config)).toEqual(PRIMARY);
+    });
+
+    test("graph pass uses processes.graphExtraction.profile when set", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY }, ministral: { ...MINISTRAL } },
+          improve: {
+            default: {
+              processes: { graphExtraction: { mode: "llm", profile: "ministral" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      expect(resolveIndexPassLLM("graph", config)).toEqual(MINISTRAL);
+      // Memory pass still falls through to default — no override for memory.
+      expect(resolveIndexPassLLM("memory", config)).toEqual(PRIMARY);
+    });
+
+    test("falls back to default LLM when the named profile does not exist", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY } },
+          improve: {
+            default: {
+              processes: { graphExtraction: { mode: "llm", profile: "no-such-profile" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      // Better to soft-fail to default than throw — saves the run on a typo.
+      expect(resolveIndexPassLLM("graph", config)).toEqual(PRIMARY);
+    });
+
+    test("processes.<key>.enabled === false opts the pass out", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        profiles: {
+          llm: { default: { ...PRIMARY } },
+          improve: {
+            default: {
+              processes: { memoryInference: { enabled: false, profile: "default" } },
+            },
+          },
+        },
+        defaults: { llm: "default" },
+      };
+      expect(resolveIndexPassLLM("memory", config)).toBeUndefined();
+    });
   });
 
   test("per-pass `llm: false` opts that pass out, leaving siblings intact", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
       index: {
         enrichment: { llm: false },
         graph: { llm: true },
@@ -75,14 +143,14 @@ describe("resolveIndexPassLLM", () => {
     };
     expect(resolveIndexPassLLM("enrichment", config)).toBeUndefined();
     expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
-    // Pass not mentioned at all still defaults to akm.llm.
     expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
   });
 
   test("per-pass `llm: true` is equivalent to default", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      llm: { ...SAMPLE_LLM },
+      profiles: { llm: { default: { ...SAMPLE_LLM } } },
+      defaults: { llm: "default" },
       index: { enrichment: { llm: true } },
     };
     expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
@@ -103,6 +171,18 @@ describe("config loader: `index` block parsing", () => {
       enrichment: { llm: false },
       graph: { llm: true },
     });
+  });
+
+  test("loads graphExtractionIncludeTypes for graph pass", async () => {
+    writeUserConfig({
+      llm: SAMPLE_LLM,
+      index: {
+        graph: { llm: true, graphExtractionIncludeTypes: ["memory", "command"] },
+      },
+    });
+    const config = loadUserConfig();
+    const { getIndexPassConfig } = await import("../src/core/config");
+    expect(getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes).toEqual(["memory", "command"]);
   });
 
   test("rejects per-pass provider configuration (duplicate provider path)", () => {
@@ -151,6 +231,14 @@ describe("config loader: `index` block parsing", () => {
       index: { enrichment: { foo: true } },
     });
     expect(() => loadUserConfig()).toThrow(/Unknown key `index\.enrichment\.foo`/);
+  });
+
+  test("rejects invalid graphExtractionIncludeTypes values", () => {
+    writeUserConfig({
+      llm: SAMPLE_LLM,
+      index: { graph: { graphExtractionIncludeTypes: ["memory", "bogus-type"] } },
+    });
+    expect(() => loadUserConfig()).toThrow(/unsupported type/);
   });
 
   test("rejects array-shaped `index` block", () => {

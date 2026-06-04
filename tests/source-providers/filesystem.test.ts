@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
+import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 
 // Trigger self-registration
 import "../../src/sources/providers/filesystem";
@@ -15,15 +16,16 @@ function createTmpDir(prefix = "akm-fs-"): string {
   return dir;
 }
 
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
+let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.AKM_STASH_DIR = createTmpDir("akm-fs-stash-");
+  const stashResult = sandboxStashDir();
+  envCleanup = stashResult.cleanup;
 });
 
 afterEach(() => {
-  if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = originalAkmStashDir;
+  envCleanup();
+  envCleanup = () => {};
 });
 
 afterAll(() => {

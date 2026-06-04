@@ -26,6 +26,7 @@ import {
   validateWikiName,
   WIKIS_SUBDIR,
 } from "../src/wiki/wiki";
+import { sandboxStashDir, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -53,21 +54,12 @@ afterEach(() => {
  * Returns the stash dir and a cleanup function.
  */
 function withIsolatedStash(): { stash: string; cleanup: () => void } {
-  const stash = makeStash();
-  const origStash = process.env.AKM_STASH_DIR;
-  const origHome = process.env.XDG_CONFIG_HOME;
-  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-qa-home-"));
-  tempDirs.push(tmpHome);
-  process.env.AKM_STASH_DIR = stash;
-  process.env.XDG_CONFIG_HOME = tmpHome;
+  const cfgResult = sandboxXdgConfigHome();
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  const stash = stashResult.dir;
   return {
     stash,
-    cleanup() {
-      if (origStash === undefined) delete process.env.AKM_STASH_DIR;
-      else process.env.AKM_STASH_DIR = origStash;
-      if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = origHome;
-    },
+    cleanup: stashResult.cleanup,
   };
 }
 

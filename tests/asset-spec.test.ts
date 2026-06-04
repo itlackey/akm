@@ -39,10 +39,13 @@ describe("getAssetTypes", () => {
     expect(types).toContain("workflow");
     expect(types).toContain("script");
     expect(types).toContain("memory");
+    expect(types).toContain("env");
     expect(types).toContain("vault");
+    expect(types).toContain("secret");
     expect(types).toContain("wiki");
     expect(types).toContain("lesson");
-    expect(types).toHaveLength(10);
+    expect(types).toContain("task");
+    expect(types).toHaveLength(13);
   });
 });
 

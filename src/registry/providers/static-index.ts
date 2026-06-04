@@ -1,8 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
-import { getRegistryIndexCacheDir } from "../../core/paths";
+import { rethrowIfTestIsolationError } from "../../core/errors";
+import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { asString } from "../../integrations/github";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
@@ -169,15 +172,30 @@ registerProvider("static-index", (config) => new StaticIndexProvider(config));
 // ── Index loading with cache ────────────────────────────────────────────────
 
 async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | null> {
-  const cachePath = indexCachePath(entry.url);
-  const cached = readCachedIndex(cachePath);
-
-  // Fresh cache: return immediately
-  if (cached && !isCacheExpired(cached.mtime)) {
-    return cached.index;
+  // ── Step 1: Try DB cache (index.db) ─────────────────────────────────────
+  let db: ReturnType<typeof openDatabase> | undefined;
+  let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
+  try {
+    db = openDatabase();
+    dbCacheResult = getRegistryIndexCache(db, entry.url, CACHE_TTL_MS);
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "DB unavailable" — see
+    // rethrowIfTestIsolationError in src/core/errors.ts. Without this, a
+    // leaky test silently gets a cold cache instead of the loud
+    // TEST_ISOLATION_MISSING failure the guard intends.
+    rethrowIfTestIsolationError(err);
+    // index.db not available yet (pre-migration install or test env) — fall through
   }
 
-  // Try to fetch fresh index
+  if (dbCacheResult) {
+    const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
+    if (index) {
+      if (db) closeDatabase(db);
+      return index;
+    }
+  }
+
+  // ── Step 2: Fetch fresh index from remote ────────────────────────────────
   try {
     const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000 });
     if (!response.ok) {
@@ -188,52 +206,34 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
     const data = await jsonWithByteCap<unknown>(response, 50 * 1024 * 1024);
     const index = parseRegistryIndex(data);
     if (index) {
-      writeCachedIndex(cachePath, index);
+      // Write to DB cache (primary)
+      if (db) {
+        try {
+          const etag = response.headers.get("etag") ?? undefined;
+          const lastModified = response.headers.get("last-modified") ?? undefined;
+          upsertRegistryIndexCache(db, entry.url, JSON.stringify(index), { etag, lastModified });
+        } catch {
+          /* best-effort */
+        }
+        closeDatabase(db);
+      }
       return index;
     }
     throw new Error("Invalid registry index format");
   } catch (err) {
-    // Fetch failed — use stale cache if available
-    if (cached && !isCacheStale(cached.mtime)) {
-      return cached.index;
+    if (db) {
+      try {
+        closeDatabase(db);
+      } catch {
+        /* ignore */
+      }
+    }
+    // Fetch failed — use stale DB cache if available
+    if (dbCacheResult) {
+      const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
+      if (index) return index;
     }
     throw err;
-  }
-}
-
-// ── Cache helpers (exported for reuse by other providers) ───────────────────
-
-export function indexCachePath(url: string): string {
-  const indexDir = getRegistryIndexCacheDir();
-  // Deterministic filename from URL
-  const slug = url
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
-  return path.join(indexDir, `${slug}.json`);
-}
-
-export function readCachedIndex(cachePath: string): { index: RegistryIndex; mtime: number } | null {
-  try {
-    const stat = fs.statSync(cachePath);
-    const raw = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-    const index = parseRegistryIndex(raw);
-    if (!index) return null;
-    return { index, mtime: stat.mtimeMs };
-  } catch {
-    return null;
-  }
-}
-
-export function writeCachedIndex(cachePath: string, index: RegistryIndex): void {
-  try {
-    const dir = path.dirname(cachePath);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${cachePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-    fs.writeFileSync(tmpPath, JSON.stringify(index), "utf8");
-    fs.renameSync(tmpPath, cachePath);
-  } catch {
-    // Best-effort caching — don't fail the search if we can't write
   }
 }
 

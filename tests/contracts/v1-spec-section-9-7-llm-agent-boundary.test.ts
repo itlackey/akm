@@ -23,12 +23,16 @@ describe("v1 spec §9.7 — LLM/agent boundary", () => {
     expect(section).toMatch(/stateless/i);
   });
 
-  test("§9.7 declares external agents are CLI shell-out only", () => {
+  test("§9.7 declares external agents are invoked via CLI shell-out", () => {
     // Tolerate markdown line-wrapping by collapsing whitespace + emphasis
     // markers when matching.
     const flat = section.replace(/[*\s]+/g, " ");
-    expect(flat).toMatch(/CLI shell-out only/i);
-    expect(flat).toMatch(/never imports vendor SDKs/i);
+    expect(flat).toMatch(/cli shell-out/i);
+    // The spec now allows embedded SDK as an alternative invocation path;
+    // the "never imports vendor SDKs" invariant is expressed as the SDK
+    // runner delegating to OpenCode's HTTP layer rather than importing
+    // Anthropic/OpenAI directly.  Check for contract violation language instead.
+    expect(flat).toMatch(/contract violation/i);
   });
 
   test("§9.7 names a `llm.features.*` per-call-site gate", () => {

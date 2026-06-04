@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { makeAssetRef, parseAssetRef } from "../src/core/asset-ref";
+import { type AssetRef, makeAssetRef, parseAssetRef } from "../src/core/asset-ref";
+import { type AkmAssetType, ASSET_TYPES } from "../src/core/common";
 
 // ── makeAssetRef ────────────────────────────────────────────────────────────
 
@@ -138,7 +139,7 @@ describe("parseAssetRef", () => {
   });
 
   test("all asset types parse", () => {
-    for (const type of ["skill", "command", "agent", "knowledge", "script"]) {
+    for (const type of ["skill", "command", "agent", "knowledge", "script"] as const) {
       const ref = parseAssetRef(`${type}:test`);
       expect(ref.type).toBe(type);
     }
@@ -191,6 +192,36 @@ describe("parseAssetRef", () => {
 
   test("throws for whitespace-only string", () => {
     expect(() => parseAssetRef("   ")).toThrow("Empty ref");
+  });
+});
+
+// ── AkmAssetType literal union (#492) ───────────────────────────────────────
+
+describe("AkmAssetType literal union", () => {
+  test("parseAssetRef returns a typed AssetRef for skill:foo", () => {
+    const ref: AssetRef = parseAssetRef("skill:foo");
+    // ref.type must be a narrowed AkmAssetType literal
+    const t: AkmAssetType = ref.type;
+    expect(t).toBe("skill");
+    expect(ref.name).toBe("foo");
+    expect(ref.origin).toBeUndefined();
+  });
+
+  test("parseAssetRef returns typed refs for every canonical asset type", () => {
+    for (const type of ASSET_TYPES) {
+      const ref: AssetRef = parseAssetRef(`${type}:sample`);
+      expect(ref.type).toBe(type);
+      expect(ref.name).toBe("sample");
+    }
+  });
+
+  test("parseAssetRef throws for an unknown asset type", () => {
+    expect(() => parseAssetRef("nonexistent:foo")).toThrow("Invalid asset type");
+  });
+
+  test("parseAssetRef throws for dynamic unknown type (not in ASSET_TYPES)", () => {
+    const unknown = "bogus-type";
+    expect(() => parseAssetRef(`${unknown}:bar`)).toThrow("Invalid asset type");
   });
 });
 

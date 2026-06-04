@@ -1,11 +1,6 @@
 /**
- * Tests for the `akm distill --exclude-feedback-from` CLI flag (#267).
- *
- * The flag and the `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM` env var both feed
- * the same `excludeFeedbackFromRefs` option on `akmDistill`. We exercise
- * the CLI dispatcher as a real subprocess so flag parsing + validation
- * runs end-to-end, including the UsageError → exit 2 contract for invalid
- * refs.
+ * `distill` remains an internal/programmatic primitive, but the public CLI
+ * command was removed in the 0.8.0 hard-break redesign.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -37,6 +32,8 @@ function runCli(
 ): { stdout: string; stderr: string; status: number } {
   const xdgCache = makeTempDir("akm-distill-cli-cache-");
   const xdgConfig = makeTempDir("akm-distill-cli-config-");
+  const xdgData = makeTempDir("akm-distill-cli-data-");
+  const xdgState = makeTempDir("akm-distill-cli-state-");
   const home = makeTempDir("akm-distill-cli-home-");
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
@@ -48,6 +45,8 @@ function runCli(
       HOME: home,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       ...options?.env,
     },
   });
@@ -58,83 +57,24 @@ function runCli(
   };
 }
 
-describe("akm distill --exclude-feedback-from flag (#267)", () => {
-  test("invalid ref in --exclude-feedback-from → exits 2 (USAGE)", () => {
-    const result = runCli(["distill", "skill:foo", "--exclude-feedback-from", "not-a-ref"]);
-    expect(result.status).toBe(2);
-    // Error envelope is JSON on stderr.
-    expect(result.stderr).toContain("Invalid --exclude-feedback-from ref");
-    expect(result.stderr).toContain("not-a-ref");
+describe("akm distill CLI removal (0.8.0 hard break)", () => {
+  test("legacy distill command is rejected as unknown", () => {
+    const result = runCli(["distill", "skill:foo"]);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("Unknown command");
+    expect(`${result.stdout}\n${result.stderr}`).toContain("distill");
   });
 
-  test("invalid ref in env var fallback → also exits 2", () => {
-    const result = runCli(["distill", "skill:foo"], {
-      env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "this-is-not-a-ref" },
-    });
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Invalid --exclude-feedback-from ref");
-  });
-
-  test("multiple invalid refs surface the first failure", () => {
-    const result = runCli(["distill", "skill:foo", "--exclude-feedback-from", "skill:ok,bad-ref,memory:also-ok"]);
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("bad-ref");
-  });
-
-  test("valid CSV refs parse without flag-parse panic (smoke)", () => {
-    // The command will likely fail downstream because no llm config exists
-    // and no asset is indexed, but flag parsing must not be the failure
-    // mode — assert exit != 2 (anything but USAGE), or accept 0/1.
-    const result = runCli(["distill", "skill:foo", "--exclude-feedback-from", "skill:bar,memory:baz"]);
-    expect(result.status).not.toBe(2);
-  });
-
-  test("env var with valid CSV parses without crash", () => {
-    const result = runCli(["distill", "skill:foo"], {
-      env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "skill:a,memory:b" },
-    });
-    expect(result.status).not.toBe(2);
-  });
-
-  test("origin-prefixed refs are accepted", () => {
-    const result = runCli(["distill", "skill:foo", "--exclude-feedback-from", "team//skill:bar,npm:pkg//memory:baz"]);
-    expect(result.status).not.toBe(2);
-  });
-
-  test("empty --exclude-feedback-from value is treated as no exclusion (no parse error)", () => {
-    const result = runCli(["distill", "skill:foo", "--exclude-feedback-from", ""]);
-    expect(result.status).not.toBe(2);
-  });
-
-  test("CLI flag takes precedence over env var (the flag is parsed regardless of env value)", () => {
-    // If precedence were wrong, the invalid env var would surface first.
-    // With correct precedence, the valid flag wins and no UsageError fires.
-    const result = runCli(["distill", "skill:foo", "--exclude-feedback-from", "skill:valid"], {
-      env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "this-would-be-invalid" },
-    });
-    expect(result.status).not.toBe(2);
-  });
-
-  // ── #284 GAP-CRIT 3 backfill ──────────────────────────────────────────────
-
-  test("--source-run flag is accepted by the CLI parser (flag wiring smoke)", () => {
-    // No llm config → command exits non-zero (0/1) but must not be a USAGE
-    // error — flag parsing for `--source-run` is the only thing under test.
-    const result = runCli(["distill", "skill:foo", "--source-run", "run-abc-123"]);
-    expect(result.status).not.toBe(2);
-    // stderr (if present) should NOT mention --source-run as an unknown flag.
-    expect(result.stderr).not.toMatch(/unknown.*--source-run|invalid.*--source-run/i);
-  });
-
-  test("AKM_DISTILL_EXCLUDE_FEEDBACK_FROM env-fallback is read when --exclude-feedback-from is omitted", () => {
-    // Drives the env-fallback branch in src/cli.ts:
-    //   const excludeRaw = excludeFlag ?? excludeEnv;
-    // An invalid env value must surface as USAGE (exit 2) → proves the fallback ran.
-    const result = runCli(["distill", "skill:foo"], {
-      env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "this-is-not-a-ref" },
-    });
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Invalid --exclude-feedback-from ref");
+  test("legacy distill flags do not restore the removed command", () => {
+    const result = runCli(
+      ["distill", "skill:foo", "--exclude-feedback-from", "skill:bar", "--source-run", "run-abc-123"],
+      {
+        env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "memory:baz" },
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("Unknown command");
+    expect(`${result.stdout}\n${result.stderr}`).toContain("distill");
   });
 });
 
@@ -183,6 +123,8 @@ Use rg.
 beforeEachHappy(() => {
   process.env.XDG_CACHE_HOME = happyTempDir("akm-distill-happy-cache-");
   process.env.XDG_CONFIG_HOME = happyTempDir("akm-distill-happy-config-");
+  process.env.XDG_DATA_HOME = happyTempDir("akm-distill-happy-data-");
+  process.env.XDG_STATE_HOME = happyTempDir("akm-distill-happy-state-");
 });
 
 afterEachHappy(() => {
@@ -198,12 +140,12 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        features: { feedback_distillation: true },
+      profiles: {
+        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+        improve: { default: { processes: { distill: { enabled: true } } } },
       },
-    } as AkmConfig;
+      defaults: { llm: "default" },
+    } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
       config,
@@ -223,12 +165,12 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      llm: {
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        features: { feedback_distillation: true },
+      profiles: {
+        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+        improve: { default: { processes: { distill: { enabled: true } } } },
       },
-    } as AkmConfig;
+      defaults: { llm: "default" },
+    } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
       config,

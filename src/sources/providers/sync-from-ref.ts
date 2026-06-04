@@ -1,13 +1,13 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * Unified install-ref dispatcher.
  *
  * Replaces the historical `installRegistryRef()` entry point. Given an
  * unparsed install ref, this resolves the right syncable provider and
  * invokes its `sync()` method.
- *
- * Audit is intentionally NOT performed here; callers (`akmAdd`,
- * `akmUpdate`) decide whether to run `auditInstallCandidate` on the
- * synced `contentDir` because they own the `--trust` flag.
  */
 
 import type { SourceSpec } from "../../core/config";

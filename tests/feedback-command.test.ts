@@ -1,45 +1,31 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
+import { setQuiet } from "../src/core/warn";
 import { closeDatabase, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
+import { runCliCapture } from "./_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
-const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-};
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+// Migrated from spawnSync("bun", [CLI, ...]) to the shared in-process harness
+// (tests/_helpers/cli.ts). beforeEach already sandboxes AKM_STASH_DIR and the
+// XDG dirs on process.env via the allowlisted sandbox helpers; the harness
+// re-reads config from that env per call, so feedback events land in the same
+// sandboxed stash/DB the test then asserts on. `feedback` is not
+// process.cwd()-dependent.
 
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
 }
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env },
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+async function runCli(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const { stdout, stderr, code } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
 }
 
 function parseJsonOutput(result: { stdout: string; stderr: string }): Record<string, unknown> {
@@ -51,40 +37,39 @@ function isLocalHit(hit: { type: string }): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 
-async function buildIndex(stashDir: string): Promise<void> {
-  process.env.AKM_STASH_DIR = stashDir;
+let stashDir = "";
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
+});
+
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
+  stashDir = "";
+});
+
+async function buildIndex(): Promise<void> {
   saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 
-afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 describe("akm feedback", () => {
   test("accepts indexed memory and vault refs without surfacing vault values", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
     );
     writeFile(path.join(stashDir, "vaults", "prod.env"), "API_KEY=super-secret-value\nREGION=us-east-1\n");
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
-    const memoryResult = runCli(["feedback", "memory:deployment-notes", "--positive", "--format=json"]);
+    const memoryResult = await runCli(["feedback", "memory:deployment-notes", "--positive", "--format=json"]);
     expect(memoryResult.status).toBe(0);
     expect(parseJsonOutput(memoryResult)).toMatchObject({
       ok: true,
@@ -92,7 +77,7 @@ describe("akm feedback", () => {
       signal: "positive",
     });
 
-    const vaultResult = runCli(["feedback", "vault:prod", "--positive", "--format=json"]);
+    const vaultResult = await runCli(["feedback", "vault:prod", "--positive", "--format=json"]);
     expect(vaultResult.status).toBe(0);
     expect(parseJsonOutput(vaultResult)).toMatchObject({
       ok: true,
@@ -122,18 +107,14 @@ describe("akm feedback", () => {
   });
 
   test("accepts markdown command refs without requiring the .md suffix", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-
     writeFile(
       path.join(stashDir, "commands", "complete-github-issue.md"),
       "---\ndescription: command asset\n---\nDispatch the workflow.\n",
     );
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
-    const result = runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
     expect(result.status).toBe(0);
     expect(parseJsonOutput(result)).toMatchObject({
       ok: true,
@@ -143,14 +124,10 @@ describe("akm feedback", () => {
   });
 
   test("rejects refs that are validly formatted but not in the current index", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-
     writeFile(path.join(stashDir, "memories", "known.md"), "---\ndescription: known memory\n---\nKnown.\n");
-    await buildIndex(stashDir);
+    await buildIndex();
 
-    const result = runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
     expect(result.status).not.toBe(0);
     const output = parseJsonOutput(result);
     expect(output.ok).toBe(false);
@@ -160,17 +137,13 @@ describe("akm feedback", () => {
 
   // ── #284 GAP-HIGH 8: feedback --note metadata round-trip ────────────────
   test("feedback --note threads metadata into events.jsonl", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
-
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
     );
-    await buildIndex(stashDir);
+    await buildIndex();
 
-    const result = runCli([
+    const result = await runCli([
       "feedback",
       "memory:deployment-notes",
       "--positive",
@@ -184,7 +157,7 @@ describe("akm feedback", () => {
       ok: true,
       ref: "memory:deployment-notes",
       signal: "positive",
-      note: "saved me 30 minutes",
+      reason: "saved me 30 minutes",
     });
 
     // Read events.jsonl directly and verify the note was persisted in metadata.
@@ -192,15 +165,89 @@ describe("akm feedback", () => {
     const { events } = readEvents({ type: "feedback", ref: "memory:deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
-    expect(md.note).toBe("saved me 30 minutes");
+    expect(md.reason).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
   });
 
-  test("positive feedback affects subsequent ranking after re-indexing", async () => {
-    const stashDir = makeTempDir("akm-feedback-stash-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+  // ── WS5.2: --note deprecation warning (removed 0.9.0) ───────────────────
+  test("feedback --note still works but emits a stderr deprecation warning", async () => {
+    // The harness defaults to quiet=true (tests/_preload.ts); opt into noisy
+    // mode so the stderr deprecation warning is observable.
+    setQuiet(false);
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
 
+    const result = await runCli([
+      "feedback",
+      "memory:deployment-notes",
+      "--positive",
+      "--note",
+      "saved me 30 minutes",
+      "--format=json",
+    ]);
+    // Old spelling still works.
+    expect(result.status).toBe(0);
+    expect(parseJsonOutput(result)).toMatchObject({
+      ok: true,
+      ref: "memory:deployment-notes",
+      signal: "positive",
+      reason: "saved me 30 minutes",
+    });
+    // And warns on stderr (never stdout).
+    expect(result.stderr).toContain("'--note' is deprecated");
+    expect(result.stderr).toContain("use '--reason'");
+    expect(result.stderr).toContain("0.9.0");
+    expect(result.stdout).not.toContain("deprecated");
+    setQuiet(true);
+  });
+
+  test("feedback --reason does not emit the --note deprecation warning", async () => {
+    setQuiet(false);
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+
+    const result = await runCli([
+      "feedback",
+      "memory:deployment-notes",
+      "--positive",
+      "--reason",
+      "saved me 30 minutes",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("'--note' is deprecated");
+    setQuiet(true);
+  });
+
+  test("feedback --note deprecation warning is suppressed under --quiet", async () => {
+    // The in-process harness does not wire the `--quiet` flag into the warn
+    // singleton, so drive quiet directly (matches save-command.test.ts).
+    setQuiet(true);
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+
+    const result = await runCli([
+      "feedback",
+      "memory:deployment-notes",
+      "--positive",
+      "--note",
+      "saved me 30 minutes",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("'--note' is deprecated");
+  });
+
+  test("positive feedback affects subsequent ranking after re-indexing", async () => {
     writeFile(
       path.join(stashDir, "memories", "alpha.md"),
       "---\ndescription: shared deployment incident memory\n---\nUse the same deployment incident checklist.\n",
@@ -210,17 +257,17 @@ describe("akm feedback", () => {
       "---\ndescription: shared deployment incident memory\n---\nUse the same deployment incident checklist.\n",
     );
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const before = await akmSearch({ query: "shared deployment incident", source: "local" });
     const beforeMemories = before.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
     expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memory:alpha", "memory:omega"]);
     expect(beforeMemories[0]?.score).toBe(beforeMemories[1]?.score);
 
-    const feedback = runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
-    await buildIndex(stashDir);
+    await buildIndex();
 
     const after = await akmSearch({ query: "shared deployment incident", source: "local" });
     const afterMemories = after.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
