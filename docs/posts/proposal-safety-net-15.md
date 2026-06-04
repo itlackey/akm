@@ -8,8 +8,9 @@ tags:
   - agents
   - memory
   - cli
-published: false
+published: true
 id: 3814548
+date: '2026-06-04T00:32:02Z'
 ---
 
 This is part fifteen in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part ten](https://dev.to/itlackey/the-improvement-loop-how-akm-keeps-your-agent-sharp-2d4d) introduced the improve pipeline and how it generates proposals. [Part twelve](https://dev.to/itlackey/belief-aware-memory-teaching-your-agent-when-not-to-write-4egi) covered belief-aware memory, which feeds directly into the confidence scores covered here.

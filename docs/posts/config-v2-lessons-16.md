@@ -8,8 +8,9 @@ tags:
   - agents
   - cli
   - configuration
-published: false
+published: true
 id: 3814550
+date: '2026-06-04T00:32:02Z'
 ---
 
 This is part sixteen in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. The [0.8.0 release notes](https://dev.to/itlackey/akm-080-cli-redesign-task-assets-and-belief-aware-memory-335a) cover the storage and pipeline changes that shipped alongside this rewrite; [Part thirteen](https://dev.to/itlackey/from-30-minutes-to-8-how-llm-mode-reflect-works-5epl) covers how the new `profiles.improve` config drives the improve pipeline.

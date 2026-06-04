@@ -8,8 +8,9 @@ tags:
   - agents
   - memory
   - cli
-published: false
+published: true
 id: 3814544
+date: '2026-06-04T00:32:02Z'
 ---
 
 A self-improving memory loop sounds like a clear win until you watch it rewrite something correct with something outdated. The agent remembered a fact. You verified it. A later consolidation pass ran against a stale context window, decided the memory was imprecise, and replaced it with a weaker version. The original was better. You lost ground.

@@ -8,8 +8,9 @@ tags:
   - agents
   - cli
   - automation
-published: false
+published: true
 id: 3814541
+date: '2026-06-04T00:32:02Z'
 ---
 
 This is part ten in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part nine](https://dev.to/itlackey/agents-that-remember-where-they-were-1koe) covered workflow assets, vault assets, and the writable git stash. [Part eight](https://dev.to/itlackey/building-agent-knowledge-bases-that-actually-scale-23pb) tackled multi-wiki support for structured research. Earlier parts addressed teams, distributed stashes, feedback scoring, and community knowledge.
