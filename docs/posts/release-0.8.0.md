@@ -20,7 +20,7 @@ If you are on 0.7.x, the v1 migration guide covers the per-surface delta. The up
 - **`akm improve`** — unified command for agent-driven asset refinement and post-loop maintenance.
 - **Improve-owned maintenance** — memory inference and graph extraction now run from `akm improve`, not `akm index`.
 - **End-of-run auto-sync** — `akm improve` now auto-commits git-backed stashes; `--sync`/`--no-sync`/`--push`/`--no-push` flags + token-based commit messages.
-- **Task assets** — first-class asset type for defining persistent agent workflows with scheduling, triggers, and context.
+- **Task assets** — first-class asset type for defining persistent agent workflows with cron scheduling and manual invocation.
 - **Belief-aware memory** — stash updates now incorporate the agent's belief state to prevent overwriting correct information.
 - **Proposal queue commands renamed** — old flat commands (`akm proposals`, `akm show proposal`, `akm diff proposal`, `akm accept`, `akm reject`) are now (`akm proposal list`, `akm proposal show`, `akm proposal diff`, `akm proposal accept`, `akm proposal reject`).
 - **`akm health`** — runtime health report for `state.db`, task execution logs, agent availability, and recent improve telemetry.
@@ -34,7 +34,7 @@ If you are on 0.7.x, the v1 migration guide covers the per-surface delta. The up
 The `akm improve` command consolidates asset refinement workflows. It can operate on a specific asset type (generating a new asset) or an existing asset ref (refining that asset). Under the hood, it uses the same proposal queue as before, ensuring all changes are reviewable before promotion.
 
 ```sh
-akm improve <type> <name>          # generate a new asset of type <type> named <name> as a proposal
+akm improve <type>                 # scope the run to all assets of that type
 akm improve <ref>                  # refine an existing asset and produce a proposal
 ```
 
@@ -84,39 +84,29 @@ The consolidate pass received two reliability fixes:
 - **Pre-flight stale-DB filter**: entries that have gone stale in the DB since
   the run started are filtered out before any LLM calls, eliminating wasted
   tokens on already-processed content.
-- **Defense-in-depth merge guards**: three layers of guards now prevent
+- **Defense-in-depth merge guards**: four layers of guards now prevent
   incorrect merges, improving correctness on edge cases.
 
 ## Task Assets: Persistent Agent Workflows
 
-Task assets (`tasks/<name>.yaml`) allow you to define long-running agent workflows that can be triggered on a schedule, by file changes, or manually. Each task runs in an isolated context and can propose updates to your stash via the improvement system.
+Task assets (`tasks/<name>.yml`) allow you to define persistent agent workflows that can be triggered on a schedule or manually. Each task runs using the configured agent runtime.
 
 Key features:
 - **Cron-based scheduling** (with proper escaping for special characters)
-- **File watch triggers** (react to changes in specific paths)
-- **Manual invocation** via `akm task run <name>`
-- **Isolated execution context** (each task gets its own working directory and environment)
+- **Manual invocation** via `akm tasks run <id>`
 - **Proposal-driven updates** (task agents propose changes via `akm improve`, which go through the proposal queue)
 
 Example task asset:
 ```yaml
 name: daily-code-review
-trigger:
-  cron: '0 9 * * *'  # every day at 9 AM
-context:
-  paths:
-    - src/
-  max_file_size: 65536
-agent:
-  command: opencode
-  args: ["--task", "Review the staged changes and suggest improvements"]
+schedule: '0 9 * * *'  # every day at 9 AM
+command: opencode
+prompt: "Review the staged changes and suggest improvements"
 ```
 
 ## Belief-Aware Memory
 
-Memory updates now consider the agent's belief state about the world. When an agent proposes to remember a fact, the system checks whether the agent currently believes that fact to be true (based on its recent observations and inferences) before allowing the update to proceed. This reduces the chance of overwriting correct stash content with outdated or incorrect beliefs.
-
-This is implemented as a pre-write validation in the memory asset pipeline and can be tuned via the `memory.belief_aware` configuration flag (enabled by default).
+Memory assets now carry a `beliefState` frontmatter field (values: `active`, `asserted`, `deprecated`, `superseded`, `contradicted`, `archived`). The consolidation and improve passes use this field to track and transition belief state — for example, marking a memory `contradicted` when a newer fact conflicts with it. This reduces the chance of outdated or incorrect beliefs persisting in the stash after new information arrives.
 
 ## Proposal Queue: Renamed Commands
 
@@ -193,7 +183,7 @@ visible wins:
 - **New commands.** `akm graph entity <name>` inverts the entities view (every
   asset that mentions a given entity, by confidence). `akm graph orphans`
   surfaces assets that produced zero entities — quality-triage candidates.
-  Both are documented in [docs/cli.md](../cli.md#graph).
+  Both are documented in [docs/cli.md](https://github.com/itlackey/akm/blob/main/docs/cli.md#graph).
 - **Better output.** `akm graph relations` and `akm graph entities` now show
   per-row confidence. Search hits annotate the graph-boost contribution in
   `whyMatched`. Related results end with a `Next: akm show '<ref>'` hint
@@ -201,14 +191,14 @@ visible wins:
 - **Ref-form output.** Related results now show canonical refs
   (e.g. `memory:incident-2026-05-12`) instead of raw file paths.
 
-**DB_VERSION bumped 12 → 13.** The schema change uses the existing
+**DB_VERSION bumped to 17.** The schema change uses the existing
 DROP+rebuild upgrade path: non-graph tables (`entries`, embeddings, FTS) rebuild
 automatically the first time akm opens `index.db`; graph tables repopulate on
 the next `akm improve` cycle, which makes LLM calls. The first improve cycle
 after upgrade is slower than steady state, but the Phase 1 / Phase 2
 improvements above make it dramatically faster than equivalent re-extraction
 on 0.7.x. See the migration guide section
-[Graph extraction will re-run after upgrade](../migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
+[Graph extraction will re-run after upgrade](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
 
 ## Config v2 and reflect LLM mode
 
@@ -274,13 +264,13 @@ akm config migrate --dry-run
 akm config migrate
 ```
 
-Full reference: [docs/configuration.md](../configuration.md).
-Full key mapping: [docs/migration/v0.7-to-v0.8.md — Config v2 migration](../migration/v0.7-to-v0.8.md#config-v2-migration-reflect-multi-mode).
+Full reference: [docs/configuration.md](https://github.com/itlackey/akm/blob/main/docs/configuration.md).
+Full key mapping: [docs/migration/v0.7-to-v0.8.md — Config v2 migration](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md#config-v2-migration-reflect-multi-mode).
 
 ## Migration Guidance
 
 Breaking changes in 0.8.0:
-- Consolidated around: `akm improve`, `akm propose`, `akm proposal list`, `akm proposal show`, `akm proposal diff`, `akm proposal accept`, `akm proposal reject` (old flat aliases deprecated)
+- Consolidated around: `akm improve`, `akm propose`, `akm proposal list`, `akm proposal show`, `akm proposal diff`, `akm proposal accept`, `akm proposal reject`, `akm proposal revert` (old flat aliases deprecated)
 - Added: task assets, renamed proposal commands
 - Added: `akm health` for runtime and improve telemetry checks
 - Added: end-of-run auto-sync for git-backed stashes (`--no-sync` to opt out)
@@ -303,8 +293,8 @@ No manual data migration is required. The proposal queue and existing stash asse
 ## Try the New Surfaces
 
 ```sh
-# Generate a new memory asset as a proposal
-akm improve memory my-new-notes --task "Summarize today's debugging session"
+# Scope an improve run to all memory assets
+akm improve memory --task "Summarize today's debugging session"
 
 # List improvement proposals
 akm proposal list
@@ -316,7 +306,7 @@ akm proposal show <id>
 akm proposal accept <id>
 
 # Define and run a task
-akm task run daily-code-review
+akm tasks run daily-code-review
 
 # Run improve with a specific profile (reflect mode comes from the profile)
 akm improve memory:my-note --profile fast-llm
@@ -333,6 +323,6 @@ akm task list              # shows your defined tasks
 akm config get configVersion  # "0.8.0" after akm config migrate
 ```
 
-Full details in the [v0.7 to v0.8 migration guide](../migration/v0.7-to-v0.8.md) and the [configuration reference](../configuration.md).
+Full details in the [v0.7 to v0.8 migration guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md) and the [configuration reference](https://github.com/itlackey/akm/blob/main/docs/configuration.md).
 
-Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/.github/CHANGELOG.md).
+Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/CHANGELOG.md).

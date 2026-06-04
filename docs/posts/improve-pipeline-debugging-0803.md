@@ -9,7 +9,10 @@ tags:
   - cli
   - local-ai
 published: false
+id: 3814547
 ---
+
+This post is part of the akm-knowledge series. [Part ten](https://dev.to/itlackey/the-improvement-loop-how-akm-keeps-your-agent-sharp-2d4d) introduced the improve pipeline — what each phase does and how to schedule it. This post goes deeper on what continuous operation looks like in practice: the hardware numbers, the reliability bugs we hit at 48 runs per day, and the observability layer we built to keep watch.
 
 Most people think of AI agent memory as something that happens during a session. You talk to your agent, it learns things, maybe you save a few notes, the session ends. The next session starts cold.
 
@@ -127,8 +130,8 @@ Both fixes eliminate wasted inference. On the 4060 Ti at 22.6s per chunk, a sing
 Running autonomously in the background only helps if you know when something goes wrong. `akm health` provides a structured view of recent improve activity:
 
 ```sh
-akm health --since=4h
-akm health --since=24h --format text
+akm health --since 4h
+akm health --since 24h --format text
 ```
 
 It surfaces run counts, skip reason breakdowns, consolidation outcomes, memory inference yield, and phase latencies in a single command. The same JSON output feeds automation.
@@ -142,7 +145,7 @@ command: akm env run fwdslsh -- bash ~/akm/scripts/akm-health-discord.sh
 enabled: true
 ```
 
-The script calls `akm health --since=4h` and `--since=8h`, computes deltas for trend context, and posts a Discord embed:
+The script calls `akm health --since 4h` and `--since 8h`, computes deltas for trend context, and posts a Discord embed:
 
 ```sh
 akm tasks sync   # register the cron
@@ -169,4 +172,4 @@ The value is in what compounds. Each run makes the stash slightly more accurate,
 
 ---
 
-`akm improve` is part of akm 0.8.x. The full pipeline configuration and local model setup docs are in the [configuration reference](../configuration.md). Hardware requirements and LM Studio setup are covered in the [getting started guide](../getting-started.md).
+`akm improve` is part of akm 0.8.x. The full pipeline configuration and local model setup docs are in the [configuration reference](https://github.com/itlackey/akm/blob/main/docs/configuration.md). Hardware requirements and LM Studio setup are covered in the [getting started guide](https://github.com/itlackey/akm/blob/main/docs/getting-started.md).
