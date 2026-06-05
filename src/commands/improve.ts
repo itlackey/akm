@@ -2807,13 +2807,16 @@ async function runImprovePostLoopStage(args: {
       // Tie consolidate proposals back to this improve invocation so
       // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
       sourceRun: `consolidate-${Date.now()}`,
-      // Incremental consolidation: in steady state (not bootstrap, not volume-
-      // triggered) pass the last-consolidation timestamp so akmConsolidate skips
-      // chunks with no memory changed since then. Converts consolidation cost
-      // from O(pool) to O(changed clusters) — the fix for the rising p95 tail
-      // where full-pool re-judging produced 5–10 min runs that promoted ~0.
-      // undefined → full pass (bootstrap, or volume-triggered large-pool sweep).
-      incrementalSince: volumeTriggered ? undefined : lastConsolidateTs,
+      // Incremental consolidation: pass the last-consolidation timestamp so
+      // akmConsolidate skips chunks with no memory changed since then. Converts
+      // consolidation cost from O(pool) to O(changed clusters) — the fix for
+      // the rising p95 tail where full-pool re-judging produced 5–10 min runs
+      // that promoted ~0. undefined → full pass on first-ever run (bootstrap).
+      // volumeTriggered correctly forces the run past cooldown but must NOT
+      // override incrementalSince — the stash has ~1400 eligible memories so
+      // volumeTriggered=true on every run, permanently forcing full 12-chunk
+      // scans (~264s) instead of the intended 1-2 chunk incremental path (~44s).
+      incrementalSince: lastConsolidateTs,
       maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
       // Honor profile.autoAccept (already merged into options.autoAccept at the
       // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
