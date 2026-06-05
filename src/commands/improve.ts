@@ -1101,7 +1101,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let eventsCtx: EventsContext = {};
 
   try {
-    const budgetTimer = setTimeout(() => budgetAbortController.abort("improve budget exhausted"), budgetMs);
+    const budgetTimer = setTimeout(() => {
+      budgetAbortController.abort("improve budget exhausted");
+      // Grace period: let finally run to release improve.lock, then hard-exit
+      // to prevent the process outliving the task timeout window (lock-cascade fix).
+      setTimeout(() => process.exit(1), 5_000);
+    }, budgetMs);
     // Clear the timer when the run ends to avoid keeping the event loop alive.
     clearBudgetTimer = () => clearTimeout(budgetTimer);
 
