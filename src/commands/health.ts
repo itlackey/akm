@@ -244,7 +244,7 @@ export interface ImproveHealthMetrics {
      * collapses toward zero just because the cache absorbs most candidates.
      */
     cacheHits: number;
-    /** `considered - cacheHits` — the number of parents that actually hit the LLM. */
+    /** `considered - cacheHits - skippedAborted` — the number of parents that actually hit the LLM. Budget-abort items return {aborted:true} with no LLM call; excluding them from the denominator prevents budget-exhaustion from appearing as a quality regression. */
     freshAttempts: number;
     splitParents: number;
     written: number;
@@ -826,7 +826,9 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
   // jsdoc for the rationale.
   metrics.memoryInference.freshAttempts = Math.max(
     0,
-    metrics.memoryInference.yieldEligibleConsidered - metrics.memoryInference.cacheHits,
+    metrics.memoryInference.yieldEligibleConsidered -
+      metrics.memoryInference.cacheHits -
+      metrics.memoryInference.skippedAborted,
   );
   metrics.memoryInference.yieldRate =
     metrics.memoryInference.freshAttempts > 0
