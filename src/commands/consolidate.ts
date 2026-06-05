@@ -1279,7 +1279,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       pendingProposalBodyHashes,
     );
 
-    const raw = await tryLlmFeature(
+    let raw = await tryLlmFeature(
       "memory_consolidation",
       config,
       async () => {
@@ -1307,16 +1307,44 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     );
 
     if (!raw.ok) {
-      warn(raw.error ?? `chunk ${chunkIdx + 1} failed`);
-      warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
-      totalChunksProcessed++;
-      totalChunksFailed++;
-      // Account for the chunk's memories under the failed-chunk bucket.
-      // judgedNoAction does NOT run on this path (it's after the success
-      // guards) so without this the accounting invariant breaks on every
-      // chunk-level transport/parse failure.
-      failedChunkMemories += chunk.length;
-      continue;
+      // Single retry with 2s backoff before recording chunk as lost.
+      // Recovers transient Shredder LM Studio timeouts without significantly
+      // extending run time. Only marks failed if both attempts fail.
+      await new Promise<void>((r) => setTimeout(r, 2_000));
+      const retry = await tryLlmFeature(
+        "memory_consolidation",
+        config,
+        async () => {
+          if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
+          try {
+            const content = await chatCompletion(
+              llmConfig,
+              [
+                { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
+                { role: "user", content: userPrompt },
+              ],
+              { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA, enableThinking: false },
+            );
+            return { ok: true as const, content };
+          } catch (e) {
+            return { ok: false as const, error: String(e) };
+          }
+        },
+        { ok: false as const, error: `chunk ${chunkIdx + 1} retry failed` },
+      );
+      if (!retry.ok) {
+        warn(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
+        warnings.push(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
+        totalChunksProcessed++;
+        totalChunksFailed++;
+        // Account for the chunk's memories under the failed-chunk bucket.
+        // judgedNoAction does NOT run on this path (it's after the success
+        // guards) so without this the accounting invariant breaks on every
+        // chunk-level transport/parse failure.
+        failedChunkMemories += chunk.length;
+        continue;
+      }
+      raw = retry;
     }
 
     if (process.env.AKM_DEBUG_LLM) {
