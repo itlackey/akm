@@ -2,14 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import profileDefault from "../assets/profiles/default.json" with { type: "json" };
+import profileGraphRefresh from "../assets/profiles/graph-refresh.json" with { type: "json" };
+import profileMemoryFocus from "../assets/profiles/memory-focus.json" with { type: "json" };
+import profileQuick from "../assets/profiles/quick.json" with { type: "json" };
+import profileThorough from "../assets/profiles/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../core/config";
 import { warn } from "../core/warn";
-import profileDefault from "./profiles/default.json" with { type: "json" };
-import profileGraphRefresh from "./profiles/graph-refresh.json" with { type: "json" };
-import profileMemoryFocus from "./profiles/memory-focus.json" with { type: "json" };
-import profileQuick from "./profiles/quick.json" with { type: "json" };
-import profileThorough from "./profiles/thorough.json" with { type: "json" };
 
 export type { ImproveProfileConfig } from "../core/config";
 

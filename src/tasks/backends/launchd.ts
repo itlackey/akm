@@ -26,6 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import launchdTemplate from "../../assets/backends/launchd-template.xml" with { type: "text" };
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolveAkmBin";
@@ -33,7 +34,6 @@ import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../sched
 import type { TaskDocument } from "../schema";
 import { escapeXml, spawnCommand } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
-import launchdTemplate from "./launchd-template.xml" with { type: "text" };
 
 export interface LaunchdExec {
   run(args: string[]): { status: number; stdout: string; stderr: string };
