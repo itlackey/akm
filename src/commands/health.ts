@@ -152,6 +152,16 @@ export interface ImproveHealthMetrics {
     graphExtraction: number;
     error: number;
   };
+  autoAccept: {
+    /** Total proposals promoted by the auto-accept gate across all phases. */
+    promoted: number;
+    /**
+     * Total proposals that passed the confidence threshold but failed
+     * validation during auto-accept (e.g. truncated description, invalid
+     * frontmatter). These remain in the queue for manual review.
+     */
+    validationFailed: number;
+  };
   reflectsWithErrorContext: number;
   coverageGapCount: number;
   evalCasesWritten: number;
@@ -501,6 +511,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       graphExtraction: 0,
       error: 0,
     },
+    autoAccept: { promoted: 0, validationFailed: 0 },
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
     evalCasesWritten: 0,
@@ -722,6 +733,8 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     }
   }
 
+  metrics.autoAccept.promoted += toFiniteNumber(result.gateAutoAcceptedCount);
+  metrics.autoAccept.validationFailed += toFiniteNumber(result.gateAutoAcceptFailedCount);
   metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
   if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
   metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
@@ -916,6 +929,8 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.memoryInference += src.actions.memoryInference;
   dst.actions.graphExtraction += src.actions.graphExtraction;
   dst.actions.error += src.actions.error;
+  dst.autoAccept.promoted += src.autoAccept.promoted;
+  dst.autoAccept.validationFailed += src.autoAccept.validationFailed;
   dst.reflectsWithErrorContext += src.reflectsWithErrorContext;
   dst.coverageGapCount += src.coverageGapCount;
   dst.evalCasesWritten += src.evalCasesWritten;
@@ -1423,6 +1438,8 @@ const INTERESTING_DELTA_PATHS = [
   "improve.graphExtraction.failures",
   "improve.sessionExtraction.sessionsScanned",
   "improve.sessionExtraction.proposalsCreated",
+  "improve.autoAccept.promoted",
+  "improve.autoAccept.validationFailed",
   "improve.wallTime.medianMs",
   "improve.wallTime.p95Ms",
 ] as const;
@@ -1722,6 +1739,21 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
         warnings: sx.warnings,
         durationMs: sx.durationMs,
       },
+    });
+
+    const aa = improveSummary.autoAccept;
+    advisories.push({
+      name: "auto-accept-validation",
+      kind: "heuristic",
+      status: aa.validationFailed > 0 ? "warn" : "pass",
+      confidence: aa.promoted + aa.validationFailed > 0 ? "high" : "low",
+      message:
+        aa.validationFailed > 0
+          ? `${aa.validationFailed} proposal(s) passed confidence threshold but failed auto-accept validation (truncated description, invalid frontmatter, etc.) — they remain in the queue for manual review.`
+          : aa.promoted > 0
+            ? `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
+            : "Auto-accept gate did not run (disabled or no proposals above threshold).",
+      evidence: { promoted: aa.promoted, validationFailed: aa.validationFailed },
     });
 
     const metrics: HealthMetrics = {
