@@ -2,6 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import profileDefault from "../assets/profiles/default.json" with { type: "json" };
+import profileGraphRefresh from "../assets/profiles/graph-refresh.json" with { type: "json" };
+import profileMemoryFocus from "../assets/profiles/memory-focus.json" with { type: "json" };
+import profileQuick from "../assets/profiles/quick.json" with { type: "json" };
+import profileThorough from "../assets/profiles/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../core/config";
 import { warn } from "../core/warn";
@@ -18,66 +23,15 @@ export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate"
   consolidate: ["memory"],
 };
 
+// Built-in profiles are loaded from embedded JSON files in src/assets/profiles/.
+// To add a new profile: create a new .json file there, import it above, and add
+// it to this map. No code change needed beyond those two steps.
 const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
-  default: {
-    description: "Standard improve pass — all sub-processes, markdown asset types.",
-    processes: {
-      reflect: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.reflect },
-      distill: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.distill },
-      consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
-      memoryInference: { enabled: true },
-      graphExtraction: { enabled: true },
-      // validation: deliberately undefined — third-tier classifier is opt-in.
-      triage: { enabled: false, applyMode: "queue", policy: "personal-stash" },
-    },
-    sync: { enabled: true, push: true },
-  },
-  quick: {
-    description: "Reflect-only pass — no distill, consolidate, memoryInference, or graphExtraction.",
-    processes: {
-      reflect: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.reflect },
-      distill: { enabled: false },
-      consolidate: { enabled: false },
-      memoryInference: { enabled: false },
-      graphExtraction: { enabled: false },
-      triage: { enabled: false },
-    },
-    // Lightweight passes opt out of end-of-run sync: a reflect-only `quick`
-    // run should not auto-commit/push the git-backed stash to its remote.
-    // (The auto-sync gate in improve.ts treats an absent sync block as
-    // ENABLED + push, so we set this explicitly to avoid a surprise push.)
-    sync: { enabled: false },
-  },
-  thorough: {
-    // Reserved for future divergence; for now behaviorally identical to
-    // `default`. Documented here so callers picking `--profile thorough` do
-    // not expect a different code path until we wire stricter limits in.
-    description: "All sub-processes enabled (currently identical to default; reserved for future divergence).",
-    processes: {
-      reflect: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.reflect },
-      distill: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.distill },
-      consolidate: { enabled: true, allowedTypes: DEFAULT_ALLOWED_TYPES.consolidate },
-      memoryInference: { enabled: true },
-      graphExtraction: { enabled: true },
-      triage: { enabled: true, applyMode: "queue" },
-    },
-    sync: { enabled: true, push: true },
-  },
-  "memory-focus": {
-    description: "Memory and lesson improvement only — no distill or consolidate.",
-    processes: {
-      reflect: { enabled: true, allowedTypes: ["memory", "lesson"] },
-      distill: { enabled: false },
-      consolidate: { enabled: false },
-      memoryInference: { enabled: true },
-      graphExtraction: { enabled: false },
-      triage: { enabled: false },
-    },
-    // Limited pass opts out of end-of-run sync for the same reason as `quick`:
-    // a memory/lesson-only run should not auto-commit/push the stash. Explicit
-    // here because improve.ts treats an absent sync block as ENABLED + push.
-    sync: { enabled: false },
-  },
+  default: profileDefault as ImproveProfileConfig,
+  quick: profileQuick as ImproveProfileConfig,
+  thorough: profileThorough as ImproveProfileConfig,
+  "memory-focus": profileMemoryFocus as ImproveProfileConfig,
+  "graph-refresh": profileGraphRefresh as ImproveProfileConfig,
 };
 
 /**

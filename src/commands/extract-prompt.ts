@@ -8,7 +8,7 @@
  * Mirrors the REFLECT_JSON_SCHEMA pattern: a strict JSON Schema describing
  * the LLM output, plus a {@link buildExtractPrompt} helper that interpolates
  * session data into the markdown template loaded from
- * `src/llm/prompts/extract-session.md`.
+ * `src/assets/prompts/extract-session.md`.
  *
  * The schema is intentionally strict — providers with `supportsJsonSchema:
  * true` enforce shape upstream, so the parser only has to handle the
@@ -16,8 +16,8 @@
  * the model emits get dropped before we parse.
  */
 
+import promptTemplate from "../assets/prompts/extract-session.md" with { type: "text" };
 import type { InlineRefMention, SessionData, SessionEvent } from "../integrations/session-logs/types";
-import promptTemplate from "../llm/prompts/extract-session.md" with { type: "text" };
 
 /**
  * JSON Schema for the structured extract output. Passed to `chatCompletion`

@@ -4,6 +4,53 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.1] - 2026-06-05
+
+### Added
+
+- **`graph-refresh` improve profile** — new built-in profile that runs a full-corpus
+  graph extraction pass across all stash files (all other improve processes disabled).
+  Use `akm improve --profile graph-refresh` for a weekly relationship rebuild.
+  Pairs with the new `graph-refresh-weekly` task template (`akm tasks add --template graph-refresh-weekly`).
+- **`session-extraction` health advisory** — new heuristic advisory backed by real
+  `akmExtract` outcomes: warns when the session-extraction process ran but produced
+  zero proposals across ≥ 5 sessions, or recorded warnings. Replaces the vestigial
+  `session-log-failures` warn signal.
+- **`improve.sessionExtraction` health metrics** — `sessionsScanned`, `sessionsExtracted`,
+  `sessionsSkipped`, `proposalsCreated`, `warnings`, `durationMs` now tracked and
+  visible in `akm health` reports.
+
+### Fixed
+
+- **`akm info` indexStats** — `readIndexStats` errors are now surfaced and the resolved
+  DB path is passed correctly; `entryCount`, `hasEmbeddings`, and related fields are
+  no longer silently empty (#510).
+- **Indexer timing fields** — `embedMs` and `ftsMs` in timing output had their
+  operands swapped, producing negative durations. Fixed (#516).
+- **Incremental consolidation gate** — the `volumeTriggered` path bypassed the
+  incremental gate introduced in 0.8.0, causing consolidation to run on chunks it
+  had already processed in the same run. Fixed.
+- **Improve budget exhaustion** — `improve.lock` was not released after budget
+  exhaustion, blocking subsequent runs until the lock TTL expired.
+- **Consolidation chunk retry** — failed chunks are now retried once with a 2 s
+  backoff before being recorded as lost, reducing transient LLM errors from
+  propagating to `chunksFailed`.
+- **`yieldRate` health metric** — `skippedAborted` refs were incorrectly counted in
+  `freshAttempts`, inflating the denominator and underreporting yield rate.
+- **`session-log-failures` advisory** — demoted from `warn` to always `pass`
+  (informational only); the advisory was a raw regex counter with no LLM signal,
+  producing false positives on normal session content.
+
+### Refactored
+
+- All runtime assets consolidated under `src/assets/` with `dist/assets/` mirroring
+  the layout exactly. Built-in improve profiles moved from in-source object literals
+  to embedded JSON files (`src/assets/profiles/*.json`). The `copy-assets.ts` build
+  step now uses a precise `src/assets/**/*` glob instead of a broad catch-all.
+- Vestigial Phase 0 (`getExecutionLogCandidates` / `ERROR_PATTERNS`) removed from
+  the improve pipeline. This regex scan collected a metric count but never fed an
+  LLM; `akmExtract` (Phase 0.4) is the real session extraction pipeline.
+
 ## [0.8.0] - 2026-05-28
 
 ### Performance

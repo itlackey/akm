@@ -34,6 +34,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import schtasksTemplate from "../../assets/backends/schtasks-template.xml" with { type: "text" };
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolveAkmBin";
@@ -41,7 +42,6 @@ import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../sch
 import type { TaskDocument } from "../schema";
 import { escapeXml, spawnCommand } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
-import schtasksTemplate from "./schtasks-template.xml" with { type: "text" };
 
 export interface SchtasksExec {
   run(args: string[]): { status: number; stdout: string; stderr: string };

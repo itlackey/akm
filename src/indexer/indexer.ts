@@ -543,8 +543,8 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         totalMs: Date.now() - timing.t0,
         walkMs: timing.tWalkEnd - timing.tWalkStart,
         llmMs: timing.tLlmEnd - timing.tWalkEnd,
-        embedMs: timing.tEmbedEnd - timing.tFtsEnd,
-        ftsMs: timing.tFtsEnd - timing.tLlmEnd,
+        embedMs: timing.tEmbedEnd - timing.tLlmEnd,
+        ftsMs: timing.tFtsEnd - timing.tEmbedEnd,
       },
       ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
     };

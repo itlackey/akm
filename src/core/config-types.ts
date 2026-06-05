@@ -154,6 +154,14 @@ export interface ImproveProcessConfig {
    */
   maxChunkSize?: number;
   /**
+   * Full-corpus scan for the `graphExtraction` process.
+   * When `true`, graph extraction runs on ALL stash files instead of only
+   * the files touched by actionable refs in the current run.
+   * Use with the `graph-refresh` built-in profile or a scheduled weekly task.
+   * Has no effect on other processes.
+   */
+  fullScan?: boolean;
+  /**
    * Apply mode for drained proposals: `queue` stages only (never promotes),
    * `promote` accepts matching proposals (commits to git). Defaults to the
    * safe `queue`. Only meaningful on the `triage` process.

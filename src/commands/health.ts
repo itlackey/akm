@@ -154,7 +154,6 @@ export interface ImproveHealthMetrics {
   };
   reflectsWithErrorContext: number;
   coverageGapCount: number;
-  executionLogCandidateCount: number;
   evalCasesWritten: number;
   deadUrlCount: number;
   memorySummary: {
@@ -244,7 +243,7 @@ export interface ImproveHealthMetrics {
      * collapses toward zero just because the cache absorbs most candidates.
      */
     cacheHits: number;
-    /** `considered - cacheHits` — the number of parents that actually hit the LLM. */
+    /** `considered - cacheHits - skippedAborted` — the number of parents that actually hit the LLM. Budget-abort items return {aborted:true} with no LLM call; excluding them from the denominator prevents budget-exhaustion from appearing as a quality regression. */
     freshAttempts: number;
     splitParents: number;
     written: number;
@@ -314,6 +313,23 @@ export interface ImproveHealthMetrics {
     cacheHitRate: number;
     truncations: number;
     failures: number;
+    durationMs: number;
+  };
+  /**
+   * Session-extraction pass metrics (Phase 0.4 — `akmExtract`).
+   * Aggregated across all harnesses and runs in the window.
+   * `ran` is false when session_extraction is disabled or no harness
+   * was available. `sessionsExtracted` counts sessions that produced
+   * at least one proposal; `sessionsSkipped` counts already-seen
+   * sessions deduped by state.db.
+   */
+  sessionExtraction: {
+    ran: boolean;
+    sessionsScanned: number;
+    sessionsExtracted: number;
+    sessionsSkipped: number;
+    proposalsCreated: number;
+    warnings: number;
     durationMs: number;
   };
   wallTime: {
@@ -487,7 +503,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     },
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
-    executionLogCandidateCount: 0,
     evalCasesWritten: 0,
     deadUrlCount: 0,
     memorySummary: { eligible: 0, derived: 0 },
@@ -542,6 +557,15 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       cacheHitRate: 0,
       truncations: 0,
       failures: 0,
+      durationMs: 0,
+    },
+    sessionExtraction: {
+      ran: false,
+      sessionsScanned: 0,
+      sessionsExtracted: 0,
+      sessionsSkipped: 0,
+      proposalsCreated: 0,
+      warnings: 0,
       durationMs: 0,
     },
     wallTime: {
@@ -700,8 +724,6 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
 
   metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
   if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
-  if (Array.isArray(result.executionLogCandidates))
-    metrics.executionLogCandidateCount += result.executionLogCandidates.length;
   metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
   if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
 
@@ -796,6 +818,21 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
 
+  if (Array.isArray(result.extract)) {
+    for (const e of result.extract as Record<string, unknown>[]) {
+      metrics.sessionExtraction.sessionsScanned += toFiniteNumber(e.sessionsProcessed);
+      metrics.sessionExtraction.sessionsSkipped += toFiniteNumber(e.sessionsSkipped);
+      if (Array.isArray(e.sessions)) {
+        metrics.sessionExtraction.sessionsExtracted += (e.sessions as Record<string, unknown>[]).filter(
+          (s) => Array.isArray(s.proposalIds) && (s.proposalIds as unknown[]).length > 0,
+        ).length;
+      }
+      metrics.sessionExtraction.proposalsCreated += Array.isArray(e.proposals) ? (e.proposals as unknown[]).length : 0;
+      metrics.sessionExtraction.warnings += Array.isArray(e.warnings) ? (e.warnings as unknown[]).length : 0;
+      metrics.sessionExtraction.durationMs += toFiniteNumber(e.durationMs);
+    }
+  }
+
   return metrics;
 }
 
@@ -826,7 +863,9 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
   // jsdoc for the rationale.
   metrics.memoryInference.freshAttempts = Math.max(
     0,
-    metrics.memoryInference.yieldEligibleConsidered - metrics.memoryInference.cacheHits,
+    metrics.memoryInference.yieldEligibleConsidered -
+      metrics.memoryInference.cacheHits -
+      metrics.memoryInference.skippedAborted,
   );
   metrics.memoryInference.yieldRate =
     metrics.memoryInference.freshAttempts > 0
@@ -838,6 +877,10 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
     metrics.graphExtraction.durationMs > 0;
   const cacheTotal = metrics.graphExtraction.cacheHits + metrics.graphExtraction.cacheMisses;
   metrics.graphExtraction.cacheHitRate = cacheTotal > 0 ? roundRate(metrics.graphExtraction.cacheHits / cacheTotal) : 0;
+  metrics.sessionExtraction.ran =
+    metrics.sessionExtraction.sessionsScanned > 0 ||
+    metrics.sessionExtraction.proposalsCreated > 0 ||
+    metrics.sessionExtraction.durationMs > 0;
 }
 
 /**
@@ -875,7 +918,6 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.error += src.actions.error;
   dst.reflectsWithErrorContext += src.reflectsWithErrorContext;
   dst.coverageGapCount += src.coverageGapCount;
-  dst.executionLogCandidateCount += src.executionLogCandidateCount;
   dst.evalCasesWritten += src.evalCasesWritten;
   dst.deadUrlCount += src.deadUrlCount;
   dst.memorySummary.eligible += src.memorySummary.eligible;
@@ -920,6 +962,12 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.graphExtraction.truncations += src.graphExtraction.truncations;
   dst.graphExtraction.failures += src.graphExtraction.failures;
   dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
+  dst.sessionExtraction.sessionsScanned += src.sessionExtraction.sessionsScanned;
+  dst.sessionExtraction.sessionsExtracted += src.sessionExtraction.sessionsExtracted;
+  dst.sessionExtraction.sessionsSkipped += src.sessionExtraction.sessionsSkipped;
+  dst.sessionExtraction.proposalsCreated += src.sessionExtraction.proposalsCreated;
+  dst.sessionExtraction.warnings += src.sessionExtraction.warnings;
+  dst.sessionExtraction.durationMs += src.sessionExtraction.durationMs;
 }
 
 interface ImproveRunRow {
@@ -1373,6 +1421,8 @@ const INTERESTING_DELTA_PATHS = [
   "improve.memoryInference.skippedNoFacts",
   "improve.graphExtraction.cacheHitRate",
   "improve.graphExtraction.failures",
+  "improve.sessionExtraction.sessionsScanned",
+  "improve.sessionExtraction.proposalsCreated",
   "improve.wallTime.medianMs",
   "improve.wallTime.p95Ms",
 ] as const;
@@ -1632,16 +1682,46 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       sessionLogEntries = [];
     }
 
+    // session-log-failures: demoted to informational — the ERROR_PATTERNS regex
+    // scans pre-LLM session text and produces false positives on diagnostic
+    // conversation. It does not gate the real extraction pipeline (akmExtract).
+    // Never triggers warn; kept for backward-compat visibility only.
     advisories.push({
       name: "session-log-failures",
       kind: "heuristic",
-      status: sessionLogEntries.length === 0 ? "pass" : "warn",
-      confidence: sessionLogEntries.length === 0 ? "low" : "medium",
+      status: "pass",
+      confidence: "low",
       message:
         sessionLogEntries.length === 0
           ? "No repeated external session-log failure patterns were detected."
-          : `${sessionLogEntries.length} repeated external session-log failure pattern(s) detected.`,
+          : `${sessionLogEntries.length} raw session-log keyword match(es) detected (pre-LLM, informational only).`,
       evidence: { candidates: sessionLogEntries.slice(0, 5) },
+    });
+
+    const sx = improveSummary.sessionExtraction;
+    const sxWarnReasons: string[] = [];
+    if (sx.warnings > 0) sxWarnReasons.push(`${sx.warnings} harness error(s)`);
+    if (sx.ran && sx.sessionsScanned >= 5 && sx.proposalsCreated === 0)
+      sxWarnReasons.push("no proposals generated across scanned sessions");
+    advisories.push({
+      name: "session-extraction",
+      kind: "heuristic",
+      status: sxWarnReasons.length > 0 ? "warn" : "pass",
+      confidence: sx.ran ? "medium" : "low",
+      message: sx.ran
+        ? sxWarnReasons.length > 0
+          ? `Session extraction degraded: ${sxWarnReasons.join("; ")}.`
+          : `Session extraction healthy: ${sx.sessionsScanned} scanned, ${sx.sessionsExtracted} extracted, ${sx.proposalsCreated} proposal(s) created.`
+        : "Session extraction not active (feature disabled or no harness available).",
+      evidence: {
+        ran: sx.ran,
+        sessionsScanned: sx.sessionsScanned,
+        sessionsExtracted: sx.sessionsExtracted,
+        sessionsSkipped: sx.sessionsSkipped,
+        proposalsCreated: sx.proposalsCreated,
+        warnings: sx.warnings,
+        durationMs: sx.durationMs,
+      },
     });
 
     const metrics: HealthMetrics = {

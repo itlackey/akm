@@ -22,12 +22,12 @@
  * straight through.
  */
 
+import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" with { type: "text" };
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { warn, warnVerbose } from "../core/warn";
 import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
-import userPromptTemplate from "./prompts/graph-extract-user-prompt.md" with { type: "text" };
 
 /**
  * Separator token used between assets in a batch prompt.

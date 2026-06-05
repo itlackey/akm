@@ -1,0 +1,10 @@
+id: graph-refresh-weekly
+description: >
+  Weekly full-corpus graph extraction pass. Rebuilds entity and relation
+  indexes across all stash files using the graph-refresh improve profile.
+  Complements the per-run improve pipeline which only extracts graph data
+  for files touched by actionable refs.
+command: akm improve --profile graph-refresh
+schedule: "0 3 * * 0"
+enabled: false
+timeout: 3600000
