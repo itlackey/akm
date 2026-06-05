@@ -57,8 +57,11 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(s.enabled !== undefined ? { enabled: s.enabled } : {}),
   }));
 
-  // Index stats
-  const indexStats = readIndexStats(options?.dbPath);
+  // Index stats — resolve the DB path from config so info reads the same
+  // database that health and search use, rather than a bare getDbPath() call
+  // that ignores XDG_DATA_HOME or per-config overrides.
+  const resolvedDbPath = options?.dbPath ?? getDbPath();
+  const indexStats = readIndexStats(resolvedDbPath);
 
   return {
     schemaVersion: 1,
@@ -77,40 +80,30 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   };
 }
 
-function readIndexStats(dbPath?: string): InfoResponse["indexStats"] {
-  const resolvedPath = dbPath ?? getDbPath();
+function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
+  const EMPTY: InfoResponse["indexStats"] = {
+    entryCount: 0,
+    lastBuiltAt: null,
+    hasEmbeddings: false,
+    vecAvailable: false,
+  };
 
-  // If no index file exists, return zeros
-  if (!fs.existsSync(resolvedPath)) {
-    return {
-      entryCount: 0,
-      lastBuiltAt: null,
-      hasEmbeddings: false,
-      vecAvailable: false,
-    };
-  }
+  if (!fs.existsSync(resolvedPath)) return EMPTY;
 
   let db: Database | undefined;
   try {
     db = openExistingDatabase(resolvedPath);
-    const entryCount = getEntryCount(db);
-    const lastBuiltAt = getMeta(db, "builtAt") ?? null;
-    const vecAvailable = isVecAvailable(db);
-    const hasEmbeddings = getMeta(db, "hasEmbeddings") === "1";
-
     return {
-      entryCount,
-      lastBuiltAt,
-      hasEmbeddings,
-      vecAvailable,
+      entryCount: getEntryCount(db),
+      lastBuiltAt: getMeta(db, "builtAt") ?? null,
+      hasEmbeddings: getMeta(db, "hasEmbeddings") === "1",
+      vecAvailable: isVecAvailable(db),
     };
-  } catch {
-    return {
-      entryCount: 0,
-      lastBuiltAt: null,
-      hasEmbeddings: false,
-      vecAvailable: false,
-    };
+  } catch (err) {
+    // Surface the error so operators can diagnose mismatches between
+    // `akm info` and `akm health` rather than silently returning zeros.
+    process.stderr.write(`[akm info] failed to read index stats from ${resolvedPath}: ${String(err)}\n`);
+    return EMPTY;
   } finally {
     if (db) {
       try {
