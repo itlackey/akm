@@ -154,7 +154,6 @@ export interface ImproveHealthMetrics {
   };
   reflectsWithErrorContext: number;
   coverageGapCount: number;
-  executionLogCandidateCount: number;
   evalCasesWritten: number;
   deadUrlCount: number;
   memorySummary: {
@@ -504,7 +503,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     },
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
-    executionLogCandidateCount: 0,
     evalCasesWritten: 0,
     deadUrlCount: 0,
     memorySummary: { eligible: 0, derived: 0 },
@@ -726,8 +724,6 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
 
   metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
   if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
-  if (Array.isArray(result.executionLogCandidates))
-    metrics.executionLogCandidateCount += result.executionLogCandidates.length;
   metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
   if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
 
@@ -922,7 +918,6 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.error += src.actions.error;
   dst.reflectsWithErrorContext += src.reflectsWithErrorContext;
   dst.coverageGapCount += src.coverageGapCount;
-  dst.executionLogCandidateCount += src.executionLogCandidateCount;
   dst.evalCasesWritten += src.evalCasesWritten;
   dst.deadUrlCount += src.deadUrlCount;
   dst.memorySummary.eligible += src.memorySummary.eligible;

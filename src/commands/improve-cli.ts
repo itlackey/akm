@@ -70,7 +70,7 @@ export const improveCommand = defineCommand({
     profile: {
       type: "string",
       description:
-        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus). Controls which sub-processes run and which asset types are processed.",
+        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus, graph-refresh). Controls which sub-processes run and which asset types are processed.",
     },
     sync: {
       type: "boolean",

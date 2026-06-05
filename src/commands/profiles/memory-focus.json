@@ -1,0 +1,12 @@
+{
+  "description": "Memory and lesson improvement only — no distill, consolidate, or graphExtraction.",
+  "processes": {
+    "reflect": { "enabled": true, "allowedTypes": ["memory", "lesson"] },
+    "distill": { "enabled": false },
+    "consolidate": { "enabled": false },
+    "memoryInference": { "enabled": true },
+    "graphExtraction": { "enabled": false },
+    "triage": { "enabled": false }
+  },
+  "sync": { "enabled": false }
+}

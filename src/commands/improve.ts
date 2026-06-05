@@ -58,7 +58,7 @@ import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
-import { getAvailableHarnesses, getExecutionLogCandidates } from "../integrations/session-logs";
+import { getAvailableHarnesses } from "../integrations/session-logs";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
 import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../sources/providers/git";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
@@ -279,7 +279,6 @@ export interface AkmImproveResult {
   lintSummary?: { fixed: number; flagged: number };
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
   coverageGaps?: string[];
-  executionLogCandidates?: string[];
   evalCasesWritten?: number;
   deadUrls?: DeadUrl[];
   /** Number of reflect calls that had at least one error in the rolling window at call time. */
@@ -344,7 +343,6 @@ interface ImprovePreparationResult {
   cleanupWarnings: string[];
   appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
-  executionLogCandidates: string[];
   /** Session-extract pass results (one per available harness), when enabled. */
   extract?: AkmExtractResult[];
   /**
@@ -1258,9 +1256,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(preparation.lintSummary !== undefined ? { lintSummary: preparation.lintSummary } : {}),
       ...(preparation.memoryIndexHealth !== undefined ? { memoryIndexHealth: preparation.memoryIndexHealth } : {}),
       ...(preparation.coverageGaps.length > 0 ? { coverageGaps: preparation.coverageGaps } : {}),
-      ...(preparation.executionLogCandidates.length > 0
-        ? { executionLogCandidates: preparation.executionLogCandidates }
-        : {}),
       ...(preparation.extract && preparation.extract.length > 0 ? { extract: preparation.extract } : {}),
       ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
       ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
@@ -1474,7 +1469,6 @@ function emitImproveCompletedEvent(
         reflectSkippedActions: actionCounts.reflectSkipped,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,
-        executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
         evalCasesWritten: result.evalCasesWritten ?? 0,
         deadUrlCount: result.deadUrls?.length ?? 0,
         memoryEligible: result.memorySummary.eligible,
@@ -1560,15 +1554,6 @@ async function runImprovePreparationStage(args: {
         // best-effort
       }
     }
-  }
-
-  // Phase 0 — execution log synthesis
-  let executionLogCandidates: string[] = [];
-  try {
-    const logEntries = getExecutionLogCandidates(7);
-    executionLogCandidates = logEntries.filter((e) => e.isFailurePattern).map((e) => e.topic);
-  } catch {
-    // best-effort
   }
 
   // Phase 0.4 — session-extract pass.
@@ -2111,7 +2096,6 @@ async function runImprovePreparationStage(args: {
     cleanupWarnings,
     appliedCleanup,
     memoryIndexHealth,
-    executionLogCandidates,
     extract: extractResults,
     actionableRefs,
     signalBearingSet,
@@ -3032,23 +3016,23 @@ async function runImproveMaintenancePasses(args: {
 
     const graphEnabled = isProcessEnabled("index", "graph_extraction", config);
     const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
+    const graphExtractionFullScan = improveProfile?.processes?.graphExtraction?.fullScan === true;
     // Build the set of refs actually touched this run.
     const touchedRefs = new Set<string>();
     for (const r of args.actionableRefs) touchedRefs.add(r.ref);
     for (const r of memoryRefsForInference) touchedRefs.add(r);
 
-    // INVARIANT: graph extraction must never run on the full corpus from the
-    // improve post-loop. Full-corpus scans belong in `akm index`. We enforce
-    // this by ALWAYS passing `candidatePaths` (possibly an empty Set) to the
-    // extractor — never `undefined`. With an empty Set, the extractor's
-    // filter (graph-extraction.ts ~L452) rejects every file and returns the
-    // empty result without scanning. The pass is still invoked so that the
-    // action is recorded, the D9 post-consolidation reindex still fires, and
-    // mock injection (graphExtractionFn) used by tests stays exercised.
+    // INVARIANT: graph extraction normally runs only on files touched by
+    // actionable refs (candidatePaths). Full-corpus scans are opt-in via
+    // profile.processes.graphExtraction.fullScan = true (used by the
+    // `graph-refresh` built-in profile and its weekly scheduled task).
+    // The empty-Set fallback is intentional when no refs were touched —
+    // the extractor's filter rejects every file and returns empty, keeping
+    // the pass invoked so the action is recorded and tests stay exercised.
     if (graphExtractionDisabledByProfile) {
       info("[improve] graph extraction skipped (disabled by improve profile)");
     } else if (sources.length > 0 && graphEnabled) {
-      info("[improve] graph extraction starting");
+      info(`[improve] graph extraction starting${graphExtractionFullScan ? " (full-corpus scan)" : ""}`);
       const extractionStart = Date.now();
       try {
         // D9: if consolidation ran but memory inference did not reindex, force a reindex
@@ -3070,16 +3054,19 @@ async function runImproveMaintenancePasses(args: {
             config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
           );
         }
-        // Resolve touched refs to absolute file paths. Empty Set is intentional
-        // when no refs were touched — see INVARIANT above.
-        const candidatePaths = new Set<string>();
-        if (primaryStashDir && touchedRefs.size > 0) {
-          const writableDirSet = new Set(getWritableStashDirs(primaryStashDir).map((d) => path.resolve(d)));
-          const resolved = await Promise.all(
-            [...touchedRefs].map((ref) => findAssetFilePath(ref, primaryStashDir, writableDirSet).catch(() => null)),
-          );
-          for (const p of resolved) {
-            if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
+        // Resolve touched refs to absolute file paths. Skipped for fullScan
+        // (candidatePaths stays undefined → extractor processes all files).
+        let candidatePaths: Set<string> | undefined;
+        if (!graphExtractionFullScan) {
+          candidatePaths = new Set<string>();
+          if (primaryStashDir && touchedRefs.size > 0) {
+            const writableDirSet = new Set(getWritableStashDirs(primaryStashDir).map((d) => path.resolve(d)));
+            const resolved = await Promise.all(
+              [...touchedRefs].map((ref) => findAssetFilePath(ref, primaryStashDir, writableDirSet).catch(() => null)),
+            );
+            for (const p of resolved) {
+              if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
+            }
           }
         }
         const progressHandler = (event: {

@@ -1,0 +1,15 @@
+{
+  "description": "Reflect-only pass — no distill, consolidate, memoryInference, or graphExtraction.",
+  "processes": {
+    "reflect": {
+      "enabled": true,
+      "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"]
+    },
+    "distill": { "enabled": false },
+    "consolidate": { "enabled": false },
+    "memoryInference": { "enabled": false },
+    "graphExtraction": { "enabled": false },
+    "triage": { "enabled": false }
+  },
+  "sync": { "enabled": false }
+}

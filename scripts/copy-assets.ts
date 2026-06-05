@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 // Build-time asset step:
-//   1. Copy non-TS asset files (*.md, *.xml) from src/ to dist/ after tsc.
+//   1. Copy non-TS asset files from src/ to dist/ after tsc. Includes:
+//      - *.md, *.xml  — documentation and Windows task XML templates
+//      - *.json       — embedded profile files (src/commands/profiles/)
+//      - *.yml/*.yaml — embedded task templates (src/tasks/templates/)
+//      Prefer small embedded files over large in-source string constants;
+//      keep the file-system import pattern consistent across the project.
 //   2. Bundle scripts/migrate-storage.ts + scripts/migrations/*.ts into
 //      dist/scripts/ so globally-installed users (npm / prebuilt binary)
 //      can run them without `../src/...` import paths breaking (#469).
@@ -8,7 +13,7 @@ import { mkdir } from "node:fs/promises";
 import { chmodSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 
-const assetGlob = new Bun.Glob("src/**/*.{md,xml}");
+const assetGlob = new Bun.Glob("src/**/*.{md,xml,json,yml,yaml}");
 for await (const src of assetGlob.scan(".")) {
   const dest = src.replace(/^src\//, "dist/");
   await mkdir(dirname(dest), { recursive: true });
