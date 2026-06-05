@@ -712,8 +712,11 @@ describe("akmHealth", () => {
 
     const result = akmHealth({ since: "7d", getExecutionLogCandidatesFn });
 
+    // session-log-failures is informational only (never warns) as of v0.8.1 —
+    // it reports raw keyword matches, not LLM-validated extraction outcomes.
+    // The overall status must still be pass (heuristic advisories don't degrade).
     expect(result.status).toBe("pass");
-    expect(result.advisories.some((check) => check.name === "session-log-failures" && check.status === "warn")).toBe(
+    expect(result.advisories.some((check) => check.name === "session-log-failures" && check.status === "pass")).toBe(
       true,
     );
   });

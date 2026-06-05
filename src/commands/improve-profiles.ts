@@ -23,7 +23,7 @@ export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate"
   consolidate: ["memory"],
 };
 
-// Built-in profiles are loaded from embedded JSON files in src/commands/profiles/.
+// Built-in profiles are loaded from embedded JSON files in src/assets/profiles/.
 // To add a new profile: create a new .json file there, import it above, and add
 // it to this map. No code change needed beyond those two steps.
 const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
