@@ -91,9 +91,9 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   },
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
-  // Environment assets — whole `.env` files sourced/injected wholesale. Replaces
-  // the deprecated `vault` type (see below). Key NAMES + start-of-line comments
-  // are surfaced as metadata; values are never read for indexing.
+  // Environment assets — whole `.env` files sourced/injected wholesale. Replaced
+  // the deprecated `vault` type (removed in 0.9.0). Key NAMES + start-of-line
+  // comments are surfaced as metadata; values are never read for indexing.
   env: {
     stashDir: "env",
     isRelevantFile: (fileName) => fileName === ".env" || fileName.endsWith(".env"),
@@ -115,31 +115,6 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     rendererName: "env-file",
     actionBuilder: (ref) =>
       `akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with the whole .env injected (values never reach stdout); akm env export ${ref} --out <file> -> write a sourceable script to a file`,
-  },
-  // DEPRECATED in 0.8.0, removed in 0.9.0 — use `env` instead. Retained so the
-  // frozen `vaults/` copy left by the migration still resolves and so existing
-  // `vault:` refs keep working through the deprecation window.
-  vault: {
-    stashDir: "vaults",
-    isRelevantFile: (fileName) => fileName === ".env" || fileName.endsWith(".env"),
-    toCanonicalName: (typeRoot, filePath) => {
-      const rel = toPosix(path.relative(typeRoot, filePath));
-      const fileName = path.basename(rel);
-      // Treat ".env" as the "default" vault; "<name>.env" → "<name>"
-      if (fileName === ".env") {
-        const dir = path.dirname(rel);
-        return dir === "." || dir === "" ? "default" : `${dir}/default`;
-      }
-      const stripped = rel.endsWith(".env") ? rel.slice(0, -4) : rel;
-      return stripped;
-    },
-    toAssetPath: (typeRoot, name) => {
-      if (name === "default") return path.join(typeRoot, ".env");
-      return path.join(typeRoot, name.endsWith(".env") ? name : `${name}.env`);
-    },
-    rendererName: "vault-env",
-    actionBuilder: (ref) =>
-      `DEPRECATED (use env): akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with injected env`,
   },
   // Secrets — a single sensitive value used on its own for authentication (a
   // PEM key, API token, TLS cert). Unlike `env` (a group of related .env

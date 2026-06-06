@@ -461,9 +461,7 @@ export function shapeShowOutput(
     "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).
-    // Exception: vault assets omit path to avoid leaking absolute disk paths
-    // into structured JSON output (security fix M3).
-    ...(result.type === "vault" ? [] : ["path"]),
+    "path",
     "editable",
   ]);
 

@@ -31,10 +31,11 @@ function makeTempStash(prefix = "akm-vault-lint-"): string {
   return dir;
 }
 
+// The dangerous-key lint now scans env/ (the vault type was removed in 0.9.0).
 function writeVault(stashDir: string, name: string, content: string): string {
-  const vaultsDir = path.join(stashDir, "vaults");
-  fs.mkdirSync(vaultsDir, { recursive: true });
-  const filePath = path.join(vaultsDir, name);
+  const envDir = path.join(stashDir, "env");
+  fs.mkdirSync(envDir, { recursive: true });
+  const filePath = path.join(envDir, name);
   fs.writeFileSync(filePath, content, { encoding: "utf8", mode: 0o600 });
   return filePath;
 }

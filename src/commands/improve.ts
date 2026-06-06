@@ -459,7 +459,7 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
   } catch {
     if (!isAssetType(trimmed)) {
       throw new UsageError(
-        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, env, vault, task.\n` +
+        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, env, secret, task.\n` +
           `If you passed --format to akm improve, that flag is not supported — use it with akm search or akm show instead.`,
         "INVALID_FLAG_VALUE",
       );
@@ -2374,7 +2374,7 @@ async function runImproveLoopStage(args: {
       // path is also a no-op for them — we just avoid unnecessary agent spawns.
       // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
       if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-        // Type guard: skip reflect for unsupported types (script, vault, task, etc.)
+        // Type guard: skip reflect for unsupported types (script, env, task, etc.)
         // and raw wiki directories, driven by the active improve profile.
         const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
         if (reflectSkip.skip) {
@@ -2456,7 +2456,7 @@ async function runImproveLoopStage(args: {
           // true LLM failures. See
           // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
           const isGuardReject = !reflectResult.ok && reflectResult.reason === "content_policy_reject";
-          // Type-guard rejection (reflect refused a script/vault/task ref) is
+          // Type-guard rejection (reflect refused a script/env/task ref) is
           // also NOT an LLM failure — the LLM is never invoked. Route to the
           // existing `reflect-skipped` bucket so it does not inflate the
           // failure-rate numerator. ~9% of `reflect-failed` events in the

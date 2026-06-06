@@ -136,9 +136,9 @@ describe("shouldSkipRef", () => {
     expect(result.reason).toBe("type-filter");
   });
 
-  test("vault type → skip (type-filter)", () => {
+  test("env type → skip (type-filter)", () => {
     const profile = resolveImproveProfile(undefined, MINIMAL_CONFIG);
-    const result = shouldSkipRef("vault:secrets/key", "reflect", profile);
+    const result = shouldSkipRef("env:secrets/key", "reflect", profile);
     expect(result.skip).toBe(true);
     expect(result.reason).toBe("type-filter");
   });

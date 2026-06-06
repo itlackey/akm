@@ -147,29 +147,6 @@ export function formatRegistryBuildIndexPlain(r: Record<string, unknown>): strin
   return `Wrote registry index ${version} (${total} kits) → ${outPath}`.replace(/\s+/g, " ").trim();
 }
 
-export function formatVaultListPlain(r: Record<string, unknown>): string {
-  // Multi-vault listing: { vaults: [{ ref, path, keys }, ...] }
-  const vaults = Array.isArray(r.vaults) ? (r.vaults as Array<Record<string, unknown>>) : [];
-  if (vaults.length === 0) {
-    return "No vaults. Create one with `akm vault create <name>` then `akm vault set vault:<name> KEY=VALUE`.";
-  }
-  const lines: string[] = [];
-  for (const v of vaults) {
-    const ref = String(v.ref ?? "?");
-    const keys = Array.isArray(v.keys) ? (v.keys as unknown[]).map(String) : [];
-    if (lines.length > 0) lines.push("");
-    lines.push(`## ${ref}`);
-    if (keys.length === 0) {
-      lines.push("- (no keys)");
-      continue;
-    }
-    for (const key of keys) {
-      lines.push(`- ${key}`);
-    }
-  }
-  return lines.join("\n");
-}
-
 export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
@@ -1091,21 +1068,6 @@ export function formatWorkflowCreatePlain(r: Record<string, unknown>): string | 
     return `Created ${String(r.ref)} at ${String(r.path)}`;
   }
   return null;
-}
-
-export function formatVaultCreatePlain(r: Record<string, unknown>): string {
-  return `Created vault ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
-}
-
-export function formatVaultSetPlain(r: Record<string, unknown>): string {
-  return `Set ${String(r.key ?? "?")} in ${String(r.ref ?? "?")} (value not displayed)`;
-}
-
-export function formatVaultUnsetPlain(r: Record<string, unknown>): string {
-  const removed = r.removed === true;
-  return removed
-    ? `Removed ${String(r.key ?? "?")} from ${String(r.ref ?? "?")}`
-    : `Key ${String(r.key ?? "?")} was not present in ${String(r.ref ?? "?")}`;
 }
 
 export function formatWorkflowResumePlain(r: Record<string, unknown>): string {

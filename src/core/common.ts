@@ -20,7 +20,6 @@ export const ASSET_TYPES = [
   "script",
   "memory",
   "env",
-  "vault",
   "secret",
   "wiki",
   "lesson",

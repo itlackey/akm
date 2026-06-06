@@ -164,10 +164,10 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(listProposals(stash).length).toBe(0);
   });
 
-  test("vault:* ref is rejected (.env files must never get YAML frontmatter)", async () => {
+  test("env:* ref is rejected (.env files must never get YAML frontmatter)", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "vault:default",
+      ref: "env:default",
       stashDir: stash,
       agentProfile: makeProfile(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
@@ -175,7 +175,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.reason).toBe("unsupported_type");
-    expect(result.error).toContain("vault");
+    expect(result.error).toContain("env");
   });
 
   test("task:* ref is rejected (YAML tasks are not markdown-shaped)", async () => {

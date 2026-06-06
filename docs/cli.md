@@ -487,7 +487,7 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
-| env | `keys`, `comments` (vault: deprecated alias) |
+| env | `keys`, `comments` (key names + comments only — values never returned) |
 | lesson | `content` plus `when_to_use` surfaced from frontmatter |
 
 Assets from non-writable sources (git clones, npm packages, websites) return
@@ -681,8 +681,8 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 
 #### Dangerous env key audit
 
-When `akm add` installs a stash that contains env files (`env/`, or legacy
-`vaults/`), it scans every file for environment variable names that can be used
+When `akm add` installs a stash that contains env files (`env/`), it scans every
+file for environment variable names that can be used
 for process-execution hijacking. The flagged key names are: `LD_PRELOAD`,
 `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `DYLD_INSERT_LIBRARIES`,
 `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`, `BASH_ENV`, `ENV`,
@@ -703,7 +703,7 @@ akm add github:owner/repo-with-sensitive-env
 akm add github:owner/repo-with-sensitive-env --allow-insecure
 ```
 
-Stash publishers: see the [Stash Maker's Guide](stash-makers.md#vault-security)
+Stash publishers: see the [Stash Maker's Guide](stash-makers.md#env-security)
 for guidance on env files that legitimately need these keys.
 
 #### Website sources
@@ -1028,7 +1028,7 @@ assets to rank higher in search results over time.
 akm feedback script:deploy.sh --positive
 akm feedback agent:reviewer --negative
 akm feedback memory:deployment-notes --positive
-akm feedback vault:prod --positive
+akm feedback env:prod --positive
 akm feedback skill:code-review --positive --reason "Worked perfectly for PR reviews"
 ```
 
@@ -1466,27 +1466,13 @@ generated file can never execute it. `export` **never prints values to stdout**
 > For most uses prefer `akm env run` (no file, no cleanup). `export` exists for
 > the case where a tool must `source` a file or you need a generated env script.
 
-### vault (deprecated)
+### vault (removed)
 
-> **Deprecated in 0.8.0, removed in 0.9.0 — use [`env`](#env).** The `akm vault`
-> verb now prints a stderr deprecation warning and delegates `list` / `path` /
-> `export` / `run` / `create` to the `env` handlers. `vault set` and
-> `vault unset` are hard-errors (akm no longer manages individual entries — edit
-> the `.env` directly, or use [`akm secret`](#secret) for a single value), as is
-> the removed single-key `vault run <ref>/KEY` form. Existing `vault:` refs
-> still resolve, and `akm-migrate-storage` copies `vaults/` → `env/` (see the
-> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
-
-### vault (deprecated)
-
-> **Deprecated in 0.8.0, removed in 0.9.0 — use [`env`](#env).** The `akm vault`
-> verb now prints a stderr deprecation warning and delegates `list` / `path` /
-> `export` / `run` / `create` to the `env` handlers. `vault set` and
-> `vault unset` are hard-errors (akm no longer manages individual entries — edit
-> the `.env` directly, or use [`akm secret`](#secret) for a single value), as is
-> the removed single-key `vault run <ref>/KEY` form. Existing `vault:` refs
-> still resolve, and `akm migrate` copies `vaults/` → `env/` (see the
-> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
+> **Removed in 0.9.0 — use [`env`](#env) or [`secret`](#secret).** The `akm vault`
+> verb no longer exists, and parsing a `vault:` ref is now an unknown-type error
+> that points at `env:` (whole `.env` config) and `secret:` (a single value).
+> `akm-migrate-storage` still copies a legacy `vaults/` directory to `env/` for
+> upgraders (see the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
 
 ### secret
 
@@ -1573,7 +1559,7 @@ known process-hijacking names (`LD_PRELOAD`, `PATH`, etc.) are rejected.
 #### Sensitive marker
 
 A sibling `<name>.sensitive` marker file excludes a secret from `secret list`
-**and** from indexing entirely (parallel to vaults). The secret remains usable
+**and** from indexing entirely (parallel to env files). The secret remains usable
 via `secret path` / `secret run`.
 
 ### wiki

@@ -280,20 +280,17 @@ describe("env run", () => {
   });
 });
 
-describe("vault run (deprecated shim)", () => {
+describe("vault run (removed in 0.9.0)", () => {
   // KEPT AS A SUBPROCESS: child-process stdout boundary, same as env run.
-  test("warns to stderr and still injects the whole env file", () => {
+  test("the `akm vault` verb no longer exists", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=bar\nBAR=baz\n", "utf8");
 
-    const { stdout, stderr, status } = spawnCli(
-      ["vault", "run", "vault:prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'],
-      { AKM_STASH_DIR: stashDir },
-    );
+    const { status } = spawnCli(["vault", "run", "vault:prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'], {
+      AKM_STASH_DIR: stashDir,
+    });
 
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe("bar baz");
-    expect(stderr).toContain("deprecated");
+    expect(status).not.toBe(0);
   });
 });

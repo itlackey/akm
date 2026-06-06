@@ -78,11 +78,6 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),
   },
   {
-    dir: "vaults",
-    type: "vault",
-    test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),
-  },
-  {
     dir: "secrets",
     type: "secret",
     // Any regular file under secrets/ is a secret value, except the lock and

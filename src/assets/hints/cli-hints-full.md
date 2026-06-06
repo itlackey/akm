@@ -58,7 +58,8 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
-| vault | `keys`, `comments` |
+| env | `keys`, `comments` (key names + comments only — values never returned) |
+| secret | `name` only (the whole file is the value — never returned) |
 | wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. To ingest sources, `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
 
 ## Capture Knowledge While You Work
@@ -77,7 +78,7 @@ akm workflow next workflow:ship-release        # Start or resume the next workfl
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
 akm feedback memory:deployment-notes --positive # Works for memories too
-akm feedback vault:prod --positive             # Records vault feedback without surfacing values
+akm feedback env:prod --positive               # Records env feedback without surfacing values
 ```
 
 Use `akm feedback` whenever an asset materially helps or fails so future search
@@ -118,20 +119,37 @@ page create/update, log entry, lint, reindex.** Wiki pages are also addressable 
 `schema.md`, `index.md`, and `log.md` are not indexed and do not appear in
 search results. No `--llm` anywhere — akm never reasons about page content.
 
-## Vaults
+## Env files
 
-Encrypted-at-rest key/value stores for secrets. Each vault is a `.env`-format
-file at `<stashDir>/vaults/<name>.env`.
+A group of related CONFIGURATION for an app/service in one `.env` file at
+`<stashDir>/env/<name>.env`, sourced/injected wholesale. Key names + comments
+are discoverable; values stay on disk and never reach stdout or the index. akm
+does not edit entries — you edit the file with your own editor and akm loads it.
 
 ```sh
-akm vault create prod                         # Create a new vault
-akm vault set prod DB_URL postgres://...      # Set a key (or KEY=VALUE combined form)
-akm vault set prod DB_URL=postgres://...      # Combined KEY=VALUE form also works
-akm vault unset prod DB_URL                   # Remove a key
-akm vault list                                # List all vaults across all stashes with key names
-akm vault path vault:prod                     # Print the vault file path for shell loading
-akm vault run vault:prod -- env               # Run one command with all vault vars injected
-akm vault run vault:prod/DB_URL -- printenv DB_URL # Inject one key for one command
+akm env create prod                           # Create an empty env file
+akm env create prod --from-file ./.env        # Ingest an existing .env
+akm env list                                  # List all env files across stashes with key names
+akm show env:prod                             # Inspect key names + comments (never values)
+akm env run env:prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
+akm env run env:prod -- $SHELL                # Open an interactive shell with values injected
+akm env export env:prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
+akm env path env:prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
+akm env remove env:prod                       # Delete the env file
+```
+
+## Secrets
+
+A single sensitive value used on its own for authentication (a token, key, or
+cert) — one file = one value at `<stashDir>/secrets/<name>`. The ENTIRE file is
+the value; only the name is ever surfaced.
+
+```sh
+printf '%s' "$TOKEN" | akm secret set secret:deploy-token   # Store a single value
+akm secret list                                             # List secrets (names only)
+akm secret path secret:deploy-token                         # Print the file path (Docker `_FILE`)
+akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm secret remove secret:deploy-token                       # Delete the secret
 ```
 
 ## Workflows

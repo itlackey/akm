@@ -215,7 +215,7 @@ const MAX_REJECTED_PROPOSALS = 3;
  * Asset types that reflect is allowed to operate on.
  *
  * Reflect's canonical output shape is `frontmatter + markdown body`. Running it
- * against types whose on-disk form is NOT markdown (executable scripts, vault
+ * against types whose on-disk form is NOT markdown (executable scripts, env files
  * env files, YAML tasks) blindly prepends `---\n…\n---\n` to the asset and
  * breaks the runtime contract — for example a `.ts` script with a YAML preamble
  * is a TypeScript syntax error.
@@ -844,7 +844,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
     // 2a. Type guard — reflect only operates on asset types whose canonical
     // shape is `frontmatter + markdown body`. Refuse non-markdown types
-    // (script / vault / task) up-front so reflect never prepends YAML to a
+    // (script / env / task) up-front so reflect never prepends YAML to a
     // `.ts` file or rewrites a `.env` blob as prose. See REFLECT_ALLOWED_TYPES.
     if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
       // Deterministic type-guard rejection — the LLM is never invoked. Emit

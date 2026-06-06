@@ -436,43 +436,12 @@ const scriptSourceRenderer: AssetRenderer = {
   },
 };
 
-// ── 8. vault-env ─────────────────────────────────────────────────────────────
+// ── 8. env-file ───────────────────────────────────────────────────────────────
 
 /**
- * Vault renderer. Returns ONLY key names and start-of-line comments — never
- * values. Deliberately omits content/template/prompt so vault values cannot
- * leak through `akm show`.
- */
-const vaultEnvRenderer: AssetRenderer = {
-  name: "vault-env",
-
-  buildShowResponse(ctx: RenderContext): ShowResponse {
-    const name = deriveName(ctx);
-    const { keys, comments } = listVaultKeys(ctx.absPath);
-    return {
-      type: "vault",
-      name,
-      path: ctx.absPath,
-      action:
-        'Vault — keys + comments only. Use `source "$(akm vault path <ref>)"` to load values into the current shell, or `akm vault run <ref[/KEY]> -- <command>` to run with injected env. Values stay on disk and are never written to akm\'s stdout.',
-      description: comments.length > 0 ? comments.join("\n") : undefined,
-      keys,
-      comments,
-    };
-  },
-
-  enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
-    const { keys } = listVaultKeys(hit.path);
-    if (keys.length > 0) hit.keys = keys;
-  },
-};
-
-// ── 8b. env-file ───────────────────────────────────────────────────────────────
-
-/**
- * Env renderer. Like the (deprecated) vault renderer, returns ONLY key names
- * and start-of-line comments — never values. Deliberately omits
- * content/template/prompt so env values cannot leak through `akm show`.
+ * Env renderer. Returns ONLY key names and start-of-line comments — never
+ * values. Deliberately omits content/template/prompt so env values cannot leak
+ * through `akm show`.
  */
 const envFileRenderer: AssetRenderer = {
   name: "env-file",
@@ -622,19 +591,6 @@ function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
   }
 }
 
-function applyVaultMetadata(entry: StashEntry, ctx: RenderContext): void {
-  const { keys, comments } = listVaultKeys(ctx.absPath);
-  if (comments.length > 0 && !entry.description) {
-    entry.description = comments.join(" ").slice(0, 500);
-    entry.source = "comments";
-    entry.confidence = 0.7;
-  }
-  if (keys.length > 0) {
-    entry.searchHints = keys;
-  }
-  entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
-}
-
 function applyEnvMetadata(entry: StashEntry, ctx: RenderContext): void {
   const { keys, comments } = listVaultKeys(ctx.absPath);
   if (comments.length > 0 && !entry.description) {
@@ -696,12 +652,6 @@ registerMetadataContributor({
 });
 
 registerMetadataContributor({
-  name: "vault-secret-metadata",
-  appliesTo: ({ rendererName }) => rendererName === "vault-env",
-  contribute: (entry, ctx) => applyVaultMetadata(entry, ctx.renderContext),
-});
-
-registerMetadataContributor({
   name: "env-file-metadata",
   appliesTo: ({ rendererName }) => rendererName === "env-file",
   contribute: (entry, ctx) => applyEnvMetadata(entry, ctx.renderContext),
@@ -733,7 +683,6 @@ const builtinRenderers: AssetRenderer[] = [
   workflowMdRenderer,
   scriptSourceRenderer,
   envFileRenderer,
-  vaultEnvRenderer,
   secretFileRenderer,
   taskMdRenderer,
 ];
@@ -762,7 +711,6 @@ export {
   scriptSourceRenderer,
   secretFileRenderer,
   skillMdRenderer,
-  vaultEnvRenderer,
   wikiMdRenderer,
   workflowMdRenderer,
 };

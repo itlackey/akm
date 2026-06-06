@@ -75,7 +75,7 @@ export const addCommand = defineCommand({
     "allow-insecure": {
       type: "boolean",
       description:
-        "Allow a plain HTTP source URL and skip confirmation for dangerous vault keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the stash.",
+        "Allow a plain HTTP source URL and skip confirmation for dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the stash.",
       default: false,
     },
   },
@@ -176,8 +176,8 @@ export const addCommand = defineCommand({
         },
       });
 
-      // ── Post-install vault key audit ────────────────────────────────────────
-      // Resolve the stash root from the install result and scan any vault files
+      // ── Post-install env key audit ──────────────────────────────────────────
+      // Resolve the stash root from the install result and scan any env files
       // for dangerous env var keys.  When findings are present the install is
       // gated: TTY → interactive confirmation prompt; non-TTY without
       // --allow-insecure → hard failure (exit 1).  Pass
@@ -187,24 +187,22 @@ export const addCommand = defineCommand({
           result.installed?.stashRoot ??
           (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
         if (installedStashRoot) {
-          const { checkVaultForDangerousKeys } = await import("./lint/env-key-rules.js");
+          const { checkEnvForDangerousKeys } = await import("./lint/env-key-rules.js");
 
-          // Collect all dangerous-key findings across every env file (env/, and
-          // the deprecated vaults/) in the freshly-installed stash.
+          // Collect all dangerous-key findings across every env file in the
+          // freshly-installed stash.
           const allFindings: Array<{ vaultRef: string; keyName: string; relPath: string }> = [];
-          for (const [subdir, prefix] of [
-            ["env", "env"],
-            ["vaults", "vault"],
-          ] as const) {
+          {
+            const subdir = "env";
+            const prefix = "env";
             const dir = path.join(installedStashRoot, subdir);
-            if (!fs.existsSync(dir)) continue;
-            const envFiles = fs.readdirSync(dir).filter((f: string) => f.endsWith(".env"));
+            const envFiles = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f: string) => f.endsWith(".env")) : [];
             for (const envFile of envFiles) {
               const envPath = path.join(dir, envFile);
               const baseName = path.basename(envFile, ".env");
               const vaultRef = baseName === "" ? `${prefix}:default` : `${prefix}:${baseName}`;
               const relPath = path.join(subdir, envFile);
-              const findings = checkVaultForDangerousKeys(envPath, relPath, vaultRef);
+              const findings = checkEnvForDangerousKeys(envPath, relPath, vaultRef);
               for (const finding of findings) {
                 // Extract the key name from the detail string for the summary line.
                 const keyMatch = finding.detail.match(/Env key `([^`]+)`/);
@@ -218,7 +216,7 @@ export const addCommand = defineCommand({
               // Operator has explicitly accepted the risk — warn and continue.
               for (const f of allFindings) {
                 warn(
-                  `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-insecure was set.`,
+                  `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm env run\`. Proceeding because --allow-insecure was set.`,
                 );
               }
             } else if (process.stdin.isTTY) {
@@ -233,9 +231,9 @@ export const addCommand = defineCommand({
                 groupedByVault.set(f.vaultRef, existing);
               }
               for (const [vaultRef, keys] of groupedByVault) {
-                warn(`[warn] Vault "${vaultRef}" in stash "${stashLabel}" contains potentially dangerous keys:`);
+                warn(`[warn] Env "${vaultRef}" in stash "${stashLabel}" contains potentially dangerous keys:`);
                 for (const key of keys) {
-                  warn(`  - ${key}: can hijack process execution via \`akm vault run\``);
+                  warn(`  - ${key}: can hijack process execution via \`akm env run\``);
                 }
               }
               const confirmed = await p.confirm({
@@ -260,7 +258,7 @@ export const addCommand = defineCommand({
                     {
                       ok: false,
                       error:
-                        "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-insecure to bypass.",
+                        "Install aborted: stash contains dangerous env keys. Remove the keys or re-run with --allow-insecure to bypass.",
                       code: "DANGEROUS_VAULT_KEY",
                       ...(rollbackWarning ? { rollbackWarning } : {}),
                     },
@@ -289,7 +287,7 @@ export const addCommand = defineCommand({
                 JSON.stringify(
                   {
                     ok: false,
-                    error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the vault.`,
+                    error: `Install blocked: stash "${ref}" contains dangerous env keys that can hijack process execution via \`akm env run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the env file.`,
                     code: "DANGEROUS_VAULT_KEY",
                     ...(rollbackWarning ? { rollbackWarning } : {}),
                   },

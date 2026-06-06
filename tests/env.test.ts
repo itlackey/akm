@@ -558,48 +558,29 @@ describe("env remove", () => {
   });
 });
 
-describe("vault deprecation shim", () => {
-  test("vault list warns to stderr and delegates to env-list shape", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
+describe("vault removed in 0.9.0", () => {
+  test("the `akm vault` verb no longer exists", async () => {
+    const stashDir = makeTempDir("akm-vault-removed-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
 
     const result = await runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: stashDir });
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("deprecated");
-    const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed.envs).toEqual([expect.objectContaining({ ref: "env:prod", keys: ["API_KEY"] })]);
+    // citty exits non-zero for an unknown top-level command.
+    expect(result.status).not.toBe(0);
   });
 
-  test("vault set hard-errors with a signpost (no silent write)", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
-    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
-    const result = await runCli(["vault", "set", "prod", "API_KEY", "newvalue"], { AKM_STASH_DIR: stashDir });
-
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("was removed");
-    expect(result.stderr).toContain("akm secret set");
-  });
-
-  test("vault unset hard-errors with a signpost", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
-    const result = await runCli(["vault", "unset", "prod", "API_KEY"], { AKM_STASH_DIR: stashDir });
-
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("was removed");
-  });
-
-  test("legacy vault:<name> ref still resolves through env export", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
-    // A stash that has NOT migrated yet — only vaults/ exists.
+  test("a `vault:` ref is an unknown-type error pointing at env", async () => {
+    const stashDir = makeTempDir("akm-vault-removed-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
     const outFile = path.join(stashDir, "out.sh");
 
     const result = await runCli(["env", "export", "vault:prod", "--out", outFile], { AKM_STASH_DIR: stashDir });
 
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(outFile, "utf8")).toContain("export API_KEY='secret'");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("was removed");
+    expect(result.stderr).toContain("env:");
+    expect(fs.existsSync(outFile)).toBe(false);
   });
 });

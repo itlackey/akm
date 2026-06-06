@@ -79,9 +79,17 @@ export function parseAssetRef(ref: string): AssetRef {
   const rawType = body.slice(0, colon);
   const rawName = body.slice(colon + 1);
 
+  // The `vault` asset type was removed in 0.9.0. Point callers at its
+  // replacements rather than failing with a generic unknown-type error.
+  if (rawType === "vault") {
+    throw new UsageError(
+      "The `vault` asset type was removed in 0.9.0 — use `env:` (whole .env config) or `secret:` (a single value).",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+
   // Type aliases: `environment:` is an accepted spelling of the canonical
-  // `env:` type. (`vault:` remains its own deprecated type so the frozen
-  // `vaults/` copy keeps resolving through the 0.8.x window.)
+  // `env:` type.
   const resolvedType = TYPE_ALIASES[rawType] ?? rawType;
 
   if (!isAssetType(resolvedType)) {

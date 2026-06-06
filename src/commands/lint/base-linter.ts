@@ -97,7 +97,7 @@ function checkStalePath(body: string): string | null {
 // ── missing-ref helpers ───────────────────────────────────────────────────────
 
 const REF_RE =
-  /(?:^|[\s`"'(])((agent|command|knowledge|memory|script|skill|workflow|lesson|task|wiki|vault):[^\s"'`)\]>,\n]+)/gm;
+  /(?:^|[\s`"'(])((agent|command|knowledge|memory|script|skill|workflow|lesson|task|wiki):[^\s"'`)\]>,\n]+)/gm;
 
 /**
  * Map from ref type to relative path pattern within stashRoot. Returns null to skip.
@@ -126,14 +126,6 @@ export function refToRelPath(refType: string, refName: string): string | null {
       return path.join("tasks", `${refName}.md`);
     case "wiki":
       return path.join("wikis", `${refName}.md`);
-    case "vault":
-      // Vaults are .env files. The canonical name "default" (or empty) maps to
-      // ".env"; any other name maps to "<name>.env".  This mirrors the vault
-      // asset-spec toAssetPath logic in src/core/asset-spec.ts.
-      if (!refName || refName === "default") {
-        return path.join("vaults", ".env");
-      }
-      return path.join("vaults", `${refName}.env`);
     default:
       return null;
   }

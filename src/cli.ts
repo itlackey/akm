@@ -773,7 +773,7 @@ const searchCommand = defineCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, lesson, or any). Use workflow to find step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, env, secret, wiki, lesson, or any). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -850,7 +850,7 @@ const curateCommand = defineCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, lesson, or any). Use workflow to curate step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, env, secret, wiki, lesson, or any). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -2009,8 +2009,8 @@ function toggleComponent(
 // `akm env` manages whole `.env` files under each stash's env/ directory.
 // Values are NEVER written to stdout or structured output — only key NAMES and
 // start-of-line comments are surfaced. akm does not manage individual entries;
-// you edit the `.env` file yourself and akm loads it. Replaces the deprecated
-// `vault` type (see the shim further below; removed in 0.9.0).
+// you edit the `.env` file yourself and akm loads it. Replaced the deprecated
+// `vault` type (removed in 0.9.0).
 
 function parseEnvRef(ref: string): ReturnType<typeof parseAssetRef> {
   return parseAssetRef(ref.includes(":") ? ref : `env:${ref}`);
@@ -2034,21 +2034,19 @@ function makeEnvRef(name: string, source?: IndexSearchSource): string {
 }
 
 /**
- * Resolve an env ref to an absolute `.env` path. Accepts `env:`, `environment:`
- * (alias), and `vault:` (deprecated) refs as well as bare names. Prefers the
- * `env/` directory; falls back to the legacy `vaults/` directory when the env
- * file is absent there (handles an upgraded-but-not-yet-migrated stash). When
- * neither exists the env path is returned (so `create` writes under `env/`).
+ * Resolve an env ref to an absolute `.env` path. Accepts `env:` and
+ * `environment:` (alias) refs as well as bare names. The path is returned even
+ * when the file does not yet exist (so `create` writes under `env/`).
  */
 function resolveEnvPath(ref: string): {
   name: string;
   absPath: string;
   source: IndexSearchSource;
   parsedRef: ReturnType<typeof parseAssetRef>;
-  dir: "env" | "vaults";
+  dir: "env";
 } {
   const parsed = parseEnvRef(ref);
-  if (parsed.type !== "env" && parsed.type !== "vault") {
+  if (parsed.type !== "env") {
     throw new UsageError(`Expected an env ref (env:<name>); got "${ref}".`);
   }
   const source = findEnvSource(parsed.origin);
@@ -2063,37 +2061,20 @@ function resolveEnvPath(ref: string): {
     throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
   }
 
-  const vaultRoot = path.join(source.path, "vaults");
-  const vaultPath = resolveAssetPathFromName("vault", vaultRoot, parsed.name);
-  if (!isWithin(vaultPath, vaultRoot)) {
-    throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-  }
-
-  // Prefer env/; fall back to the frozen vaults/ copy only when the env file
-  // is absent and the legacy vault file is present.
-  if (!fs.existsSync(envPath) && fs.existsSync(vaultPath)) {
-    return { name: parsed.name, absPath: vaultPath, source, parsedRef: parsed, dir: "vaults" };
-  }
   return { name: parsed.name, absPath: envPath, source, parsedRef: parsed, dir: "env" };
 }
 
 /**
  * Walk each stash's env files and return one entry per `.env` file, using the
  * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
- * `env:team/prod`, `env/team/.env` → `env:team/default`). When a stash has not
- * yet migrated (no `env/` dir) the legacy `vaults/` dir is listed instead, so
- * `env list` stays continuous across the upgrade.
+ * `env:team/prod`, `env/team/.env` → `env:team/default`).
  */
 function listEnvsRecursive(
   listKeysFn: (envPath: string) => { keys: string[] },
 ): Array<{ ref: string; path: string; keys: string[] }> {
   const result: Array<{ ref: string; path: string; keys: string[] }> = [];
   for (const source of resolveSourceEntries(undefined, loadConfig())) {
-    const envDir = path.join(source.path, "env");
-    const legacyDir = path.join(source.path, "vaults");
-    // Prefer env/; only fall back to the frozen vaults/ copy when env/ is absent.
-    const scanType: "env" | "vault" = fs.existsSync(envDir) ? "env" : "vault";
-    const root = scanType === "env" ? envDir : legacyDir;
+    const root = path.join(source.path, "env");
     if (!fs.existsSync(root)) continue;
 
     const walk = (dir: string): void => {
@@ -2105,7 +2086,7 @@ function listEnvsRecursive(
         }
         if (!entry.isFile()) continue;
         if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
-        const canonical = deriveCanonicalAssetName(scanType, root, full);
+        const canonical = deriveCanonicalAssetName("env", root, full);
         if (!canonical) continue;
         // Skip sensitive envs: a sibling .sensitive marker file suppresses listing.
         const markerPath = full.replace(/\.env$/, ".sensitive");
@@ -2282,14 +2263,11 @@ const envExportCommand = defineCommand({
 });
 
 /**
- * Shared implementation for `env run` (and the deprecated `vault run` shim).
- * Injects an entire env file's values into the child process env — never via a
- * shell — after scanning the injected keys for process-hijacking variables.
+ * Shared implementation for `env run`. Injects an entire env file's values into
+ * the child process env — never via a shell — after scanning the injected keys
+ * for process-hijacking variables.
  */
-async function runEnvInjected(
-  target: string,
-  opts: { viaVault: boolean; only?: string[]; except?: string[] },
-): Promise<void> {
+async function runEnvInjected(target: string, opts: { only?: string[]; except?: string[] }): Promise<void> {
   const dashIndex = process.argv.indexOf("--");
   if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
     throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
@@ -2394,13 +2372,11 @@ async function runEnvInjected(
     mergedEnv[envKey] = envValue;
   }
 
-  // Audit trail: keys only, never values. A single `env_access` event carries a
-  // `deprecatedAlias` marker when reached via the `vault run` shim, so log
-  // consumers see one stable event type without a doubled physical record.
+  // Audit trail: keys only, never values.
   appendEvent({
     eventType: "env_access",
     ref: makeEnvRef(name, source),
-    metadata: opts.viaVault ? { keys, deprecatedAlias: "vault_access" } : { keys },
+    metadata: { keys },
   });
 
   const result = spawnSync(command[0] as string, command.slice(1), {
@@ -2459,7 +2435,6 @@ const envRunCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() =>
       runEnvInjected(args.target, {
-        viaVault: false,
         only: parseKeyListFlag(getHyphenatedArg<string>(args, "only")),
         except: parseKeyListFlag(getHyphenatedArg<string>(args, "except")),
       }),
@@ -2475,7 +2450,6 @@ const envRemoveCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      // Resolve against env/ specifically — never delete the frozen vaults/ copy.
       const parsed = parseEnvRef(args.ref);
       const source = findEnvSource(parsed.origin);
       const envRoot = path.join(source.path, "env");
@@ -2647,153 +2621,10 @@ const envCommand = defineCommand({
   },
 });
 
-// ── vault (DEPRECATED) ────────────────────────────────────────────────────────
-//
-// `akm vault` is deprecated in 0.8.0 and removed in 0.9.0. The verb now warns
-// to stderr and delegates to the `env` handlers. The legacy `vault set` /
-// `vault unset` and single-key `run <ref>/KEY` forms are hard-errors that
-// signpost their current spelling (`akm env set` / `akm env unset` / `akm
-// secret`) — silent behaviour changes around secret material are unacceptable.
-
-function emitVaultDeprecation(sub: string): void {
-  process.stderr.write(
-    `warning: 'akm vault ${sub}' is deprecated and will be removed in 0.9.0. Use 'akm env ${sub}'.\n` +
-      "         For single-value injection use 'akm secret'.\n",
-  );
-}
-
-const vaultSetCommand = defineCommand({
-  meta: { name: "set", description: "DEPRECATED — removed. Edit the .env file directly, or use `akm secret set`." },
-  args: {
-    ref: { type: "positional", description: "(deprecated)", required: false },
-    key: { type: "positional", description: "(deprecated)", required: false },
-  },
-  run() {
-    return runWithJsonErrors(async () => {
-      throw new UsageError(
-        "'akm vault set' was removed. Use `akm env set <ref> <KEY>` (value via stdin/--from-env/--from-file),\n" +
-          "       or store a single value as a secret: `akm secret set secret:<name>`.",
-        "INVALID_FLAG_VALUE",
-      );
-    });
-  },
-});
-
-const vaultUnsetCommand = defineCommand({
-  meta: { name: "unset", description: "DEPRECATED — removed. Edit the .env file directly." },
-  args: {
-    ref: { type: "positional", description: "(deprecated)", required: false },
-    key: { type: "positional", description: "(deprecated)", required: false },
-  },
-  run() {
-    return runWithJsonErrors(async () => {
-      throw new UsageError(
-        "'akm vault unset' was removed. Use `akm env unset <ref> <KEY...>`,\n" +
-          "       or remove a secret with `akm secret remove secret:<name>`.",
-        "INVALID_FLAG_VALUE",
-      );
-    });
-  },
-});
-
-const vaultListCommand = defineCommand({
-  meta: { name: "list", description: "DEPRECATED — use `akm env list`." },
-  run() {
-    return runWithJsonErrors(async () => {
-      emitVaultDeprecation("list");
-      const { listKeys } = await import("./commands/env.js");
-      output("env-list", { envs: listEnvsRecursive(listKeys) });
-    });
-  },
-});
-
-const vaultCreateCommand = defineCommand({
-  meta: { name: "create", description: "DEPRECATED — use `akm env create`." },
-  args: {
-    name: { type: "positional", description: "Env name", required: true },
-    sensitive: { type: "boolean", description: "Exclude from list output and the search index", default: false },
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      emitVaultDeprecation("create");
-      const { createEnv } = await import("./commands/env.js");
-      const parsed = parseEnvRef(args.name);
-      const source = findEnvSource(parsed.origin);
-      const envRoot = path.join(source.path, "env");
-      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-      if (!isWithin(absPath, envRoot)) {
-        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-      }
-      createEnv(absPath);
-      if (args.sensitive) {
-        const markerPath = absPath.replace(/\.env$/, ".sensitive");
-        if (!fs.existsSync(markerPath)) fs.writeFileSync(markerPath, "", { mode: 0o600 });
-      }
-      output("env-create", { ref: makeEnvRef(parsed.name, source) });
-    });
-  },
-});
-
-const vaultPathCommand = defineCommand({
-  meta: { name: "path", description: "DEPRECATED — use `akm env path`." },
-  args: {
-    ref: { type: "positional", description: "Env ref", required: true },
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      emitVaultDeprecation("path");
-      const { name, absPath, source } = resolveEnvPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-      }
-      process.stderr.write(
-        `warning: sourcing the raw file executes shell substitutions it contains. Use: akm env run ${args.ref} -- <command>\n`,
-      );
-      process.stdout.write(`${absPath}\n`);
-    });
-  },
-});
-
-const vaultRunCommand = defineCommand({
-  meta: { name: "run", description: "DEPRECATED — use `akm env run`. The single-key `<ref>/KEY` form was removed." },
-  args: {
-    target: { type: "positional", description: "Env ref", required: true },
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      emitVaultDeprecation("run");
-      await runEnvInjected(args.target, { viaVault: true });
-    });
-  },
-});
-
-const vaultCommand = defineCommand({
-  meta: {
-    name: "vault",
-    description: "DEPRECATED (use `akm env`) — removed in 0.9.0. Manages whole `.env` files; values never printed.",
-  },
-  subCommands: {
-    list: vaultListCommand,
-    path: vaultPathCommand,
-    run: vaultRunCommand,
-    create: vaultCreateCommand,
-    set: vaultSetCommand,
-    unset: vaultUnsetCommand,
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      if (hasSubcommand(args, VAULT_SUBCOMMAND_SET)) return;
-      emitVaultDeprecation("list");
-      const { listKeys } = await import("./commands/env.js");
-      output("env-list", { envs: listEnvsRecursive(listKeys) });
-    });
-  },
-});
-
 // ── secret ──────────────────────────────────────────────────────────────────
 //
 // `akm secret` manages whole-file secrets under each stash's secrets/ directory.
-// Unlike vaults (.env key/value), the ENTIRE file is the secret value. The bytes
+// Unlike env files (.env key/value), the ENTIRE file is the secret value. The bytes
 // are NEVER written to stdout or structured output. Values reach a command only
 // via `akm secret run` (injected into a child env var) or `akm secret path`
 // (the Docker /run/secrets + `_FILE` convention).
@@ -4633,7 +4464,6 @@ export const main = defineCommand({
     hints: hintsCommand,
     completions: completionsCommand,
     env: envCommand,
-    vault: vaultCommand,
     secret: secretCommand,
     wiki: wikiCommand,
     tasks: tasksCommand,
@@ -4642,7 +4472,6 @@ export const main = defineCommand({
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);
 const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "set", "unset", "remove"]);
-const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);
 const WIKI_SUBCOMMAND_SET = new Set([
   "create",

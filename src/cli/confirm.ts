@@ -27,7 +27,7 @@
  * accidental destruction in scripts that forget to pass `-y`.
  *
  * This is intentionally stricter than many CLIs that silently proceed in
- * non-TTY mode. The rationale: vault keys, sources, and proposals cannot be
+ * non-TTY mode. The rationale: secrets, sources, and proposals cannot be
  * recovered after deletion, so the cost of requiring `--yes` in scripts is
  * low and the cost of accidental deletion is high.
  *

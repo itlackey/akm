@@ -59,12 +59,12 @@ async function buildIndex(): Promise<void> {
 }
 
 describe("akm feedback", () => {
-  test("accepts indexed memory and vault refs without surfacing vault values", async () => {
+  test("accepts indexed memory and env refs without surfacing env values", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
     );
-    writeFile(path.join(stashDir, "vaults", "prod.env"), "API_KEY=super-secret-value\nREGION=us-east-1\n");
+    writeFile(path.join(stashDir, "env", "prod.env"), "API_KEY=super-secret-value\nREGION=us-east-1\n");
 
     await buildIndex();
 
@@ -76,15 +76,14 @@ describe("akm feedback", () => {
       signal: "positive",
     });
 
-    const vaultResult = await runCli(["feedback", "vault:prod", "--positive", "--format=json"]);
-    expect(vaultResult.status).toBe(0);
-    expect(parseJsonOutput(vaultResult)).toMatchObject({
+    const envResult = await runCli(["feedback", "env:prod", "--positive", "--format=json"]);
+    expect(envResult.status).toBe(0);
+    expect(parseJsonOutput(envResult)).toMatchObject({
       ok: true,
-      ref: "vault:prod",
+      ref: "env:prod",
       signal: "positive",
     });
-    expect(vaultResult.stdout).not.toContain("super-secret-value");
-    expect(vaultResult.stdout).not.toContain("REGION");
+    expect(envResult.stdout).not.toContain("super-secret-value");
 
     const db = openDatabase(getDbPath());
     try {
@@ -94,10 +93,10 @@ describe("akm feedback", () => {
         )
         .all() as Array<{ entry_ref: string; entry_id: number | null; signal: string }>;
       expect(events).toHaveLength(2);
-      expect(events[0]?.entry_ref).toBe("memory:deployment-notes");
+      expect(events[0]?.entry_ref).toBe("env:prod");
       expect(events[0]?.entry_id).toEqual(expect.any(Number));
       expect(events[0]?.signal).toBe("positive");
-      expect(events[1]?.entry_ref).toBe("vault:prod");
+      expect(events[1]?.entry_ref).toBe("memory:deployment-notes");
       expect(events[1]?.entry_id).toEqual(expect.any(Number));
       expect(events[1]?.signal).toBe("positive");
     } finally {

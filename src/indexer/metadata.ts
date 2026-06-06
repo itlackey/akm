@@ -624,20 +624,15 @@ export function shouldIndexStashFile(
   const segments = relPath.split(/[\\/]+/).filter(Boolean);
   if (segments.length === 0) return true;
 
-  // Skip env / vault .env files that have a sibling .sensitive marker file.
-  if (
-    (segments[0] === "env" || segments[0] === "vaults") &&
-    (file.endsWith(".env") || path.basename(file) === ".env")
-  ) {
+  // Skip env .env files that have a sibling .sensitive marker file.
+  if (segments[0] === "env" && (file.endsWith(".env") || path.basename(file) === ".env")) {
     const markerPath = file.replace(/\.env$/, ".sensitive");
     if (fs.existsSync(markerPath)) return false;
   }
 
-  // Deprecation: once a stash has migrated to the `env/` directory, the legacy
-  // `vaults/` copy is frozen. Skip indexing it so the same keys are not
-  // double-surfaced under both `vault:` and `env:`. (Pre-migration stashes
-  // with no `env/` dir still index `vaults/` normally.)
-  if (segments[0] === "vaults" && fs.existsSync(path.join(stashRoot, "env"))) {
+  // The legacy `vaults/` directory (frozen copy left by the 0.8 migration) is
+  // never indexed — the `vault` asset type was removed in 0.9.0.
+  if (segments[0] === "vaults") {
     return false;
   }
 
@@ -1046,11 +1041,10 @@ async function buildEntryFromFile(
   }
 
   // Extract @param from script files.
-  // Env / vault files (.env) and secret files (whole-file secrets) are
-  // deliberately excluded — their contents are secrets and must never be
-  // parsed for @param or any other metadata that could embed a value into the
-  // entry.
-  if (ext !== ".md" && assetType !== "env" && assetType !== "vault" && assetType !== "secret") {
+  // Env files (.env) and secret files (whole-file secrets) are deliberately
+  // excluded — their contents are secrets and must never be parsed for @param
+  // or any other metadata that could embed a value into the entry.
+  if (ext !== ".md" && assetType !== "env" && assetType !== "secret") {
     const content = ctx.content();
     const scriptParams = extractScriptParameters(file, content);
     if (scriptParams) entry.parameters = scriptParams;
