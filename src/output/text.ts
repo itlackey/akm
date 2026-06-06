@@ -99,7 +99,6 @@ import "./text/info";
 import "./text/config";
 import "./text/feedback";
 import "./text/remember";
-import "./text/move";
 import "./text/import";
 import "./text/save";
 import "./text/enable-disable";

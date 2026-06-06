@@ -105,7 +105,6 @@ import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stash
 import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
-import { akmMove } from "./commands/move";
 import { registryCommand } from "./commands/registry-cli";
 import { rememberCommand } from "./commands/remember-cli";
 
@@ -1116,33 +1115,6 @@ const showCommand = defineCommand({
         eventSource: resolveEventSource(),
       });
       output("show", result);
-    });
-  },
-});
-
-const moveCommand = defineCommand({
-  meta: {
-    name: "move",
-    description:
-      "Relocate an existing stash asset into a subdirectory under the same type root (e.g. akm move knowledge:guide.md knowledge:personal/guide.md)",
-  },
-  args: {
-    ref: {
-      type: "positional",
-      description: "Source asset ref ([origin//]type:name), e.g. knowledge:guide.md",
-      required: true,
-    },
-    dest: {
-      type: "positional",
-      description:
-        "Destination ref or subpath under the same type, e.g. knowledge:personal/guide.md or personal/guide.md",
-      required: true,
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const result = await akmMove({ ref: args.ref, dest: args.dest });
-      output("move", result);
     });
   },
 });
@@ -4667,9 +4639,6 @@ export const main = defineCommand({
     search: searchCommand,
     curate: curateCommand,
     show: showCommand,
-    move: moveCommand,
-    // Alias: `akm mv <ref> <dest>` behaves identically to `akm move`.
-    mv: moveCommand,
     workflow: workflowCommand,
     remember: rememberCommand,
     import: importKnowledgeCommand,
