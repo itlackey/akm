@@ -80,7 +80,7 @@ ranking can learn from actual usage.
 ## Proposals & improvement (0.8.0+)
 
 Reflective edits, new asset drafts, and feedback-distilled lessons land
-in a durable proposal queue first — `akm accept` is the only
+in a durable proposal queue first — `akm proposal accept` is the only
 path that mutates the live stash.
 
 ```sh
@@ -111,7 +111,7 @@ The six proposal subcommands are now accessed via the `proposal` noun group:
 - `akm proposal reject` (was `akm reject`)
 - `akm proposal revert` (was `akm revert`)
 
-The flat verbs remain as deprecated aliases that warn on stderr (removed in 0.9.0).
+The flat verbs were removed in 0.9.0; use the `akm proposal <verb>` forms.
 
 ## Wikis
 
@@ -184,8 +184,7 @@ When `--dest` is provided, `akm setup` is not required first.
 ## Sync
 
 Commit local changes in a git-backed stash. Behaviour adapts automatically.
-(`akm save` is the deprecated 0.7 spelling — it still works but warns; removed
-in 0.9.0.)
+(`akm save`, the pre-0.8 spelling, was removed in 0.9.0 — use `akm sync`.)
 
 - **Not a git repo** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default stash always falls here)

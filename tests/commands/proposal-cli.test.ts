@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createProposal, isProposalSkipped } from "../../src/core/proposals";
-import { setQuiet } from "../../src/core/warn";
 import { runCliCapture } from "../_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
@@ -59,23 +58,14 @@ function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
   return result;
 }
 
-describe("akm proposals (CLI)", () => {
-  test("happy path: lists pending proposal as JSON with totalCount", async () => {
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["proposals", "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.totalCount).toBe(1);
-    expect(Array.isArray(parsed.proposals)).toBe(true);
-    expect(parsed.proposals[0].id).toBe(created.id);
-  });
-
+describe("akm proposal list (CLI)", () => {
   test("supports --ref filtering", async () => {
     const stash = makeStashDir();
     seedProposal(stash, "lesson:rg-over-grep");
     seedProposal(stash, "lesson:docker-cleanup");
-    const result = await runCli(["proposals", "--ref", "lesson:docker-cleanup", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "list", "--ref", "lesson:docker-cleanup", "--format=json"], {
+      stashDir: stash,
+    });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.totalCount).toBe(1);
@@ -99,7 +89,7 @@ describe("akm proposals (CLI)", () => {
   test("error path: invalid --status value → UsageError exit 2 with code", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["proposals", "--status=bogus", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "list", "--status=bogus", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
@@ -110,7 +100,7 @@ describe("akm proposals (CLI)", () => {
     // `akm proposal list --status reverted` works for archived/reverted proposals.
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["proposals", "--status=reverted", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "list", "--status=reverted", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     // No proposals have been reverted in this fixture, so the list is empty.
@@ -119,110 +109,66 @@ describe("akm proposals (CLI)", () => {
   });
 });
 
-describe("akm show proposal (CLI)", () => {
-  test("happy path: returns proposal + validation report", async () => {
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.proposal.id).toBe(created.id);
-    expect(parsed.validation.ok).toBe(true);
-  });
-});
-
-describe("akm accept / reject / diff proposal (CLI)", () => {
-  test("accept materialises asset on disk and exits 0", async () => {
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["accept", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.ok).toBe(true);
-    expect(fs.existsSync(parsed.assetPath as string)).toBe(true);
-  });
-
+describe("akm proposal accept/reject/diff (CLI)", () => {
   test("reject requires --reason", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = await runCli(["reject", created.id, "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "reject", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("MISSING_REQUIRED_ARGUMENT");
-  });
-
-  test("reject archives proposal with reason", async () => {
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    // --yes is required in non-interactive mode since WS-6 added confirmation prompts.
-    const result = await runCli(["reject", created.id, "--reason", "duplicate", "--yes", "--format=json"], {
-      stashDir: stash,
-    });
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.reason).toBe("duplicate");
-    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
-    expect(JSON.parse(list.stdout).totalCount).toBe(0);
-  });
-
-  test("diff proposal shows a unified diff", async () => {
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["diff", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.id).toBe(created.id);
-    expect(parsed.unified).toContain("/dev/null");
   });
 
   test("single-id accept is NOT guarded (revertable) — proceeds without --yes", async () => {
     // WS0: the bulk-accept guard must not leak onto the single-id path.
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = await runCli(["accept", created.id, "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "accept", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.ok).toBe(true);
   });
 });
 
-describe("akm accept --generator bulk safety guard (WS0)", () => {
+describe("akm proposal accept --generator bulk safety guard (WS0)", () => {
   test("bulk accept without --yes aborts in non-interactive mode (exit 2)", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
     // confirmDestructive throws NON_INTERACTIVE_REQUIRES_YES (UsageError → exit 2)
     expect(result.status).toBe(2);
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("NON_INTERACTIVE_REQUIRES_YES");
     // Proposal must NOT have been promoted.
-    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    const list = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
     expect(JSON.parse(list.stdout).totalCount).toBe(1);
   });
 
   test("bulk accept with --yes proceeds and promotes matching proposals", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["accept", "--generator", "reflect", "--yes", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.accepted).toBe(1);
     expect(parsed.dryRun).toBe(false);
-    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    const list = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
     expect(JSON.parse(list.stdout).totalCount).toBe(0);
   });
 
   test("bulk accept --dry-run auto-passes the guard (no --yes needed)", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["accept", "--generator", "reflect", "--dry-run", "--format=json"], {
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--dry-run", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.dryRun).toBe(true);
     // Nothing promoted — proposal still pending.
-    const list = await runCli(["proposals", "--format=json"], { stashDir: stash });
+    const list = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
     expect(JSON.parse(list.stdout).totalCount).toBe(1);
   });
 });
@@ -338,89 +284,6 @@ describe("akm proposal noun group (canonical)", () => {
     const result = await runCli(["proposal", "accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
-  });
-});
-
-describe("deprecated flat proposal verbs warn on stderr and delegate", () => {
-  // The harness sets quiet=true by default (tests/_preload.ts) and resets it
-  // before each test; opt into noisy mode so the deprecation warning surfaces,
-  // exactly as it would in a normal (non-`--quiet`) production invocation.
-  test("`proposals` delegates to `proposal list` and warns", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["proposals", "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).proposals[0].id).toBe(created.id);
-    expect(result.stderr).toContain("'akm proposals' is deprecated");
-    expect(result.stderr).toContain("akm proposal list");
-  });
-
-  test("`accept` delegates and warns", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["accept", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).ok).toBe(true);
-    expect(result.stderr).toContain("'akm accept' is deprecated");
-    expect(result.stderr).toContain("akm proposal accept");
-  });
-
-  test("`reject` delegates and warns", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["reject", created.id, "--reason", "dup", "--yes", "--format=json"], {
-      stashDir: stash,
-    });
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("'akm reject' is deprecated");
-    expect(result.stderr).toContain("akm proposal reject");
-  });
-
-  test("`diff` delegates and warns", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["diff", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).id).toBe(created.id);
-    expect(result.stderr).toContain("'akm diff' is deprecated");
-    expect(result.stderr).toContain("akm proposal diff");
-  });
-
-  test("deprecation warning is suppressed under --quiet", async () => {
-    // quiet defaults to true under the harness (mirrors `--quiet` in prod, which
-    // sets the same global via applyEarlyStderrFlags).
-    setQuiet(true);
-    const stash = makeStashDir();
-    seedProposal(stash);
-    const result = await runCli(["proposals", "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("deprecated");
-  });
-});
-
-describe("akm show proposal (deprecated alias)", () => {
-  test("still works but warns and points to `akm proposal show`", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).proposal.id).toBe(created.id);
-    expect(result.stderr).toContain("'akm show proposal <id>' is deprecated");
-    expect(result.stderr).toContain("akm proposal show");
-  });
-
-  test("warning suppressed under --quiet", async () => {
-    setQuiet(true);
-    const stash = makeStashDir();
-    const created = seedProposal(stash);
-    const result = await runCli(["show", "proposal", created.id, "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("deprecated");
   });
 });
 

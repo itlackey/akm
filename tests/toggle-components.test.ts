@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setQuiet } from "../src/core/warn";
 import { runCliCapture } from "./_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
@@ -75,50 +74,14 @@ describe("component toggles", () => {
     expect(skillsRegistry?.enabled).toBe(true);
   });
 
-  test("deprecated top-level `akm disable` still works AND warns on stderr", async () => {
-    setQuiet(false);
-    const env = sandboxEnv();
-
-    const result = await runCli(["disable", "skills.sh", "--format=json"], env);
-
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).enabled).toBe(false);
-    expect(result.stderr).toContain("'akm disable' is deprecated");
-    expect(result.stderr).toContain("akm config disable");
-    expect(readSkillsRegistry(env.XDG_CONFIG_HOME as string)?.enabled).toBe(false);
-  });
-
-  test("deprecated top-level `akm enable` still works AND warns on stderr", async () => {
-    setQuiet(false);
-    const env = sandboxEnv();
-
-    const result = await runCli(["enable", "skills.sh", "--format=json"], env);
-
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).enabled).toBe(true);
-    expect(result.stderr).toContain("'akm enable' is deprecated");
-    expect(result.stderr).toContain("akm config enable");
-  });
-
-  test("deprecated top-level `akm enable` warning is suppressed under --quiet", async () => {
-    setQuiet(true);
-    const env = sandboxEnv();
-
-    const result = await runCli(["enable", "skills.sh", "--format=json"], env);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("deprecated");
-    setQuiet(false);
-  });
-
-  test("akm enable <unsupported-target> exits with usage error", async () => {
+  test("akm config enable <unsupported-target> exits with usage error", async () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const xdgData = makeTempDir("akm-toggle-data-");
     const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
-    const result = await runCli(["enable", "context-hub", "--format=json"], {
+    const result = await runCli(["config", "enable", "context-hub", "--format=json"], {
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,
@@ -131,14 +94,14 @@ describe("component toggles", () => {
     expect(combined).toContain("Unsupported target");
   });
 
-  test("akm disable <unsupported-target> exits with usage error", async () => {
+  test("akm config disable <unsupported-target> exits with usage error", async () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const xdgData = makeTempDir("akm-toggle-data-");
     const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
-    const result = await runCli(["disable", "context-hub", "--format=json"], {
+    const result = await runCli(["config", "disable", "context-hub", "--format=json"], {
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,

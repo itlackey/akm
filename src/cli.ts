@@ -1019,21 +1019,6 @@ const showCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const subcommand = Array.isArray(args._) ? args._[0] : undefined;
-      if (subcommand === "proposal") {
-        if (!isQuiet()) {
-          process.stderr.write(
-            "warning: 'akm show proposal <id>' is deprecated and will be removed in 0.9.0. Use 'akm proposal show <id>'.\n",
-          );
-        }
-        const proposalId = Array.isArray(args._) ? args._[1] : undefined;
-        if (typeof proposalId !== "string" || !proposalId.trim()) {
-          throw new UsageError("Usage: akm proposal show <id>", "MISSING_REQUIRED_ARGUMENT");
-        }
-        const result = akmProposalShow({ id: proposalId.trim() });
-        output("proposal-show", result);
-        return;
-      }
       // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
       // not a typed asset ref — skip ref validation and let akmShowUnified
       // direct-read it. (`parseAssetRef` would reject the non-type `meta`.)
@@ -1297,13 +1282,9 @@ const configCommand = defineCommand({
   },
 });
 
-// Shared `save`/`sync` body. `sync` is the canonical spelling in 0.8; `save`
-// remains a deprecated alias (removed 0.9.0). Both share this implementation so
-// the git-commit/push logic and the `--format`-as-name workaround stay in one place.
-async function runSyncBody(
-  args: { name?: string; message?: string; push?: boolean },
-  verb: "save" | "sync",
-): Promise<void> {
+// `sync` body. Kept as a standalone function so the git-commit/push logic and
+// the `--format`-as-name workaround stay in one place.
+async function runSyncBody(args: { name?: string; message?: string; push?: boolean }, verb: "sync"): Promise<void> {
   await runWithJsonErrors(async () => {
     // Fix: citty can consume `--format json` (space-separated) as the
     // positional `name` argument (e.g. `akm sync --format json` parses
@@ -1368,47 +1349,17 @@ const syncCommand = defineCommand({
   },
 });
 
-// Deprecated alias (removed 0.9.0): `akm save` → `akm sync`.
-const saveCommand = defineCommand({
-  meta: {
-    name: "save",
-    description: "DEPRECATED — use `akm sync`. Removed in 0.9.0.",
-  },
-  args: {
-    name: {
-      type: "positional",
-      description: "Name of the git stash to save (default: primary stash directory)",
-      required: false,
-    },
-    message: {
-      type: "string",
-      alias: "m",
-      description: "Commit message (default: timestamp)",
-    },
-    push: {
-      type: "boolean",
-      description: "Push after commit when writable + remote configured (use --no-push to commit only). Default: true.",
-      default: true,
-    },
-  },
-  async run({ args }) {
-    emitCommandDeprecation("save", "sync");
-    await runSyncBody(args, "save");
-  },
-});
-
 /**
  * Detect whether `--format <value>` was consumed by citty as the optional
- * `name` positional of `akm save`. Returns true only when `--format` appears
- * in the save subcommand's argv slice AND the candidate name does NOT
+ * `name` positional of `akm sync`. Returns true only when `--format` appears
+ * in the sync subcommand's argv slice AND the candidate name does NOT
  * appear as a standalone positional elsewhere (before or after the flag).
  *
  * This keeps `akm sync json --format json` routing `json` as the stash name,
  * while `akm sync --format json` (no separate positional) is treated as a
- * primary-stash sync. `verb` is the subcommand token to anchor on (`sync` or
- * the deprecated `save`).
+ * primary-stash sync. `verb` is the subcommand token to anchor on.
  */
-function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "save" | "sync"): boolean {
+function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "sync"): boolean {
   const argv = process.argv.slice(2);
   const verbIndex = argv.indexOf(verb);
   const tokens = verbIndex >= 0 ? argv.slice(verbIndex + 1) : argv;
@@ -2052,35 +2003,6 @@ function toggleComponent(
   // normalizeToggleTarget throws for any unsupported target; this is unreachable.
   throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
 }
-
-// Deprecated top-level aliases (removed 0.9.0) — delegate to `config enable|disable`.
-const enableCommand = defineCommand({
-  meta: { name: "enable", description: "DEPRECATED — use `akm config enable`. Removed in 0.9.0." },
-  args: {
-    target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      emitCommandDeprecation("enable", "config enable");
-      const result = toggleComponent(args.target, true);
-      output("enable", result);
-    });
-  },
-});
-
-const disableCommand = defineCommand({
-  meta: { name: "disable", description: "DEPRECATED — use `akm config disable`. Removed in 0.9.0." },
-  args: {
-    target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      emitCommandDeprecation("disable", "config disable");
-      const result = toggleComponent(args.target, false);
-      output("disable", result);
-    });
-  },
-});
 
 // ── env ───────────────────────────────────────────────────────────────────
 //
@@ -2738,17 +2660,6 @@ function emitVaultDeprecation(sub: string): void {
     `warning: 'akm vault ${sub}' is deprecated and will be removed in 0.9.0. Use 'akm env ${sub}'.\n` +
       "         For single-value injection use 'akm secret'.\n",
   );
-}
-
-/**
- * Emit a stderr deprecation warning for a renamed top-level command. The old
- * spelling keeps working in 0.8 (wrap-and-delegate) and is removed in 0.9.0.
- * Suppressed under --quiet; never written to stdout so JSON consumers are
- * unaffected.
- */
-function emitCommandDeprecation(oldCmd: string, newCmd: string): void {
-  if (isQuiet()) return;
-  process.stderr.write(`warning: 'akm ${oldCmd}' is deprecated and will be removed in 0.9.0. Use 'akm ${newCmd}'.\n`);
 }
 
 const vaultSetCommand = defineCommand({
@@ -4189,13 +4100,6 @@ const proposalDrainCommand = defineCommand({
 
 const PROPOSAL_SUBCOMMAND_SET = new Set(["list", "show", "diff", "accept", "reject", "revert", "drain"]);
 
-function emitProposalVerbDeprecation(oldVerb: string, canonical: string): void {
-  if (isQuiet()) return;
-  process.stderr.write(
-    `warning: 'akm ${oldVerb}' is deprecated and will be removed in 0.9.0. Use 'akm ${canonical}'.\n`,
-  );
-}
-
 const proposalCommand = defineCommand({
   meta: { name: "proposal", description: "Manage the proposal queue: list, show, diff, accept, reject, revert" },
   args: {
@@ -4229,53 +4133,6 @@ const proposalCommand = defineCommand({
       });
       output("proposal-list", result);
     });
-  },
-});
-
-// Deprecated flat-verb aliases (removed 0.9.0). Each wraps the canonical command
-// body so bulk/guard logic is not duplicated.
-const proposalsCommand = defineCommand({
-  meta: { name: "proposals", description: "DEPRECATED — use `akm proposal list`. Removed in 0.9.0." },
-  args: proposalListCommand.args,
-  run(ctx) {
-    emitProposalVerbDeprecation("proposals", "proposal list");
-    return proposalListCommand.run?.(ctx);
-  },
-});
-
-const acceptCommand = defineCommand({
-  meta: { name: "accept", description: "DEPRECATED — use `akm proposal accept`. Removed in 0.9.0." },
-  args: proposalAcceptCommand.args,
-  run(ctx) {
-    emitProposalVerbDeprecation("accept", "proposal accept");
-    return proposalAcceptCommand.run?.(ctx);
-  },
-});
-
-const rejectCommand = defineCommand({
-  meta: { name: "reject", description: "DEPRECATED — use `akm proposal reject`. Removed in 0.9.0." },
-  args: proposalRejectCommand.args,
-  run(ctx) {
-    emitProposalVerbDeprecation("reject", "proposal reject");
-    return proposalRejectCommand.run?.(ctx);
-  },
-});
-
-const diffCommand = defineCommand({
-  meta: { name: "diff", description: "DEPRECATED — use `akm proposal diff`. Removed in 0.9.0." },
-  args: proposalDiffCommand.args,
-  run(ctx) {
-    emitProposalVerbDeprecation("diff", "proposal diff");
-    return proposalDiffCommand.run?.(ctx);
-  },
-});
-
-const revertCommand = defineCommand({
-  meta: { name: "revert", description: "DEPRECATED — use `akm proposal revert`. Removed in 0.9.0." },
-  args: proposalRevertCommand.args,
-  run(ctx) {
-    emitProposalVerbDeprecation("revert", "proposal revert");
-    return proposalRevertCommand.run?.(ctx);
   },
 });
 
@@ -4759,13 +4616,9 @@ export const main = defineCommand({
     remember: rememberCommand,
     import: importKnowledgeCommand,
     sync: syncCommand,
-    // Deprecated alias (removed 0.9.0) — delegates to `sync`.
-    save: saveCommand,
     clone: cloneCommand,
     registry: registryCommand,
     config: configCommand,
-    enable: enableCommand,
-    disable: disableCommand,
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
@@ -4776,12 +4629,6 @@ export const main = defineCommand({
     extract: extractCommand,
     propose: proposeCommand,
     proposal: proposalCommand,
-    // Deprecated flat verbs (removed 0.9.0) — delegate to `proposal <verb>`.
-    proposals: proposalsCommand,
-    accept: acceptCommand,
-    reject: rejectCommand,
-    diff: diffCommand,
-    revert: revertCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,

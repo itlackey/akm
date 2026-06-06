@@ -131,7 +131,7 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`, `summary`, `agent`). |
 | `sources` | array | `[]` | Source entries — directories, git repos, websites, npm packages. |
 | `defaultWriteTarget` | string | — | Source name for `akm remember` / `akm import` writes when `--target` is omitted. |
-| `writable` | boolean | `false` | Whether the primary stash pushes on `akm save`. |
+| `writable` | boolean | `false` | Whether the primary stash pushes on `akm sync`. |
 | `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project sources compose with global ones. |
 | `registries` | array | official + skills.sh | Configured registries. |
 | `stashDir` | string | platform default | Path to the working stash. |

@@ -559,7 +559,6 @@ const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines
 export function normalizeShowArgv(argv: string[]): string[] {
   // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
   if (argv[2] !== "show") return argv;
-  if (argv[3] === "proposal") return argv;
   if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
     throw new UsageError(
       'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',

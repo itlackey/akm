@@ -94,7 +94,7 @@ akm lint --json | cat | jq '.'   # safe for any output size
 
 `akm` ships a proposal queue so reflective edits, improvements, and feedback-distilled lessons
 land out-of-band before they touch the live stash. None of these commands
-mutate stash content directly — they always go through `akm accept`.
+mutate stash content directly — they always go through `akm proposal accept`.
 
 ```sh
 akm improve <ref>                              # Produce an improvement proposal for an existing asset

@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setQuiet } from "../src/core/warn";
 import { parseGitRepoUrl } from "../src/sources/providers/git";
 import { type CliResult, runCliCapture } from "./_helpers/cli";
 import { withEnv } from "./_helpers/sandbox";
@@ -225,37 +224,6 @@ describe("akm sync", () => {
     expect(gitHeadSubject(repoDir)).toBe("no push commit");
   });
 
-  test("deprecated `akm save` still works AND warns on stderr", async () => {
-    setQuiet(false);
-    const stashDir = makeTempDir("akm-save-deprecated-");
-    initGitRepo(stashDir);
-    fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
-
-    const result = await runCli(["save", "-m", "via save alias"], stashDir);
-    expect(result.code).toBe(0);
-    const json = parseSaveOutput(result.stdout);
-    expect(json.committed).toBe(true);
-    expect(result.stderr).toContain("'akm save' is deprecated");
-    expect(result.stderr).toContain("akm sync");
-
-    const log = spawnSync("git", ["-C", stashDir, "log", "--oneline"], { encoding: "utf8" });
-    expect(log.stdout).toContain("via save alias");
-  });
-
-  test("deprecated `akm save` warning is suppressed under --quiet", async () => {
-    setQuiet(true);
-    const stashDir = makeTempDir("akm-save-quiet-");
-    initGitRepo(stashDir);
-    fs.mkdirSync(path.join(stashDir, "skills"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "skills", "skill.md"), "# Test");
-
-    const result = await runCli(["save", "-m", "quiet save"], stashDir);
-    expect(result.code).toBe(0);
-    expect(result.stderr).not.toContain("deprecated");
-    setQuiet(false);
-  });
-
   test("named git-backed save targets the named repo instead of the primary stash", async () => {
     const primaryStashDir = makeTempDir("akm-save-primary-");
     initGitRepo(primaryStashDir);
@@ -319,7 +287,7 @@ describe("akm sync", () => {
         XDG_DATA_HOME: makeTempDir("akm-save-data-"),
         XDG_STATE_HOME: makeTempDir("akm-save-state-"),
       },
-      () => runCliCapture(["save", namedRepoName, "-m", "slash target commit"]),
+      () => runCliCapture(["sync", namedRepoName, "-m", "slash target commit"]),
     );
 
     expect(result.code).toBe(0);
@@ -365,7 +333,7 @@ describe("akm sync", () => {
         XDG_DATA_HOME: makeTempDir("akm-save-data-installed-"),
         XDG_STATE_HOME: makeTempDir("akm-save-state-installed-"),
       },
-      () => runCliCapture(["save", "installed-stash"]),
+      () => runCliCapture(["sync", "installed-stash"]),
     );
 
     expect(result.code).toBe(2);

@@ -842,10 +842,8 @@ running `akm setup` first.
 Stage and commit local changes in a git-backed stash. If the stash has a
 remote configured and is marked `writable: true`, the commit is also pushed.
 
-> **Renamed in 0.8.0.** `akm save` is the deprecated spelling — it still works
-> and delegates to `akm sync`, but prints a stderr deprecation warning and is
-> removed in 0.9.0. `sync` connotes the commit+push behaviour better than
-> `save`.
+> **Renamed in 0.8.0; the `akm save` alias was removed in 0.9.0.** Use `akm
+> sync` — it connotes the commit+push behaviour better than `save`.
 
 ```sh
 akm sync                            # Sync primary stash (auto timestamp message)
@@ -1866,9 +1864,8 @@ Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 behaves as `akm proposal list`.
 
 The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
-`akm reject`, `akm diff`, and `akm revert` remain as **deprecated aliases** that
-warn on stderr and delegate to the `proposal <verb>` forms. They are removed in
-0.9.0.
+`akm reject`, `akm diff`, and `akm revert` were **removed in 0.9.0**. Use the
+`akm proposal <verb>` forms.
 
 #### proposal list
 

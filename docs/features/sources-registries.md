@@ -22,7 +22,7 @@ akm add https://docs.example.com --max-pages 200 --max-depth 5
 # Add the official onboarding stash:
 akm add github:itlackey/akm-stash
 
-# Mark a git stash as writable (enables akm save to push):
+# Mark a git stash as writable (enables akm sync to push):
 akm add git@github.com:org/skills.git --provider git --name my-skills --writable
 ```
 
@@ -105,34 +105,34 @@ akm clone workflow:ship-release --dest ./project/.claude
 # The local copy wins in searches from this directory forward
 ```
 
-## akm save
+## akm sync
 
-`akm save` stages, commits, and optionally pushes your writable stash. It is
-the complement to `akm add`: once you have made changes locally, `save` persists
-them to git.
+`akm sync` stages, commits, and optionally pushes your writable stash. It is
+the complement to `akm add`: once you have made changes locally, `sync` persists
+them to git. (`akm save`, the pre-0.8 spelling, was removed in 0.9.0.)
 
 ```sh
-akm save                          # Primary stash, auto timestamp message
-akm save -m "Add deploy skill"   # Custom commit message
-akm save my-skills -m "Update"   # Named writable git source
+akm sync                          # Primary stash, auto timestamp message
+akm sync -m "Add deploy skill"   # Custom commit message
+akm sync my-skills -m "Update"   # Named writable git source
 ```
 
 Push behavior depends on configuration: if the stash is a git repo with a
-remote and `writable: true`, save also pushes. Otherwise it commits only.
+remote and `writable: true`, sync also pushes. Otherwise it commits only.
 
 > **0.9.0:** writes that land on a writable git source via `--target` (e.g.
 > `akm remember --target my-skills`, proposal accept/revert, consolidate) are
 > committed automatically in a single batch at the end of the operation — one
 > complete commit (staging `.akm/` + assets together), pushed under the same
-> `writable + remote` gate as `akm save`. The legacy per-asset `options.pushOnCommit`
+> `writable + remote` gate as `akm sync`. The legacy per-asset `options.pushOnCommit`
 > knob is deprecated; remove it and rely on `writable: true` + push instead.
 
 **Example: publish your own stash**
 
 ```sh
-# One-time setup: make the primary stash push on save
+# One-time setup: make the primary stash push on sync
 # Set `"writable": true` in ~/.config/akm/config.json
-akm save -m "Add deployment skills"
+akm sync -m "Add deployment skills"
 # → stages, commits, and pushes to your configured remote
 ```
 

@@ -170,7 +170,7 @@ structured output or search index, and vault files are stored at mode 0600.
 
 Values are **plaintext at rest** — protected only by filesystem permissions.
 OS-level full-disk encryption (FileVault, LUKS, BitLocker) is the recommended
-complement. Vault files are excluded from `akm save` git commits when `vaults/`
+complement. Vault files are excluded from `akm sync` git commits when `vaults/`
 is listed in your stash `.gitignore`.
 
 ### Threat model scope

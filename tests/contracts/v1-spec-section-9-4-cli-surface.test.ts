@@ -26,25 +26,20 @@ const SHIPPED_COMMANDS = [
   "vault",
   "wiki",
   "graph",
-  "enable",
-  "disable",
   "completions",
   "upgrade",
-  "save",
   "help",
   "hints",
   "config",
 ] as const;
 
-// The proposal queue is now exposed as the `proposal` noun group (0.8 CLI
-// stabilization). The flat verbs (`proposals` / `accept` / `reject`) survive as
-// deprecated aliases (removed 0.9.0), so the spec still names them, but the
-// canonical v1 surface is `proposal <verb>`.
+// The proposal queue is exposed as the `proposal` noun group (0.8 CLI
+// stabilization). The flat verbs (`proposals` / `accept` / `reject`) and the
+// `save` / `enable` / `disable` aliases were removed in 0.9.0; the canonical
+// v1 surface is `proposal <verb>`, `sync`, and `config enable|disable`.
 const PLANNED_FOR_V1 = ["agent", "improve", "propose", "proposal"] as const;
 
-// Spec §9.4 still enumerates the deprecated flat verbs alongside the canonical
-// group; assert they remain documented as the alias surface.
-const PLANNED_FOR_V1_SPEC = [...PLANNED_FOR_V1, "proposals", "accept", "reject"] as const;
+const PLANNED_FOR_V1_SPEC = [...PLANNED_FOR_V1] as const;
 
 describe("v1 spec §9.4 — CLI command surface", () => {
   const spec = readDoc(SPEC_PATH);
