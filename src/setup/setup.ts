@@ -41,6 +41,7 @@ import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProf
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectLMStudio, detectOllama, type LMStudioDetectionResult } from "./detect";
+import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
 
 // ── Setup sandbox guard ─────────────────────────────────────────────────────
@@ -804,12 +805,23 @@ export async function stepLlm(
   ollamaEndpoint?: string,
   ollamaChatModels?: string[],
   lmStudio?: LMStudioDetectionResult,
+  harnessConfigs?: HarnessLLMConfig[],
 ): Promise<LlmConnectionConfig | undefined> {
-  const options: Array<{ value: string; label: string; hint?: string }> = LLM_PRESETS.map((preset) => ({
-    value: preset.value,
-    label: preset.label,
-    hint: preset.hint,
+  // Build "Import from <Harness>" options and prepend them before LLM_PRESETS
+  const harnessOptions = (harnessConfigs ?? []).map((h) => ({
+    value: `harness:${h.harnessName}`,
+    label: `Import from ${h.harnessName}`,
+    hint: [h.provider, h.model].filter(Boolean).join(" / ") || "detected",
   }));
+
+  const options: Array<{ value: string; label: string; hint?: string }> = [
+    ...harnessOptions,
+    ...LLM_PRESETS.map((preset) => ({
+      value: preset.value,
+      label: preset.label,
+      hint: preset.hint,
+    })),
+  ];
 
   const ollamaAvailable = Boolean(ollamaEndpoint && ollamaChatModels && ollamaChatModels.length > 0);
   if (ollamaAvailable) {
@@ -846,6 +858,26 @@ export async function stepLlm(
 
   if (choice === "keep") return cloneLlmConfig(currentLlm);
   if (choice === "none") return undefined;
+
+  // Handle "Import from <Harness>" choices
+  if (typeof choice === "string" && choice.startsWith("harness:")) {
+    const harness = (harnessConfigs ?? []).find((h) => `harness:${h.harnessName}` === choice);
+    if (!harness) return undefined;
+    // Show a summary before accepting
+    p.log.info(
+      `Importing LLM config from ${harness.harnessName}: ` +
+        [harness.provider, harness.model, harness.baseUrl].filter(Boolean).join(", "),
+    );
+    const llmConfig: LlmConnectionConfig = {
+      endpoint: harness.baseUrl ?? "",
+      model: harness.model ?? "",
+      temperature: 0.3,
+      maxTokens: 1024,
+    };
+    if (harness.provider) llmConfig.provider = harness.provider as LlmConnectionConfig["provider"];
+    if (harness.baseUrl) llmConfig.endpoint = harness.baseUrl;
+    return llmConfig;
+  }
 
   let llm: LlmConnectionConfig;
 
@@ -1840,6 +1872,8 @@ export function buildSetupSteps(options: {
   let ollamaEndpoint: string | undefined;
   let ollamaChatModels: string[] | undefined;
   let lmStudioResult: LMStudioDetectionResult | undefined;
+  // Harness configs detected once and shared with the LLM step.
+  const harnessConfigs = detectHarnessConfigs();
 
   const steps: SetupStep[] = [
     {
@@ -1876,7 +1910,7 @@ export function buildSetupSteps(options: {
         if (!options.online) {
           return;
         }
-        const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels, lmStudioResult);
+        const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels, lmStudioResult, harnessConfigs);
         ctx.apply(applyLegacyLlm(ctx.config, llm));
       },
     },
