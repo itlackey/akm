@@ -324,10 +324,38 @@ const setupCommand = defineCommand({
       default: false,
       description: "Probe LLM/embedding endpoints after writing config to verify connectivity",
     },
+    "detect-only": {
+      type: "boolean",
+      default: false,
+      description:
+        "Run environment detection only and print the result (no prompts, no writes). Pair with --format json.",
+    },
+    "reset-recommended": {
+      type: "boolean",
+      default: false,
+      description:
+        "Merge opinionated, detection-derived defaults into the existing config without removing custom keys.",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = getHyphenatedBoolean(args, "no-init");
+      const detectOnly = getHyphenatedBoolean(args, "detect-only");
+      const resetRecommended = getHyphenatedBoolean(args, "reset-recommended");
+      if (detectOnly) {
+        // Detection only: no prompts, no writes.
+        const { runDetectOnly } = await import("./setup/setup");
+        const detection = await runDetectOnly();
+        output("setup", detection);
+        return;
+      }
+      if (resetRecommended) {
+        const { runResetRecommended } = await import("./setup/setup");
+        const result = await runResetRecommended({ dir: args.dir, noInit, probe: args.probe });
+        output("setup", result);
+        printSetupTtyHint(result);
+        return;
+      }
       if (args.from && args.config) {
         throw new UsageError("Pass either --from <file> or --config <json>, not both.", "INVALID_FLAG_VALUE");
       }

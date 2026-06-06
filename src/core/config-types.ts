@@ -488,4 +488,18 @@ export interface AkmConfig {
    * `akm improve` pipeline tuning. Persisted settings apply to every unattended run.
    */
   improve?: ImproveConfig;
+  /**
+   * Recommendations recorded by `akm setup` (e.g. `--reset-recommended`).
+   * Advisory metadata only — actual task scheduling lives in the tasks
+   * subsystem. Persisted so the value survives a re-run.
+   */
+  setup?: {
+    /** Recommended cron schedules for background tasks. */
+    taskSchedules?: {
+      /** Cron expression for the `improve` task, e.g. "0 2 * * *". */
+      improve?: string;
+      /** Cron expression for the `index` task, e.g. "0 4 * * *". */
+      index?: string;
+    };
+  };
 }
