@@ -1212,12 +1212,20 @@ function buildPerRunSummaries(db: Database, since: string, until?: string): Impr
   for (const row of rows) {
     const startMs = new Date(row.started_at).getTime();
     const endMs = new Date(row.completed_at).getTime();
-    // Prefer the task_history interval (which has distinct start/end timestamps).
-    // Fall back to the improve_runs row's own delta (usually 0 because
-    // recordImproveRun writes started_at == completed_at == end-of-run timestamp).
-    const fallbackWallMs = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : 0;
-    const interval = Number.isFinite(startMs) ? findContainingTaskInterval(startMs, taskIntervals) : undefined;
-    const wallTimeMs = interval?.durationMs ?? fallbackWallMs;
+    // Prefer the improve_runs row's own (completed_at - started_at) delta:
+    // recordImproveRun now persists distinct start/end timestamps, so the
+    // row's own delta is the authoritative per-run wall time even for
+    // manually-invoked `akm improve` runs with no enclosing task_history.
+    // Only fall back to the task_history containing-interval join for legacy/
+    // backfill rows where started_at == completed_at (row delta is 0).
+    const hasRowDelta = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
+    let wallTimeMs: number;
+    if (hasRowDelta) {
+      wallTimeMs = endMs - startMs;
+    } else {
+      const interval = Number.isFinite(startMs) ? findContainingTaskInterval(startMs, taskIntervals) : undefined;
+      wallTimeMs = interval?.durationMs ?? 0;
+    }
     summaries.push(projectImproveRunSummary(row, wallTimeMs));
   }
   return summaries;

@@ -309,6 +309,97 @@ describe("akmHealth", () => {
     expect(result.schemaVersion).toBe(2);
   });
 
+  test("manual run row with distinct started_at<completed_at and no task_history yields wallTime from the row delta (#499)", () => {
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 45_000).toISOString(); // 15s row delta
+    const db = openStateDatabase();
+    try {
+      // No task_history interval — this is a manually-invoked `akm improve`.
+      recordImproveRun(db, {
+        id: "run-manual",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [{ ref: "memory:m" }],
+          actions: [{ ref: "memory:m", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    // wallTime comes from the row's own (completed_at - started_at) delta (15s),
+    // NOT from any task_history join (there is none).
+    expect(result.improve.wallTime.count).toBe(1);
+    expect(result.improve.wallTime.minMs).toBe(15_000);
+    expect(result.improve.wallTime.maxMs).toBe(15_000);
+  });
+
+  test("legacy row with started_at==completed_at falls back to containing task_history interval duration (#499)", () => {
+    const taskStart = new Date(Date.now() - 60_000).toISOString();
+    const taskEnd = new Date(Date.now() - 38_000).toISOString(); // 22s interval
+    // Legacy/backfill row: started_at == completed_at, falling inside the task interval.
+    const stamp = new Date(Date.now() - 50_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: taskStart,
+        completed_at: taskEnd,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      recordImproveRun(db, {
+        id: "run-legacy",
+        startedAt: stamp,
+        completedAt: stamp,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [{ ref: "memory:l" }],
+          actions: [{ ref: "memory:l", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    // Row delta is 0, so wallTime is sourced from the containing task interval (22s).
+    expect(result.improve.wallTime.count).toBe(1);
+    expect(result.improve.wallTime.minMs).toBe(22_000);
+    expect(result.improve.wallTime.maxMs).toBe(22_000);
+  });
+
   test("reflect content-policy guard hits are counted separately from failed (Pattern A)", () => {
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
