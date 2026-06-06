@@ -6,6 +6,27 @@
 
 Revised refactor plan for epic #490, verified against HEAD 2164f64 (release/0.9.0), incorporating every required revision from the clean-code review. The epic's headline numbers are largely STALE because quick wins (#491-#495) shipped: AkmAssetType is a literal union, shapeForCommand/formatPlain/PASSTHROUGH are registry-driven, serializeFrontmatter is consolidated, sandbox.ts is adopted by 92 test files (not 1). Re-measured at HEAD: cli.ts=4589 LOC/106 defineCommand; `new Database` already confined to EXACTLY 3 engine modules (4 call sites) so the Database-constructor battle is already won — the remaining leak is raw SQL (~68 sites outside DB modules) and hand-rolled open/try/finally lifecycle. getLockfilePath duplicated (lockfile.ts:44 vs paths.ts:267); the two SQLite migration runners differ by ONE line; the `task` registry/union drift is a real latent bug. CHANGES FROM REVIEW: (1) the LOW/MEDIUM-risk parameter-object work (PassContext, ImproveRunContext, AkmImproveOptions decomposition) is PROMOTED out of the optional XL god-function bucket into its own Phase-1 type-only workstream (WS10) so it ships independent of the dangerous akmConsolidate extraction. (2) WS3 is SPLIT into WS3a (shared SqliteMigrationRunner — high value, do now) and WS3b (migrate-storage MigrationStep registry — severable, lower priority, behind a fixture-stash differential test). (3) src/services/env-store.ts is REMOVED from WS6 — it violated the plan's own anti-speculative-layer guardrail; env/secret logic moves into env-cli.ts/secret-cli.ts + core/env-secret-ref.ts only. (4) WS5 gains an explicit connection-lifetime hazard rule (repo methods MUST fully materialize result sets before the with*Repo scope closes) plus a per-repo extraction threshold (>=2 callers OR >=3 raw-SQL sites) so low-traffic tables don't get ceremony repos. NEW FINDING confirmed at HEAD: the `existingDb?` caller-owns-vs-callee-owns flag exists in only 6 sites across 2 files (search.ts, show.ts) — far narrower than the review's cited 41, so the lifetime hazard is contained. (5) defineJsonCommand factory is now a TRACKED WS6 deliverable with a KPI (123 runWithJsonErrors sites verified at HEAD; defineJsonCommand does not yet exist). (6) WS6 gains a lower-bound anti-fragmentation guardrail (group by command family; no <100-LOC single-command files). Hard rule throughout: zero behaviour change, `bun run check` green every PR, one shippable concern per PR, byte-identical 41-key CLI surface.
 
+## Delivery process — local merges, no PRs
+
+This refactor is delivered **directly on `release/0.9.0` via local merges with local
+reviews** — there are **no GitHub pull requests**. Wherever this document says
+"PR", "green PR", "one PR per concern", etc., read it as **one local merge unit**:
+
+1. **Branch** a workstream (or sub-slice) off the current `origin/release/0.9.0` tip.
+2. **Implement** it, writing the required characterization tests first.
+3. **Gate:** `bunx tsc --noEmit`, `bun run lint`, unit, and the relevant integration
+   tests must all pass.
+4. **Local clean-code review:** an architect-role reviewer reads the diff against this
+   plan's contract for that workstream (zero behaviour change, KPI met, no regression,
+   no over-engineering) and returns approve / revise.
+5. **Merge** the approved branch into `release/0.9.0` **locally**, re-run the gate on the
+   merged result, and **push `release/0.9.0`**. Merges are **serialized** (one at a time)
+   so each workstream builds on the prior's merged tip — never push in parallel to the
+   shared branch (stale-local-ref hazard).
+
+The gate + the local review are the safety net; nothing merges red or unreviewed. Each
+merge stays small and independently revertable.
+
 ## Re-baseline: stale #490 claims corrected at HEAD
 
 The quick wins (#491–#495) already shipped, so most headline numbers are stale. Verified at HEAD:
@@ -164,8 +185,8 @@ The quick wins (#491–#495) already shipped, so most headline numbers are stale
 
 ## Guardrails
 
-- ZERO behaviour change is the contract. Every PR keeps `bun run check` green and the public CLI surface (41 subCommand keys) byte-identical. No PR may change on-disk storage locations (STABILITY.md 'storage consolidation' is under user review — WS1/WS5 are abstraction-only, paths unchanged).
-- One shippable concern per PR; each independently revertable. Never gate epic #490 as a whole — gate per child PR only.
+- ZERO behaviour change is the contract. Every local merge keeps `bun run check` green and the public CLI surface (41 subCommand keys) byte-identical. No merge may change on-disk storage locations (STABILITY.md 'storage consolidation' is under user review — WS1/WS5 are abstraction-only, paths unchanged).
+- One shippable concern per local merge; each independently revertable. Never gate epic #490 as a whole — gate + locally review each merge unit only. No GitHub PRs; merges land directly on `release/0.9.0` after a local clean-code review.
 - Build ONE abstraction per concern: with*Repo (WS5) supersedes a generic withDatabase; StorageLocations (WS1) is the only path seam. NO src/services layer unless a concrete NON-CLI consumer exists — env-store.ts is explicitly DROPPED (env/secret logic lives in env-cli.ts/secret-cli.ts + core/env-secret-ref.ts).
 - WS5 connection-lifetime rule: every repo method MUST fully materialize result sets (.all()/array copy, plain return values) before the with*Repo scope closes — never return live statement iterators/cursors across the scope boundary. Audit the 6 existingDb? sites (search.ts/show.ts) individually before collapsing them.
 - WS5 repo threshold: extract a repo only for tables with >=2 callers OR >=3 raw-SQL sites; low-traffic single-caller tables stay inline — no ceremony repos.
