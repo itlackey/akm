@@ -40,7 +40,7 @@ import {
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
-import { detectAgentPlatforms, detectOllama } from "./detect";
+import { detectAgentPlatforms, detectLMStudio, detectOllama, type LMStudioDetectionResult } from "./detect";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
 
 // ── Setup sandbox guard ─────────────────────────────────────────────────────
@@ -803,6 +803,7 @@ export async function stepLlm(
   current: AkmConfig,
   ollamaEndpoint?: string,
   ollamaChatModels?: string[],
+  lmStudio?: LMStudioDetectionResult,
 ): Promise<LlmConnectionConfig | undefined> {
   const options: Array<{ value: string; label: string; hint?: string }> = LLM_PRESETS.map((preset) => ({
     value: preset.value,
@@ -818,6 +819,10 @@ export async function stepLlm(
       hint: ollamaChatModels?.[0] ?? "local",
     });
   }
+  const lmStudioHint = lmStudio?.available
+    ? `${lmStudio.models.length} model${lmStudio.models.length === 1 ? "" : "s"} detected`
+    : "http://localhost:1234";
+  options.push({ value: "lmstudio", label: "LM Studio / local server", hint: lmStudioHint });
   options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
   options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement during indexing" });
   const currentLlm = getCurrentLlm(current);
@@ -856,6 +861,65 @@ export async function stepLlm(
       provider: "ollama",
       endpoint: `${ollamaEndpoint}/v1/chat/completions`,
       model: modelChoice,
+      temperature: 0.3,
+      maxTokens: 1024,
+    };
+  } else if (choice === "lmstudio") {
+    const currentLmsLlm = currentLlm?.provider === "lmstudio" ? currentLlm : undefined;
+    const defaultEndpoint =
+      currentLmsLlm?.endpoint ??
+      (lmStudio?.endpoint ? `${lmStudio.endpoint}/v1/chat/completions` : "http://localhost:1234/v1/chat/completions");
+    const endpoint = await prompt(() =>
+      p.text({
+        message: "Endpoint URL:",
+        placeholder: defaultEndpoint,
+        defaultValue: defaultEndpoint,
+        validate: (v) => {
+          if (!v?.trim()) return "Endpoint cannot be empty";
+          if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
+        },
+      }),
+    );
+    let model: string;
+    const lmsModels = lmStudio?.available && lmStudio.models.length > 0 ? lmStudio.models : [];
+    if (lmsModels.length > 0) {
+      const modelChoice = await prompt(() =>
+        p.select({
+          message: "Model name:",
+          options: [
+            ...lmsModels.map((m) => ({ value: m, label: m })),
+            { value: "__manual__", label: "Enter manually..." },
+          ],
+          initialValue:
+            currentLmsLlm?.model && lmsModels.includes(currentLmsLlm.model) ? currentLmsLlm.model : lmsModels[0],
+        }),
+      );
+      if (modelChoice === "__manual__") {
+        model = await prompt(() =>
+          p.text({
+            message: "Model name:",
+            placeholder: currentLmsLlm?.model ?? "local-model",
+            ...(currentLmsLlm?.model ? { defaultValue: currentLmsLlm.model } : {}),
+            validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+          }),
+        );
+      } else {
+        model = modelChoice;
+      }
+    } else {
+      model = await prompt(() =>
+        p.text({
+          message: "Model name:",
+          placeholder: currentLmsLlm?.model ?? "local-model",
+          ...(currentLmsLlm?.model ? { defaultValue: currentLmsLlm.model } : {}),
+          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+        }),
+      );
+    }
+    llm = {
+      provider: "lmstudio",
+      endpoint: endpoint.trim(),
+      model: model.trim(),
       temperature: 0.3,
       maxTokens: 1024,
     };
@@ -1157,11 +1221,17 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     ].join("\n"),
   );
 
-  // Probe for Ollama in the background while showing the note.
+  // Probe for Ollama and LM Studio in the background while showing the note.
   const spin = p.spinner();
   spin.start("Detecting local services...");
-  const ollama = await detectOllama();
-  spin.stop(ollama.available ? `Ollama detected at ${ollama.endpoint}` : "No local services detected");
+  const [ollama, lmStudio] = await Promise.all([detectOllama(), detectLMStudio()]);
+  const detectedServices = [
+    ollama.available ? `Ollama at ${ollama.endpoint}` : null,
+    lmStudio.available ? `LM Studio at ${lmStudio.endpoint}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  spin.stop(detectedServices ? `Detected: ${detectedServices}` : "No local services detected");
 
   const ollamaEndpoint = ollama.available ? ollama.endpoint : undefined;
 
@@ -1173,9 +1243,12 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
       hint: `detected at ${ollama.endpoint}`,
     });
   }
+  const lmStudioHint = lmStudio.available
+    ? `${lmStudio.models.length} model${lmStudio.models.length === 1 ? "" : "s"} detected`
+    : "http://localhost:1234";
   providerOptions.push(
     { value: "openai", label: "OpenAI", hint: "requires AKM_LLM_API_KEY" },
-    { value: "lmstudio", label: "LM Studio / local server", hint: "http://localhost:1234" },
+    { value: "lmstudio", label: "LM Studio / local server", hint: lmStudioHint },
     { value: "custom", label: "Custom OpenAI-compatible endpoint" },
     { value: "skip", label: "Skip — disable enrichment features" },
   );
@@ -1289,8 +1362,8 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
   } else if (providerChoice === "lmstudio") {
     const currentLmsEndpoint =
       currentLlmSmall?.provider === "lmstudio"
-        ? (currentLlmSmall.endpoint ?? "http://localhost:1234/v1/chat/completions")
-        : "http://localhost:1234/v1/chat/completions";
+        ? (currentLlmSmall.endpoint ?? `${lmStudio.endpoint}/v1/chat/completions`)
+        : `${lmStudio.endpoint}/v1/chat/completions`;
     const currentLmsModel = currentLlmSmall?.provider === "lmstudio" ? currentLlmSmall.model : undefined;
     const endpoint = await prompt(() =>
       p.text({
@@ -1303,14 +1376,41 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
         },
       }),
     );
-    const model = await prompt(() =>
-      p.text({
-        message: "Model name:",
-        placeholder: currentLmsModel ?? "local-model",
-        ...(currentLmsModel ? { defaultValue: currentLmsModel } : {}),
-        validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-      }),
-    );
+    let model: string;
+    const lmsModels = lmStudio.available && lmStudio.models.length > 0 ? lmStudio.models : [];
+    if (lmsModels.length > 0) {
+      const modelChoice = await prompt(() =>
+        p.select({
+          message: "Model name:",
+          options: [
+            ...lmsModels.map((m) => ({ value: m, label: m })),
+            { value: "__manual__", label: "Enter manually..." },
+          ],
+          initialValue: currentLmsModel && lmsModels.includes(currentLmsModel) ? currentLmsModel : lmsModels[0],
+        }),
+      );
+      if (modelChoice === "__manual__") {
+        model = await prompt(() =>
+          p.text({
+            message: "Model name:",
+            placeholder: currentLmsModel ?? "local-model",
+            ...(currentLmsModel ? { defaultValue: currentLmsModel } : {}),
+            validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+          }),
+        );
+      } else {
+        model = modelChoice;
+      }
+    } else {
+      model = await prompt(() =>
+        p.text({
+          message: "Model name:",
+          placeholder: currentLmsModel ?? "local-model",
+          ...(currentLmsModel ? { defaultValue: currentLmsModel } : {}),
+          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+        }),
+      );
+    }
     llm = {
       provider: "lmstudio",
       endpoint: endpoint.trim(),
@@ -1739,6 +1839,7 @@ export function buildSetupSteps(options: {
   // to the LLM step. Mutable by design — `stepLlm` needs them.
   let ollamaEndpoint: string | undefined;
   let ollamaChatModels: string[] | undefined;
+  let lmStudioResult: LMStudioDetectionResult | undefined;
 
   const steps: SetupStep[] = [
     {
@@ -1761,9 +1862,10 @@ export function buildSetupSteps(options: {
           ctx.apply({ embedding: ctx.config.embedding });
           return;
         }
-        const result = await stepOllama(ctx.config);
+        const [result, lmStudio] = await Promise.all([stepOllama(ctx.config), detectLMStudio()]);
         ollamaEndpoint = result.ollamaEndpoint;
         ollamaChatModels = result.ollamaChatModels;
+        lmStudioResult = lmStudio;
         ctx.apply({ embedding: result.embedding });
       },
     },
@@ -1774,7 +1876,7 @@ export function buildSetupSteps(options: {
         if (!options.online) {
           return;
         }
-        const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels);
+        const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels, lmStudioResult);
         ctx.apply(applyLegacyLlm(ctx.config, llm));
       },
     },

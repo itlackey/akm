@@ -85,6 +85,42 @@ export async function detectOllama(): Promise<OllamaDetectionResult> {
   return result;
 }
 
+// ── LM Studio Detection ────────────────────────────────────────────────────
+
+export interface LMStudioDetectionResult {
+  available: boolean;
+  models: string[];
+  endpoint: string;
+}
+
+const LMSTUDIO_BASE = "http://localhost:1234";
+
+/**
+ * Detect if LM Studio is running and list available models.
+ * Probes the OpenAI-compatible /v1/models endpoint.
+ */
+export async function detectLMStudio(): Promise<LMStudioDetectionResult> {
+  const result: LMStudioDetectionResult = { available: false, models: [], endpoint: LMSTUDIO_BASE };
+  try {
+    const response = await fetch(`${LMSTUDIO_BASE}/v1/models`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (response.ok) {
+      const data = (await response.json()) as { data?: Array<{ id?: string }> };
+      if (Array.isArray(data.data)) {
+        result.models = data.data
+          .map((m) => (typeof m.id === "string" ? m.id : ""))
+          .filter(Boolean)
+          .sort();
+        result.available = true;
+      }
+    }
+  } catch {
+    // LM Studio not running or not accessible
+  }
+  return result;
+}
+
 // ── Agent Platform Detection ────────────────────────────────────────────────
 
 const AGENT_PLATFORMS: Array<{ name: string; relPath: string }> = [
