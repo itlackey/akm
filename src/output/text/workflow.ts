@@ -5,6 +5,7 @@
 // Output text formatters for all `akm workflow *` commands.
 
 import {
+  formatWorkflowCompleteRejectedPlain,
   formatWorkflowCreatePlain,
   formatWorkflowListPlain,
   formatWorkflowNextPlain,
@@ -17,6 +18,7 @@ import { registerTextFormatter } from "./registry";
 registerTextFormatter("workflow-start", (r) => formatWorkflowStatusPlain(r));
 registerTextFormatter("workflow-status", (r) => formatWorkflowStatusPlain(r));
 registerTextFormatter("workflow-complete", (r) => formatWorkflowStatusPlain(r));
+registerTextFormatter("workflow-complete-rejected", (r) => formatWorkflowCompleteRejectedPlain(r));
 registerTextFormatter("workflow-next", (r) => formatWorkflowNextPlain(r));
 registerTextFormatter("workflow-list", (r) => formatWorkflowListPlain(r));
 registerTextFormatter("workflow-create", (r) => formatWorkflowCreatePlain(r));

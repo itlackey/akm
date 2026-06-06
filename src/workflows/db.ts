@@ -165,6 +165,21 @@ const MIGRATIONS: Migration[] = [
         ON workflow_runs(agent_harness, agent_session_id);
     `,
   },
+  // ── Migration 003 — check-in arming + per-step summary (#506) ────────────────
+  //
+  // Builds on the agent identity recorded by migration 002. Arms a file-signal
+  // check-in (a timestamp, NOT a background thread — see
+  // docs/technical/workflow-agent-checkin-adr.md) so a stalled run can be
+  // re-targeted with a `continue` directive, and adds a per-step `summary`
+  // column so step/workflow completion can capture and validate a required
+  // summary of work done. Both columns are nullable.
+  {
+    id: "003-checkin-and-step-summary",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN checkin_armed_at TEXT;
+      ALTER TABLE workflow_run_steps ADD COLUMN summary TEXT;
+    `,
+  },
 ];
 
 /**

@@ -24,10 +24,12 @@ import type {
 } from "../sources/types";
 import { resolveAgentIdentity } from "./agent-identity";
 import { formatWorkflowErrors } from "./authoring";
+import { type CheckinDirective, evaluateCheckin } from "./checkin";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
 import { parseWorkflow } from "./parser";
 import type { WorkflowDocument } from "./schema";
 import { getCurrentWorkflowScopeKey } from "./scope-key";
+import { type SummaryJudge, validateStepSummary } from "./validate-summary";
 
 async function withWorkflowDb<T>(fn: (db: Database) => T | Promise<T>): Promise<T> {
   const db = openWorkflowDatabase();
@@ -61,6 +63,7 @@ type WorkflowRunRow = {
   completed_at: string | null;
   agent_harness: string | null;
   agent_session_id: string | null;
+  checkin_armed_at: string | null;
 };
 
 type WorkflowRunStepRow = {
@@ -74,6 +77,7 @@ type WorkflowRunStepRow = {
   notes: string | null;
   evidence_json: string | null;
   completed_at: string | null;
+  summary: string | null;
 };
 
 export interface WorkflowRunDetail {
@@ -95,6 +99,8 @@ export interface WorkflowNextResult {
   step: WorkflowRunStepState | null;
   done?: true;
   autoStarted?: true;
+  /** Present when the run looks stalled — a strong `continue` directive (#506). */
+  checkin?: CheckinDirective;
 }
 
 export interface CompleteWorkflowStepInput {
@@ -103,6 +109,30 @@ export interface CompleteWorkflowStepInput {
   status: Exclude<WorkflowRunStepStatus, "pending">;
   notes?: string;
   evidence?: Record<string, unknown>;
+  /**
+   * Required when completing a step (`status === "completed"`): a summary of the
+   * work done. Persisted on the step row and, for the final step, doubles as the
+   * workflow summary. Validated against the step's completionCriteria (#506).
+   */
+  summary?: string;
+  /**
+   * Optional override for the summary-validation judge. When omitted the engine
+   * builds one from the configured LLM (and skips validation when none is set).
+   * Injected primarily for tests.
+   */
+  summaryJudge?: SummaryJudge | null;
+}
+
+/**
+ * Structured corrective feedback returned when a completed step's summary fails
+ * the completionCriteria validation gate. The step is left pending.
+ */
+export interface SummaryValidationFailure {
+  ok: false;
+  runId: string;
+  stepId: string;
+  missing: string[];
+  feedback: string;
 }
 
 export async function startWorkflowRun(
@@ -145,11 +175,17 @@ export async function startWorkflowRun(
       }
     }
 
+    // #506: arm a file-signal check-in (a timestamp, NOT a background thread —
+    // see docs/technical/workflow-agent-checkin-adr.md) so a stalled run can be
+    // re-targeted with a `continue` directive. The agent harness + session id
+    // are already resolved above (agentHarness/agentSessionId, from #501).
+
     db.transaction(() => {
       db.prepare(
         `INSERT INTO workflow_runs (
-          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at, agent_harness, agent_session_id
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at,
+          agent_harness, agent_session_id, checkin_armed_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         runId,
         asset.ref,
@@ -162,6 +198,7 @@ export async function startWorkflowRun(
         now,
         agentHarness,
         agentSessionId,
+        now,
       );
 
       const insertStep = db.prepare(
@@ -243,6 +280,16 @@ export async function getNextWorkflowStep(
     const steps = readWorkflowRunSteps(db, run.id);
     const currentStep = resolveCurrentStep(run, steps);
     const done = run.status === "completed" ? (true as const) : undefined;
+    // #506: surface a check-in directive through the normal command output when
+    // the run looks stalled. Pure timestamp evaluation — no background thread.
+    const checkin =
+      evaluateCheckin({
+        status: run.status,
+        updatedAt: run.updated_at,
+        checkinArmedAt: run.checkin_armed_at,
+        agentHarness: run.agent_harness,
+        agentSessionId: run.agent_session_id,
+      }) ?? undefined;
     return {
       run: toWorkflowRunSummary(run),
       workflow: {
@@ -253,6 +300,7 @@ export async function getNextWorkflowStep(
       step: currentStep ? toWorkflowRunStepState(currentStep) : null,
       ...(done ? { done } : {}),
       ...(autoStarted ? { autoStarted } : {}),
+      ...(checkin ? { checkin } : {}),
     };
   });
 }
@@ -286,7 +334,72 @@ export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetai
   });
 }
 
-export async function completeWorkflowStep(input: CompleteWorkflowStepInput): Promise<WorkflowRunDetail> {
+export async function completeWorkflowStep(
+  input: CompleteWorkflowStepInput,
+): Promise<WorkflowRunDetail | SummaryValidationFailure> {
+  // Read the step (read-only) up front so the LLM validation gate runs OUTSIDE
+  // the write transaction — a slow/hung LLM must never hold a db write lock.
+  const preflight = await withWorkflowDb((db) => {
+    const run = readWorkflowRun(db, input.runId);
+    if (run.status !== "active") {
+      throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
+    }
+    const existing = db
+      .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
+      .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
+    if (!existing) {
+      throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
+    }
+    if (existing.status !== "pending") {
+      throw new UsageError(`Step "${input.stepId}" is already ${existing.status} in workflow run ${run.id}.`);
+    }
+    if (run.current_step_id !== existing.step_id) {
+      throw new UsageError(
+        `Step "${input.stepId}" is not the current step for workflow run ${run.id}. Complete "${run.current_step_id}" first.`,
+      );
+    }
+    return { existing };
+  });
+
+  const summary = input.summary?.trim();
+
+  // #506: completing a step requires a summary of the work done.
+  if (input.status === "completed" && !summary) {
+    throw new UsageError(
+      `Completing step "${input.stepId}" requires a --summary describing the work done.`,
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+
+  // #506: validation gate — judge the summary against the step's
+  // completionCriteria via the configured LLM. Fail-open when no criteria or no
+  // judge. Only a well-formed `complete: false` blocks completion.
+  if (input.status === "completed" && summary) {
+    const criteria = parseJsonArray(preflight.existing.completion_json) ?? [];
+    const judge = input.summaryJudge === undefined ? buildDefaultSummaryJudge() : input.summaryJudge;
+    const verdict = await validateStepSummary(
+      { stepTitle: preflight.existing.step_title, completionCriteria: criteria, summary },
+      judge ?? undefined,
+    );
+    if (!verdict.complete) {
+      // Re-arm the check-in so a subsequent stall is still nudged, but leave the
+      // step pending and return corrective feedback instead of completing.
+      await withWorkflowDb((db) => {
+        db.prepare("UPDATE workflow_runs SET checkin_armed_at = ? WHERE id = ?").run(
+          new Date().toISOString(),
+          input.runId,
+        );
+      });
+      return {
+        ok: false,
+        runId: input.runId,
+        stepId: input.stepId,
+        missing: verdict.missing,
+        feedback: verdict.feedback ?? "The summary does not satisfy the step's completion criteria.",
+      };
+    }
+  }
+
   return withWorkflowDb((db) => {
     let updatedRun: WorkflowRunRow | undefined;
     let refreshedSteps: WorkflowRunStepRow[] = [];
@@ -314,12 +427,13 @@ export async function completeWorkflowStep(input: CompleteWorkflowStepInput): Pr
       const completedAt = new Date().toISOString();
       db.prepare(
         `UPDATE workflow_run_steps
-           SET status = ?, notes = ?, evidence_json = ?, completed_at = ?
+           SET status = ?, notes = ?, evidence_json = ?, summary = ?, completed_at = ?
            WHERE run_id = ? AND step_id = ?`,
       ).run(
         input.status,
         input.notes?.trim() || null,
         input.evidence ? JSON.stringify(input.evidence) : null,
+        summary || null,
         completedAt,
         run.id,
         input.stepId,
@@ -327,11 +441,13 @@ export async function completeWorkflowStep(input: CompleteWorkflowStepInput): Pr
 
       refreshedSteps = readWorkflowRunSteps(db, run.id);
       const state = deriveRunState(refreshedSteps);
+      // Re-arm the check-in on every state change: a healthy, progressing run
+      // keeps pushing the stall window forward so the directive never fires.
       db.prepare(
         `UPDATE workflow_runs
-           SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?
+           SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?, checkin_armed_at = ?
            WHERE id = ?`,
-      ).run(state.status, state.currentStepId, completedAt, state.completedAt, run.id);
+      ).run(state.status, state.currentStepId, completedAt, state.completedAt, completedAt, run.id);
 
       updatedRun = {
         ...run,
@@ -339,6 +455,7 @@ export async function completeWorkflowStep(input: CompleteWorkflowStepInput): Pr
         current_step_id: state.currentStepId,
         updated_at: completedAt,
         completed_at: state.completedAt,
+        checkin_armed_at: completedAt,
       };
     })();
 
@@ -570,6 +687,7 @@ function toWorkflowRunStepState(step: WorkflowRunStepRow): WorkflowRunStepState 
     status: step.status,
     notes: step.notes ?? undefined,
     evidence: parseJsonObject(step.evidence_json),
+    summary: step.summary ?? undefined,
     completedAt: step.completed_at,
   };
 }
@@ -606,6 +724,32 @@ function deriveRunState(steps: WorkflowRunStepRow[]): {
     .sort()
     .at(-1);
   return { status: "completed", currentStepId: null, completedAt: completedAt ?? null };
+}
+
+/**
+/**
+ * Build the default summary-validation judge from the configured LLM, or return
+ * `null` when no LLM is configured (gate is then skipped — fail-open). Lazily
+ * imports the client/config so the workflow engine has no hard LLM dependency.
+ */
+function buildDefaultSummaryJudge(): SummaryJudge | null {
+  let llm: import("../core/config").LlmConnectionConfig | undefined;
+  try {
+    const config = loadConfig();
+    const { getDefaultLlmConfig } = require("../core/config") as typeof import("../core/config");
+    llm = getDefaultLlmConfig(config);
+  } catch {
+    return null;
+  }
+  if (!llm) return null;
+  const resolved = llm;
+  return async ({ system, user }) => {
+    const { chatCompletion } = require("../llm/client") as typeof import("../llm/client");
+    return chatCompletion(resolved, [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ]);
+  };
 }
 
 function parseJsonObject(value: string | null): Record<string, unknown> | undefined {

@@ -118,6 +118,8 @@ export interface WorkflowRunStepState extends WorkflowStepDefinition {
   status: WorkflowRunStepStatus;
   notes?: string;
   evidence?: Record<string, unknown>;
+  /** Summary of work done, captured on completion (#506). */
+  summary?: string;
   completedAt?: string | null;
 }
 

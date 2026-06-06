@@ -221,6 +221,24 @@ export function formatWorkflowValidatePlain(r: Record<string, unknown>): string 
   return `workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`;
 }
 
+/**
+ * Plain-text rendering for a step-completion that was rejected by the
+ * summary-validation gate (#506): the step stays pending and the agent gets
+ * corrective feedback on what to finish/fix.
+ */
+export function formatWorkflowCompleteRejectedPlain(r: Record<string, unknown>): string {
+  const stepId = String(r.stepId ?? "?");
+  const feedback = typeof r.feedback === "string" ? r.feedback : "";
+  const missing = Array.isArray(r.missing) ? (r.missing as unknown[]).map((m) => String(m)) : [];
+  const lines = [`workflow complete: rejected — step "${stepId}" does not meet its completion criteria`];
+  if (feedback) lines.push(`  feedback: ${feedback}`);
+  if (missing.length > 0) {
+    lines.push("  outstanding:");
+    for (const m of missing) lines.push(`    - ${m}`);
+  }
+  return lines.join("\n");
+}
+
 export function formatProposalProducerPlain(command: string, r: Record<string, unknown>): string {
   if (r.ok === false) {
     const reason = String(r.reason ?? "unknown");
