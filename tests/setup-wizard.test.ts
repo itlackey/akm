@@ -39,7 +39,32 @@ function reset() {
   q.logged.length = 0;
 }
 
+// Stable two-stash list returned by the mock — mirrors FALLBACK_STASHES so
+// stepAddSources tests remain deterministic and decoupled from the live registry.
+const MOCK_SETUP_STASHES = [
+  {
+    id: "itlackey/akm-stash",
+    name: "itlackey/akm-stash",
+    description: "official onboarding stash",
+    url: "https://github.com/itlackey/akm-stash",
+    source: "fallback" as const,
+    defaultSelected: true,
+  },
+  {
+    id: "andrewyng/context-hub",
+    name: "andrewyng/context-hub",
+    description: "optional community prompt and context stash",
+    url: "https://github.com/andrewyng/context-hub",
+    source: "fallback" as const,
+    defaultSelected: false,
+  },
+];
+
 function installPromptMock() {
+  mock.module("../src/setup/registry-stash-loader", () => ({
+    loadSetupStashes: async () => MOCK_SETUP_STASHES,
+    DEFAULT_SELECTED_STASH_IDS: ["itlackey/akm-stash"],
+  }));
   mock.module("@clack/prompts", () => ({
     isCancel: (v: unknown) => v === CANCEL,
     cancel: (msg: string) => {
