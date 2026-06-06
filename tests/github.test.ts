@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../src/integrations/github";
+import { asRecord, asString, createIssue, GITHUB_API_BASE, githubHeaders } from "../src/integrations/github";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
 
 const originalGithubToken = process.env.GITHUB_TOKEN;
 const originalGhToken = process.env.GH_TOKEN;
+const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   mock.restore();
+  globalThis.fetch = originalFetch;
 
   if (originalGithubToken === undefined) {
     delete process.env.GITHUB_TOKEN;
@@ -192,5 +194,64 @@ describe("asString", () => {
 
   test("returns string with whitespace preserved", () => {
     expect(asString("  spaced  ")).toBe("  spaced  ");
+  });
+});
+
+// ── createIssue ───────────────────────────────────────────────────────────────
+
+describe("createIssue", () => {
+  test("POSTs to the repo issues endpoint with title, body and labels", async () => {
+    process.env.GITHUB_TOKEN = "ghp_test";
+    let captured: { url: string; method?: string; body: unknown } | undefined;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      captured = { url, method: init?.method, body: JSON.parse(String(init?.body)) };
+      return new Response(JSON.stringify({ number: 7, html_url: "https://github.com/o/r/issues/7", title: "Hello" }), {
+        status: 201,
+      });
+    }) as unknown as typeof fetch;
+
+    const issue = await createIssue({ owner: "o", repo: "r", title: "Hello", body: "World", labels: ["feedback"] });
+
+    expect(captured?.method).toBe("POST");
+    expect(captured?.url).toBe("https://api.github.com/repos/o/r/issues");
+    expect(captured?.body).toEqual({ title: "Hello", body: "World", labels: ["feedback"] });
+    expect(issue).toEqual({ number: 7, url: "https://github.com/o/r/issues/7", title: "Hello" });
+  });
+
+  test("respects an apiBase override", async () => {
+    process.env.GITHUB_TOKEN = "ghp_test";
+    let capturedUrl = "";
+    globalThis.fetch = (async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ number: 1, html_url: "https://example.test/i/1" }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    await createIssue({ owner: "o", repo: "r", title: "t", body: "b", apiBase: "https://example.test/api/" });
+    expect(capturedUrl).toBe("https://example.test/api/repos/o/r/issues");
+  });
+
+  test("throws when no token is available", async () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    spyOn(childProcess, "spawnSync").mockReturnValue({ status: 1, stdout: "" } as never);
+    await expect(createIssue({ owner: "o", repo: "r", title: "t", body: "b" })).rejects.toThrow(/token/i);
+  });
+
+  test("throws on a non-OK response with the status in the message", async () => {
+    process.env.GITHUB_TOKEN = "ghp_test";
+    globalThis.fetch = (async () => new Response("Forbidden", { status: 403 })) as unknown as typeof fetch;
+    await expect(createIssue({ owner: "o", repo: "r", title: "t", body: "b" })).rejects.toThrow(/403/);
+  });
+
+  test("throws when the response is missing number or html_url", async () => {
+    process.env.GITHUB_TOKEN = "ghp_test";
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ title: "t" }), { status: 201 })) as unknown as typeof fetch;
+    await expect(createIssue({ owner: "o", repo: "r", title: "t", body: "b" })).rejects.toThrow(/unexpected response/);
+  });
+
+  test("requires a non-empty title", async () => {
+    process.env.GITHUB_TOKEN = "ghp_test";
+    await expect(createIssue({ owner: "o", repo: "r", title: "  ", body: "b" })).rejects.toThrow(/title/i);
   });
 });

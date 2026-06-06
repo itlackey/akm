@@ -66,6 +66,8 @@ const PASSTHROUGH_COMMANDS = [
   "secret-set",
   "secret-remove",
   "setup",
+  "submit-feedback",
+  "submit-registry",
   "tasks-add",
   "tasks-disable",
   "tasks-doctor",

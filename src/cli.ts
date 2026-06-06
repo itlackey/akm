@@ -107,6 +107,7 @@ import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
 import { registryCommand } from "./commands/registry-cli";
 import { rememberCommand } from "./commands/remember-cli";
+import { submitCommand } from "./commands/submit-cli";
 
 /**
  * Resolve the event source from the environment. When `AKM_EVENT_SOURCE` is
@@ -4577,6 +4578,7 @@ export const main = defineCommand({
     enable: enableCommand,
     disable: disableCommand,
     feedback: feedbackCommand,
+    submit: submitCommand,
     history: historyCommand,
     events: eventsCommand,
     lessons: lessonsCommand,
