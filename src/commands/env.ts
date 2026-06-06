@@ -34,6 +34,14 @@
  *
  * Value parsing is delegated to the `dotenv` package — we deliberately do not
  * implement our own quoting/escaping rules for security-sensitive content.
+ *
+ * Secret-token substitution: env VALUES may embed `${secret:NAME}` tokens, which
+ * are replaced at `env run` time with the value of the sibling `secret:NAME`
+ * asset in the SAME stash (see `resolveSecretTokens`). Substitution applies to
+ * values only, never keys; only the `${secret:...}` form is recognised —
+ * shell-style `${VAR}` / `$VAR` are left untouched. The secret lookup is
+ * injected so this module keeps its narrow dependency surface (dotenv +
+ * core/common) and never reaches into the secret resolver/source machinery.
  */
 
 import fs from "node:fs";
@@ -173,6 +181,12 @@ export function injectIntoEnv(
  * `X=$(rm -rf ~)`, which would execute if `source`d directly, but dotenv parses
  * it to the literal string `$(rm -rf ~)` and we re-emit it single-quoted. This
  * backs `akm env export <ref> --out <file>` (file-only; never printed to stdout).
+ *
+ * NOTE: `${secret:NAME}` token substitution is intentionally NOT applied here.
+ * The export path emits values single-quoted as literals, so an unsubstituted
+ * `${secret:NAME}` is written verbatim (it would expand to nothing under POSIX
+ * shells, never to the secret). Secret-token resolution is scoped to the
+ * `env run` value-injection path only; see `resolveSecretTokens`.
  */
 export function buildShellExportScript(envPath: string): string {
   const env = loadEnv(envPath);
@@ -185,6 +199,59 @@ export function buildShellExportScript(envPath: string): string {
     lines.push(`export ${key}='${escaped}'`);
   }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+/**
+ * Matches a `${secret:NAME}` substitution token in an env value. The captured
+ * NAME accepts the same character set as a secret asset name (letters, digits,
+ * `_`, `.`, `/`, `-`). Only this exact form is recognised — shell-style
+ * `${VAR}` and `$VAR` deliberately do not match and are left untouched.
+ */
+const SECRET_TOKEN_RE = /\$\{secret:([A-Za-z0-9_./-]+)\}/g;
+
+/**
+ * Replace every `${secret:NAME}` token in each value with the corresponding
+ * secret value, looked up via the injected `resolveSecret`. Keys are never
+ * touched. Multiple tokens per value and tokens embedded in larger strings
+ * (e.g. `Bearer ${secret:a}:${secret:b}`) are all substituted.
+ *
+ * `resolveSecret` returns `undefined` for an unknown secret name; such names are
+ * collected into `missing` (de-duplicated, in first-seen order) and their tokens
+ * are left unsubstituted in the returned values. Callers MUST treat a non-empty
+ * `missing` as a hard error and inject NOTHING — never partially inject.
+ *
+ * The lookup is injected so this module does not import the secret
+ * resolver/source machinery directly, preserving its narrow dependency surface.
+ * Resolved secret values must never be logged or printed by callers.
+ */
+export function resolveSecretTokens(
+  values: Record<string, string>,
+  resolveSecret: (name: string) => string | undefined,
+): { values: Record<string, string>; missing: string[] } {
+  const missing: string[] = [];
+  const missingSeen = new Set<string>();
+  const out: Record<string, string> = {};
+  const cache = new Map<string, string | undefined>();
+
+  for (const [key, value] of Object.entries(values)) {
+    out[key] = value.replace(SECRET_TOKEN_RE, (match, name: string) => {
+      let resolved = cache.get(name);
+      if (!cache.has(name)) {
+        resolved = resolveSecret(name);
+        cache.set(name, resolved);
+      }
+      if (resolved === undefined) {
+        if (!missingSeen.has(name)) {
+          missingSeen.add(name);
+          missing.push(name);
+        }
+        return match;
+      }
+      return resolved;
+    });
+  }
+
+  return { values: out, missing };
 }
 
 /** Create an empty env file (does nothing if it already exists). */

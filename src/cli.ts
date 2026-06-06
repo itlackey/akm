@@ -2379,6 +2379,34 @@ async function runEnvInjected(
     const excluded = new Set(opts.except);
     envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
   }
+  // Substitute `${secret:NAME}` tokens in values with the value of the sibling
+  // secret asset in the SAME stash. The lookup is injected so commands/env.ts
+  // keeps its narrow dependency surface; we resolve each name against this env's
+  // own `source`. A missing secret is a hard error — inject NOTHING (no partial
+  // injection). Resolved values are never logged or printed.
+  const { resolveSecretTokens } = await import("./commands/env.js");
+  const { readValue } = await import("./commands/secret.js");
+  const secretsRoot = path.join(source.path, "secrets");
+  const resolveSecret = (secretName: string): string | undefined => {
+    const secretPath = resolveAssetPathFromName("secret", secretsRoot, secretName);
+    // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
+    if (!isWithin(secretPath, secretsRoot)) {
+      throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);
+    }
+    if (!fs.existsSync(secretPath)) return undefined;
+    // Match `secret run`: read utf8, do not trim (stay consistent with that path).
+    return readValue(secretPath).toString("utf8");
+  };
+  const { values: substituted, missing } = resolveSecretTokens(envValues, resolveSecret);
+  if (missing.length > 0) {
+    const envRef = makeEnvRef(name, source);
+    throw new NotFoundError(
+      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => `secret:${n}`).join(", ")}. Nothing was injected.`,
+      "FILE_NOT_FOUND",
+      `Create the missing secret, e.g. \`akm secret set secret:${missing[0]}\`.`,
+    );
+  }
+  envValues = substituted;
   const keys = Object.keys(envValues);
 
   // Scan injected keys for known process-hijacking variables (LD_PRELOAD,
@@ -2454,7 +2482,7 @@ const envRunCommand = defineCommand({
   meta: {
     name: "run",
     description:
-      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except.",
+      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${secret:NAME}` tokens, replaced at run time with the sibling `secret:NAME` value from the same stash.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },
