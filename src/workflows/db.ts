@@ -147,6 +147,24 @@ const MIGRATIONS: Migration[] = [
         ON workflow_runs(scope_key, workflow_ref, status);
     `,
   },
+  // ── Migration 002 — record agent harness + session identity ──────────────────
+  //
+  // Persists the agent harness identifier (e.g. "claude-code", "opencode") and
+  // the platform-native session id that owns each workflow run. This is the
+  // first concrete slice of #501 / #506: capturing *who* is driving a run so a
+  // future (separately-approved) monitor can correlate workflow runs with
+  // session activity. Both columns are nullable — runs started outside an agent
+  // harness, and all pre-existing runs, simply have NULL identity.
+  {
+    id: "002-add-agent-identity",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN agent_harness TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN agent_session_id TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id);
+    `,
+  },
 ];
 
 /**

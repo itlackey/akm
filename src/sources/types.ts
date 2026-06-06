@@ -133,6 +133,10 @@ export interface WorkflowRunSummary {
   updatedAt: string;
   completedAt?: string | null;
   params?: Record<string, unknown>;
+  /** Agent harness that started the run (e.g. "claude-code", "opencode"), if known. */
+  agentHarness?: string | null;
+  /** Platform-native session id that owns the run, if known. */
+  agentSessionId?: string | null;
 }
 
 export interface AddResponse {

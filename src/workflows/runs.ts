@@ -22,6 +22,7 @@ import type {
   WorkflowRunSummary,
   WorkflowStepDefinition,
 } from "../sources/types";
+import { resolveAgentIdentity } from "./agent-identity";
 import { formatWorkflowErrors } from "./authoring";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
 import { parseWorkflow } from "./parser";
@@ -58,6 +59,8 @@ type WorkflowRunRow = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  agent_harness: string | null;
+  agent_session_id: string | null;
 };
 
 type WorkflowRunStepRow = {
@@ -105,7 +108,7 @@ export interface CompleteWorkflowStepInput {
 export async function startWorkflowRun(
   ref: string,
   params: Record<string, unknown> = {},
-  options?: { force?: boolean },
+  options?: { force?: boolean; agentHarness?: string | null; agentSessionId?: string | null },
 ): Promise<WorkflowRunDetail> {
   const asset = await loadWorkflowAsset(ref);
   return withWorkflowDb(async (db) => {
@@ -114,6 +117,13 @@ export async function startWorkflowRun(
     const scopeKey = getCurrentWorkflowScopeKey();
     const currentStepId = asset.steps[0]?.id ?? null;
     const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
+
+    // Capture the agent harness + session driving this run. Explicit options
+    // win; otherwise fall back to best-effort environment detection. This is
+    // identity-only — no background thread or timer is started here.
+    const detected = resolveAgentIdentity();
+    const agentHarness = options?.agentHarness !== undefined ? options.agentHarness : detected.harness;
+    const agentSessionId = options?.agentSessionId !== undefined ? options.agentSessionId : detected.sessionId;
 
     // Concurrency guard (#485): if an active run already exists in this
     // (workflow_ref, scope_key) pair, refuse to create a parallel run unless
@@ -138,9 +148,21 @@ export async function startWorkflowRun(
     db.transaction(() => {
       db.prepare(
         `INSERT INTO workflow_runs (
-          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-      ).run(runId, asset.ref, scopeKey, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
+          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at, agent_harness, agent_session_id
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        runId,
+        asset.ref,
+        scopeKey,
+        workflowEntryId,
+        asset.title,
+        JSON.stringify(params),
+        currentStepId,
+        now,
+        now,
+        agentHarness,
+        agentSessionId,
+      );
 
       const insertStep = db.prepare(
         `INSERT INTO workflow_run_steps (
@@ -533,6 +555,8 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
     updatedAt: run.updated_at,
     completedAt: run.completed_at,
     params: parseJsonObject(run.params_json),
+    agentHarness: run.agent_harness ?? null,
+    agentSessionId: run.agent_session_id ?? null,
   };
 }
 

@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Workflow runs record agent harness + session identity** — `akm workflow start`
+  now persists the agent harness (e.g. `claude-code`, `opencode`) and the
+  platform-native session id that owns each run. Identity is resolved best-effort
+  from the environment (`AKM_AGENT_HARNESS` / `AKM_SESSION_ID`, falling back to the
+  harness-native session env var) or can be passed explicitly to `startWorkflowRun`.
+  Stored via additive migration `002-add-agent-identity` and surfaced on
+  `WorkflowRunSummary.agentHarness` / `.agentSessionId`. This is the first concrete,
+  scoped slice toward workflow session monitoring (#501).
+
+### Design notes
+
+- **#501 narrowed; superseded by #506 for the monitoring design.** Issue #501
+  ("Add background thread for workflow command session monitoring and agent
+  prompting") was an epic. Per #506's stated preference to avoid always-on
+  background threads/daemons, the background-thread requirement is **not**
+  implemented here. #501 is narrowed to the one tractable, prerequisite sub-feature
+  — persisting harness + session identity on each workflow run — which any future
+  monitor needs regardless of design. The session-monitoring/agent-steering loop is
+  deferred to #506 and requires a separately approved design.
+
 ## [0.8.2] - 2026-06-05
 
 ### Added
