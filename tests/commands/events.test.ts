@@ -131,10 +131,10 @@ describe("appendEvent / readEvents", () => {
     expect(empty.nextOffset).toBe(next.nextOffset);
   });
 
-  test("`akm events list --since @offset:N` resumes across a real process boundary", () => {
+  test("`akm log list --since @offset:N` resumes across a real process boundary", () => {
     // This is the cross-process durability contract: a producer writes N
     // events, persists nextOffset to a temp file, appends MORE events, and
-    // then a SECOND `bun src/cli.ts events list` invocation reads the cursor
+    // then a SECOND `bun src/cli.ts log list` invocation reads the cursor
     // from the file and must emit only the post-cursor events with no
     // duplicates and no losses.
     const dataDir = makeTempDir("akm-events-xproc-data-");
@@ -173,7 +173,7 @@ describe("appendEvent / readEvents", () => {
     //    and asks the CLI for events with `--since @offset:<cursor>`. This
     //    exercises a real exec boundary, not just in-process arithmetic.
     const persisted = fs.readFileSync(cursorFile, "utf8").trim();
-    const child = spawnCli(["events", "list", "--since", `@offset:${persisted}`, "--format=json"], childEnv);
+    const child = spawnCli(["log", "list", "--since", `@offset:${persisted}`, "--format=json"], childEnv);
     expect(child.status).toBe(0);
     const parsed = JSON.parse(child.stdout) as {
       events: Array<{ ref: string }>;
@@ -317,7 +317,7 @@ describe("akm CLI mutation events", () => {
     expect(add.status).toBe(0);
 
     // Confirm events are in state.db by querying through the CLI.
-    const list = await runCli(["events", "list", "--format=json"]);
+    const list = await runCli(["log", "list", "--format=json"]);
     expect(list.status).toBe(0);
     const parsed = JSON.parse(list.stdout) as { events: Array<{ eventType: string }> };
     const types = parsed.events.map((e) => e.eventType);
@@ -326,7 +326,7 @@ describe("akm CLI mutation events", () => {
     expect(types).toContain("add");
   });
 
-  test("`akm events list` returns the captured events in JSON envelope shape", async () => {
+  test("`akm log list` returns the captured events in JSON envelope shape", async () => {
     sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
@@ -334,7 +334,7 @@ describe("akm CLI mutation events", () => {
     const remember = await runCli(["remember", "another event captured", "--name", "beta", "--format=json"]);
     expect(remember.status).toBe(0);
 
-    const list = await runCli(["events", "list", "--format=json"]);
+    const list = await runCli(["log", "list", "--format=json"]);
     expect(list.status).toBe(0);
     const parsed = JSON.parse(list.stdout) as Record<string, unknown>;
     expect(parsed.totalCount).toBeGreaterThanOrEqual(1);
@@ -343,21 +343,25 @@ describe("akm CLI mutation events", () => {
     expect(events.some((e) => e.eventType === "remember")).toBe(true);
   });
 
-  test("`akm log list` resolves to the same events stream (alias)", async () => {
+  test("`akm log` is the canonical command; `akm events` is no longer a command", async () => {
     sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
-    const remember = await runCli(["remember", "alias resolves", "--name", "delta", "--format=json"]);
+    const remember = await runCli(["remember", "log is canonical", "--name", "delta", "--format=json"]);
     expect(remember.status).toBe(0);
 
-    // `log` is a citty meta.alias for `events` in 0.8 (flip primary in 0.9).
+    // 0.9.0: `log` is primary; the old `events` command was removed.
     const list = await runCli(["log", "list", "--format=json"]);
     expect(list.status).toBe(0);
     const parsed = JSON.parse(list.stdout) as { events: Array<{ eventType: string }> };
     expect(parsed.events.some((e) => e.eventType === "remember")).toBe(true);
+
+    // `akm events` is no longer a registered command.
+    const removed = await runCli(["events", "list", "--format=json"]);
+    expect(removed.status).not.toBe(0);
   });
 
-  test("`akm events list --type feedback` filters by event type", async () => {
+  test("`akm log list --type feedback` filters by event type", async () => {
     sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
 
@@ -366,7 +370,7 @@ describe("akm CLI mutation events", () => {
     await runCli(["index", "--full", "--format=json"]);
     await runCli(["feedback", "memory:gamma", "--positive", "--format=json"]);
 
-    const filtered = await runCli(["events", "list", "--type", "feedback", "--format=json"]);
+    const filtered = await runCli(["log", "list", "--type", "feedback", "--format=json"]);
     expect(filtered.status).toBe(0);
     const parsed = JSON.parse(filtered.stdout) as Record<string, unknown>;
     const events = parsed.events as Array<Record<string, unknown>>;
@@ -398,7 +402,7 @@ describe("akmEventsTail", () => {
   });
 });
 
-describe("akm events tail (streaming trailer)", () => {
+describe("akm log tail (streaming trailer)", () => {
   // Blocker fix: `--format text|jsonl` previously dropped the resumable
   // cursor entirely. After the streaming loop ends we must emit a single
   // trailer line so callers can resume from `nextOffset`.
@@ -413,7 +417,7 @@ describe("akm events tail (streaming trailer)", () => {
     appendEvent({ eventType: "remember", ref: "memory:t2" }, ctx);
 
     const child = await runCli([
-      "events",
+      "log",
       "tail",
       "--format=jsonl",
       "--max-events",
@@ -442,7 +446,7 @@ describe("akm events tail (streaming trailer)", () => {
     appendEvent({ eventType: "remember", ref: "memory:tx1" }, ctx);
 
     const child = await runCli([
-      "events",
+      "log",
       "tail",
       "--format=text",
       "--max-events",

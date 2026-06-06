@@ -334,11 +334,10 @@ describe("output shape registry — every CLI verb returns a registered shape", 
     "db",
     "list",
     "config",
-    "events",
+    "log",
     "history",
     "registry",
     "wiki",
-    "vault",
   ];
 
   for (const verb of READ_ONLY_VERBS) {

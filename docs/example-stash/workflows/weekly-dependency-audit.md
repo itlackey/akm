@@ -4,12 +4,12 @@ tags:
   - example
   - maintenance
   - dependencies
-  - vault
+  - env
   - weekly
 params:
   package_manager: "Package manager in use (`bun`, `pnpm`, `npm`, `yarn`, or `cargo`). Defaults to `bun`."
   base_branch: "Branch to cut the audit branch from. Defaults to `main`."
-  vault: "Optional vault ref with private-registry credentials (e.g. `vault:npm-readonly`). Loaded only at the shell level, never echoed."
+  env: "Optional env ref with private-registry credentials (e.g. `env:npm-readonly`). Loaded only at the shell level, never echoed."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
   max_pr_size: "Soft cap on the number of packages bundled into a single PR. Defaults to `8`."
   freeze_list: "Optional JSON array of package names that must not be upgraded this week (e.g. `[\"react\", \"vite\"]`)."
@@ -35,11 +35,11 @@ Set up an isolated workspace before touching the lockfile.
    git switch -c chore/dep-audit-{{ runId }} origin/{{ base_branch }}
    ```
 
-2. If `vault` is provided, verify the keys it declares without surfacing
+2. If `env` is provided, verify the keys it declares without surfacing
    values:
 
     ```sh
-    akm show {{ vault }}
+    akm show {{ env }}
     ```
 
    Block the run if any key the registry needs is missing.
@@ -50,7 +50,7 @@ Set up an isolated workspace before touching the lockfile.
 ### Completion Criteria
 - A clean branch `chore/dep-audit-{{ runId }}` exists from a fresh
   `base_branch`.
-- `vault` keys are confirmed present (or `vault` was omitted intentionally).
+- `env` keys are confirmed present (or `env` was omitted intentionally).
 - `audit-context.md` records the starting state for reproducibility.
 
 ## Step: Inventory outdated and vulnerable packages
@@ -63,10 +63,10 @@ Produce one canonical list of candidates. Do not start upgrading yet.
    commands, never into agent context:
 
     ```sh
-    akm vault run {{ vault }} -- bun outdated --json
+    akm env run {{ env }} -- bun outdated --json
     ```
 
-    Use `akm vault run {{ vault }} -- <command>` for each audit command that
+    Use `akm env run {{ env }} -- <command>` for each audit command that
     needs registry credentials.
 
 2. Run the package-manager-native commands and capture full output to disk:

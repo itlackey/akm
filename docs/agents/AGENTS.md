@@ -1,6 +1,6 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, vaults, wikis, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, env files, secrets, wikis, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 
@@ -40,7 +40,8 @@ akm registry search "<query>"                 # Search all registries
 | knowledge | A reference doc (use `toc` or `section "..."` to navigate) |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
-| vault | Keys only in normal output; use `akm vault path` or `akm vault run` when a command needs values |
+| env | Keys only in normal output; use `akm env run env:<name> -- <cmd>` when a command needs the values |
+| secret | A single sensitive value; never shown — inject it with `akm secret run secret:<name> <VAR> -- <cmd>` |
 | wiki | A page in a multi-wiki knowledge base. For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the wiki's ingest workflow. `akm wiki -h` for the full surface. |
 | lesson | A distilled feedback lesson (`when_to_use` plus body). Read before applying related skills. Generated via `akm distill` and the proposal queue. |
 

@@ -104,7 +104,7 @@ akm show skill:code-review
 akm show workflow:ship-release
 akm show script:deploy.sh
 akm show knowledge:api-guide
-akm show vault:prod         # shows key names only; values never appear in output
+akm show env:prod           # shows key names only; values never appear in output
 akm show wiki:ops/runbook
 
 # From a specific source (origin-qualified ref):

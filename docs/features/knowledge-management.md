@@ -118,45 +118,43 @@ akm index
 akm wiki lint ml-research
 ```
 
-## akm vault
+## akm env / akm secret
 
-`akm vault` manages `.env`-backed key/value stores for configuration and
-secrets. The core security guarantee: **vault values never appear in akm's
-structured output**. Only key names are shown. Values reach processes through
-`source` or `vault run`, not through akm's JSON output.
+`akm env` manages `.env`-backed groups of configuration (a `.env` file loaded
+wholesale), and `akm secret` manages a single standalone sensitive value. The
+core security guarantee: **values never appear in akm's structured output**.
+Only key names (and `.env` comments) are shown. Values reach processes through
+`akm env run` / `akm secret run`, never through akm's JSON output. (The old
+`akm vault` verb was removed in 0.9.0.)
 
 ```sh
-akm vault create prod
+akm env create prod                       # create an empty .env group
+akm env create prod --from-file ./.env    # or ingest an existing .env
 
-# Values are read from stdin by default — never via argv
-printf '%s' "$DB_URL"   | akm vault set vault:prod DATABASE_URL
-printf '%s' "$API_KEY"  | akm vault set vault:prod API_KEY --comment "Rotate every 90 days"
+# akm no longer edits entries — edit the file with your own editor:
+$EDITOR "$(akm env path env:prod --quiet)"
 
-# Or from an env var
-AKM_VALUE="$TOKEN" akm vault set vault:prod TOKEN --from-env AKM_VALUE
+akm env list
+akm show env:prod                         # key names + comments only
 
-akm vault list
-akm vault path vault:prod
+# Inject the whole .env into a subprocess (never onto stdout):
+akm env run env:prod -- ./deploy.sh
+akm env run env:prod -- $SHELL            # interactive session with the env loaded
 
-# Load in the current shell:
-source "$(akm vault path vault:prod)"
-
-# Inject into a subprocess:
-akm vault run vault:prod -- env
-akm vault run vault:prod/API_KEY -- printenv API_KEY
+# Store a single credential as a secret:
+printf '%s' "$TOKEN" | akm secret set secret:deploy-token
+akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
 ```
 
-Vault files are stored at mode 0600 under `vaults/` in your stash. Values
-**never cross argv** (no `/proc/cmdline` exposure) and never appear in akm's
-structured output — only key names are shown.
+`.env` and secret files are stored at mode 0600 under `env/` in your stash.
+Values **never cross argv** (no `/proc/cmdline` exposure) and never appear in
+akm's structured output — only key names are shown.
 
 **Example: store API endpoint config**
 
 ```sh
-akm vault create staging
-printf '%s' "https://api.staging.example.com" | akm vault set vault:staging API_BASE
-printf '%s' "$AUTH_TOKEN" | akm vault set vault:staging AUTH_TOKEN --comment "Service account — rotate monthly"
-source "$(akm vault path vault:staging)"
+akm env create staging --from-file ./staging.env
+akm env run env:staging -- ./smoke-test.sh
 ```
 
 ## Security model
@@ -164,14 +162,14 @@ source "$(akm vault path vault:staging)"
 ### What akm protects
 
 Values never cross argv (no `/proc/cmdline` exposure), never appear in akm's
-structured output or search index, and vault files are stored at mode 0600.
+structured output or search index, and env/secret files are stored at mode 0600.
 
 ### What akm does NOT protect
 
 Values are **plaintext at rest** — protected only by filesystem permissions.
 OS-level full-disk encryption (FileVault, LUKS, BitLocker) is the recommended
-complement. Vault files are excluded from `akm sync` git commits when `vaults/`
-is listed in your stash `.gitignore`.
+complement. env/secret files are excluded from `akm sync` git commits when
+`env/` is listed in your stash `.gitignore`.
 
 ### Threat model scope
 
@@ -181,23 +179,23 @@ Manager, 1Password Secrets Automation) in production infrastructure.
 
 ### Key-name hygiene
 
-Key names are visible metadata — `vault list` shows them. Avoid encoding
-sensitive context in key names (e.g. prefer `DATABASE_URL` over
-`PROD_POSTGRES_MASTER_PASSWORD`).
+Key names are visible metadata — `akm env list` and `akm show env:<name>` show
+them. Avoid encoding sensitive context in key names (e.g. prefer `DATABASE_URL`
+over `PROD_POSTGRES_MASTER_PASSWORD`).
 
 ### Subprocess env residency
 
-`vault run` injects secrets into the child process environment for its entire
-lifetime and they are visible to all subprocesses the child spawns. Prefer the
-single-key form `akm vault run vault:prod/SINGLE_KEY -- cmd` when the command
-only needs one secret. Avoid `vault run` for long-lived daemon or server
+`akm env run` injects the whole `.env` into the child process environment for
+its entire lifetime and they are visible to all subprocesses the child spawns.
+Prefer a `secret` (or `akm secret run secret:<name> VAR -- cmd`) when the
+command only needs one value. Avoid `env run` for long-lived daemon or server
 processes.
 
 ### Rotation
 
-`vault set` overwrites the live file atomically. If the stash is git-tracked,
-the old value may remain in git history — use `git filter-repo` or BFG to purge
-if a secret needs to be expunged from history.
+Editing the `.env` overwrites the live file. If the stash is git-tracked, the
+old value may remain in git history — use `git filter-repo` or BFG to purge if
+a secret needs to be expunged from history.
 
 ## See also
 

@@ -5,13 +5,13 @@ tags:
   - features
   - delivery
   - tdd
-  - vault
+  - env
 params:
   spec_ref: "Reference to the agreed spec — a stash asset (e.g. `wiki:engineering/spec-foo`), an issue (`gh:itlackey/akm#214`), or a path under the run workspace."
   base_branch: "Branch to cut the feature branch from. Defaults to `main`."
   feature_slug: "Short kebab-case slug used in branch and PR names (e.g. `fts5-tokenizer-v2`)."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
-  vault: "Optional vault ref for any credentials the test or deploy needs (e.g. `vault:integration-tests`)."
+  env: "Optional env ref for any credentials the test or deploy needs (e.g. `env:integration-tests`)."
   knowledge_wiki: "AKM wiki to consult for prior decisions and update with new ones. Defaults to `engineering`."
 ---
 
@@ -157,7 +157,7 @@ real entry points before opening the PR.
    shell:
 
     ```sh
-    akm vault run {{ vault }} -- <integration-command>
+    akm env run {{ env }} -- <integration-command>
     ```
 
    The credentials must never appear in `integration.log`.

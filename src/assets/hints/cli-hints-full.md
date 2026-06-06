@@ -188,8 +188,7 @@ When `--dest` is provided, `akm init` is not required first.
 ## Sync
 
 Commit local changes in a git-backed stash. Behaviour adapts automatically.
-(`akm save` is the deprecated 0.7 spelling — it still works but warns; removed
-in 0.9.0.)
+(`akm save` was the pre-0.8 spelling; it was removed in 0.9.0 — use `akm sync`.)
 
 - **No `.git` directory** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default stash always falls here)
@@ -296,8 +295,8 @@ akm proposal revert <id>                                # Restore the pre-promot
 ```
 
 The flat verbs `akm proposals` / `akm show proposal` / `akm accept` /
-`akm reject` / `akm diff` / `akm revert` still work as deprecated aliases
-(warn on stderr; removed in 0.9.0).
+`akm reject` / `akm diff` / `akm revert` were removed in 0.9.0 — use the
+`akm proposal <verb>` forms above.
 
 Per-task `timeoutMs`: task markdown frontmatter may set `timeoutMs: null` to
 disable the agent kill timer for long-running local-model tasks, or a number

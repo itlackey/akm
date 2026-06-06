@@ -1137,30 +1137,28 @@ If the stash has never been indexed, the `usage_events` schema is created
 on demand and the command returns an empty `entries` array rather than
 erroring.
 
-### events (alias: `log`)
+### log
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends
-an event row to `<dataDir>/state.db`; `akm events list` reads it and
-`akm events tail` follows it via polling.
+an event row to `<dataDir>/state.db`; `akm log list` reads it and
+`akm log tail` follows it via polling.
 
-> **Alias:** `akm log` resolves to this same command in 0.8 (`akm log list`,
-> `akm log tail`). In 0.9.0 `log` becomes the primary spelling and `events`
-> becomes the deprecated alias.
+> **Renamed in 0.9.0.** `log` is the primary spelling; the old `akm events`
+> command was removed (it was a `log` alias during the 0.8 window).
 
 ```sh
-akm events list                                   # All events, oldest first
-akm log list                                      # Same — `log` is an alias for `events`
-akm events list --type feedback                   # Filter by event type
-akm events list --ref skill:deploy                # Filter by asset ref
-akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
-akm events list --since '@offset:12345'           # Resume from a row-id cursor
-akm events tail --max-events 10                   # Follow until 10 events
-akm events tail --format jsonl                    # Stream as JSONL
+akm log list                                      # All events, oldest first
+akm log list --type feedback                      # Filter by event type
+akm log list --ref skill:deploy                   # Filter by asset ref
+akm log list --since 2026-04-01T00:00:00Z         # ISO timestamp
+akm log list --since '@offset:12345'              # Resume from a row-id cursor
+akm log tail --max-events 10                      # Follow until 10 events
+akm log tail --format jsonl                       # Stream as JSONL
 ```
 
-**`history` vs `events`/`log` — which one do I want?**
+**`history` vs `log` — which one do I want?**
 
-| | `akm history` | `akm events` / `akm log` |
+| | `akm history` | `akm log` |
 | --- | --- | --- |
 | Scope | Per-asset (or stash-wide) state changes | Raw stash-wide mutation stream |
 | Backing store | `usage_events` table (built by the indexer) | `state.db` append-only events |
@@ -1170,7 +1168,7 @@ akm events tail --format jsonl                    # Stream as JSONL
 | Typical use | Audit a specific asset; debug utility-score shifts | Tail the live mutation bus; drive cooperating processes |
 
 In short: reach for `history` when you care about *an asset's lifecycle*, and
-for `events`/`log` when you care about *the raw, resumable mutation stream*.
+for `log` when you care about *the raw, resumable mutation stream*.
 
 | Flag | Description |
 | --- | --- |
@@ -1996,4 +1994,4 @@ in the task YAML itself.
 
 `akm tasks run` is what cron / launchd / schtasks invoke at the scheduled
 time — `tasks_invoked` and `tasks_completed` events land in `state.db` so
-runs are auditable via `akm events`.
+runs are auditable via `akm log`.

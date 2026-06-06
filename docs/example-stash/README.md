@@ -46,7 +46,7 @@ engineering work:
 - `workflows/triage-bug-report.md` — intake, reproduce, localize, propose a
   fix, and promote durable lessons back into the stash and a knowledge wiki.
 - `workflows/weekly-dependency-audit.md` — recurring lockfile audit that
-  ships safe upgrades and queues the rest, demonstrating `akm vault` for
+  ships safe upgrades and queues the rest, demonstrating `akm env` for
   registry credentials.
 - `workflows/code-review-pr.md` — structured PR review against the project's
   own conventions, demonstrating `akm search` for prior art and

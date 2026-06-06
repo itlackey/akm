@@ -157,7 +157,7 @@ treat package dependencies**:
 - **Audit before run** for any workflow that touches secrets, deploys to
   production, or writes outside the project tree. Workflow steps can read
   any environment variable visible to the akm process — including secrets
-  exported by your shell or loaded from a vault via `akm vault load`.
+  exported by your shell or injected via `akm env run` / `akm secret run`.
 - **Pin known-good versions** when adding workflow sources from a registry
   or git remote (`akm add github:owner/stash#v1.2.3`), and update
   deliberately rather than via `akm update --all`. A trusted workflow source

@@ -14,7 +14,7 @@ params:
   max_parallel: "Maximum number of issues the implement step may run in parallel. Defaults to `3` — tune to the host's CPU/memory budget."
   reviewers: "JSON array of reviewer agent roles required to approve each issue (e.g. `[\"senior-engineer\", \"security\", \"domain-expert\"]`). All listed reviewers must approve."
   required_checks: "JSON array of required status checks (e.g. `[\"lint\", \"typecheck\", \"unit\", \"integration\", \"e2e\"]`). All must pass before an issue is marked complete."
-  vault: "Optional `vault:` ref with credentials needed for CI, deploy previews, or private package registries. Use `akm vault run` for command-scoped env injection or `akm vault path` for explicit shell loading."
+  env: "Optional `env:` ref with credentials needed for CI, deploy previews, or private package registries. Use `akm env run` for command-scoped env injection."
 ---
 
 # Workflow: GitHub Issues Parallel Implementer
@@ -30,7 +30,7 @@ You are the **orchestrator agent** for this run. Before doing any coding work, e
 1. Parse `issues` as JSON. Abort the run with `--state blocked` if it is not a non-empty array of positive integers.
 2. Confirm `repo` is reachable via `gh repo view {{ repo }}`. If the CLI is unauthenticated, surface the error verbatim and block the run — do not attempt to log in silently.
 3. Resolve `base_branch` (default `main`) and confirm it exists on the remote with `git ls-remote --heads origin {{ base_branch }}`.
-4. If `vault` is provided, call `akm show {{ vault }}` and verify every key the downstream tooling needs is declared. Do not print values. If any key is missing, block the run with notes listing the missing keys.
+4. If `env` is provided, call `akm show {{ env }}` and verify every key the downstream tooling needs is declared. Do not print values. If any key is missing, block the run with notes listing the missing keys.
 
 #### Capture ground truth for every issue
 For each issue number in `issues`:
@@ -53,7 +53,7 @@ The next step can assume:
 
 ### Completion Criteria
 - `issues` parsed to a non-empty list of open, actionable GitHub issues.
-- `repo`, `base_branch`, and (if provided) `vault` all pass their health checks.
+- `repo`, `base_branch`, and (if provided) `env` all pass their health checks.
 - Working set, scratch directory, and cached issue payloads are recorded in the run notes.
 - Any excluded issues are listed with the reason they were dropped.
 
@@ -273,7 +273,7 @@ Leave the environment in the state a fresh run would expect to find it.
 
 #### Artefacts
 - Move `.akm-run/{{ runId }}/` to a long-term location (e.g. `.akm-archive/` inside the stash, or an external artefact store configured by the user). Keep the plan.json, per-issue summaries, and final PR metadata — they are the audit trail for the run.
-- Redact any accidentally captured secrets from logs before archiving. Use the keys declared in `vault` as a denylist during redaction.
+- Redact any accidentally captured secrets from logs before archiving. Use the keys declared in `env` as a denylist during redaction.
 
 #### Worktrees and branches
 - For every worktree under `.akm-run/{{ runId }}/wt/`, run `git worktree remove` after confirming the branch is either merged or explicitly preserved.

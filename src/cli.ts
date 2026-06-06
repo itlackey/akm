@@ -3254,7 +3254,7 @@ const wikiCommand = defineCommand({
   },
 });
 
-// ── `akm events` ────────────────────────────────────────────────────────────
+// ── `akm log` ────────────────────────────────────────────────────────────────
 // Append-only events stream surface (#204). `list` reads state.db events
 // with optional --since/--type/--ref filters; `tail` follows the table via
 // a polling loop and prints each event as a single JSONL line.
@@ -3375,10 +3375,9 @@ const eventsTailCommand = defineCommand({
   },
 });
 
-const eventsCommand = defineCommand({
+const logCommand = defineCommand({
   meta: {
-    name: "events",
-    alias: "log",
+    name: "log",
     description: "Read or follow the append-only state.db events stream (mutations, feedback, indexing)",
   },
   subCommands: {
@@ -4452,7 +4451,7 @@ export const main = defineCommand({
     config: configCommand,
     feedback: feedbackCommand,
     history: historyCommand,
-    events: eventsCommand,
+    log: logCommand,
     lessons: lessonsCommand,
     agent: agentCommand,
     lint: lintCommand,
