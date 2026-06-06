@@ -2075,10 +2075,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 
   // Save config
   const cfgPath1 = getConfigPath();
-  if (fs.existsSync(cfgPath1)) {
-    backupExistingConfig(cfgPath1);
-    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
-  }
+  backupAndAnnounce(cfgPath1);
   saveConfig(newConfig);
 
   if (semanticSearchMode.mode === "off") {
@@ -2170,6 +2167,20 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 // ── Non-interactive / scripting entry points ─────────────────────────────────
 
 /**
+ * Back up an existing config file and print the real, timestamped backup
+ * location (not a generic display string). On a fresh install where there is
+ * nothing to back up, print a "nothing to back up" notice instead.
+ */
+function backupAndAnnounce(configPath: string): void {
+  const result = backupExistingConfig(configPath);
+  if (result) {
+    p.log.info(`Config backed up to ${result.timestamped}`);
+  } else {
+    p.log.info("No existing config to back up.");
+  }
+}
+
+/**
  * Run setup in non-interactive mode, applying all defaults.
  * Safe to call from CI or scripts. Idempotent — re-running produces the same result.
  */
@@ -2212,10 +2223,7 @@ export async function runSetupWithDefaults(opts: {
   }
 
   const cfgPath2 = getConfigPath();
-  if (fs.existsSync(cfgPath2)) {
-    backupExistingConfig(cfgPath2);
-    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
-  }
+  backupAndAnnounce(cfgPath2);
   saveConfig(ctx.config);
 
   return {
@@ -2229,6 +2237,34 @@ export async function runSetupWithDefaults(opts: {
 }
 
 /**
+ * Recursively merge `incoming` into `base`: plain objects merge key-by-key,
+ * while arrays and scalars replace wholesale. A partial input therefore only
+ * updates the keys it carries and never drops sibling subkeys (e.g. a file
+ * containing `{ output: { format: "text" } }` leaves `output.detail` intact).
+ *
+ * `base` is treated as immutable — a fresh object graph is returned.
+ */
+function deepMergeConfig<T>(base: T, incoming: unknown): T {
+  if (!isPlainObject(incoming)) return incoming as T;
+  const baseObj = isPlainObject(base) ? (base as Record<string, unknown>) : {};
+  const out: Record<string, unknown> = { ...baseObj };
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value === undefined) continue;
+    if (isPlainObject(value) && isPlainObject(baseObj[key])) {
+      out[key] = deepMergeConfig(baseObj[key], value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as T;
+}
+
+/** True for non-null, non-array plain objects. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
  * Apply a JSON config blob non-interactively, merging it with the current config.
  * Validates required sub-fields and strips unknown/restricted keys.
  */
@@ -2237,6 +2273,12 @@ export async function runSetupFromConfig(opts: {
   dir?: string;
   noInit?: boolean;
   probe?: boolean;
+  /**
+   * When true (`--yes --file`), fill any keys still missing after the deep
+   * merge with non-interactive defaults — without overwriting values the file
+   * or existing config already supplied.
+   */
+  applyDefaults?: boolean;
 }): Promise<SetupSummary> {
   // Phase 1: Parse JSON
   type IncomingShape = Partial<AkmConfig> & {
@@ -2292,11 +2334,15 @@ export async function runSetupFromConfig(opts: {
   applyStashIsolationToEnv(stashDir, stashDirExplicit);
 
   let merged: AkmConfig = { ...current, stashDir };
-  // Apply non-llm/agent keys directly.
-  const mergedRec = merged as unknown as Record<string, unknown>;
+  // Deep-merge non-llm/agent keys: nested objects merge key-by-key so a
+  // partial `--file` only updates the keys it carries and never drops sibling
+  // subkeys (e.g. output.detail survives an output.format-only file). Arrays
+  // and scalars replace wholesale.
   for (const key of Object.keys(incoming)) {
     if (key === "llm" || key === "agent") continue;
-    mergedRec[key] = (incoming as Record<string, unknown>)[key];
+    const incomingVal = (incoming as Record<string, unknown>)[key];
+    const mergedRec = merged as unknown as Record<string, unknown>;
+    mergedRec[key] = deepMergeConfig(mergedRec[key], incomingVal);
   }
   // Translate legacy llm/agent inputs into the new shape.
   if (incoming.llm) {
@@ -2304,6 +2350,29 @@ export async function runSetupFromConfig(opts: {
   }
   if (incoming.agent) {
     merged = { ...merged, ...applyLegacyAgent(merged, incoming.agent) };
+  }
+
+  // With `--yes`, fill keys still missing after the merge with non-interactive
+  // defaults. Steps start from `merged` and their nonInteractive path only
+  // populates absent values, so nothing the file or existing config supplied
+  // is overwritten.
+  if (opts.applyDefaults) {
+    const ctx = createSetupContext(merged, { nonInteractive: true });
+    const { steps } = buildSetupSteps({
+      online: false,
+      semanticSearchOutcome: { mode: merged.semanticSearchMode, prepareAssets: false },
+      preferredStashDir: stashDir,
+    });
+    await runSetupSteps(steps, ctx);
+    if (!ctx.config.stashDir) ctx.apply({ stashDir });
+    if (!ctx.config.defaults?.agent) {
+      const detected = detectAgentCliProfiles(undefined);
+      const defaultProfile = pickDefaultAgentProfile(detected, undefined);
+      if (defaultProfile) {
+        ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
+      }
+    }
+    merged = ctx.config;
   }
 
   // Bootstrap directory structure
@@ -2332,10 +2401,7 @@ export async function runSetupFromConfig(opts: {
   }
 
   const cfgPath3 = getConfigPath();
-  if (fs.existsSync(cfgPath3)) {
-    backupExistingConfig(cfgPath3);
-    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
-  }
+  backupAndAnnounce(cfgPath3);
   saveConfig(merged);
 
   return {
