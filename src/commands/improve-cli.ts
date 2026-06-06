@@ -193,6 +193,7 @@ export const improveCommand = defineCommand({
           dryRun,
           target: targetArg,
           autoAccept,
+          ...(runId !== undefined ? { runId } : {}),
           ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),

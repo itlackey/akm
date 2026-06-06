@@ -75,7 +75,7 @@ import {
   shouldSkipRef,
 } from "./improve-profiles";
 import { akmLint } from "./lint/index";
-import { drainProposals } from "./proposal/drain";
+import { type DrainResult, drainProposals } from "./proposal/drain";
 import { resolveDrainPolicy } from "./proposal/drain-policies";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
@@ -96,6 +96,12 @@ export interface AkmImproveOptions {
   autoAccept?: number;
   stashDir?: string;
   config?: AkmConfig;
+  /**
+   * Run identifier minted by the CLI (`buildImproveRunId()`). Threaded onto the
+   * result so health/run records and sync-commit templates (`{runId}`) can read
+   * it. Undefined for programmatic callers that do not mint one.
+   */
+  runId?: string;
   /** Wall-clock budget for the entire improve run in milliseconds. Defaults to 2 hours. */
   timeoutMs?: number;
   limit?: number;
@@ -335,6 +341,20 @@ export interface AkmImproveResult {
    */
   gateAutoAcceptFailedCount?: number;
   /**
+   * Triage pre-pass outcome (array lengths from the pre-pass `DrainResult`
+   * mapped to counts). Present only when the triage pre-pass actually ran
+   * (non-dry-run, triage process enabled, whole-stash / type-scoped run);
+   * omitted entirely otherwise to keep the envelope tidy.
+   */
+  triage?: { promoted: number; rejected: number; deferred: number; skippedByCap: number };
+  /**
+   * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
+   * through `options.runId`. Surfaced on the result so health/run records and
+   * the `{runId}` sync-commit token can read it. Absent for programmatic
+   * callers that did not mint one.
+   */
+  runId?: string;
+  /**
    * End-of-run auto-sync outcome for a git-backed primary stash. Present only
    * when sync was attempted (non-dry-run, git-backed stash, sync not disabled).
    * `skipped: true` covers both a no-op `saveGitStash` and a caught failure
@@ -461,6 +481,9 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
  *   {scope}      scope value (e.g. a ref/type) or the scope mode (`all`)
  *   {refs}       number of planned refs this run processed
  *   {accepted}   number of proposals auto-accepted by the confidence gate
+ *   {triage_promoted}  proposals promoted by the triage pre-pass (0 if triage did not run)
+ *   {triage_rejected}  proposals rejected by the triage pre-pass (0 if triage did not run)
+ *   {runId}      this run's id (empty string when absent)
  *
  * The result is still passed through `sanitizeCommitMessage` downstream in
  * `saveGitStash`, so token values never widen the commit-message attack surface
@@ -471,7 +494,13 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
  */
 export function renderSyncCommitMessage(
   template: string,
-  result: { scope: { mode: string; value?: string }; plannedRefs: unknown[]; gateAutoAcceptedCount?: number },
+  result: {
+    scope: { mode: string; value?: string };
+    plannedRefs: unknown[];
+    gateAutoAcceptedCount?: number;
+    triage?: { promoted: number; rejected: number; deferred: number; skippedByCap: number };
+    runId?: string;
+  },
   nowMs: number,
 ): string {
   const iso = new Date(nowMs).toISOString();
@@ -482,6 +511,9 @@ export function renderSyncCommitMessage(
     scope: result.scope.value ?? result.scope.mode,
     refs: String(result.plannedRefs.length),
     accepted: String(result.gateAutoAcceptedCount ?? 0),
+    triage_promoted: String(result.triage?.promoted ?? 0),
+    triage_rejected: String(result.triage?.rejected ?? 0),
+    runId: result.runId ?? "",
   };
   return template.replace(/\{(\w+)\}/g, (match, key: string) => (Object.hasOwn(tokens, key) ? tokens[key] : match));
 }
@@ -930,6 +962,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let profileFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["profileFilteredRefs"];
   let memoryCleanupPlan: ReturnType<typeof analyzeMemoryCleanup> | undefined;
   let guidance: string | undefined;
+  let triageDrain: DrainResult | undefined;
 
   try {
     // Acquire the lock and run the triage pre-pass for non-dry-run executions.
@@ -959,7 +992,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             const judgment = triageConfig?.judgment
               ? resolveTriageJudgmentRunner(triageConfig.judgment, _earlyConfig)
               : null;
-            await drainProposalsFn({
+            triageDrain = await drainProposalsFn({
               stashDir: primaryStashDir,
               policy,
               applyMode,
@@ -1303,6 +1336,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         const f = preparation.gateAutoAcceptFailedCount + loopGateFailedCount + postLoopGateFailedCount;
         return f > 0 ? { gateAutoAcceptFailedCount: f } : {};
       })(),
+      ...(triageDrain
+        ? {
+            triage: {
+              promoted: triageDrain.promoted.length,
+              rejected: triageDrain.rejected.length,
+              deferred: triageDrain.deferred.length,
+              skippedByCap: triageDrain.skippedByCap.length,
+            },
+          }
+        : {}),
+      ...(options.runId !== undefined ? { runId: options.runId } : {}),
     };
     if (!result.dryRun)
       emitImproveCompletedEvent(
