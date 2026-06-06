@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] - 2026-06-05
+
+### Added
+
+- **LM Studio auto-detection in setup wizard** — `akm setup` now probes
+  `localhost:1234/v1/models` at startup and, when the server is running, pre-fills
+  the LLM backend with the active model list, mirroring the existing Ollama detection
+  flow (#522).
+- **Agent harness config import** — `akm setup` detects installed AI coding harnesses
+  (currently Claude Code and OpenCode) and pre-populates LLM provider, model, and
+  base-URL fields from the harness configuration. The importer registry
+  (`HARNESS_CONFIG_IMPORTERS`) makes adding future harnesses a single append (#523).
+  API key *values* are never read or stored — only the environment variable name is
+  imported.
+- **Registry-driven stash selection** — the "Add Sources" step now fetches available
+  stashes from the official AKM registry at startup. `DEFAULT_SELECTED_STASH_IDS`
+  in `src/setup/registry-stash-loader.ts` is the single edit point for changing
+  which stashes are pre-checked. Falls back to a hardcoded list on network error (#520).
+- **`improve.autoAccept.{promoted,validationFailed}` health metrics** — auto-accepted
+  proposals that pass the confidence threshold but fail validation (truncated
+  description, invalid frontmatter) are now counted as `gateAutoAcceptFailedCount`
+  in the improve result envelope and surfaced as `improve.autoAccept.validationFailed`
+  in `akm health` reports.
+- **`auto-accept-validation` health advisory** — heuristic advisory that warns when
+  `validationFailed > 0` so malformed proposals are visible before they pile up in
+  the queue.
+
+### Fixed
+
+- **`akm-improve` tasks recorded as failed on budget exhaustion** — the budget
+  exhaustion timer called `process.exit(1)`, causing every budget-limited run to be
+  recorded as a task failure. Changed to `process.exit(0)`; budget exhaustion is a
+  normal exit condition.
+
+### Improved
+
+- **Setup wizard pre-populates from existing config** — on re-run, `akm setup`
+  initialises every prompt default from the current saved configuration so users
+  only need to change what has actually changed (#519).
+- **Config backup before every setup write** — `backupExistingConfig()` is now called
+  before each `saveConfig` in the setup wizard, ensuring the previous config is always
+  recoverable if a wizard run is interrupted (#521).
+
 ## [0.8.1] - 2026-06-05
 
 ### Added
