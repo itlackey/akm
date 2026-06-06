@@ -26,6 +26,7 @@ import type {
   SourceConfigEntry,
 } from "../core/config";
 import { DEFAULT_CONFIG, getDefaultLlmConfig, loadUserConfig, saveConfig } from "../core/config";
+import { backupExistingConfig } from "../core/config-io";
 import { ConfigError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
@@ -1918,6 +1919,11 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   if (!shouldSave) bail();
 
   // Save config
+  const cfgPath1 = getConfigPath();
+  if (fs.existsSync(cfgPath1)) {
+    backupExistingConfig(cfgPath1);
+    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
+  }
   saveConfig(newConfig);
 
   if (semanticSearchMode.mode === "off") {
@@ -2050,6 +2056,11 @@ export async function runSetupWithDefaults(opts: {
     }
   }
 
+  const cfgPath2 = getConfigPath();
+  if (fs.existsSync(cfgPath2)) {
+    backupExistingConfig(cfgPath2);
+    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
+  }
   saveConfig(ctx.config);
 
   return {
@@ -2165,6 +2176,11 @@ export async function runSetupFromConfig(opts: {
     }
   }
 
+  const cfgPath3 = getConfigPath();
+  if (fs.existsSync(cfgPath3)) {
+    backupExistingConfig(cfgPath3);
+    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
+  }
   saveConfig(merged);
 
   return {
