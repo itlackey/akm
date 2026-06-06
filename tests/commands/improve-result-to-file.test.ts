@@ -96,6 +96,7 @@ function runCli(args: string[], stashDir: string): CliRun {
 function readImproveRuns(xdgData: string): Array<{
   id: string;
   started_at: string;
+  completed_at: string | null;
   dry_run: number;
   ok: number;
   scope_mode: string;
@@ -107,12 +108,13 @@ function readImproveRuns(xdgData: string): Array<{
   try {
     const rows = db
       .prepare(
-        `SELECT id, started_at, dry_run, ok, scope_mode, result_json
+        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, result_json
          FROM improve_runs ORDER BY started_at ASC`,
       )
       .all() as Array<{
       id: string;
       started_at: string;
+      completed_at: string | null;
       dry_run: number;
       ok: number;
       scope_mode: string;
@@ -121,6 +123,7 @@ function readImproveRuns(xdgData: string): Array<{
     return rows.map((r) => ({
       id: r.id,
       started_at: r.started_at,
+      completed_at: r.completed_at,
       dry_run: r.dry_run,
       ok: r.ok,
       scope_mode: r.scope_mode,
@@ -156,17 +159,18 @@ describe("relativeImproveResultPath", () => {
 });
 
 describe("writeImproveResultFile", () => {
+  const baseResult: AkmImproveResult = {
+    schemaVersion: 1,
+    ok: true,
+    scope: { mode: "all" },
+    dryRun: false,
+    memorySummary: { eligible: 1, derived: 0 },
+    plannedRefs: [],
+  };
+
   test("records a row in the improve_runs table of state.db", () => {
     const stash = makeStashDir();
     const runId = "test-run-write";
-    const result: AkmImproveResult = {
-      schemaVersion: 1,
-      ok: true,
-      scope: { mode: "all" },
-      dryRun: false,
-      memorySummary: { eligible: 1, derived: 0 },
-      plannedRefs: [],
-    };
 
     // Isolate state.db to a tmpdir so the test never touches the user's real
     // data directory. The sandbox helper sets + restores XDG_DATA_HOME so the
@@ -176,7 +180,7 @@ describe("writeImproveResultFile", () => {
     const xdgData = dataSb.dir;
 
     try {
-      const rel = writeImproveResultFile(stash, runId, result);
+      const rel = writeImproveResultFile(stash, runId, baseResult);
       // Return value is now a state.db locator for log messages, not a file path.
       expect(rel).toBe(path.join("state.db", "improve_runs", runId));
 
@@ -191,6 +195,50 @@ describe("writeImproveResultFile", () => {
       // No legacy on-disk file under .akm/runs/ — the storage swap is complete.
       const runsDir = path.join(stash, ".akm", "runs");
       expect(fs.existsSync(runsDir)).toBe(false);
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
+  test("started_at uses the explicit startedAt parameter and differs from completed_at", () => {
+    const stash = makeStashDir();
+    const runId = buildImproveRunId(new Date("2026-05-01T10:00:00.000Z"));
+    const startedAt = "2026-05-01T10:00:00.000Z";
+
+    const dataSb = sandboxXdgDataHome();
+    const xdgData = dataSb.dir;
+    try {
+      writeImproveResultFile(stash, runId, baseResult, startedAt);
+      const rows = readImproveRuns(xdgData);
+      expect(rows.length).toBe(1);
+      expect(rows[0].started_at).toBe(startedAt);
+      // completed_at is set to now() at write time — must be >= started_at
+      expect(rows[0].completed_at).not.toBeNull();
+      // biome-ignore lint/style/noNonNullAssertion: asserted not-null on the line above
+      expect(new Date(rows[0].completed_at!).getTime()).toBeGreaterThanOrEqual(new Date(rows[0].started_at).getTime());
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
+  test("started_at fallback decodes correctly from runId when startedAt is omitted", () => {
+    const stash = makeStashDir();
+    // Use a runId whose embedded timestamp is at least a second in the past
+    const past = new Date(Date.now() - 60_000);
+    const runId = buildImproveRunId(past);
+
+    const dataSb = sandboxXdgDataHome();
+    const xdgData = dataSb.dir;
+    try {
+      writeImproveResultFile(stash, runId, baseResult);
+      const rows = readImproveRuns(xdgData);
+      expect(rows.length).toBe(1);
+      // started_at should be close to `past`, not to now()
+      const storedStart = new Date(rows[0].started_at).getTime();
+      expect(Math.abs(storedStart - past.getTime())).toBeLessThan(1000);
+      // completed_at must be after started_at
+      // biome-ignore lint/style/noNonNullAssertion: completed_at is always set on successful writes
+      expect(new Date(rows[0].completed_at!).getTime()).toBeGreaterThan(storedStart);
     } finally {
       dataSb.cleanup();
     }

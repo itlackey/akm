@@ -79,14 +79,25 @@ export function relativeImproveResultPath(runId: string): string {
  * (closes the dry-run/real-run artifact-trap recorded in MEMORY.md
  * `feedback_akm_dryrun_artifact_trap`).
  */
-export function writeImproveResultFile(stashDir: string, runId: string, result: AkmImproveResult): string {
+export function writeImproveResultFile(
+  stashDir: string,
+  runId: string,
+  result: AkmImproveResult,
+  startedAt?: string,
+): string {
   const db = openStateDatabase();
   try {
-    const startedAt = new Date().toISOString();
+    const completedAt = new Date().toISOString();
+    // startedAt is the ISO timestamp captured at process launch (passed from the
+    // CLI entry point). If omitted, fall back to the run-id's embedded timestamp
+    // so started_at != completed_at even on older call sites.
+    const resolvedStartedAt =
+      startedAt ??
+      runId.slice(0, 24).replace(/^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1$2:$3:$4.$5Z");
     recordImproveRun(db, {
       id: runId,
-      startedAt,
-      completedAt: startedAt,
+      startedAt: resolvedStartedAt,
+      completedAt,
       stashDir,
       dryRun: Boolean(result.dryRun),
       profile: null,
