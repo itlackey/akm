@@ -1501,6 +1501,13 @@ export function getEntryCount(db: Database): number {
   return row.cnt;
 }
 
+export function getEmbeddableEntryCount(db: Database): number {
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM entries WHERE entry_type != 'vault'").get() as {
+    cnt: number;
+  };
+  return row.cnt;
+}
+
 export function getEmbeddingCount(db: Database): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
   return row.cnt;

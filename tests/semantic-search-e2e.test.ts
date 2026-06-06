@@ -18,6 +18,7 @@ import { getDbPath } from "../src/core/paths";
 import {
   closeDatabase,
   EMBEDDING_DIM,
+  getEmbeddableEntryCount,
   getEmbeddingCount,
   getEntryCount,
   getMeta,
@@ -253,6 +254,13 @@ echo "Database migration finished successfully."
     }),
   );
 
+  // 6. Vault entry (#502) — vault rows are indexed for keyword search but are
+  //    intentionally excluded from embeddings (getAllEntriesForEmbedding filters
+  //    entry_type != 'vault'). Semantic verification must not count these.
+  const vaultsDir = path.join(stashDir, "vaults");
+  fs.mkdirSync(vaultsDir, { recursive: true });
+  fs.writeFileSync(path.join(vaultsDir, "prod.env"), "API_TOKEN=placeholder-not-a-real-secret\nDB_PASSWORD=example\n");
+
   return stashDir;
 }
 
@@ -307,6 +315,16 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBeGreaterThan(0);
     expect(result.verification.semanticSearchEnabled).toBeTruthy();
+
+    // #502: a healthy index containing vault entries (which are excluded from
+    // embeddings) must still verify ok and land in a ready status — not blocked
+    // / verification-failed — because verification now tracks the embeddable
+    // entry count rather than the full entry count.
+    expect(result.verification.ok).toBe(true);
+    expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
+    // The user-facing entryCount reflects embeddable entries, so it equals the
+    // embedding count even though vault entries inflate the total entry count.
+    expect(result.verification.entryCount).toBe(result.verification.embeddingCount);
   }, 120_000); // 2 minute timeout for model download on first run
 
   // Restore env vars before each test in case the degradation describe
@@ -332,15 +350,19 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       // Verify hasEmbeddings flag is set
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
 
-      // Verify embedding count matches entry count
+      // Verify embedding count matches the embeddable entry count. Vault rows
+      // (#502) are indexed for keyword search but excluded from embeddings, so
+      // the full entry count is strictly greater than the embeddable count.
       const entryCount = getEntryCount(db);
+      const embeddableCount = getEmbeddableEntryCount(db);
       const embeddingCount = getEmbeddingCount(db);
-      expect(entryCount).toBeGreaterThanOrEqual(5);
-      expect(embeddingCount).toBe(entryCount);
+      expect(entryCount).toBeGreaterThanOrEqual(6); // 5 assets + >=1 vault entry
+      expect(embeddableCount).toBeLessThan(entryCount); // vault entry is excluded
+      expect(embeddingCount).toBe(embeddableCount); // every embeddable entry embedded
 
       // Verify each embedding has the correct dimension (384 for bge-small-en-v1.5)
       const rows = db.prepare("SELECT id, embedding FROM embeddings").all() as Array<{ id: number; embedding: Buffer }>;
-      expect(rows.length).toBe(entryCount);
+      expect(rows.length).toBe(embeddableCount);
 
       for (const row of rows) {
         const f32 = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);

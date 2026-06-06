@@ -8,6 +8,7 @@ import {
   DB_VERSION,
   deleteEntriesByDir,
   getAllEntries,
+  getEmbeddableEntryCount,
   getEntriesByDir,
   getEntryById,
   getEntryCount,
@@ -296,6 +297,41 @@ describe("Entry CRUD", () => {
 
       const remaining = getAllEntries(db);
       expect(remaining[0].entryKey).toBe("keep-1");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  // Regression for #502: the embedding phase intentionally excludes vault
+  // entries (getAllEntriesForEmbedding filters entry_type != 'vault'). Semantic
+  // verification must track the embeddable count, not the full entry count, or a
+  // healthy index with vault entries is permanently reported as blocked.
+  test("getEmbeddableEntryCount excludes vault entries", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "asset-1", { type: "skill" });
+      insertTestEntry(db, "asset-2", { type: "command" });
+      insertTestEntry(db, "asset-3", { type: "script" });
+      insertTestEntry(db, "secret-1", { type: "vault" });
+      insertTestEntry(db, "secret-2", { type: "vault" });
+
+      // Full count includes vault rows; embeddable count excludes them.
+      expect(getEntryCount(db)).toBe(5);
+      expect(getEmbeddableEntryCount(db)).toBe(3);
+      expect(getEmbeddableEntryCount(db)).toBeLessThan(getEntryCount(db));
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEmbeddableEntryCount equals total when no vault entries exist", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "asset-1", { type: "skill" });
+      insertTestEntry(db, "asset-2", { type: "script" });
+
+      expect(getEmbeddableEntryCount(db)).toBe(getEntryCount(db));
+      expect(getEmbeddableEntryCount(db)).toBe(2);
     } finally {
       closeDatabase(db);
     }
