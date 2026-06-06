@@ -51,6 +51,7 @@ import {
   deleteEntriesByStashDir,
   deleteIndexDirStatesByStashDir,
   getAllEntriesForEmbedding,
+  getEmbeddableEntryCount,
   getEmbeddingCount,
   getEntriesByDir,
   getEntryCount,
@@ -367,7 +368,8 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   warnIfVecMissing(db);
 
   const totalEntries = getEntryCount(db);
-  const verification = verifyIndexState(db, config, totalEntries, embeddingResult);
+  const semanticEntryCount = getEmbeddableEntryCount(db);
+  const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
 
   if (config.semanticSearchMode === "off") {
     clearSemanticStatus();
@@ -1437,14 +1439,14 @@ function getSemanticSearchLabel(
 function verifyIndexState(
   db: Database,
   config: AkmConfig,
-  totalEntries: number,
+  embeddableEntries: number,
   embeddingResult: EmbeddingGenerationResult,
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
   const vecAvailable = isVecAvailable(db);
   const embeddingProvider = getEmbeddingProvider(config.embedding);
 
-  if (totalEntries === 0) {
+  if (embeddableEntries === 0) {
     return {
       ok: true,
       message: "Index ready. No assets were found yet.",
@@ -1452,7 +1454,7 @@ function verifyIndexState(
       semanticSearchMode: config.semanticSearchMode,
       semanticStatus: config.semanticSearchMode === "off" ? "disabled" : "pending",
       embeddingProvider,
-      entryCount: totalEntries,
+      entryCount: embeddableEntries,
       embeddingCount,
       vecAvailable,
     };
@@ -1466,21 +1468,21 @@ function verifyIndexState(
       semanticSearchMode: config.semanticSearchMode,
       semanticStatus: "disabled",
       embeddingProvider,
-      entryCount: totalEntries,
+      entryCount: embeddableEntries,
       embeddingCount,
       vecAvailable,
     };
   }
 
-  if (embeddingCount >= totalEntries) {
+  if (embeddingCount >= embeddableEntries) {
     return {
       ok: true,
-      message: `Semantic search ready (${embeddingCount}/${totalEntries} embeddings, ${vecAvailable ? "sqlite-vec active" : "JS fallback active"}).`,
+      message: `Semantic search ready (${embeddingCount}/${embeddableEntries} embeddings, ${vecAvailable ? "sqlite-vec active" : "JS fallback active"}).`,
       semanticSearchEnabled: true,
       semanticSearchMode: config.semanticSearchMode,
       semanticStatus: vecAvailable ? "ready-vec" : "ready-js",
       embeddingProvider,
-      entryCount: totalEntries,
+      entryCount: embeddableEntries,
       embeddingCount,
       vecAvailable,
     };
@@ -1490,7 +1492,7 @@ function verifyIndexState(
     ok: false,
     message:
       embeddingResult.message ??
-      `Semantic search verification failed (${embeddingCount}/${totalEntries} embeddings available).`,
+      `Semantic search verification failed (${embeddingCount}/${embeddableEntries} embeddings available).`,
     guidance:
       embeddingProvider === "remote"
         ? "Check your embedding endpoint and credentials, then retry `akm index --full --verbose`."
@@ -1499,7 +1501,7 @@ function verifyIndexState(
     semanticSearchMode: config.semanticSearchMode,
     semanticStatus: "blocked",
     embeddingProvider,
-    entryCount: totalEntries,
+    entryCount: embeddableEntries,
     embeddingCount,
     vecAvailable,
   };
