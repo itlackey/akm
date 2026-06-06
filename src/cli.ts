@@ -155,6 +155,7 @@ import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, s
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
+import { parseMetaRef } from "./core/stash-meta";
 import { plainize } from "./core/tty";
 import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { closeDatabase, openExistingDatabase } from "./indexer/db";
@@ -1026,7 +1027,10 @@ const showCommand = defineCommand({
         output("proposal-show", result);
         return;
       }
-      parseAssetRef(args.ref);
+      // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
+      // not a typed asset ref — skip ref validation and let akmShowUnified
+      // direct-read it. (`parseAssetRef` would reject the non-type `meta`.)
+      if (!parseMetaRef(args.ref)) parseAssetRef(args.ref);
       // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
       // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
       // by `normalizeShowArgv` before citty parses argv. We read those values

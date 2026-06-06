@@ -45,6 +45,36 @@ afterEach(() => {
   stashDir = "";
 });
 
+// ── Stash .meta/ convention ──────────────────────────────────────────────────
+
+describe("akmShow stash .meta convention", () => {
+  test("direct-reads .meta/index.md from the working stash for `meta`", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    writeFile(path.join(stashDir, ".meta", "index.md"), "# Stash orientation\nStart at skill:foo.");
+
+    const result = await akmShow({ ref: "meta" });
+    expect(result.type).toBe("meta");
+    expect(result.name).toBe("index");
+    expect(result.content).toContain("Stash orientation");
+    expect(result.path).toBe(path.join(stashDir, ".meta", "index.md"));
+  });
+
+  test("resolves a named meta doc via `meta:<name>`", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    writeFile(path.join(stashDir, ".meta", "about.md"), "# About\nThe stash.");
+
+    const result = await akmShow({ ref: "meta:about" });
+    expect(result.type).toBe("meta");
+    expect(result.name).toBe("about");
+    expect(result.content).toContain("The stash.");
+  });
+
+  test("throws a maintainer-actionable error when the doc is absent", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    await expect(akmShow({ ref: "meta:missing" })).rejects.toThrow(/\.meta\/missing/);
+  });
+});
+
 // ── Installed ref with missing asset ─────────────────────────────────────────
 
 describe("akmShow installed ref", () => {

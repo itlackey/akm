@@ -247,6 +247,55 @@ Legacy example:
 
 See [technical/filesystem.md](technical/filesystem.md) for the legacy field reference.
 
+## Step 3.5: Orient Readers with `.meta/` (optional)
+
+Add a `.meta/` directory at the stash root to give agents and humans a quick
+orientation to the stash *as a whole* — what it's for, where to start, and the
+conventions to follow. This is separate from per-asset metadata: `.meta/`
+describes the stash, not individual assets.
+
+```text
+my-stash/
+  .meta/
+    index.md          # akm show meta
+    about.md          # akm show meta:about
+    conventions.md    # akm show meta:conventions
+```
+
+`.meta/index.md` is the default doc. A useful starting shape:
+
+```markdown
+---
+purpose:
+  - Release engineering + changelog automation for the CLI
+entry_points: [skill:git-release, command:changelog-entry, script:bump-version]
+conventions:
+  - "Scripts are bun-first; shebang #!/usr/bin/env bun"
+maintainer: you <you@example.com>
+---
+# About this stash
+
+Start with `skill:git-release`. The bump→changelog→tag→push flow lives in
+`script:bump-version` then `command:changelog-entry`.
+```
+
+Key properties:
+
+- **Not indexed.** `.meta/` is a dot-directory, so the indexer skips it — these
+  docs never appear in `akm search` and never compete for ranking. They are
+  read directly via `akm show meta[:<name>]` (or `akm show <stash>//meta[:<name>]`
+  once installed).
+- **Travels with the stash.** It's committed files in your tree, so installers
+  get your conventions automatically.
+- **Open-ended.** Add any doc by dropping a file — `akm show meta:<name>`
+  resolves `.meta/<name>.md` (then an extensionless `.meta/<name>`) with no
+  configuration or code changes.
+
+> **npm publishing note:** if you ship via npm with an `akm.include` allowlist
+> (see "Sharing on npm" below), add `.meta` to the list — dot-directories are
+> otherwise easy to leave out of the published tarball. GitHub tarball installs
+> include `.meta/` automatically.
+
 ## Step 4: Test Locally
 
 Before sharing, install your stash locally to verify everything works:

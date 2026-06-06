@@ -82,6 +82,7 @@ my-stash/
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
    lessons/        # Distilled lessons (.md, see akm improve / proposals)
   memories/       # Recalled context fragments (.md)
+  .meta/          # Optional stash orientation, not indexed (see "Metadata" below)
 ```
 
 ## Asset Types
@@ -259,6 +260,39 @@ scripts. The indexer derives metadata from filenames, code comments,
 frontmatter, and package.json.
 
 See [technical/filesystem.md](technical/filesystem.md) for the full field reference.
+
+### Stash orientation: the `.meta/` convention
+
+A stash may carry an optional `.meta/` directory at its root holding
+human-authored orientation for the stash *as a whole* — purpose, key assets,
+conventions, maintainer. This is distinct from per-asset metadata (which still
+lives with each asset) and from the removed `.stash.json` sidecar (which
+enumerated per-asset entries): `.meta/` never describes individual assets, only
+the stash itself.
+
+```text
+my-stash/
+  .meta/
+    index.md          # shown by `akm show meta` — the default orientation doc
+    about.md          # shown by `akm show meta:about`
+    conventions.md    # shown by `akm show meta:conventions`
+```
+
+Because `.meta/` is a dot-directory, the indexer skips it — these docs never
+appear in `akm search` and never compete for ranking. They are **direct-read on
+demand**:
+
+```sh
+akm show meta                       # working stash's .meta/index.md
+akm show meta:about                 # working stash's .meta/about.md
+akm show local//meta                # the primary stash explicitly
+akm show github:owner/repo//meta    # an installed stash's .meta/index.md
+```
+
+`akm show <origin>//meta:<name>` resolves `<name>.md` first, then an
+extensionless `<name>`. The convention is open-ended: stash owners add new docs
+by dropping files into `.meta/` — no configuration or code changes required.
+`akm init` scaffolds a starter `.meta/index.md`.
 
 ## Script Execution (ExecHints)
 

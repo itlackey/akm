@@ -50,6 +50,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Stash `.meta/` convention** — a stash may carry an optional, human-authored
+  `.meta/` directory at its root for orientation: purpose, key assets, conventions,
+  and maintainer info. Surface it on demand with `akm show meta` (the working
+  stash's `.meta/index.md`), `akm show meta:<name>` (e.g. `.meta/about.md`), or
+  scope it to a specific stash with `akm show <origin>//meta[:<name>]`. Because
+  `.meta/` is a dot-directory, the indexer already skips it, so these docs never
+  pollute search results — they are direct-read on demand. Owners extend the
+  convention by dropping new files (`.meta/about.md`, `.meta/conventions.md`,
+  `.meta/license`) with no code changes. `akm init` scaffolds a `.meta/index.md`
+  template into newly created stashes.
 - **Default stash skeleton** — `akm init` (and `akm setup`) now copies
   `src/assets/stash-skeleton/` into every newly created stash. Currently ships
   a `README.md` covering what the stash contains and how agents use `akm` to

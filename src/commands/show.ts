@@ -26,6 +26,7 @@ import { loadConfig } from "../core/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
+import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../core/stash-meta";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
@@ -136,6 +137,16 @@ export async function akmShowUnified(input: {
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
+  // 0a. Stash `.meta/` convention: `[origin//]meta[:name]` direct-reads a
+  //     human-authored orientation doc from the stash's `.meta/` directory.
+  //     These files are not indexed (the walker skips dot-dirs), so they are
+  //     resolved here before the index lookup and the `type:name` parser,
+  //     which would otherwise reject the non-asset-type `meta`.
+  {
+    const metaRef = parseMetaRef(ref);
+    if (metaRef) return showStashMeta(metaRef);
+  }
+
   // 0. Wiki-root shortcut: `wiki:<name>` with no page path routes to the
   //    wiki summary (same payload as `akm wiki show <name>`). Honour
   //    `parsed.origin` by resolving against the matching stash source(s),
@@ -184,6 +195,49 @@ export async function akmShowUnified(input: {
     (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
   }
   return result;
+}
+
+/**
+ * Resolve a stash `.meta/` doc and return it as a lightweight ShowResponse.
+ *
+ * With no origin the working stash (and other configured sources, in order)
+ * is searched and the first hit wins. With an origin the lookup is narrowed
+ * to that stash; an uninstalled origin yields an actionable "not installed"
+ * error. The file is read directly from disk — `.meta/` is never indexed.
+ */
+async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
+  const allSources = resolveSourceEntries();
+  const sources = resolveSourcesForOrigin(metaRef.origin, allSources);
+
+  if (metaRef.origin && sources.length === 0) {
+    throw new NotFoundError(
+      `Stash "${metaRef.origin}" is not installed, so its ${META_DIR}/ docs are unavailable. ` +
+        `Run: akm add ${metaRef.origin}`,
+    );
+  }
+
+  const config = loadConfig();
+  for (const source of sources) {
+    const filePath = resolveMetaFilePath(source.path, metaRef.name);
+    if (!filePath) continue;
+    const content = fs.readFileSync(filePath, "utf8");
+    const editable = isEditable(filePath, config);
+    appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
+    return {
+      type: "meta",
+      name: metaRef.name,
+      path: filePath,
+      content,
+      origin: source.registryId ?? null,
+      editable,
+    } as ShowResponse;
+  }
+
+  throw new NotFoundError(
+    `No ${META_DIR}/${metaRef.name} doc found${metaRef.origin ? ` in "${metaRef.origin}"` : ""}. ` +
+      `Stash maintainers can create ${META_DIR}/${metaRef.name}.md to describe this stash ` +
+      `(purpose, key assets, conventions, maintainer).`,
+  );
 }
 
 function hasAnyScopeKey(scope: StashEntryScope): boolean {

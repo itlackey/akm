@@ -455,10 +455,23 @@ akm show knowledge:guide section "Authentication"
 akm show knowledge:guide lines 10 30
 akm show knowledge:guide frontmatter
 
+# Stash .meta/ orientation docs (0.8.2+) — direct-read, not indexed:
+akm show meta                       # working stash's .meta/index.md
+akm show meta:about                 # working stash's .meta/about.md
+akm show local//meta                # the primary stash explicitly
+akm show github:owner/repo//meta    # an installed stash's .meta/index.md
+
 # Multi-tenant scope filtering (0.7.0+):
 akm show memory:retro --scope user=alice
 akm show memory:retro --scope user=alice --scope agent=claude
 ```
+
+`meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
+human-authored orientation doc from a stash's optional `.meta/` directory
+(`<name>` defaults to `index`; `.meta/<name>.md` is tried before an
+extensionless `.meta/<name>`). These files are never indexed, so they do not
+appear in `akm search`. See [concepts.md](concepts.md#stash-orientation-the-meta-convention)
+for the full convention.
 
 `--scope` accepts the same `<key>=<value>` shape as `akm search --filter`
 (repeatable; valid keys: `user`, `agent`, `run`, `channel`). When supplied,

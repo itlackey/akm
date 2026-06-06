@@ -17,7 +17,7 @@ import { loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
 import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
 import { ensureRg } from "../core/ripgrep/install";
-import { copyStashSkeleton } from "./stash-skeleton";
+import { copyStashSkeleton, scaffoldStashMeta } from "./stash-skeleton";
 
 /**
  * Refuse to persist a temporary-directory stashDir to the user's config when
@@ -98,6 +98,7 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
 
   if (created) {
     copyStashSkeleton(stashDir);
+    scaffoldStashMeta(stashDir);
   }
 
   // Persist stashDir in config.json
