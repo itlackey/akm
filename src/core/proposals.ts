@@ -49,7 +49,13 @@ import { NotFoundError, UsageError } from "./errors";
 import { appendEvent } from "./events";
 import { runProposalValidators } from "./proposal-validators";
 import { warn } from "./warn";
-import { resolveWriteTarget, type WriteTargetSource, writeAssetToSource } from "./write-source";
+import {
+  commitWriteTargetBoundary,
+  formatRefForMessage,
+  resolveWriteTarget,
+  type WriteTargetSource,
+  writeAssetToSource,
+} from "./write-source";
 
 // ── Source allow-list (F-4 / #385) ──────────────────────────────────────────
 
@@ -1021,6 +1027,9 @@ export async function promoteProposal(
   }
 
   const written = await writeAssetToSource(target.source, target.config, ref, proposal.payload.content);
+  // 0.9.0 (issue #507): single batch commit at the write boundary for git
+  // targets. No-op for filesystem/primary-stash targets.
+  commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
 
   const archived = archiveProposal(stashDir, id, "accepted", undefined, ctx);
 
@@ -1110,6 +1119,9 @@ export async function revertProposal(
 
   const target = resolveWriteTarget(config, options.target);
   const written = await writeAssetToSource(target.source, target.config, ref, backupContent);
+  // 0.9.0 (issue #507): single batch commit at the write boundary for git
+  // targets. No-op for filesystem/primary-stash targets.
+  commitWriteTargetBoundary(target, `Revert ${formatRefForMessage(ref)}`);
 
   // Update the archived proposal record to status: "reverted" and bump
   // updatedAt + review so the audit trail reflects the second decision.

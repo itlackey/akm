@@ -252,6 +252,11 @@ export const DefaultsSchema = z
 
 const SourceConfigEntryOptionsSchema = z
   .object({
+    /**
+     * @deprecated 0.9.0 (issue #507). Retired per-asset push-on-commit. Kept so
+     * old configs still parse; its intent maps onto the batch push gate and
+     * encountering it emits a one-time deprecation warning.
+     */
     pushOnCommit: z.boolean().optional(),
   })
   .passthrough();

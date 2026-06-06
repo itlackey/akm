@@ -28,6 +28,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   monitor needs regardless of design. The session-monitoring/agent-steering loop is
   deferred to #506 and requires a separately approved design.
 
+### Changed
+
+- **Unified git commit model — single batch-at-boundary commit** (#507). Writing
+  or deleting an asset on a git-backed source no longer commits (and optionally
+  pushes) **per asset**. `writeAssetToSource` / `deleteAssetFromSource` now
+  perform a plain filesystem write/unlink for every kind, and git-backed targets
+  are committed **once** at the operation boundary (`akm remember --target`,
+  proposal accept/revert, consolidate) as a single complete commit — `git add -A`
+  stages `.akm/` state + sibling assets together — pushed under the same
+  `writable + remote` gate as `akm save`/`akm sync`. This removes the noisy,
+  incomplete per-asset commits (~25 per improve run) and leaves no dirty
+  working-tree residue.
+
+### Deprecated
+
+- **`options.pushOnCommit`** (#507). The per-asset push-on-commit knob is retired.
+  Existing configs still parse — its push intent is mapped onto the batch push
+  gate and a one-time deprecation warning is emitted when the option is
+  encountered. Remove it and rely on `writable: true` + a configured remote.
+
 ## [0.8.2] - 2026-06-05
 
 ### Added

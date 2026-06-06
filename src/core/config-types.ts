@@ -290,7 +290,14 @@ export interface ConfiguredSource {
 
 /** Provider-specific options for a configured source entry. */
 export interface SourceConfigEntryOptions {
-  /** When true and the source is a git repo, akm runs `git push` after every asset commit. */
+  /**
+   * @deprecated 0.9.0 (issue #507). The per-asset commit/push path is retired:
+   * akm now commits writes in a single batch at the operation boundary and
+   * pushes when the target is writable with a remote (same gate as `sync.push`).
+   * The field still parses so old configs load; its push intent is mapped onto
+   * the batch push gate, and an encountered value emits a one-time deprecation
+   * warning. Prefer `writable: true` + sync push instead.
+   */
   pushOnCommit?: boolean;
   /** Pass-through catch-all for provider-specific options. */
   [key: string]: unknown;

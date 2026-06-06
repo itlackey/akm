@@ -16,7 +16,12 @@ import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isHttpUrl, isWithin, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
-import { resolveWriteTarget, writeAssetToSource } from "../core/write-source";
+import {
+  commitWriteTargetBoundary,
+  formatRefForMessage,
+  resolveWriteTarget,
+  writeAssetToSource,
+} from "../core/write-source";
 import { fetchWebsiteMarkdownSnapshot } from "../sources/website-ingest";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
@@ -133,7 +138,8 @@ export async function writeMarkdownAsset(options: {
   target?: string;
 }): Promise<{ ref: string; path: string; stashDir: string }> {
   const cfg = loadConfig();
-  const { source, config } = resolveWriteTarget(cfg, options.target);
+  const target = resolveWriteTarget(cfg, options.target);
+  const { source, config } = target;
 
   const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
   const normalizedName = normalizeMarkdownAssetName(
@@ -154,12 +160,11 @@ export async function writeMarkdownAsset(options: {
     );
   }
 
-  const result = await writeAssetToSource(
-    source,
-    config,
-    { type: options.type, name: normalizedName },
-    options.content,
-  );
+  const ref = { type: options.type, name: normalizedName };
+  const result = await writeAssetToSource(source, config, ref, options.content);
+  // 0.9.0 (issue #507): single batch commit at the write boundary for git
+  // targets. No-op for filesystem/primary-stash targets.
+  commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
   return {
     ref: result.ref,
     path: result.path,

@@ -120,6 +120,13 @@ akm save my-skills -m "Update"   # Named writable git source
 Push behavior depends on configuration: if the stash is a git repo with a
 remote and `writable: true`, save also pushes. Otherwise it commits only.
 
+> **0.9.0:** writes that land on a writable git source via `--target` (e.g.
+> `akm remember --target my-skills`, proposal accept/revert, consolidate) are
+> committed automatically in a single batch at the end of the operation — one
+> complete commit (staging `.akm/` + assets together), pushed under the same
+> `writable + remote` gate as `akm save`. The legacy per-asset `options.pushOnCommit`
+> knob is deprecated; remove it and rely on `writable: true` + push instead.
+
 **Example: publish your own stash**
 
 ```sh
