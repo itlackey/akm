@@ -435,6 +435,11 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
             cacheMisses: row.cache_misses,
             truncationCount: row.truncation_count,
             failureCount: row.failure_count,
+            // `retry_attempts` is not persisted to the graph-meta table (it is
+            // surfaced from the run's emitted telemetry into `akm health`, not
+            // from the reuse cache). Default to 0 so the loaded shape satisfies
+            // GraphExtractionTelemetry.
+            retryAttempts: 0,
           },
         };
       } catch {

@@ -341,6 +341,7 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           unaccounted: 0,
           htmlErrorCount: 0,
           cacheHits: 0,
+          retryAttempts: 0,
           skippedChildExists: 0,
           skippedAborted: 0,
           warnings: [],
@@ -368,7 +369,14 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
             lowConfidenceRatio: 0,
           },
           files: [],
-          telemetry: { failureCount: 0, failuresByReason: {}, cacheHits: 0, cacheMisses: 0, truncationCount: 0 },
+          telemetry: {
+            failureCount: 0,
+            failuresByReason: {},
+            cacheHits: 0,
+            cacheMisses: 0,
+            truncationCount: 0,
+            retryAttempts: 0,
+          },
         };
       },
     });

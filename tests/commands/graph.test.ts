@@ -154,6 +154,7 @@ function writeGraphArtifact(): string {
         cacheMisses: 1,
         truncationCount: 0,
         failureCount: 0,
+        retryAttempts: 0,
       },
     });
   } finally {

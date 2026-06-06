@@ -141,6 +141,7 @@ function fakeExtractionResult(extractedFiles: number): GraphExtractionResult {
       cacheMisses: extractedFiles,
       truncationCount: 0,
       failureCount: 0,
+      retryAttempts: 0,
     },
     warnings: [],
   };
