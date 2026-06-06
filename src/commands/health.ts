@@ -279,6 +279,13 @@ export interface ImproveHealthMetrics {
      */
     unaccounted: number;
     /**
+     * Parents whose LLM call returned an HTML body (e.g. LM Studio serving its
+     * web UI) instead of JSON. Surfaced distinctly from `skippedNoFacts` so a
+     * provider-load failure is observable rather than masked as an empty-result
+     * skip. Sourced from the `memoryInference` envelope's `htmlErrorCount`.
+     */
+    htmlErrorCount: number;
+    /**
      * Count of envelopes that contributed to the yield denominator. A run
      * is yield-eligible iff its `memoryInference` envelope has a
      * `cacheHits` field (i.e. it post-dates the cache-hits metric). Older
@@ -323,6 +330,14 @@ export interface ImproveHealthMetrics {
     cacheHitRate: number;
     truncations: number;
     failures: number;
+    /**
+     * Asset extractions where the provider returned an HTML body (e.g. LM
+     * Studio serving its web UI) instead of JSON. Tracked distinctly from
+     * `failures` so a provider-load failure is observable rather than folded
+     * into the generic failure count. Sourced from the graph-extraction
+     * telemetry's `htmlErrorCount`.
+     */
+    htmlErrors: number;
     durationMs: number;
   };
   /**
@@ -551,6 +566,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
       yieldEligibleRuns: 0,
       yieldEligibleConsidered: 0,
       yieldEligibleWritten: 0,
@@ -568,6 +584,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       cacheHitRate: 0,
       truncations: 0,
       failures: 0,
+      htmlErrors: 0,
       durationMs: 0,
     },
     sessionExtraction: {
@@ -800,6 +817,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     metrics.memoryInference.skippedChildExists += toFiniteNumber(memoryInference.skippedChildExists);
     metrics.memoryInference.skippedAborted += toFiniteNumber(memoryInference.skippedAborted);
     metrics.memoryInference.unaccounted += toFiniteNumber(memoryInference.unaccounted);
+    metrics.memoryInference.htmlErrorCount += toFiniteNumber(memoryInference.htmlErrorCount);
     // Yield-rate gating: pre-cache-feature envelopes lack the `cacheHits`
     // field entirely. Treating their `considered` as freshAttempts (since
     // cacheHits=0) is mathematically tempting but operationally wrong —
@@ -827,6 +845,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
       metrics.graphExtraction.cacheMisses += toFiniteNumber(telemetry.cacheMisses);
       metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
       metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
+      metrics.graphExtraction.htmlErrors += toFiniteNumber(telemetry.htmlErrorCount);
     }
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
@@ -965,6 +984,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.memoryInference.skippedChildExists += src.memoryInference.skippedChildExists;
   dst.memoryInference.skippedAborted += src.memoryInference.skippedAborted;
   dst.memoryInference.unaccounted += src.memoryInference.unaccounted;
+  dst.memoryInference.htmlErrorCount += src.memoryInference.htmlErrorCount;
   dst.memoryInference.yieldEligibleRuns += src.memoryInference.yieldEligibleRuns;
   dst.memoryInference.yieldEligibleConsidered += src.memoryInference.yieldEligibleConsidered;
   dst.memoryInference.yieldEligibleWritten += src.memoryInference.yieldEligibleWritten;
@@ -976,6 +996,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.graphExtraction.cacheMisses += src.graphExtraction.cacheMisses;
   dst.graphExtraction.truncations += src.graphExtraction.truncations;
   dst.graphExtraction.failures += src.graphExtraction.failures;
+  dst.graphExtraction.htmlErrors += src.graphExtraction.htmlErrors;
   dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
   dst.sessionExtraction.sessionsScanned += src.sessionExtraction.sessionsScanned;
   dst.sessionExtraction.sessionsExtracted += src.sessionExtraction.sessionsExtracted;
@@ -1434,8 +1455,10 @@ const INTERESTING_DELTA_PATHS = [
   "improve.memoryInference.written",
   "improve.memoryInference.yieldRate",
   "improve.memoryInference.skippedNoFacts",
+  "improve.memoryInference.htmlErrorCount",
   "improve.graphExtraction.cacheHitRate",
   "improve.graphExtraction.failures",
+  "improve.graphExtraction.htmlErrors",
   "improve.sessionExtraction.sessionsScanned",
   "improve.sessionExtraction.proposalsCreated",
   "improve.autoAccept.promoted",

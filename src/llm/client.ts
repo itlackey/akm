@@ -62,9 +62,33 @@ export function redactErrorBody(input: string): string {
 export type LlmCallErrorCode =
   | "rate_limited" // HTTP 429
   | "provider_error" // HTTP 5xx
+  | "provider_html_error" // body is HTML (e.g. LM Studio web UI) instead of JSON
   | "network_error" // fetch failed / timeout
   | "parse_error" // response received but JSON parse failed
   | "timeout"; // request exceeded timeoutMs
+
+/**
+ * Detect a response body that is an HTML document rather than the expected
+ * JSON. LM Studio (and similar local providers) can serve their web UI on
+ * partial-load / startup failures, producing an HTML page where the OpenAI
+ * API contract promises JSON.
+ */
+function isHtmlResponse(body: string): boolean {
+  const lower = body.trimStart().toLowerCase();
+  return lower.startsWith("<!doctype html") || lower.startsWith("<html");
+}
+
+/**
+ * Produce a short plain-text excerpt of an HTML body for inclusion in error
+ * messages: strip tags, collapse whitespace, and truncate.
+ */
+function htmlExcerpt(body: string): string {
+  const text = body
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > ERROR_BODY_MAX_LEN ? `${text.slice(0, ERROR_BODY_MAX_LEN)}…` : text;
+}
 
 export class LlmCallError extends Error {
   constructor(
@@ -184,6 +208,13 @@ export async function chatCompletion(
     if (status === 429) {
       throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
     }
+    if (status >= 500 && isHtmlResponse(rawBody)) {
+      throw new LlmCallError(
+        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${htmlExcerpt(rawBody)}`,
+        "provider_html_error",
+        status,
+      );
+    }
     if (status >= 500) {
       throw new LlmCallError(
         `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
@@ -194,7 +225,27 @@ export async function chatCompletion(
     throw new LlmCallError(`LLM request failed (${status}) ${config.endpoint}: ${safeBody}`, "provider_error", status);
   }
 
-  const json = (await response.json()) as ChatCompletionResponse;
+  // A 2xx response is still an error if the body is HTML where JSON was
+  // expected (e.g. a provider serving its web UI). Read the raw body first so
+  // we can categorize an HTML page distinctly from a malformed-JSON parse_error.
+  const rawOkBody = await response.text();
+  if (isHtmlResponse(rawOkBody)) {
+    throw new LlmCallError(
+      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${htmlExcerpt(rawOkBody)}`,
+      "provider_html_error",
+      response.status,
+    );
+  }
+  let json: ChatCompletionResponse;
+  try {
+    json = JSON.parse(rawOkBody) as ChatCompletionResponse;
+  } catch {
+    throw new LlmCallError(
+      `LLM response was not valid JSON ${config.endpoint}: ${redactErrorBody(rawOkBody)}`,
+      "parse_error",
+      response.status,
+    );
+  }
   const content = (json.choices?.[0]?.message?.content ?? "").trim();
   const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
   return content || reasoning;

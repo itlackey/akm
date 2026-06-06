@@ -1141,6 +1141,7 @@ describe("akm improve memory cleanup", () => {
           skippedChildExists: 0,
           skippedAborted: 0,
           unaccounted: 0,
+          htmlErrorCount: 0,
           cacheHits: 0,
         } satisfies MemoryInferenceResult;
       },
@@ -1178,6 +1179,7 @@ describe("akm improve memory cleanup", () => {
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
       cacheHits: 0,
     });
     expect(result.graphExtraction?.written).toBe(true);
@@ -1227,6 +1229,7 @@ describe("akm improve memory cleanup", () => {
           skippedChildExists: 0,
           skippedAborted: 0,
           unaccounted: 0,
+          htmlErrorCount: 0,
           cacheHits: 0,
         } satisfies MemoryInferenceResult;
       },
@@ -1388,6 +1391,7 @@ describe("akm improve memory cleanup", () => {
         skippedChildExists: 0,
         skippedAborted: 0,
         unaccounted: 0,
+        htmlErrorCount: 0,
         cacheHits: 0,
       }),
       graphExtractionFn: async () => ({

@@ -48,7 +48,7 @@ import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import type { DerivedMemoryDraft } from "../llm/memory-infer";
+import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../llm/memory-infer";
 import * as memoryInfer from "../llm/memory-infer";
 import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
@@ -101,6 +101,13 @@ export interface MemoryInferenceResult {
    * Exposed (not asserted) so health can surface drift loudly.
    */
   unaccounted: number;
+  /**
+   * Parents whose LLM call returned an HTML body (e.g. LM Studio serving its
+   * web UI) instead of JSON. Tracked distinctly from `skippedNoFacts` so a
+   * provider-load failure is observable in health output rather than masked as
+   * a generic empty-result skip.
+   */
+  htmlErrorCount: number;
 }
 
 export interface MemoryInferencePassOptions {
@@ -160,7 +167,13 @@ export async function runMemoryInferencePass(
     skippedChildExists: 0,
     skippedAborted: 0,
     unaccounted: 0,
+    htmlErrorCount: 0,
   };
+
+  // Mutable sink threaded into compressMemoryToDerivedMemory so the per-call
+  // HTML-error categorization (which is otherwise swallowed inside the feature
+  // gate) bubbles up into the pass result.
+  const inferTelemetry: MemoryInferTelemetry = {};
 
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
   // (profiles.improve.default.processes.memoryInference.enabled). Defaults to
@@ -229,9 +242,16 @@ export async function runMemoryInferencePass(
             record.body,
             reEnrich ?? false,
             () =>
-              memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
-                warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-              }),
+              memoryInfer.compressMemoryToDerivedMemory(
+                llmConfig,
+                record.body,
+                signal,
+                config,
+                (evt) => {
+                  warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+                },
+                inferTelemetry,
+              ),
             validate,
             undefined,
             "",
@@ -241,9 +261,16 @@ export async function runMemoryInferencePass(
               },
             },
           )
-        : await memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
-            warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-          });
+        : await memoryInfer.compressMemoryToDerivedMemory(
+            llmConfig,
+            record.body,
+            signal,
+            config,
+            (evt) => {
+              warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+            },
+            inferTelemetry,
+          );
 
       if (!derived) {
         return { skipped: true, fromCache } as const;
@@ -314,6 +341,8 @@ export async function runMemoryInferencePass(
       currentRef: pending[i]?.ref,
     });
   }
+
+  result.htmlErrorCount = inferTelemetry.htmlErrorCount ?? 0;
 
   return result;
 }

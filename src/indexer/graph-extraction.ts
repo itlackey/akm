@@ -97,6 +97,13 @@ export interface GraphExtractionTelemetry {
   cacheMisses: number;
   truncationCount: number;
   failureCount: number;
+  /**
+   * Asset extractions where the provider returned an HTML body (e.g. LM Studio
+   * serving its web UI) instead of JSON. Tracked distinctly from
+   * `failureCount` so a provider-load failure is observable in health output
+   * rather than folded into the generic failure count (#497).
+   */
+  htmlErrorCount?: number;
 }
 
 /** Persisted graph shape loaded from SQLite. */
@@ -516,11 +523,13 @@ export async function runGraphExtractionPass(
     cacheMisses: 0,
     truncationCount: 0,
     failureCount: 0,
+    htmlErrorCount: 0,
   };
   const canReusePreviousGraph = previousGraph.telemetry?.extractorId === extractorId;
   const runtimeTelemetry: graphExtract.GraphRuntimeTelemetry = {
     truncationCount: 0,
     failureCount: 0,
+    htmlErrorCount: 0,
     filteredGenericEntities: 0,
     filteredInvalidRelations: 0,
     filteredLowConfidenceRelations: 0,
@@ -807,6 +816,7 @@ export async function runGraphExtractionPass(
   );
   telemetry.truncationCount = runtimeTelemetry.truncationCount ?? 0;
   telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
+  telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
 
   const qualityConsidered = mergedNodes.length;
   const qualityExtracted = mergedNodes.filter((node) => node.status === "extracted" && node.entities.length > 0).length;
