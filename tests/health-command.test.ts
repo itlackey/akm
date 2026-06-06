@@ -876,8 +876,8 @@ describe("akmHealth", () => {
 
 // ── Folded from tests/health-command-window.test.ts ──────────────────────────
 describe("health — window comparison", () => {
-  // ── Phase 2: --detail per-run ──────────────────────────────────────────────
-  describe("akm health --detail per-run", () => {
+  // ── Phase 2: --group-by run ────────────────────────────────────────────────
+  describe("akm health --group-by run", () => {
     function seedTwoRuns(): { startA: string; endA: string; startB: string; endB: string } {
       const startA = new Date(Date.now() - 60_000).toISOString();
       const endA = new Date(Date.now() - 30_000).toISOString();
@@ -963,7 +963,7 @@ describe("health — window comparison", () => {
       expect(result.runs).toBeUndefined();
     });
 
-    test("--detail per-run returns runs[] with the right shape", () => {
+    test("--group-by run returns runs[] with the right shape", () => {
       seedTwoRuns();
       const result = akmHealth({ since: "7d", groupBy: "run" });
       expect(result.runs).toBeDefined();
@@ -973,7 +973,7 @@ describe("health — window comparison", () => {
       expect(ids).toContain("run-b");
     });
 
-    test("--detail per-run rows are ordered newest first", () => {
+    test("--group-by run rows are ordered newest first", () => {
       const { startA, startB } = seedTwoRuns();
       expect(new Date(startB).getTime()).toBeGreaterThan(new Date(startA).getTime());
       const result = akmHealth({ since: "7d", groupBy: "run" });
@@ -1557,46 +1557,5 @@ describe("akm health --group-by run", () => {
     const parsed = JSON.parse(stdout);
     expect(Array.isArray(parsed.runs)).toBe(true);
     expect(parsed.runs.length).toBe(1);
-  });
-
-  test("legacy --detail per-run still works and warns on stderr", async () => {
-    pinHealthEnv("gbcompat");
-    const { stdout, stderr } = await runCliCapture([
-      "health",
-      "--since",
-      "7d",
-      "--detail",
-      "per-run",
-      "--format",
-      "json",
-    ]);
-    JSON.parse(stdout); // valid JSON envelope
-    expect(stderr).toContain("'--detail per-run' is deprecated");
-    expect(stderr).toContain("--group-by run");
-  });
-
-  test("legacy --detail per-run warning is suppressed under --quiet", async () => {
-    pinHealthEnv("gbquiet");
-    const { stderr } = await runCliCapture([
-      "health",
-      "--since",
-      "7d",
-      "--detail",
-      "per-run",
-      "--quiet",
-      "--format",
-      "json",
-    ]);
-    expect(stderr).not.toContain("deprecated");
-  });
-
-  test("--detail with a non-per-run value is rejected for health", async () => {
-    pinHealthEnv("gbreject");
-    const { stderr, code } = await runCliCapture(["health", "--since", "7d", "--detail", "brief", "--format", "json"]);
-    expect(code).toBe(2);
-    // The error envelope is emitted to stderr (stdout stays clean for pipelines).
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
   });
 });

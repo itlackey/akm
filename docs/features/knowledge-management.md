@@ -89,7 +89,7 @@ the actual writing.
 akm wiki create research
 akm wiki list
 akm wiki show research
-akm wiki remove research --force
+akm wiki remove research -y
 
 # Add raw source material
 akm wiki stash research ./paper.md

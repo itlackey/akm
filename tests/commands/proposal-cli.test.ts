@@ -186,11 +186,11 @@ describe("akm accept / reject / diff proposal (CLI)", () => {
   });
 });
 
-describe("akm accept --source bulk safety guard (WS0)", () => {
+describe("akm accept --generator bulk safety guard (WS0)", () => {
   test("bulk accept without --yes aborts in non-interactive mode (exit 2)", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["accept", "--source", "reflect", "--format=json"], { stashDir: stash });
+    const result = await runCli(["accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
     // confirmDestructive throws NON_INTERACTIVE_REQUIRES_YES (UsageError → exit 2)
     expect(result.status).toBe(2);
     const envelope = JSON.parse(result.stderr);
@@ -203,7 +203,7 @@ describe("akm accept --source bulk safety guard (WS0)", () => {
   test("bulk accept with --yes proceeds and promotes matching proposals", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["accept", "--source", "reflect", "--yes", "--format=json"], { stashDir: stash });
+    const result = await runCli(["accept", "--generator", "reflect", "--yes", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.accepted).toBe(1);
@@ -215,7 +215,9 @@ describe("akm accept --source bulk safety guard (WS0)", () => {
   test("bulk accept --dry-run auto-passes the guard (no --yes needed)", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["accept", "--source", "reflect", "--dry-run", "--format=json"], { stashDir: stash });
+    const result = await runCli(["accept", "--generator", "reflect", "--dry-run", "--format=json"], {
+      stashDir: stash,
+    });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.dryRun).toBe(true);
@@ -239,19 +241,6 @@ describe("accept/reject --generator flag (WS3)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  test("bulk accept --source still works as a deprecated alias and warns", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    seedProposal(stash);
-    const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
-      stashDir: stash,
-    });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).accepted).toBe(1);
-    expect(result.stderr).toContain("'--source' is deprecated");
-    expect(result.stderr).toContain("--generator");
-  });
-
   test("bulk reject --generator proceeds with --yes", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
@@ -261,31 +250,6 @@ describe("accept/reject --generator flag (WS3)", () => {
     );
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout).rejected).toBe(1);
-    expect(result.stderr).not.toContain("deprecated");
-  });
-
-  test("bulk reject --source still works as a deprecated alias and warns", async () => {
-    setQuiet(false);
-    const stash = makeStashDir();
-    seedProposal(stash);
-    const result = await runCli(
-      ["proposal", "reject", "--source", "reflect", "--reason", "dup", "--yes", "--format=json"],
-      { stashDir: stash },
-    );
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).rejected).toBe(1);
-    expect(result.stderr).toContain("'--source' is deprecated");
-    expect(result.stderr).toContain("--generator");
-  });
-
-  test("accept --source deprecation warning is suppressed under --quiet", async () => {
-    setQuiet(true);
-    const stash = makeStashDir();
-    seedProposal(stash);
-    const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
-      stashDir: stash,
-    });
-    expect(result.status).toBe(0);
     expect(result.stderr).not.toContain("deprecated");
   });
 });
@@ -368,10 +332,10 @@ describe("akm proposal noun group (canonical)", () => {
     expect(JSON.parse(result.stdout).reason).toBe("dup");
   });
 
-  test("proposal accept --source bulk guard still applies under the noun group", async () => {
+  test("proposal accept --generator bulk guard still applies under the noun group", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["proposal", "accept", "--source", "reflect", "--format=json"], { stashDir: stash });
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
   });

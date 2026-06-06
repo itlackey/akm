@@ -22,7 +22,6 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
 | `--detail` | `brief`, `normal`, `full` | `brief` |
 | `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
-| `--for-agent` | boolean (deprecated — use `--shape agent`) | `false` |
 
 ## Curate
 
@@ -300,6 +299,5 @@ All commands accept `--format`, `--detail`, and `--shape` flags:
 - `--shape human` (default) — standard projection
 - `--shape agent` — agent-optimized output: strips non-actionable fields
 - `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only valid on `akm show`
-- `--for-agent` — deprecated alias for `--shape agent` (removed 0.9.0)
 
 Run `akm -h` or `akm <command> -h` for per-command help.

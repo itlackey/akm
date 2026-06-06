@@ -134,8 +134,8 @@ akm wiki lint research                         # Structural checks: orphans, bro
 akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
 akm wiki ingest research --profile claude --model sonnet  # Override agent profile and model
 akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout
-akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
-akm wiki remove research --force --with-sources # Full nuke, including raw/
+akm wiki remove research -y                    # Delete pages/schema/index/log; preserves raw/
+akm wiki remove research -y --with-sources     # Full nuke, including raw/
 ```
 
 **For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`

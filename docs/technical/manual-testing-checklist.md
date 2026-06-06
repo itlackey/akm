@@ -158,7 +158,7 @@ Fixture refs worth using throughout this doc:
 - [ ] `akm search code --source both` emits both `hits[]` and `registryHits[]`.
 - [ ] `akm search docker --detail full` includes richer hit fields such as
       `ref`, `score`, optional `origin`, and ranking metadata.
-- [ ] `akm search docker --detail agent` includes `ref` plus the smaller
+- [ ] `akm search docker --shape agent` includes `ref` plus the smaller
       action-oriented field set.
 - [ ] `akm search docker --format jsonl` emits one JSON object per line.
 - [ ] `akm search docker --format yaml` is valid YAML and preserves the same
@@ -182,9 +182,9 @@ Fixture refs worth using throughout this doc:
       `type`, `name`, `action`, and `content`.
 - [ ] `akm show skill:k8s-deploy --format text` renders a plain-text view that
       includes header/metadata lines plus the body content.
-- [ ] `akm show skill:k8s-deploy --detail summary` returns the compact summary
+- [ ] `akm show skill:k8s-deploy --shape summary` returns the compact summary
       shape.
-- [ ] `akm show skill:k8s-deploy --detail agent` returns the action-oriented
+- [ ] `akm show skill:k8s-deploy --shape agent` returns the action-oriented
       shape.
 - [ ] `akm show knowledge:incident-response-runbook toc` prints the table of
       contents only.
@@ -421,7 +421,7 @@ Workflows now include authoring, validation, execution, and recovery flows.
       findings may exit non-zero but should still be structured and not crash.
 - [ ] `akm show wiki:my-wiki` returns the same summary class as
       `akm wiki show my-wiki`.
-- [ ] `akm wiki remove my-wiki --force` removes the wiki.
+- [ ] `akm wiki remove my-wiki -y` removes the wiki.
 
 `wiki register` should only be tested against disposable paths or repos. Do not
 register a real long-lived knowledge repo unless you intend to exercise it.
@@ -455,7 +455,7 @@ that guarantee carefully.
 These are core auditability flows to validate in `0.8.x`.
 
 - [ ] `akm feedback skill:k8s-deploy --positive` succeeds.
-- [ ] `akm feedback skill:k8s-deploy --negative --note "not specific enough"`
+- [ ] `akm feedback skill:k8s-deploy --negative --reason "not specific enough"`
       succeeds.
 - [ ] `akm feedback` with no ref fails with `MISSING_REQUIRED_ARGUMENT`.
 - [ ] `akm feedback skill:k8s-deploy --positive --negative` fails with a

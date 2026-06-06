@@ -107,54 +107,14 @@ export function resolveOutputMode(argv: string[], defaults: OutputDefaults | und
 
   const rawDetail = parseFlagValue(argv, "--detail");
   const rawShape = parseFlagValue(argv, "--shape");
-  const usedForAgent = hasBooleanFlag(argv, "--for-agent");
 
-  // Back-compat: the projection presets `summary`/`agent` used to live on
-  // `--detail`. They moved to `--shape` in 0.8 (removed from `--detail` in
-  // 0.9.0). Map the legacy spellings onto `--shape` + warn, and treat the
-  // verbosity axis as `normal` (the prior effective behaviour).
-  let detailForVerbosity: string | undefined = rawDetail;
-  let shapeFromLegacyDetail: ShapeMode | undefined;
-  if (rawDetail === "summary" || rawDetail === "agent") {
-    // Only nudge toward `--shape` when the caller did not already pass an
-    // explicit `--shape` (which wins below). Otherwise the "use --shape <x>"
-    // advice would name a projection the caller did not request.
-    if (rawShape === undefined) emitDetailShapeDeprecation(rawDetail);
-    shapeFromLegacyDetail = rawDetail;
-    detailForVerbosity = "normal";
-  } else if (rawDetail === "per-run") {
-    // Legacy `akm health --detail per-run` (→ `--group-by run`). The health
-    // command owns the back-compat warning + mapping; the global singleton must
-    // not reject the value here, so fall through to the default verbosity.
-    detailForVerbosity = undefined;
-  }
-
-  if (usedForAgent) {
-    emitForAgentDeprecation();
-  }
-
-  const detail = parseDetailLevel(detailForVerbosity) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
-
-  // Precedence: explicit `--shape` wins; then legacy `--detail summary|agent`;
-  // then legacy `--for-agent`; default `human`.
-  const shape: ShapeMode = parseShapeMode(rawShape) ?? shapeFromLegacyDetail ?? (usedForAgent ? "agent" : "human");
+  // `--detail` is verbosity only (brief|normal|full); the projection presets
+  // (`summary`/`agent`) and the `--for-agent` boolean were removed in 0.9.0 —
+  // use `--shape`. Unknown `--detail` values fall through to the default.
+  const detail = parseDetailLevel(rawDetail) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
+  const shape: ShapeMode = parseShapeMode(rawShape) ?? "human";
 
   return { format, detail, shape, forAgent: shape === "agent" };
-}
-
-/** Suppress deprecation warnings under `--quiet` (mirrors the rest of the CLI). */
-function isQuietArgv(): boolean {
-  return process.argv.includes("--quiet") || process.argv.includes("-q");
-}
-
-function emitDetailShapeDeprecation(value: string): void {
-  if (isQuietArgv()) return;
-  process.stderr.write(`warning: '--detail ${value}' is deprecated; use '--shape ${value}'. Removed in 0.9.0.\n`);
-}
-
-function emitForAgentDeprecation(): void {
-  if (isQuietArgv()) return;
-  process.stderr.write("warning: '--for-agent' is deprecated; use '--shape agent'. Removed in 0.9.0.\n");
 }
 
 let _mode: OutputMode | undefined;

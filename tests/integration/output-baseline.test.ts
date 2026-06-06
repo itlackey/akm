@@ -204,30 +204,4 @@ describe("output baseline", () => {
     expect(json).not.toHaveProperty("template");
     expect(json).not.toHaveProperty("content");
   });
-
-  test("legacy show --detail summary still works and warns on stderr", async () => {
-    const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(
-      path.join(stashDir, "commands", "release.md"),
-      "---\ndescription: Release\n---\nRun release {{version}}\n",
-    );
-    const xdgCache = makeTempDir("akm-output-cache-");
-    const xdgConfig = makeTempDir("akm-output-config-");
-    const xdgData = makeTempDir("akm-output-data-");
-    const xdgState = makeTempDir("akm-output-state-");
-    const res = await withEnv(
-      {
-        AKM_STASH_DIR: stashDir,
-        XDG_CACHE_HOME: xdgCache,
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: xdgData,
-        XDG_STATE_HOME: xdgState,
-      },
-      async () => runCliCapture(["show", "command:release.md", "--format=json", "--detail=summary"]),
-    );
-    expect(res.code).toBe(0);
-    expect(res.stderr).toContain("'--detail summary' is deprecated");
-    const json = JSON.parse(res.stdout.trim()) as Record<string, unknown>;
-    expect(json).not.toHaveProperty("template");
-  });
 });

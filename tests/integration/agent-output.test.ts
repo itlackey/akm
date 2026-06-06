@@ -60,7 +60,7 @@ afterEach(() => {
   }
 });
 
-describe("--for-agent output mode", () => {
+describe("--shape agent field projection", () => {
   function makeStash(): string {
     const stashDir = makeTempDir("akm-agent-stash-");
     writeFile(
@@ -75,9 +75,9 @@ describe("--for-agent output mode", () => {
     return stashDir;
   }
 
-  test("--for-agent search output has only: name, ref, type, description, action, score", async () => {
+  test("--shape agent search output has only: name, ref, type, description, action, score", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--for-agent"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
     expect(json.hits.length).toBeGreaterThan(0);
@@ -96,9 +96,9 @@ describe("--for-agent output mode", () => {
     }
   });
 
-  test("--for-agent search output does NOT have: schemaVersion, stashDir, path, whyMatched, origin, editable", async () => {
+  test("--shape agent search output does NOT have: schemaVersion, stashDir, path, whyMatched, origin, editable", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--for-agent"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Top-level envelope must not have these
@@ -119,9 +119,9 @@ describe("--for-agent output mode", () => {
     }
   });
 
-  test("--for-agent show output strips non-essential fields", async () => {
+  test("--shape agent show output strips non-essential fields", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--for-agent"]);
+    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Must have essential fields
@@ -136,23 +136,23 @@ describe("--for-agent output mode", () => {
     expect(json).not.toHaveProperty("editHint");
   });
 
-  test("--for-agent show output keeps content/run/action", async () => {
+  test("--shape agent show output keeps content/run/action", async () => {
     const stashDir = makeStash();
 
     // Command has template content
-    const cmdOutput = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--for-agent"]);
+    const cmdOutput = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=agent"]);
     const cmdJson = JSON.parse(cmdOutput) as Record<string, unknown>;
     expect(cmdJson).toHaveProperty("template");
     expect(cmdJson).toHaveProperty("action");
 
     // Script has run field
-    const scriptOutput = await runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--for-agent"]);
+    const scriptOutput = await runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--shape=agent"]);
     const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
     expect(scriptJson).toHaveProperty("run");
     expect(scriptJson).toHaveProperty("action");
   }, 30_000);
 
-  test("standard output (without --for-agent) is unchanged", async () => {
+  test("standard output (without --shape agent) is unchanged", async () => {
     const stashDir = makeStash();
 
     // Default brief search still has same shape
@@ -173,7 +173,7 @@ describe("--for-agent output mode", () => {
   });
 });
 
-// ── WS2: --shape agent is the canonical spelling; --for-agent is deprecated ───
+// ── WS2: --shape agent is the canonical spelling ─────────────────────────────
 describe("--shape agent output mode", () => {
   function makeStash(): string {
     const stashDir = makeTempDir("akm-shape-stash-");
@@ -188,7 +188,7 @@ describe("--shape agent output mode", () => {
     return stashDir;
   }
 
-  test("--shape agent search output matches the --for-agent shape", async () => {
+  test("--shape agent search output projects to the agent-essential fields", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
@@ -207,74 +207,6 @@ describe("--shape agent output mode", () => {
     expect(json).not.toHaveProperty("origin");
     // commands carry their body in `template`; the agent shape keeps it.
     expect(json).toHaveProperty("template");
-  });
-
-  test("--for-agent still works but emits a stderr deprecation warning", async () => {
-    const stashDir = makeStash();
-    const xdgCache = makeTempDir("akm-shape-cache-");
-    const xdgConfig = makeTempDir("akm-shape-config-");
-    const xdgData = makeTempDir("akm-shape-data-");
-    const xdgState = makeTempDir("akm-shape-state-");
-    const res = await withEnv(
-      {
-        AKM_STASH_DIR: stashDir,
-        XDG_CACHE_HOME: xdgCache,
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: xdgData,
-        XDG_STATE_HOME: xdgState,
-      },
-      async () => runCliCapture(["search", "architect", "--format=json", "--for-agent"]),
-    );
-    expect(res.code).toBe(0);
-    expect(res.stderr).toContain("'--for-agent' is deprecated");
-    expect(res.stderr).toContain("--shape agent");
-    // stdout stays clean JSON — the warning is stderr-only.
-    expect(() => JSON.parse(res.stdout.trim())).not.toThrow();
-  });
-
-  test("--for-agent deprecation warning is suppressed under --quiet", async () => {
-    const stashDir = makeStash();
-    const xdgCache = makeTempDir("akm-shape-cache-q-");
-    const xdgConfig = makeTempDir("akm-shape-config-q-");
-    const xdgData = makeTempDir("akm-shape-data-q-");
-    const xdgState = makeTempDir("akm-shape-state-q-");
-    const res = await withEnv(
-      {
-        AKM_STASH_DIR: stashDir,
-        XDG_CACHE_HOME: xdgCache,
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: xdgData,
-        XDG_STATE_HOME: xdgState,
-      },
-      async () => runCliCapture(["search", "architect", "--format=json", "--for-agent", "--quiet"]),
-    );
-    expect(res.code).toBe(0);
-    expect(res.stderr).not.toContain("deprecated");
-  });
-
-  test("legacy --detail agent maps to --shape agent and warns", async () => {
-    const stashDir = makeStash();
-    const xdgCache = makeTempDir("akm-shape-cache-d-");
-    const xdgConfig = makeTempDir("akm-shape-config-d-");
-    const xdgData = makeTempDir("akm-shape-data-d-");
-    const xdgState = makeTempDir("akm-shape-state-d-");
-    const res = await withEnv(
-      {
-        AKM_STASH_DIR: stashDir,
-        XDG_CACHE_HOME: xdgCache,
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: xdgData,
-        XDG_STATE_HOME: xdgState,
-      },
-      async () => runCliCapture(["search", "architect", "--format=json", "--detail=agent"]),
-    );
-    expect(res.code).toBe(0);
-    expect(res.stderr).toContain("'--detail agent' is deprecated");
-    const json = JSON.parse(res.stdout.trim()) as { hits: Array<Record<string, unknown>> };
-    const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
-    for (const key of Object.keys(json.hits[0] ?? {})) {
-      expect(allowedKeys.has(key)).toBe(true);
-    }
   });
 });
 
@@ -320,9 +252,9 @@ describe("--format jsonl", () => {
     }
   });
 
-  test("JSONL combined with --for-agent uses agent shaping", async () => {
+  test("JSONL combined with --shape agent uses agent shaping", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl", "--for-agent"]);
+    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl", "--shape=agent"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     for (const line of lines) {

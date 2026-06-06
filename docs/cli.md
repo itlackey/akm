@@ -22,16 +22,13 @@ These flags are accepted by all commands:
 | --- | --- | --- | --- |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level |
-| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** (was `--detail summary\|agent`) |
-| `--for-agent` | boolean | `false` | **Deprecated alias** for `--shape=agent` (removed in 0.9.0). Prefer `--shape=agent` |
+| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
 `--detail` controls **how much** is returned (`brief|normal|full`); `--shape`
 controls the **projection** (`human` for people, `agent` for a token-lean
-action view, `summary` for capability discovery). The legacy spellings
-`--detail summary`, `--detail agent`, and `--for-agent` are deprecated aliases
-that warn on stderr and map to `--shape` (removed in 0.9.0).
+action view, `summary` for capability discovery).
 
 ### `--format jsonl`
 
@@ -39,16 +36,12 @@ Outputs one JSON object per line. For `search` and `registry search`, each hit
 is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--shape=agent` (was `--detail=agent` / `--for-agent`)
+### `--shape=agent`
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 - **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`, `comments`
-
-Prefer `--shape=agent` going forward. The `--detail=agent` and `--for-agent`
-spellings are kept as deprecated aliases that warn on stderr (removed in
-0.9.0).
 
 ### `--shape summary`
 
@@ -58,10 +51,6 @@ than a silent fallback. It returns a compact view suitable for capability
 discovery:
 
 - **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
-
-The legacy `--detail summary` spelling is a deprecated alias for `--shape
-summary` (removed in 0.9.0); like `--shape summary`, it is accepted only on
-`akm show` and is rejected elsewhere.
 
 ## Exit Codes and Error Envelope
 
@@ -398,7 +387,7 @@ detail level (and per `--shape`) is authoritative in `src/output/shapes.ts`
 | `normal` | adds `description`, `score`, optional `warnings`, optional `quality` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, stash metadata) | full hit object |
 | `--shape summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
-| `--shape agent` (was `--detail agent` / `--for-agent`) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+| `--shape agent` | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
 The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
 surface an optional `warnings: string[]` field on hits when a provider has
@@ -482,7 +471,7 @@ cannot accidentally read out-of-scope content.
 The default `show` JSON includes the asset body when applicable. Use
 `--detail brief` for a reduced metadata-first view without
 `content`/`template`/`prompt`; `--detail full` adds verbose metadata such as
-`schemaVersion`, `path`, `editable`, and `editHint`; `--detail summary`
+`schemaVersion`, `path`, `editable`, and `editHint`; `--shape summary`
 returns a compact view with only `type`, `name`, `description`, `tags`,
 `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, and
 `comments`.
@@ -1042,14 +1031,14 @@ akm feedback script:deploy.sh --positive
 akm feedback agent:reviewer --negative
 akm feedback memory:deployment-notes --positive
 akm feedback vault:prod --positive
-akm feedback skill:code-review --positive --note "Worked perfectly for PR reviews"
+akm feedback skill:code-review --positive --reason "Worked perfectly for PR reviews"
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--positive` | Record positive feedback (use when an asset was helpful) |
 | `--negative` | Record negative feedback (use when an asset was not useful) |
-| `--note` | Optional text note to attach to the feedback event |
+| `--reason` | Optional text reason to attach to the feedback event (required for negative feedback by default) |
 | `--applied-to <ref>` | Credit a `lesson:<name>` that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). Silently ignored on non-lesson targets. |
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
@@ -1114,7 +1103,7 @@ akm history --format text                      # Human-readable trail
 | --- | --- |
 | `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
 | `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
-| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). `--source` is a deprecated alias (removed 0.9.0). |
+| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). |
 | `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
 
 Output envelope (JSON):
@@ -1613,8 +1602,8 @@ akm wiki search research "attention"
 akm wiki lint research
 akm wiki ingest research               # dispatches defaults.agent to run the ingest workflow
 akm wiki ingest research --profile claude --model sonnet  # explicit overrides
-akm wiki remove research --force       # preserves raw/ by default
-akm wiki remove research --force --with-sources
+akm wiki remove research -y            # preserves raw/ by default
+akm wiki remove research -y --with-sources
 ```
 
 Subcommands:
@@ -1625,7 +1614,7 @@ Subcommands:
 | `register <name> <path-or-repo>` | Register an existing directory or repo as a first-class wiki without copying it |
 | `list` | List wikis with page and raw counts plus last-modified timestamps |
 | `show <name>` | Path, description (from `schema.md`), counts, and the last 3 `log.md` entries |
-| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Requires `--force`. External wikis are unregistered without deleting source files |
+| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Prompts before deleting; pass `-y`/`--yes` to skip the prompt (required in non-interactive shells). External wikis are unregistered without deleting source files |
 | `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
 | `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
@@ -1926,9 +1915,8 @@ akm proposal accept --generator reflect -y    # Bulk-accept by generator (requir
 ```
 
 Bulk-accept all pending proposals from one generator with `--generator <name>`
-(e.g. `reflect`, `distill`) and no positional id. `--source` is a deprecated
-alias for `--generator` (removed 0.9.0). Bulk accept requires `-y`/`--yes` in
-non-interactive shells.
+(e.g. `reflect`, `distill`) and no positional id. Bulk accept requires
+`-y`/`--yes` in non-interactive shells.
 
 #### proposal reject
 
@@ -1943,8 +1931,7 @@ akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by ge
 ```
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
-and no positional id. `--source` is a deprecated alias for `--generator`
-(removed 0.9.0). Bulk reject requires `-y`/`--yes` in non-interactive shells.
+and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
 
 #### proposal revert
 
@@ -1987,14 +1974,13 @@ akm proposal diff <id> --target team-stash
 `proposal accept` runs full validation before promoting. `proposal reject`
 requires `--reason`.
 
-### feedback (`--reason` extension)
+### feedback (`--reason`)
 
 **Status: Available since 0.8.0.**
-Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
-and gains an optional `--reason <slug>` flag whose value is forwarded into
-feedback metadata and consumed by improve/distill proposal prompts.
-Backwards compatible: scripts without `--reason`
-behave exactly as today.
+`akm feedback` accepts an optional `--reason <text>` flag whose value is
+forwarded into feedback metadata and consumed by improve/distill proposal
+prompts. Scripts without `--reason` behave as before (though negative feedback
+requires a reason by default).
 
 ### tasks
 

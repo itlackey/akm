@@ -529,10 +529,6 @@ const healthCommand = defineCommand({
       type: "string",
       description: "Group rows by: run (one row per improve_runs entry). Omit for the default summary.",
     },
-    detail: {
-      type: "string",
-      description: "DEPRECATED: use --group-by run instead of --detail per-run (removed 0.9.0).",
-    },
     "window-compare": {
       type: "string",
       description: "Compare current window vs prior window of the same duration (e.g. 24h, 7d, 30m)",
@@ -551,30 +547,7 @@ const healthCommand = defineCommand({
       const rawWindows = parseAllFlagValues("--windows");
       const windows: WindowSpec[] | undefined =
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
-      const groupByRaw = (args as Record<string, unknown>)["group-by"] as string | undefined;
-      const detailRaw = (args as Record<string, unknown>).detail as string | undefined;
-      // Back-compat: `--detail per-run` → `--group-by run` (warns; removed 0.9.0).
-      let groupBy = groupByRaw;
-      if (detailRaw !== undefined) {
-        if (detailRaw === "per-run") {
-          // Read --quiet from argv (not the warn-module singleton) so the
-          // warning fires correctly even when the early-stderr flags were not
-          // applied (e.g. the in-process test harness), matching the WS2
-          // output-flag deprecations in src/output/context.ts.
-          const quietRequested = process.argv.includes("--quiet") || process.argv.includes("-q");
-          if (!quietRequested) {
-            process.stderr.write(
-              "warning: '--detail per-run' is deprecated for 'akm health'; use '--group-by run'. Removed in 0.9.0.\n",
-            );
-          }
-          groupBy = groupBy ?? "run";
-        } else {
-          throw new UsageError(
-            `Invalid value for --detail: ${detailRaw}. 'akm health' uses --group-by run (not --detail).`,
-            "INVALID_DETAIL_VALUE",
-          );
-        }
-      }
+      const groupBy = (args as Record<string, unknown>)["group-by"] as string | undefined;
       const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
       const result = akmHealth({
         since: args.since,
@@ -1511,10 +1484,6 @@ const historyCommand = defineCommand({
       type: "string",
       description: 'Filter by event generator: "user" (default) or "improve" (akm improve operations).',
     },
-    source: {
-      type: "string",
-      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
-    },
     "include-proposals": {
       type: "boolean",
       description:
@@ -1533,16 +1502,10 @@ const historyCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (args.generator === undefined && args.source !== undefined) {
-        emitFlagDeprecation("--source", "--generator", "history");
-      }
-      const generatorFlag = (args.generator ?? args.source) as "user" | "improve" | undefined;
+      const generatorFlag = args.generator as "user" | "improve" | undefined;
       if (generatorFlag !== undefined && generatorFlag !== "user" && generatorFlag !== "improve") {
-        // Name the flag the user actually typed so the diagnostic points at
-        // their command line, not the canonical flag they may not have used.
-        const usedFlag = args.generator !== undefined ? "--generator" : "--source";
         throw new UsageError(
-          `Invalid ${usedFlag} value: "${generatorFlag}". Must be "user" or "improve".`,
+          `Invalid --generator value: "${generatorFlag}". Must be "user" or "improve".`,
           "INVALID_FLAG_VALUE",
         );
       }
@@ -2777,11 +2740,6 @@ function emitVaultDeprecation(sub: string): void {
   );
 }
 
-function emitFlagDeprecation(oldFlag: string, newFlag: string, cmd: string): void {
-  if (isQuiet()) return;
-  process.stderr.write(`warning: '${oldFlag}' is deprecated for 'akm ${cmd}'; use '${newFlag}'. Removed in 0.9.0.\n`);
-}
-
 /**
  * Emit a stderr deprecation warning for a renamed top-level command. The old
  * spelling keeps working in 0.8 (wrap-and-delegate) and is removed in 0.9.0.
@@ -3310,11 +3268,6 @@ const wikiRemoveCommand = defineCommand({
       description: "Skip confirmation prompt (required in non-interactive shells)",
       default: false,
     },
-    force: {
-      type: "boolean",
-      description: "DEPRECATED — use -y/--yes. Removed in 0.9.0.",
-      default: false,
-    },
     "with-sources": {
       type: "boolean",
       description: "Also delete the raw/ directory (immutable ingested sources)",
@@ -3323,12 +3276,9 @@ const wikiRemoveCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (args.yes !== true && args.force === true) {
-        emitFlagDeprecation("--force", "-y/--yes", "wiki remove");
-      }
       const { confirmDestructive } = await import("./cli/confirm.js");
       const confirmed = await confirmDestructive(`Remove wiki "${args.name}"? This cannot be undone.`, {
-        yes: args.yes === true || args.force === true,
+        yes: args.yes === true,
       });
       if (!confirmed) {
         process.stderr.write("Aborted.\n");
@@ -3815,10 +3765,6 @@ const proposalAcceptCommand = defineCommand({
       description:
         "F-6: Bulk-accept all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
     },
-    source: {
-      type: "string",
-      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
-    },
     "max-diff-lines": {
       type: "string",
       description:
@@ -3843,10 +3789,7 @@ const proposalAcceptCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (args.generator === undefined && args.source !== undefined) {
-        emitFlagDeprecation("--source", "--generator", "proposal accept");
-      }
-      const generator = (args.generator ?? args.source) as string | undefined;
+      const generator = args.generator as string | undefined;
       // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
       if (generator && !args.id) {
         const { confirmDestructive } = await import("./cli/confirm.js");
@@ -3922,10 +3865,6 @@ const proposalRejectCommand = defineCommand({
       description:
         "F-6: Bulk-reject all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
     },
-    source: {
-      type: "string",
-      description: "DEPRECATED — use --generator. Removed in 0.9.0.",
-    },
     "max-diff-lines": {
       type: "string",
       description:
@@ -3950,10 +3889,7 @@ const proposalRejectCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (args.generator === undefined && args.source !== undefined) {
-        emitFlagDeprecation("--source", "--generator", "proposal reject");
-      }
-      const generator = (args.generator ?? args.source) as string | undefined;
+      const generator = args.generator as string | undefined;
       if (!args.reason || !String(args.reason).trim()) {
         throw new UsageError(
           "Usage: akm proposal reject <id> --reason '<reason>'  OR  akm proposal reject --generator <generator> --reason '<reason>'",
@@ -4787,11 +4723,6 @@ export const main = defineCommand({
       description:
         "Output projection: human|agent|summary. 'agent' trims to agent-essential fields; " +
         "'summary' is only valid on 'akm show'. Default: human.",
-    },
-    "for-agent": {
-      type: "boolean",
-      description: "DEPRECATED alias for '--shape agent' (removed 0.9.0).",
-      default: false,
     },
     quiet: {
       type: "boolean",

@@ -5,7 +5,6 @@ import { akmHistory } from "../../src/commands/history";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
-import { setQuiet } from "../../src/core/warn";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage-events";
@@ -578,53 +577,5 @@ describe("akm history --generator CLI flag", () => {
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
     expect(parsed.error).toContain("--generator");
-  });
-
-  test("invalid value via deprecated --source names --source in the error, not --generator", async () => {
-    const result = await runCli(["history", "--source", "bogus", "--format=json"]);
-    expect(result.status).not.toBe(0);
-    const parsed = parseJsonOutput(result);
-    expect(parsed.ok).toBe(false);
-    // The diagnostic must point at the flag the user actually typed.
-    expect(parsed.error).toContain('Invalid --source value: "bogus"');
-    expect(parsed.error).not.toContain("--generator");
-  });
-
-  test("--source still works as a deprecated alias and warns on stderr", async () => {
-    // The harness defaults to quiet=true (tests/_preload.ts); opt into noisy mode
-    // so the deprecation warning surfaces, as in a normal (non-`--quiet`) run.
-    setQuiet(false);
-    const stashDir = sandboxStash();
-    saveConfig({ semanticSearchMode: "off" });
-
-    writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
-    await akmIndex({ stashDir, full: true });
-
-    const db = openDatabase(getDbPath());
-    try {
-      ensureUsageEventsSchema(db);
-      insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });
-    } finally {
-      closeDatabase(db);
-    }
-
-    const improveOnly = await runCli(["history", "--source", "improve", "--format=json"]);
-    expect(improveOnly.status).toBe(0);
-    expect(improveOnly.stderr).toContain("'--source' is deprecated");
-    expect(improveOnly.stderr).toContain("--generator");
-    const improveJson = parseJsonOutput(improveOnly);
-    const improveEntries = improveJson.entries as Array<Record<string, unknown>>;
-    expect(improveEntries.every((e) => e.source === "improve")).toBe(true);
-  });
-
-  test("deprecation warning is suppressed under --quiet", async () => {
-    // quiet defaults to true under the harness (mirrors `--quiet` in prod, which
-    // sets the same global via applyEarlyStderrFlags).
-    setQuiet(true);
-    sandboxStash();
-    saveConfig({ semanticSearchMode: "off" });
-    const result = await runCli(["history", "--source", "user", "--format=json"]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("deprecated");
   });
 });

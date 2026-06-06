@@ -34,9 +34,4 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
       "--verbose",
     ]);
   });
-
-  test("the deprecated --for-agent alias still survives too", () => {
-    const out = normalizeShowArgv([...base, "toc", "--for-agent"]);
-    expect(out).toContain("--for-agent");
-  });
 });

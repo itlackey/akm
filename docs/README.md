@@ -31,7 +31,7 @@
 
 ## Operations
 
-- Analyzing `akm improve` runs -- use [`akm health`](../src/commands/health.ts) (0.8.0+): `--since`, `--detail per-run`, `--window-compare`, `--windows`. See [health-command-enhancements.md](technical/health-command-enhancements.md).
+- Analyzing `akm improve` runs -- use [`akm health`](../src/commands/health.ts) (0.8.0+): `--since`, `--group-by run`, `--window-compare`, `--windows`. See [health-command-enhancements.md](technical/health-command-enhancements.md).
 
 ## Internals
 

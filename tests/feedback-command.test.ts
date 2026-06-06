@@ -4,7 +4,6 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
-import { setQuiet } from "../src/core/warn";
 import { closeDatabase, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
@@ -135,8 +134,8 @@ describe("akm feedback", () => {
     expect(output.error).toContain("not in the index");
   });
 
-  // ── #284 GAP-HIGH 8: feedback --note metadata round-trip ────────────────
-  test("feedback --note threads metadata into events.jsonl", async () => {
+  // ── #284 GAP-HIGH 8: feedback --reason metadata round-trip ──────────────
+  test("feedback --reason threads metadata into events.jsonl", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
@@ -147,7 +146,7 @@ describe("akm feedback", () => {
       "feedback",
       "memory:deployment-notes",
       "--positive",
-      "--note",
+      "--reason",
       "saved me 30 minutes",
       "--format=json",
     ]);
@@ -167,84 +166,6 @@ describe("akm feedback", () => {
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
     expect(md.reason).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
-  });
-
-  // ── WS5.2: --note deprecation warning (removed 0.9.0) ───────────────────
-  test("feedback --note still works but emits a stderr deprecation warning", async () => {
-    // The harness defaults to quiet=true (tests/_preload.ts); opt into noisy
-    // mode so the stderr deprecation warning is observable.
-    setQuiet(false);
-    writeFile(
-      path.join(stashDir, "memories", "deployment-notes.md"),
-      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
-    );
-    await buildIndex();
-
-    const result = await runCli([
-      "feedback",
-      "memory:deployment-notes",
-      "--positive",
-      "--note",
-      "saved me 30 minutes",
-      "--format=json",
-    ]);
-    // Old spelling still works.
-    expect(result.status).toBe(0);
-    expect(parseJsonOutput(result)).toMatchObject({
-      ok: true,
-      ref: "memory:deployment-notes",
-      signal: "positive",
-      reason: "saved me 30 minutes",
-    });
-    // And warns on stderr (never stdout).
-    expect(result.stderr).toContain("'--note' is deprecated");
-    expect(result.stderr).toContain("use '--reason'");
-    expect(result.stderr).toContain("0.9.0");
-    expect(result.stdout).not.toContain("deprecated");
-    setQuiet(true);
-  });
-
-  test("feedback --reason does not emit the --note deprecation warning", async () => {
-    setQuiet(false);
-    writeFile(
-      path.join(stashDir, "memories", "deployment-notes.md"),
-      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
-    );
-    await buildIndex();
-
-    const result = await runCli([
-      "feedback",
-      "memory:deployment-notes",
-      "--positive",
-      "--reason",
-      "saved me 30 minutes",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("'--note' is deprecated");
-    setQuiet(true);
-  });
-
-  test("feedback --note deprecation warning is suppressed under --quiet", async () => {
-    // The in-process harness does not wire the `--quiet` flag into the warn
-    // singleton, so drive quiet directly (matches save-command.test.ts).
-    setQuiet(true);
-    writeFile(
-      path.join(stashDir, "memories", "deployment-notes.md"),
-      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
-    );
-    await buildIndex();
-
-    const result = await runCli([
-      "feedback",
-      "memory:deployment-notes",
-      "--positive",
-      "--note",
-      "saved me 30 minutes",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("'--note' is deprecated");
   });
 
   test("positive feedback affects subsequent ranking after re-indexing", async () => {

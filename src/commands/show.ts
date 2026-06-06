@@ -575,13 +575,7 @@ export function normalizeShowArgv(argv: string[]): string[] {
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-    if (
-      arg === "--quiet" ||
-      arg === "-q" ||
-      arg === "--verbose" ||
-      arg === "--for-agent" ||
-      arg === "--for-agent=true"
-    ) {
+    if (arg === "--quiet" || arg === "-q" || arg === "--verbose") {
       globalFlags.push(arg);
       continue;
     }

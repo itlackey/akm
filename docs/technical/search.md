@@ -198,13 +198,12 @@ By default (`--format json`, `--detail brief`), search emits minimal fields:
 
 `--detail normal` adds `description`, `score`, `ref`, and `tags`.
 `--detail full` adds `whyMatched`, `origin`, `path`, and timing data.
-`--detail summary` returns metadata only (no content), under 200 tokens.
+`--shape summary` returns metadata only (no content), under 200 tokens.
 
 ### Agent-optimized output
 
-`--detail=agent` strips non-actionable fields, keeping only: `name`, `ref`,
-`type`, `description`, `action`, `score`. (The pre-0.6.0 `--for-agent`
-boolean is kept as a deprecated alias for one release cycle.)
+`--shape agent` strips non-actionable fields, keeping only: `name`, `ref`,
+`type`, `description`, `action`, `score`.
 
 `--format jsonl` outputs one JSON object per line for streaming consumption.
 

@@ -1038,7 +1038,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   });
 
-  test("cli: wiki remove --force hides preserved raw-only leftovers from wiki list", async () => {
+  test("cli: wiki remove -y hides preserved raw-only leftovers from wiki list", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-wiki-remove-");
     const rawSource = path.join(stashDir, "source.md");
     process.env.AKM_STASH_DIR = stashDir;
@@ -1065,11 +1065,9 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(showResult.exitCode).not.toBe(0);
       expect(showResult.stderr).toContain("Wiki not found: my-notes");
 
-      // --force still works as a deprecated skip-prompt alias for -y, but warns on stderr.
-      const cleanupResult = runCli("wiki", "remove", "my-notes", "--force", "--with-sources", "--format", "json");
+      // Remove the preserved raw/ leftover with -y --with-sources.
+      const cleanupResult = runCli("wiki", "remove", "my-notes", "-y", "--with-sources", "--format", "json");
       expect(cleanupResult.exitCode).toBe(0);
-      expect(cleanupResult.stderr).toContain("'--force' is deprecated");
-      expect(cleanupResult.stderr).toContain("-y/--yes");
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
