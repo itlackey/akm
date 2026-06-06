@@ -17,6 +17,7 @@ import { loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
 import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
 import { ensureRg } from "../core/ripgrep/install";
+import { writeStashReadme } from "./stash-readme";
 
 /**
  * Refuse to persist a temporary-directory stashDir to the user's config when
@@ -94,6 +95,10 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
 
   // Ensure the default stash is a local git repo (no remote required)
   ensureGitRepo(stashDir);
+
+  if (created) {
+    writeStashReadme(stashDir);
+  }
 
   // Persist stashDir in config.json
   const configPath = getConfigPath();
