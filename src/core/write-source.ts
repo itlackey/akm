@@ -3,27 +3,30 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * write-source — the only place in the codebase that branches on `source.kind`.
+ * write-source — the command-layer helper that performs asset writes.
  *
- * v1 architecture spec §2.6 / §2.7 / §10 step 5: writing to a source is *not*
- * a SourceProvider interface concern. It's a small command-layer helper that
- * does a plain filesystem write, plus a git-specific commit (and optional
- * push) when the source is backed by a git working tree.
+ * v1 architecture spec §2.6 / §2.7 / §10 step 5 (amended for 0.9.0): writing to
+ * a source is *not* a SourceProvider interface concern. It's a small
+ * command-layer helper that does a plain filesystem write for **every** kind.
  *
- * If a third kind ever needs special write handling, it gets added here. For
- * v1 there are exactly two cases. Adding more parallel scoring systems for
- * different provider kinds is explicitly disallowed by CLAUDE.md.
+ * 0.9.0 amendment (issue #507): the per-asset git commit/push path is retired.
+ * `writeAssetToSource` / `deleteAssetFromSource` no longer branch on `kind` for
+ * commit behaviour — they only ever touch the filesystem. Git-backed targets
+ * are committed in a SINGLE batch at the operation boundary via
+ * {@link commitWriteTargetBoundary} (which delegates to `saveGitStash`). This
+ * stages `.akm/` + sibling assets together as one complete commit instead of
+ * one noisy, incomplete commit per asset.
  *
- * This module is the **single dispatch point** for `kind`-branching write
- * logic. Callers (remember, import, source-add, etc.) MUST go through
- * `writeAssetToSource` / `deleteAssetFromSource` rather than re-inlining the
- * filesystem-write + git-commit dance.
+ * This module is still the **single dispatch point** for write/delete: callers
+ * (remember, import, source-add, etc.) MUST go through `writeAssetToSource` /
+ * `deleteAssetFromSource` rather than re-inlining a filesystem write, and they
+ * fire {@link commitWriteTargetBoundary} once after a batch of mutations to a
+ * writable git target.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { getCachePaths, parseGitRepoUrl } from "../sources/providers/git";
+import { getCachePaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
 import type { AssetRef } from "./asset-ref";
 import { makeAssetRef } from "./asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
@@ -146,16 +149,13 @@ export function assertWritableAllowedForKind(entry: Pick<SourceConfigEntry, "typ
  * `ref`. Always:
  *
  *   1. Refuses if `config.writable` is not truthy (per §5.4).
- *   2. Performs a plain filesystem write to `path.join(source.path, …)`.
+ *   2. Rejects unsupported kinds (anything but `filesystem` / `git`).
+ *   3. Performs a plain filesystem write to `path.join(source.path, …)`.
  *
- * For sources of `kind === "git"`, additionally:
- *
- *   3. `git -C <path> add <file>`
- *   4. `git -C <path> commit -m "Update <ref>"`
- *   5. `git -C <path> push` when `config.options.pushOnCommit` is truthy.
- *
- * Any other `kind` reaching this helper is a configuration bug — the loader
- * rejects unsupported writable kinds — so we throw {@link ConfigError}.
+ * No commit runs here — for **every** kind. Git-backed targets are committed in
+ * one batch at the operation boundary via {@link commitWriteTargetBoundary}
+ * (0.9.0 amendment, issue #507). The caller fires that boundary commit once
+ * after a batch of mutations to a writable git target.
  */
 export async function writeAssetToSource(
   source: WriteTargetSource,
@@ -164,21 +164,21 @@ export async function writeAssetToSource(
   content: string,
 ): Promise<{ path: string; ref: string }> {
   ensureWritable(source, config);
+  assertSupportedKind(source);
 
   const filePath = resolveAssetFilePath(source, ref);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const normalized = content.endsWith("\n") ? content : `${content}\n`;
   fs.writeFileSync(filePath, normalized, "utf8");
 
-  await runKindSpecificCommit(source, config, filePath, `Update ${formatRefForMessage(ref)}`);
-
   return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
 }
 
 /**
  * Delete the asset at `ref` from `source`. Symmetric to
- * {@link writeAssetToSource}: same writable check, same git-commit-and-push
- * convenience for `kind === "git"`.
+ * {@link writeAssetToSource}: same writable check, same unsupported-kind guard,
+ * a plain `unlink` with no commit. Git-backed targets are committed once at the
+ * operation boundary via {@link commitWriteTargetBoundary}.
  */
 export async function deleteAssetFromSource(
   source: WriteTargetSource,
@@ -186,6 +186,7 @@ export async function deleteAssetFromSource(
   ref: AssetRef,
 ): Promise<{ path: string; ref: string }> {
   ensureWritable(source, config);
+  assertSupportedKind(source);
 
   const filePath = resolveAssetFilePath(source, ref);
   if (!fs.existsSync(filePath)) {
@@ -196,9 +197,67 @@ export async function deleteAssetFromSource(
   }
   fs.unlinkSync(filePath);
 
-  await runKindSpecificCommit(source, config, filePath, `Remove ${formatRefForMessage(ref)}`);
-
   return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
+}
+
+/**
+ * Fire the one-shot batch-at-boundary commit for a resolved write target.
+ *
+ * 0.9.0 (issue #507): replaces the retired per-asset git commit. Callers invoke
+ * this EXACTLY ONCE after a batch of writes/deletes to a resolved write target.
+ * It is a no-op for any non-git target (plain filesystem sources and the
+ * primary stash stay non-committing here — the primary stash is committed by
+ * the existing improve auto-sync boundary).
+ *
+ * For a git target it delegates to `saveGitStash(name, message, writable, …)`,
+ * which stages `.akm/` + sibling assets together (`git add -A`), commits once,
+ * and pushes when the target is writable, has a remote, and `push !== false`.
+ *
+ * The push intent honours a deprecated `options.pushOnCommit` on the source
+ * config (mapped onto the batch push gate) when `push` is not explicitly set.
+ */
+export function commitWriteTargetBoundary(
+  target: ResolvedWriteTarget,
+  message: string,
+  options?: { push?: boolean },
+): void {
+  if (target.source.kind !== "git") return;
+
+  warnIfPushOnCommit(target.config);
+
+  // Map the deprecated per-asset `pushOnCommit` intent onto the batch push gate
+  // when the caller did not pass an explicit push toggle. `saveGitStash` still
+  // gates the actual push on writable + remote, so this only ever opts *in*.
+  const push = options?.push ?? (target.config.options?.pushOnCommit === true ? true : undefined);
+
+  const writable = resolveWritable(target.config);
+  // Commit against the already-resolved repo directory (target.source.path)
+  // rather than re-resolving the stash by name through config. The write helper
+  // resolved this exact path; the boundary commit must operate on the SAME
+  // directory so the staged batch matches what was just written.
+  saveGitStash(undefined, message, writable, {
+    repoDir: target.source.path,
+    ...(push === undefined ? {} : { push }),
+  });
+}
+
+/**
+ * Emit a one-time deprecation warning the first time a source config carrying
+ * `options.pushOnCommit` is encountered. The field still parses (for old
+ * configs) but its per-asset push-on-commit behaviour is retired; its intent is
+ * now honoured via the batch push gate (writable + remote + push toggle).
+ */
+let pushOnCommitWarned = false;
+function warnIfPushOnCommit(config: SourceConfigEntry): void {
+  if (config.options?.pushOnCommit === undefined) return;
+  if (pushOnCommitWarned) return;
+  pushOnCommitWarned = true;
+  const label = config.name ? ` on source "${config.name}"` : "";
+  process.stderr.write(
+    `warning: \`options.pushOnCommit\`${label} is deprecated (0.9.0) and no longer commits per asset. ` +
+      "akm now commits writes in a single batch at the operation boundary and pushes when the target is " +
+      "writable with a remote. Remove the option or rely on sync push instead.\n",
+  );
 }
 
 // ── Write-target resolution (locked decision 3) ─────────────────────────────
@@ -283,12 +342,10 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
   //
   // The primary stash stays `kind: "filesystem"` on purpose, even when it is a
   // git repo on disk (recognized elsewhere via isGitBackedStash). Returning
-  // `kind: "git"` here would route every asset write through the per-asset
-  // runGitCommit, which is INCOMPLETE (stages only the single asset file,
-  // leaving .akm/proposals + other state dirty) and NOISY (one commit per
-  // asset, ~25 per improve run). Recognition is decoupled: per-write stays
-  // non-committing, and the primary stash is committed in a single batch at
-  // operation boundaries (e.g. the end-of-run improve auto-sync via saveGitStash).
+  // `kind: "git"` here would fire the boundary commit on every write through
+  // this resolver, double-committing the primary stash which is already
+  // committed in a single batch at operation boundaries (e.g. the end-of-run
+  // improve auto-sync via saveGitStash). Per-write stays non-committing.
   try {
     const stashDir = resolveStashDir({ readOnly: true });
     return {
@@ -337,25 +394,14 @@ function resolveAssetFilePath(source: WriteTargetSource, ref: AssetRef): string 
   return assetPath;
 }
 
-async function runKindSpecificCommit(
-  source: WriteTargetSource,
-  config: SourceConfigEntry,
-  filePath: string,
-  message: string,
-): Promise<void> {
-  if (source.kind === "filesystem") {
-    return; // No commit step.
-  }
-  if (source.kind === "git") {
-    runGitCommit(source.path, filePath, message);
-    if (config.options?.pushOnCommit) {
-      runGitPush(source.path);
-    }
-    return;
-  }
-  // Reject any other kind reaching the helper. The config loader is the
-  // first line of defence (assertWritableAllowedForKind), but we throw here
-  // so external callers that bypass the loader still get a clear error.
+/**
+ * Reject any kind reaching the write/delete helpers other than the two
+ * supported writable kinds. The config loader is the first line of defence
+ * (assertWritableAllowedForKind), but we throw here so external callers that
+ * bypass the loader still get a clear error.
+ */
+function assertSupportedKind(source: WriteTargetSource): void {
+  if (source.kind === "filesystem" || source.kind === "git") return;
   throw new ConfigError(
     `write-source: unsupported kind "${source.kind}" for source "${source.name}". ` +
       "Writes are only defined for `filesystem` and `git` sources.",
@@ -364,50 +410,7 @@ async function runKindSpecificCommit(
   );
 }
 
-function runGitCommit(repoDir: string, filePath: string, message: string): void {
-  // Stage the specific file rather than `add -A` so unrelated working-tree
-  // changes don't get folded into the asset commit.
-  const relPath = path.relative(repoDir, filePath) || filePath;
-  const addResult = spawnSync("git", ["-C", repoDir, "add", "--", relPath], { encoding: "utf8" });
-  if (addResult.status !== 0) {
-    throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
-  }
-
-  // Defense in depth: sanitize the commit subject one more time at the spawn
-  // boundary. Callers should already pass sanitized strings (via
-  // formatRefForMessage / saveGitStash), but this guards against future
-  // refactors that forget. Empty after sanitize falls back to a safe stub.
-  const safeMessage = sanitizeCommitMessage(message) || "akm update";
-
-  // Provide a fallback identity so fresh CI/test environments without
-  // user.name/user.email configured can always commit.
-  const commitResult = spawnSync(
-    "git",
-    ["-C", repoDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", safeMessage],
-    { encoding: "utf8" },
-  );
-  if (commitResult.status !== 0) {
-    // `nothing to commit` is a no-op success — the file may have matched the
-    // existing tree exactly. Surface other errors verbatim.
-    const stderr = commitResult.stderr ?? "";
-    if (
-      /nothing to commit|no changes added/i.test(stderr) ||
-      /nothing to commit|no changes added/i.test(commitResult.stdout ?? "")
-    ) {
-      return;
-    }
-    throw new Error(`git commit failed: ${stderr.trim() || "unknown error"}`);
-  }
-}
-
-function runGitPush(repoDir: string): void {
-  const pushResult = spawnSync("git", ["-C", repoDir, "push"], { encoding: "utf8", timeout: 120_000 });
-  if (pushResult.status !== 0) {
-    throw new Error(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`);
-  }
-}
-
-function formatRefForMessage(ref: AssetRef): string {
+export function formatRefForMessage(ref: AssetRef): string {
   // Sanitize each component independently. `ref.origin` originates from user
   // config and could contain CR/LF that would otherwise be smuggled into the
   // commit subject and forge trailers downstream. `ref.type` and `ref.name`

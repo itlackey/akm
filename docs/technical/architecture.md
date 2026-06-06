@@ -163,9 +163,15 @@ deleteAssetFromSource(source, config, ref)
 The flow:
 
 1. Refuse if the source is not `writable`.
-2. Plain filesystem write to `path.join(source.path, …)`.
-3. For `kind === "git"`, run `git add` + `git commit` (and `git push` when
-   `options.pushOnCommit` is set).
+2. Plain filesystem write to `path.join(source.path, …)` — for **every** kind,
+   with no commit (0.9.0, issue #507).
+
+Git-backed targets are committed in a single batch at the operation boundary via
+`commitWriteTargetBoundary(target, message, { push })`, which delegates to
+`saveGitStash`: `git add -A` (staging `.akm/` + sibling assets as one complete
+commit), a guarded commit, and a push gated on `writable && hasRemote &&
+push !== false`. The old per-asset commit/push path (`options.pushOnCommit`) is
+deprecated and no longer commits per asset.
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
 `filesystem`, `false` for everything else. `writable: true` on `website` or

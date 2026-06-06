@@ -31,7 +31,12 @@ import { detectTruncatedDescription } from "../core/text-truncation";
 export { hasSupersededStatus, validateProposalFrontmatter };
 
 import { warn } from "../core/warn";
-import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
+import {
+  commitWriteTargetBoundary,
+  deleteAssetFromSource,
+  resolveWriteTarget,
+  writeAssetToSource,
+} from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
 import {
   closeDatabase,
@@ -2023,6 +2028,15 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         pushSkipReason("contradict", op.ref, "contradict_write_failed");
       }
     }
+  }
+
+  // 0.9.0 (issue #507): batch-at-boundary commit. The merge/delete loop above
+  // wrote one merged primary and deleted N secondaries to the resolved target
+  // with NO per-asset commit. If the target is a writable git source and any
+  // asset was mutated, commit the whole batch ONCE here (stages .akm/ +
+  // siblings together). No-op for filesystem/primary-stash targets.
+  if (merged > 0 || deleted > 0) {
+    commitWriteTargetBoundary(target, `Consolidate: ${merged} merged, ${deleted} removed`);
   }
 
   cleanupJournal(stashDir, timestamp);

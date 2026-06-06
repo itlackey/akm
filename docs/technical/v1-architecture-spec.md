@@ -171,19 +171,25 @@ export async function writeAssetToSource(
 
   const filePath = resolveAssetPath(source.path(), ref);
   await writeFile(filePath, content);
-
-  // git-specific convenience: commit and optionally push
-  if (source.kind === "git") {
-    await git("-C", source.path(), "add", filePath);
-    await git("-C", source.path(), "commit", "-m", `Update ${formatRef(ref)}`);
-    if (config.options.pushOnCommit) {
-      await git("-C", source.path(), "push");
-    }
-  }
+  // No commit here — for any kind. See the 0.9.0 amendment below.
 }
 ```
 
-This is the **only** place in the codebase that branches on `source.kind`, and it's intentional — "git has a commit step" is domain knowledge, not polymorphism. If a third kind ever needs special write handling, it gets added here. If it becomes more than two or three cases, revisit and introduce a hook. For v1 it's two cases.
+> **0.9.0 amendment (issue #507) — single batch-at-boundary commit.** The
+> original v1 design committed (and optionally pushed) per asset write for
+> `kind === "git"`, gated on `config.options.pushOnCommit`. That model staged
+> only the single asset file (leaving `.akm/` state dirty) and produced one
+> noisy commit per asset (~25 per improve run). It is **retired**. `writeAssetToSource`
+> / `deleteAssetFromSource` now perform a plain filesystem write/unlink for
+> **every** kind and never commit. Git-backed targets are committed **once** at
+> the operation boundary by `commitWriteTargetBoundary(target, message, { push })`,
+> which delegates to `saveGitStash` — `git add -A` (staging `.akm/` + sibling
+> assets as one complete commit), a guarded commit, and a push gated on
+> `writable && hasRemote && push !== false` (the same gate as `improve` sync
+> push). The deprecated `pushOnCommit` knob still parses but only maps its push
+> intent onto that gate and emits a one-time deprecation warning.
+
+With the commit removed, `writeAssetToSource` no longer branches on `source.kind` for commit behaviour — the only remaining `kind` check is the unsupported-kind guard (filesystem / git only).
 
 ### 2.7 Delete is symmetric
 
@@ -196,17 +202,12 @@ export async function deleteAssetFromSource(
   if (!config.writable) throw new UsageError(/* ... */);
   const filePath = resolveAssetPath(source.path(), ref);
   await unlink(filePath);
-  if (source.kind === "git") {
-    await git("-C", source.path(), "add", filePath);
-    await git("-C", source.path(), "commit", "-m", `Remove ${formatRef(ref)}`);
-    if (config.options.pushOnCommit) {
-      await git("-C", source.path(), "push");
-    }
-  }
+  // No commit here — for any kind (0.9.0 amendment, issue #507). The caller
+  // fires commitWriteTargetBoundary() once after a batch of mutations.
 }
 ```
 
-Same pattern.
+Same pattern — symmetric with the write path, and likewise committed once at the operation boundary rather than per asset.
 
 ---
 
@@ -408,8 +409,10 @@ introduces on the locked hit type. Both are optional. Renderers in
       "writable": true },
 
     { "name": "team", "kind": "git",
-      "options": { "url": "git+https://github.com/team/kit", "pushOnCommit": true },
+      "options": { "url": "git+https://github.com/team/kit" },
       "writable": true },
+    // 0.9.0: a writable git source with a remote is pushed by the single
+    // boundary commit; the old per-asset `pushOnCommit` knob is deprecated.
 
     { "name": "upstream", "kind": "git",
       "options": { "url": "git+https://github.com/someone/kit" },
