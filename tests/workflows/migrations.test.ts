@@ -75,11 +75,7 @@ describe("workflow.db migrations", () => {
 
       // All three migrations recorded, in order
       const applied = listAppliedMigrations(db);
-      expect(applied).toEqual([
-        SCOPE_KEY_MIGRATION_ID,
-        AGENT_IDENTITY_MIGRATION_ID,
-        CHECKIN_SUMMARY_MIGRATION_ID,
-      ]);
+      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
     } finally {
       closeWorkflowDatabase(db);
     }
@@ -150,11 +146,7 @@ describe("workflow.db migrations", () => {
     const db = openWorkflowDatabase(dbPath);
     try {
       const applied = listAppliedMigrations(db);
-      expect(applied).toEqual([
-        SCOPE_KEY_MIGRATION_ID,
-        AGENT_IDENTITY_MIGRATION_ID,
-        CHECKIN_SUMMARY_MIGRATION_ID,
-      ]);
+      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
 
       // The legacy row must still be there with its scope_key intact.
       const row = db.prepare("SELECT id, scope_key FROM workflow_runs WHERE id = 'legacy-run-1'").get() as
@@ -174,21 +166,13 @@ describe("workflow.db migrations", () => {
     const db2 = openWorkflowDatabase(dbPath);
     try {
       const applied = listAppliedMigrations(db2);
-      expect(applied).toEqual([
-        SCOPE_KEY_MIGRATION_ID,
-        AGENT_IDENTITY_MIGRATION_ID,
-        CHECKIN_SUMMARY_MIGRATION_ID,
-      ]);
+      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
 
       // Explicit re-run on the same connection is also a no-op.
       runMigrations(db2);
       runMigrations(db2);
       const afterReRun = listAppliedMigrations(db2);
-      expect(afterReRun).toEqual([
-        SCOPE_KEY_MIGRATION_ID,
-        AGENT_IDENTITY_MIGRATION_ID,
-        CHECKIN_SUMMARY_MIGRATION_ID,
-      ]);
+      expect(afterReRun).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
     } finally {
       closeWorkflowDatabase(db2);
     }
@@ -199,11 +183,7 @@ describe("workflow.db migrations", () => {
     const db = openWorkflowDatabase(dbPath);
     try {
       const before = listAppliedMigrations(db);
-      expect(before).toEqual([
-        SCOPE_KEY_MIGRATION_ID,
-        AGENT_IDENTITY_MIGRATION_ID,
-        CHECKIN_SUMMARY_MIGRATION_ID,
-      ]);
+      expect(before).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
 
       // Manually simulate a faulty migration body running through the same
       // transaction pattern used by runMigrations(). The body fails on the
@@ -217,11 +197,7 @@ describe("workflow.db migrations", () => {
       expect(() => apply()).toThrow();
 
       const after = listAppliedMigrations(db);
-      expect(after).toEqual([
-        SCOPE_KEY_MIGRATION_ID,
-        AGENT_IDENTITY_MIGRATION_ID,
-        CHECKIN_SUMMARY_MIGRATION_ID,
-      ]);
+      expect(after).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
       // The DDL inside the failed transaction must also have been rolled back.
       const stillExists = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='faulty_test_table'")
