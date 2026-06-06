@@ -129,8 +129,8 @@ import {
   akmProposalRevert,
   akmProposalShow,
 } from "./commands/proposal";
-import { drainProposals } from "./commands/proposal-drain";
-import { resolveDrainPolicy } from "./commands/proposal-drain-policies";
+import { drainProposals } from "./commands/proposal/drain";
+import { resolveDrainPolicy } from "./commands/proposal/drain-policies";
 import { akmPropose } from "./commands/propose";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
 import { checkForUpdate, performUpgrade } from "./commands/self-update";

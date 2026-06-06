@@ -18,8 +18,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { akmConsolidate } from "../src/commands/consolidate";
-import type { AkmConfig } from "../src/core/config";
+import { akmConsolidate } from "../../../src/commands/consolidate";
+import type { AkmConfig } from "../../../src/core/config";
 import {
   type Cleanup,
   sandboxStashDir,
@@ -27,7 +27,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-} from "./_helpers/sandbox";
+} from "../../_helpers/sandbox";
 
 let cleanup: Cleanup;
 let stashDir: string;

@@ -48,7 +48,7 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export interface ConsolidateMergeOp {
+interface ConsolidateMergeOp {
   op: "merge";
   primary: string;
   secondaries: string[];
@@ -57,7 +57,7 @@ export interface ConsolidateMergeOp {
   confidence?: number;
 }
 
-export interface ConsolidateDeleteOp {
+interface ConsolidateDeleteOp {
   op: "delete";
   ref: string;
   reason: string;
@@ -82,7 +82,7 @@ export interface ConsolidatePromoteOp {
  * so `resolveFamilyContradictions` in `memory-improve.ts` can resolve them
  * via its SCC algorithm. Zep arXiv:2501.13956 §3.
  */
-export interface ConsolidateContradictOp {
+interface ConsolidateContradictOp {
   op: "contradict";
   /** The memory that should be marked as contradicted. */
   ref: string;
@@ -172,7 +172,7 @@ export interface ConsolidateResult {
 }
 
 /** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
-export type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
+type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
 
 export interface AkmConsolidateOptions {
   target?: string; // which source to target; defaults to primary writable stash
@@ -383,9 +383,9 @@ export function isHotCapturedMemory(filePath: string): boolean {
  * Use this for any destructive operation; use `isHotCapturedMemory` only
  * when a missing/unparseable file is genuinely safe to ignore.
  */
-export type ConsolidateGuardVerdict = "hot" | "safe" | "unparseable" | "missing";
+type ConsolidateGuardVerdict = "hot" | "safe" | "unparseable" | "missing";
 
-export function consolidateGuardStatus(filePath: string): ConsolidateGuardVerdict {
+function consolidateGuardStatus(filePath: string): ConsolidateGuardVerdict {
   if (!fs.existsSync(filePath)) return "missing";
   let content: string;
   try {
@@ -635,7 +635,7 @@ export function buildChunkPrompt(
  * trimmed). Empty set on any read/parse error — fail-safe to "annotate
  * nothing" so the LLM still proposes, just slightly more wastefully.
  */
-export function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
+function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
   const hashes = new Set<string>();
   try {
     const pending = listProposals(stashDir, { status: "pending" }).filter((p) => p.source === "consolidate");
@@ -2161,7 +2161,7 @@ export function stripOuterCodeFence(raw: string): { content: string; stripped: b
  *      quoting or odd escaping the LLM produced gets normalised. If yaml.parse
  *      throws, return `null` — the response is unusable.
  */
-export interface SanitizedMergedContent {
+interface SanitizedMergedContent {
   /** Clean markdown with re-serialised frontmatter. */
   content: string;
   /** Parsed frontmatter object (after yaml round-trip). */
@@ -2325,7 +2325,7 @@ export function normalizeUpdatedField(fm: Record<string, unknown>): void {
  * Two slugs that normalise to the same string are considered the same asset
  * for dedup purposes even if they don't share an exact ref.
  */
-export function normalizeSlugForDedup(ref: string): string {
+function normalizeSlugForDedup(ref: string): string {
   const slug = ref.replace(/^[^:]+:/, "");
   const monthRe = /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
   const tokens = slug
@@ -2364,7 +2364,7 @@ export function normalizeSlugForDedup(ref: string): string {
  * improve invocation — a different concern from the cross-run content-hash
  * dedup, and cheap (no embeddings, no DB query).
  */
-export async function checkPreEmitDedup(opts: {
+async function checkPreEmitDedup(opts: {
   candidateRef: string;
   candidateText: string;
   stashDir: string;

@@ -16,7 +16,7 @@ import { TYPE_DIRS } from "../core/asset-spec";
 import { loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
 import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
-import { ensureRg } from "../setup/ripgrep-install";
+import { ensureRg } from "../core/ripgrep/install";
 
 /**
  * Refuse to persist a temporary-directory stashDir to the user's config when

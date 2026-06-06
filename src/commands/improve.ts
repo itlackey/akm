@@ -75,8 +75,8 @@ import {
   shouldSkipRef,
 } from "./improve-profiles";
 import { akmLint } from "./lint/index";
-import { drainProposals } from "./proposal-drain";
-import { resolveDrainPolicy } from "./proposal-drain-policies";
+import { drainProposals } from "./proposal/drain";
+import { resolveDrainPolicy } from "./proposal/drain-policies";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
 import { checkDeadUrls, type DeadUrl } from "./url-checker";

@@ -20,9 +20,9 @@ import {
   DEFAULT_CONTEXT_LENGTH_TOKENS,
   isConsolidationEligibleMemoryName,
   type MemoryEntry,
-} from "../src/commands/consolidate";
-import { parseFrontmatter } from "../src/core/frontmatter";
-import { writeContradictEdge } from "../src/core/memory-belief";
+} from "../../../src/commands/consolidate";
+import { parseFrontmatter } from "../../../src/core/frontmatter";
+import { writeContradictEdge } from "../../../src/core/memory-belief";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

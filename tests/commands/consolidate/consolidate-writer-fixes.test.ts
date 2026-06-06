@@ -28,10 +28,10 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { assembleAssetFromString } from "../src/core/asset-serialize";
-import { parseFrontmatter } from "../src/core/frontmatter";
-import type { Proposal } from "../src/core/proposals";
-import { validateProposal } from "../src/core/proposals";
+import { assembleAssetFromString } from "../../../src/core/asset-serialize";
+import { parseFrontmatter } from "../../../src/core/frontmatter";
+import type { Proposal } from "../../../src/core/proposals";
+import { validateProposal } from "../../../src/core/proposals";
 
 function makeProposal(content: string, envelopeFm: Record<string, unknown> = {}): Proposal {
   return {

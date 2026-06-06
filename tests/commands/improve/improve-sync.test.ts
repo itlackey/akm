@@ -21,19 +21,19 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmImprove } from "../src/commands/improve";
-import type { AkmConfig } from "../src/core/config";
-import { saveConfig } from "../src/core/config";
-import { akmIndex } from "../src/indexer/indexer";
-import type { SaveGitStashResult } from "../src/sources/providers/git";
-import type { Cleanup } from "./_helpers/sandbox";
+import { akmImprove } from "../../../src/commands/improve";
+import type { AkmConfig } from "../../../src/core/config";
+import { saveConfig } from "../../../src/core/config";
+import { akmIndex } from "../../../src/indexer/indexer";
+import type { SaveGitStashResult } from "../../../src/sources/providers/git";
+import type { Cleanup } from "../../_helpers/sandbox";
 import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-} from "./_helpers/sandbox";
+} from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
 

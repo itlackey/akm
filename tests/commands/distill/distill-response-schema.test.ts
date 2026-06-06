@@ -27,10 +27,10 @@ import {
   assembleStructuredDistillMarkdown,
   DISTILL_KNOWLEDGE_JSON_SCHEMA,
   DISTILL_LESSON_JSON_SCHEMA,
-} from "../src/commands/distill";
-import type { AkmConfig } from "../src/core/config";
-import type { readEvents } from "../src/core/events";
-import { listProposals } from "../src/core/proposals";
+} from "../../../src/commands/distill";
+import type { AkmConfig } from "../../../src/core/config";
+import type { readEvents } from "../../../src/core/events";
+import { listProposals } from "../../../src/core/proposals";
 
 // ── Scaffolding ─────────────────────────────────────────────────────────────
 

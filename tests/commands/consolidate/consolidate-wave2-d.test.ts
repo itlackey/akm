@@ -10,9 +10,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { parseConfigValue } from "../src/commands/config-cli";
-import { parseAssetRef } from "../src/core/asset-ref";
-import { ConfigError, NotFoundError, UsageError } from "../src/core/errors";
+import { parseConfigValue } from "../../../src/commands/config-cli";
+import { parseAssetRef } from "../../../src/core/asset-ref";
+import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 
 // ── #15: parseAssetRef — MISSING_REQUIRED_ARGUMENT code ────────────────────
 
@@ -169,7 +169,7 @@ describe("config-cli parseConfigValue sources error message (#16)", () => {
 describe("source-resolve user-facing errors (#27)", () => {
   test("error message does not contain 'Stash type root'", async () => {
     // Import the resolver lazily so we don't pull in full DB on every test run.
-    const { resolveAssetPath } = await import("../src/sources/resolve");
+    const { resolveAssetPath } = await import("../../../src/sources/resolve");
     try {
       await resolveAssetPath("/tmp/nonexistent-stash-dir-xyz", "skill", "missing-skill");
       throw new Error("should have thrown");
@@ -183,7 +183,7 @@ describe("source-resolve user-facing errors (#27)", () => {
   });
 
   test("error hint is set on the not-found error from source-resolve", async () => {
-    const { resolveAssetPath } = await import("../src/sources/resolve");
+    const { resolveAssetPath } = await import("../../../src/sources/resolve");
     try {
       await resolveAssetPath("/tmp/nonexistent-stash-dir-xyz", "skill", "missing-skill");
       throw new Error("should have thrown");

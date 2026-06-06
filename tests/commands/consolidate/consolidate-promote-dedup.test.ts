@@ -28,8 +28,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { type ConsolidateOperation, type ConsolidatePromoteOp, mergePlans } from "../src/commands/consolidate";
-import { createProposal, isProposalSkipped, listProposals } from "../src/core/proposals";
+import { type ConsolidateOperation, type ConsolidatePromoteOp, mergePlans } from "../../../src/commands/consolidate";
+import { createProposal, isProposalSkipped, listProposals } from "../../../src/core/proposals";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

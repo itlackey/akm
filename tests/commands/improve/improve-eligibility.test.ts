@@ -16,12 +16,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmDistillResult } from "../src/commands/distill";
-import { akmImprove } from "../src/commands/improve";
-import type { AkmReflectResult } from "../src/commands/reflect";
-import { saveConfig } from "../src/core/config";
-import { appendEvent, readEvents } from "../src/core/events";
-import { akmIndex } from "../src/indexer/indexer";
+import type { AkmDistillResult } from "../../../src/commands/distill";
+import { akmImprove } from "../../../src/commands/improve";
+import type { AkmReflectResult } from "../../../src/commands/reflect";
+import { saveConfig } from "../../../src/core/config";
+import { appendEvent, readEvents } from "../../../src/core/events";
+import { akmIndex } from "../../../src/indexer/indexer";
 
 // Deterministic, strictly-ordered timestamps for signal-delta ordering.
 // These replace `await sleep(10)` between two appendEvent() calls: instead of

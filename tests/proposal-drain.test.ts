@@ -9,8 +9,8 @@ import {
   drainProposals,
   isEmptyDiff,
   type JudgmentSeams,
-} from "../src/commands/proposal-drain";
-import { CONSERVATIVE, MANUAL, PERSONAL_STASH, resolveDrainPolicy } from "../src/commands/proposal-drain-policies";
+} from "../src/commands/proposal/drain";
+import { CONSERVATIVE, MANUAL, PERSONAL_STASH, resolveDrainPolicy } from "../src/commands/proposal/drain-policies";
 import type { EventsContext } from "../src/core/events";
 import { createProposal, isProposalSkipped, listProposals, type Proposal } from "../src/core/proposals";
 import type { AgentRunResult } from "../src/integrations/agent";

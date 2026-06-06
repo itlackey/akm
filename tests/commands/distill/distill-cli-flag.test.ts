@@ -23,7 +23,7 @@ afterAll(() => {
   }
 });
 
-const repoRoot = path.resolve(import.meta.dir, "..");
+const repoRoot = path.resolve(import.meta.dir, "../../..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 function runCli(
@@ -92,9 +92,9 @@ import {
   expect as expectHappy,
   test as testHappy,
 } from "bun:test";
-import { akmDistill } from "../src/commands/distill";
-import type { AkmConfig } from "../src/core/config";
-import { listProposals } from "../src/core/proposals";
+import { akmDistill } from "../../../src/commands/distill";
+import type { AkmConfig } from "../../../src/core/config";
+import { listProposals } from "../../../src/core/proposals";
 
 const happyTempDirs: string[] = [];
 

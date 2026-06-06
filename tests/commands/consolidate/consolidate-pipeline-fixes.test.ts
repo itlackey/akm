@@ -28,10 +28,10 @@ import {
   sanitizeMergedContent,
   stripOuterCodeFence,
   validateProposalFrontmatter,
-} from "../src/commands/consolidate";
-import type { AkmConfig } from "../src/core/config";
-import { detectTruncatedDescription } from "../src/core/text-truncation";
-import { resolveImproveProcessRunnerFromProfile } from "../src/integrations/agent/runner";
+} from "../../../src/commands/consolidate";
+import type { AkmConfig } from "../../../src/core/config";
+import { detectTruncatedDescription } from "../../../src/core/text-truncation";
+import { resolveImproveProcessRunnerFromProfile } from "../../../src/integrations/agent/runner";
 
 // ── stripOuterCodeFence ─────────────────────────────────────────────────────
 

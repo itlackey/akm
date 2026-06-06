@@ -12,8 +12,8 @@ import {
   parseConfigValue,
   setConfigValue,
   unsetConfigValue,
-} from "../src/commands/config-cli";
-import type { AkmConfig } from "../src/core/config";
+} from "../../../src/commands/config-cli";
+import type { AkmConfig } from "../../../src/core/config";
 
 // ── Cluster B: #21 defaultWriteTarget ────────────────────────────────────────
 
@@ -237,24 +237,24 @@ describe("search empty-query guard (#14, #24)", () => {
   // requires a meaningful query.
 
   test("akmCurate throws UsageError for empty string query", async () => {
-    const { akmCurate } = await import("../src/commands/curate");
+    const { akmCurate } = await import("../../../src/commands/curate");
     await expect(akmCurate({ query: "" })).rejects.toThrow(/query is required/i);
   });
 
   test("akmCurate throws UsageError for whitespace-only query", async () => {
-    const { akmCurate } = await import("../src/commands/curate");
+    const { akmCurate } = await import("../../../src/commands/curate");
     await expect(akmCurate({ query: "   " })).rejects.toThrow(/query is required/i);
   });
 
   test("akmCurate UsageError has MISSING_REQUIRED_ARGUMENT code", async () => {
-    const { akmCurate } = await import("../src/commands/curate");
-    const { UsageError } = await import("../src/core/errors");
+    const { akmCurate } = await import("../../../src/commands/curate");
+    const { UsageError } = await import("../../../src/core/errors");
     try {
       await akmCurate({ query: "" });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
-      expect((err as import("../src/core/errors").UsageError).code).toBe("MISSING_REQUIRED_ARGUMENT");
+      expect((err as import("../../../src/core/errors").UsageError).code).toBe("MISSING_REQUIRED_ARGUMENT");
     }
   });
 });

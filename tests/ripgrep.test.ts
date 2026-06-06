@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isRgAvailable, resolveRg } from "../src/setup/ripgrep-resolve";
+import { isRgAvailable, resolveRg } from "../src/core/ripgrep/resolve";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];

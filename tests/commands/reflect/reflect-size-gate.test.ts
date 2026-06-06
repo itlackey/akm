@@ -21,7 +21,7 @@ import {
   REFLECT_EXPAND_RATIO_MAX,
   REFLECT_SHRINK_RATIO_MIN,
   REFLECT_SIZE_GUARD_MIN_BYTES,
-} from "../src/core/proposal-quality-validators";
+} from "../../../src/core/proposal-quality-validators";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
