@@ -55,6 +55,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmImproveResult } from "../commands/improve";
+import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import type { EventEnvelope } from "./events";
 import { getDataDir } from "./paths";
 import type { Proposal } from "./proposals";
@@ -119,21 +120,11 @@ export function openStateDatabase(dbPath?: string): Database {
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────
-
-/**
- * A single migration: a stable string `id` and idempotent SQL `up` script.
- *
- * Rules:
- *   - `id` is permanent and must never be reused.
- *   - `up` must be idempotent (use IF NOT EXISTS, INSERT OR IGNORE, etc.).
- *   - `up` must not DROP any table that holds durable (non-regenerable) data.
- *   - `up` must not RENAME or change the type of an existing column.
- *   - To add a column: use `ALTER TABLE … ADD COLUMN … DEFAULT …`.
- */
-interface Migration {
-  id: string;
-  up: string;
-}
+//
+// The runner itself (ensureMigrationsTable + runMigrations) lives in the shared
+// engine at src/storage/engines/sqlite-migrations.ts. This module owns only its
+// own MIGRATIONS array and delegates application to that shared runner. The
+// {@link Migration} interface is imported from there.
 
 /**
  * All migrations in application order. New migrations are APPENDED to this
@@ -487,43 +478,15 @@ const MIGRATIONS: Migration[] = [
 ];
 
 /**
- * Create the migrations table if it does not exist. This must be called
- * unconditionally on every open so a fresh database bootstraps correctly.
- */
-function ensureMigrationsTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-}
-
-/**
  * Apply every pending migration in a single transaction per migration.
  *
- * Each migration is applied in its own transaction so a failure in migration N
- * does not roll back already-applied migrations 1..N-1. The migration row is
- * inserted AFTER the DDL succeeds, so a crash mid-migration leaves no row and
- * the migration will be retried on next open (all DDL in `up` uses IF NOT
- * EXISTS so the retry is safe).
+ * Delegates to the shared SQLite migration engine; state.db has no
+ * pre-versioning bootstrap step, so no `bootstrap` hook is passed.
  *
  * Called automatically by `openStateDatabase()`.
  */
 export function runMigrations(db: Database): void {
-  ensureMigrationsTable(db);
-
-  const appliedRows = db.prepare("SELECT id FROM schema_migrations").all() as Array<{ id: string }>;
-  const applied = new Set(appliedRows.map((r) => r.id));
-
-  for (const migration of MIGRATIONS) {
-    if (applied.has(migration.id)) continue;
-
-    db.transaction(() => {
-      db.exec(migration.up);
-      db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
-    })();
-  }
+  runSqliteMigrations(db, MIGRATIONS);
 }
 
 // ── TypeScript row types ─────────────────────────────────────────────────────
