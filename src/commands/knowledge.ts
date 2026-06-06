@@ -73,7 +73,7 @@ export function normalizeCreateSubPath(subPath: string | undefined): string {
  * names (e.g. a URL-path-derived knowledge name) may still be nested.
  */
 export function assertFlatAssetName(name: string | undefined): void {
-  if (name !== undefined && name.replace(/\\/g, "/").replace(/\.md$/i, "").includes("/")) {
+  if (name?.replace(/\\/g, "/").replace(/\.md$/i, "").includes("/")) {
     throw new UsageError(
       "Asset --name must be a flat name without '/'. Use --path to choose a subdirectory " +
         "(e.g. --path personal --name grocery-list).",
