@@ -1683,6 +1683,10 @@ const workflowCompleteCommand = defineCommand({
       description: `Step state (default: completed). One of: ${WORKFLOW_STEP_STATES.join(", ")}.`,
     },
     notes: { type: "string", description: "Notes for the completed step" },
+    summary: {
+      type: "string",
+      description: "Summary of work done (required when completing a step); validated against completion criteria",
+    },
     evidence: { type: "string", description: "Evidence JSON object for the step" },
   },
   async run({ args }) {
@@ -1692,8 +1696,15 @@ const workflowCompleteCommand = defineCommand({
         stepId: args.step,
         status: parseWorkflowStepState(args.state),
         notes: args.notes,
+        summary: args.summary,
         evidence: args.evidence ? parseWorkflowJsonObject(args.evidence, "--evidence") : undefined,
       });
+      if ("ok" in result && result.ok === false) {
+        // Summary failed the completion-criteria validation gate (#506): the
+        // step stays pending and the agent receives corrective feedback.
+        output("workflow-complete-rejected", result);
+        return;
+      }
       output("workflow-complete", result);
     });
   },
