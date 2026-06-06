@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `akm move <ref> <dest>` (alias `akm mv`) relocates an existing stash asset
+  into a subdirectory under the same type root and reindexes, so assets can be
+  organized into logical subdirectories (e.g.
+  `akm move knowledge:guide.md knowledge:personal/guide.md`). The destination
+  may be a full ref or a bare subpath that inherits the source type.
+  Directory-style assets (skill `SKILL.md`) are moved as a unit. The command
+  refuses when the source is missing, the destination already exists, the move
+  would change the asset type, the source lives in a read-only/registry source,
+  or the destination would escape the type root (path-traversal / absolute /
+  drive-letter destinations are rejected via the asset-ref name guards). (#504)
 - **Workflow runs record agent harness + session identity** — `akm workflow start`
   now persists the agent harness (e.g. `claude-code`, `opencode`) and the
   platform-native session id that owns each run. Identity is resolved best-effort
