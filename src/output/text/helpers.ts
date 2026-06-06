@@ -206,6 +206,20 @@ export function formatEnvRemovePlain(r: Record<string, unknown>): string {
   return removed ? `Removed env ${String(r.ref ?? "?")}` : `Env ${String(r.ref ?? "?")} was not present`;
 }
 
+export function formatEnvSetPlain(r: Record<string, unknown>): string {
+  return `Set ${String(r.key ?? "?")} in env ${String(r.ref ?? "?")} (value not displayed)`;
+}
+
+export function formatEnvUnsetPlain(r: Record<string, unknown>): string {
+  const removed = Array.isArray(r.removed) ? (r.removed as unknown[]).map(String) : [];
+  const missing = Array.isArray(r.missing) ? (r.missing as unknown[]).map(String) : [];
+  const ref = String(r.ref ?? "?");
+  const parts: string[] = [];
+  if (removed.length > 0) parts.push(`Removed ${removed.join(", ")} from env ${ref}`);
+  if (missing.length > 0) parts.push(`Not present in env ${ref}: ${missing.join(", ")}`);
+  return parts.join("\n") || `No keys changed in env ${ref}`;
+}
+
 export function formatWikiRegisterPlain(r: Record<string, unknown>): string {
   const name = String(r.name ?? r.wiki ?? "?");
   const ref = String(r.ref ?? r.path ?? r.url ?? "?");

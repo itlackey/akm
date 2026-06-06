@@ -33,6 +33,8 @@ const PASSTHROUGH_COMMANDS = [
   "env-create",
   "env-export",
   "env-remove",
+  "env-set",
+  "env-unset",
   "feedback",
   "graph-entities",
   "graph-entity",

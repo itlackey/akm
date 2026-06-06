@@ -102,5 +102,5 @@ export function runProposalValidators(
     if (ctx.stop) break;
   }
 
-  return { ok: findings.length === 0, findings };
+  return { ok: findings.every((f) => f.severity === "warn"), findings };
 }

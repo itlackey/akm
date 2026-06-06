@@ -9,6 +9,8 @@ import {
   formatEnvExportPlain,
   formatEnvListPlain,
   formatEnvRemovePlain,
+  formatEnvSetPlain,
+  formatEnvUnsetPlain,
   formatVaultCreatePlain,
   formatVaultListPlain,
   formatVaultSetPlain,
@@ -20,6 +22,8 @@ registerTextFormatter("env-list", (r) => formatEnvListPlain(r));
 registerTextFormatter("env-create", (r) => formatEnvCreatePlain(r));
 registerTextFormatter("env-export", (r) => formatEnvExportPlain(r));
 registerTextFormatter("env-remove", (r) => formatEnvRemovePlain(r));
+registerTextFormatter("env-set", (r) => formatEnvSetPlain(r));
+registerTextFormatter("env-unset", (r) => formatEnvUnsetPlain(r));
 
 // Deprecated vault formatters — retained so any still-cached vault-shaped output
 // renders; removed in 0.9.0 with the vault verb.

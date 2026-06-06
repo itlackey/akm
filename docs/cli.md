@@ -1367,12 +1367,23 @@ and `export` are the supported value-use paths.
 akm env list
 akm env create prod                          # creates env/prod.env (mode 0600)
 akm env create prod --from-file ./.env        # ingest an existing .env
+akm env create prod --path staging            # creates env/staging/prod.env
+echo "https://db" | akm env set env:prod DATABASE_URL   # set one key (value via stdin)
+akm env set env:prod API_TOKEN --from-env CI_TOKEN      # set from an env var (not argv)
+akm env unset env:prod DEBUG OLD_FLAG          # remove one or more keys
 $EDITOR "$(akm env path env:prod --quiet)"    # edit the file directly
 akm env run env:prod -- npm test              # run a command with the whole file injected
 akm env run env:prod -- $SHELL                # interactive shell with the env loaded
 akm env run env:prod --only DATABASE_URL -- ./migrate   # inject just one var
-akm env remove env:prod --yes
+akm env remove env:prod --yes                 # remove the whole env file
 ```
+
+`env set`/`env unset` do a minimal, comment-preserving edit and use `dotenv`
+as the round-trip oracle — a value is only written if `dotenv.parse` reads it
+back exactly, and the whole edit is re-verified so no other key is disturbed.
+Set-values are read from stdin (default), `--from-env <VAR>`, or `--from-file
+<path>` — never from argv — and are never echoed. `env unset <ref> <KEY...>`
+removes keys; `env remove <ref>` removes the whole file.
 
 Subcommands:
 

@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`akm env set` / `akm env unset` — single-key `.env` management.** `akm env
+  set <ref> <KEY>` sets/updates one key (value from stdin by default, or
+  `--from-env <VAR>` / `--from-file <path>` — never argv, never echoed); `akm env
+  unset <ref> <KEY...>` removes one or more keys. Both do a minimal edit that
+  preserves existing comments and key order, and use `dotenv` as the
+  serialisation oracle: a value is only written if `dotenv.parse` reads it back
+  exactly, and the whole edit is re-verified so no sibling key is disturbed. This
+  reintroduces key-level management (the deprecated `vault set`/`vault unset`
+  pointed here); `akm env remove` still removes the whole file.
+
 - **`--path` for subdirectory asset creation** (#503) — a consistent `--path
   <relative-dir>` flag across the asset-creating command surface: `akm remember`,
   `akm import`, `akm propose`, `akm workflow create`, `akm env create`, and

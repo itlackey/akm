@@ -11,11 +11,13 @@
  * them all the same. For a single sensitive value used on its own for
  * authentication (a token, key, or cert), use the `secret` type instead.
  *
- * Unlike the deprecated `vault` type it replaces, akm does NOT manage individual
- * KEY=value entries (no `set`/`unset`/quoting): you edit the `.env` file with
- * your own editor, and akm loads it. The simplification removes the
- * hand-rolled quoting/escaping surface; the safety guarantee moves to the READ
- * path instead (see `buildShellExportScript` + `akm env export`).
+ * Single keys can be managed with `akm env set <ref> KEY` (value read from stdin
+ * or `--from-env`/`--from-file`, never argv) and `akm env unset <ref> KEY...`,
+ * which do a minimal line-level edit that preserves existing comments and key
+ * order (see `setEnvKey` / `unsetEnvKeys`). You can also just edit the `.env`
+ * file with your own editor. Values are quoted/escaped only when necessary and
+ * round-trip through `dotenv`; the shell-load safety guarantee still lives on
+ * the READ path (see `buildShellExportScript` + `akm env export`).
  *
  * Invariant: env values must never be written to stdout, returned through the
  * indexer, the `akm show` renderer, or any structured output channel. Key
@@ -32,8 +34,11 @@
  *     execute on load. `export` never prints values to stdout (would leak into
  *     an agent's context); `path` prints only the file path.
  *
- * Value parsing is delegated to the `dotenv` package — we deliberately do not
- * implement our own quoting/escaping rules for security-sensitive content.
+ * Value parsing is delegated to the `dotenv` package, and `dotenv` is also the
+ * serialisation oracle for `env set` (`setEnvKey`): a written value is only
+ * committed if `dotenv.parse` reads it back exactly, and the whole edit is
+ * re-parsed to confirm no other key was disturbed. We never hand-roll a
+ * quoting representation we cannot read back.
  *
  * Secret-token substitution: env VALUES may embed `${secret:NAME}` tokens, which
  * are replaced at `env run` time with the value of the sibling `secret:NAME`
@@ -48,6 +53,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { writeFileAtomic } from "../core/common";
+import { UsageError } from "../core/errors";
 
 /** Matches a KEY=value assignment line, capturing only the key. */
 const ASSIGN_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
@@ -278,6 +284,148 @@ export function removeEnv(envPath: string): boolean {
   const marker = `${envPath}.sensitive`;
   if (fs.existsSync(marker)) fs.rmSync(marker);
   return true;
+}
+
+/** A valid env KEY name (same grammar as the assignment scanner). */
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Build a `KEY=value` assignment line whose value is GUARANTEED to round-trip
+ * through `dotenv.parse` — dotenv is the serialisation oracle, so we never
+ * write a representation we cannot read back. Candidate representations are
+ * tried in order of readability (bare → double-quoted → single-quoted) and the
+ * first one `dotenv.parse` recovers exactly is used. If a value contains
+ * characters no inline representation can round-trip (e.g. both quote styles),
+ * we throw rather than silently corrupt the file.
+ */
+function serializeEnvAssignment(key: string, value: string): string {
+  const candidates: string[] = [];
+  // Bare — only for simple values (no whitespace/quotes/#/$/control chars).
+  if (/^[A-Za-z0-9_@%+=:,./-]*$/.test(value)) candidates.push(`${key}=${value}`);
+  // Double-quoted — dotenv expands \n \r \t inside double quotes.
+  const dq = value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  candidates.push(`${key}="${dq}"`);
+  // Single-quoted — dotenv takes the content literally (no escapes/expansion).
+  candidates.push(`${key}='${value}'`);
+
+  for (const line of candidates) {
+    try {
+      if (dotenv.parse(line)[key] === value) return line;
+    } catch {
+      // Not parseable as written; try the next representation.
+    }
+  }
+  throw new UsageError(
+    `Value for "${key}" cannot be stored inline in a .env file (it contains characters dotenv cannot round-trip). ` +
+      "Edit the .env file directly, or choose a different value.",
+  );
+}
+
+/**
+ * Assert (using `dotenv.parse` as the oracle) that `after` set `key` to
+ * `expected` and left every other key from `before` byte-identical. This
+ * catches a line-level edit accidentally disturbing a quoted/multiline value.
+ */
+function assertEnvEditSafe(before: Record<string, string>, after: Record<string, string>, key: string): void {
+  for (const [k, v] of Object.entries(before)) {
+    if (k !== key && after[k] !== v) {
+      throw new UsageError(
+        `Editing "${key}" would disturb "${k}" (the .env file has a value layout dotenv could not safely round-trip). ` +
+          "Edit the .env file directly.",
+      );
+    }
+  }
+}
+
+/**
+ * Set (create or update) a single `KEY=value` entry in an env file, preserving
+ * the file's existing lines, comments, and key order. The first existing
+ * assignment of `key` is replaced in place; otherwise the entry is appended.
+ * Creates the file (and parent dirs) if absent. The value is never logged.
+ *
+ * The serialised value and the whole resulting file are verified with
+ * `dotenv.parse` before the write commits.
+ */
+export function setEnvKey(envPath: string, key: string, value: string): void {
+  ensureParentDir(envPath);
+  const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
+  const assignment = serializeEnvAssignment(key, value);
+  const keyLineRe = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`);
+  const lines = existing.split(/\r?\n/);
+  let replaced = false;
+  const out = lines.map((line) => {
+    if (!replaced && keyLineRe.test(line)) {
+      replaced = true;
+      return assignment;
+    }
+    return line;
+  });
+  if (!replaced) {
+    while (out.length > 0 && out[out.length - 1] === "") out.pop();
+    out.push(assignment);
+  }
+  let content = out.join("\n");
+  if (!content.endsWith("\n")) content += "\n";
+
+  // Verify the edit with dotenv before committing it.
+  const after = dotenv.parse(content);
+  if (after[key] !== value) {
+    throw new UsageError(
+      `Could not set "${key}" reliably (the .env file has a value layout dotenv could not round-trip). ` +
+        "Edit the .env file directly.",
+    );
+  }
+  assertEnvEditSafe(dotenv.parse(existing), after, key);
+  writeFileAtomic(envPath, content, 0o600);
+}
+
+/**
+ * Remove one or more `KEY=value` entries from an env file, preserving all other
+ * lines and comments. Returns which keys were present (removed) vs. absent.
+ *
+ * The result is verified with `dotenv.parse`: the removed keys are gone and
+ * every surviving key is byte-identical to before.
+ */
+export function unsetEnvKeys(envPath: string, keys: string[]): { removed: string[]; missing: string[] } {
+  if (!fs.existsSync(envPath)) return { removed: [], missing: keys };
+  const text = fs.readFileSync(envPath, "utf8");
+  const before = dotenv.parse(text);
+  const present = new Set(Object.keys(before));
+  const toRemove = new Set(keys);
+  const out = text.split(/\r?\n/).filter((line) => {
+    const m = line.match(ASSIGN_RE);
+    return !(m && toRemove.has(m[1]));
+  });
+  let content = out.join("\n");
+  if (content.length > 0 && !content.endsWith("\n")) content += "\n";
+
+  // Verify with dotenv: removed keys gone, survivors unchanged.
+  const after = dotenv.parse(content);
+  for (const k of toRemove) {
+    if (k in after) {
+      throw new UsageError(
+        `Could not remove "${k}" reliably (the .env file has a value layout dotenv could not round-trip). ` +
+          "Edit the .env file directly.",
+      );
+    }
+  }
+  for (const [k, v] of Object.entries(before)) {
+    if (!toRemove.has(k) && after[k] !== v) {
+      throw new UsageError(
+        `Removing those keys would disturb "${k}" (multiline/quoted value). Edit the .env file directly.`,
+      );
+    }
+  }
+  writeFileAtomic(envPath, content, 0o600);
+  return {
+    removed: keys.filter((k) => present.has(k)),
+    missing: keys.filter((k) => !present.has(k)),
+  };
 }
 
 function ensureParentDir(filePath: string): void {

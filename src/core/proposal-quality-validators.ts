@@ -96,7 +96,7 @@ export function isValidDescription(
   value: unknown,
   inputRef: string,
   options: DescriptionValidationOptions = {},
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true } | { ok: false; reason: string; severity?: "warn" } {
   if (typeof value !== "string") return { ok: false, reason: "description is not a string" };
   const v = value.trim();
   if (!v) return { ok: false, reason: "description is empty" };
@@ -135,7 +135,11 @@ export function isValidDescription(
       reason: `description has ${backtickCount} backticks (unbalanced); likely contains a malformed code fragment`,
     };
   if (/^when\b/i.test(v))
-    return { ok: false, reason: "description starts with 'When' — that pattern belongs in when_to_use" };
+    return {
+      ok: false,
+      reason: "description starts with 'When' — that pattern belongs in when_to_use",
+      severity: "warn",
+    };
   if (!options.skipRefTailCheck) {
     const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
     if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40)
@@ -330,12 +334,13 @@ const lessonContentQualityValidator: ProposalValidator = {
     } catch {
       return [];
     }
-    const findings = [] as { kind: string; message: string }[];
+    const findings = [] as { kind: string; message: string; severity?: "warn" }[];
     const descCheck = isValidDescription(fm.description, proposal.ref);
     if (!descCheck.ok)
       findings.push({
         kind: "invalid-description",
         message: `Lesson proposal ${proposal.id} (${proposal.ref}) has an invalid description: ${descCheck.reason}.`,
+        ...(descCheck.severity ? { severity: descCheck.severity } : {}),
       });
     const wtuCheck = isValidWhenToUse(fm.when_to_use, proposal.ref);
     if (!wtuCheck.ok)

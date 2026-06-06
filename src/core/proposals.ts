@@ -924,6 +924,8 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
 export interface ProposalValidationFinding {
   kind: string;
   message: string;
+  /** "warn" findings are surfaced but do not block proposal acceptance. Defaults to error-level when absent. */
+  severity?: "warn";
 }
 
 export interface ProposalValidationReport {

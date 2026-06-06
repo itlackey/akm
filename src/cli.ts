@@ -2616,6 +2616,127 @@ const envRemoveCommand = defineCommand({
   },
 });
 
+const envSetCommand = defineCommand({
+  meta: {
+    name: "set",
+    description:
+      "Set (create or update) a single KEY in an env file: `akm env set <ref> <KEY>`. The value is read from stdin by default (never via argv); use --from-env <VAR> or --from-file <path>. Preserves existing comments and key order; the value is never printed. Creates the env file if it does not exist.",
+  },
+  args: {
+    ref: { type: "positional", description: "Env ref (e.g. env:prod or just prod)", required: true },
+    key: { type: "positional", description: "Key name to set (e.g. API_URL)", required: true },
+    "from-env": { type: "string", description: "Read the value from the named environment variable" },
+    "from-file": { type: "string", description: "Read the value from this file" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const parsed = parseEnvRef(args.ref);
+      const source = findEnvSource(parsed.origin);
+      const envRoot = path.join(source.path, "env");
+      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+      if (!isWithin(absPath, envRoot)) {
+        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+      }
+      const key = String(args.key);
+      const { ENV_KEY_RE, setEnvKey } = await import("./commands/env.js");
+      if (!ENV_KEY_RE.test(key)) {
+        throw new UsageError(`Invalid env key "${key}". Keys match [A-Za-z_][A-Za-z0-9_]*.`, "INVALID_FLAG_VALUE");
+      }
+
+      const fromEnv = getHyphenatedArg<string>(args, "from-env");
+      const fromFile = getHyphenatedArg<string>(args, "from-file");
+      if (fromEnv !== undefined && fromFile !== undefined) {
+        throw new UsageError("Pass only one of --from-file or --from-env (or use stdin).", "INVALID_FLAG_VALUE");
+      }
+      const MAX_ENV_VALUE_BYTES = 1024 * 1024; // 1 MB
+      let value: string;
+      if (fromFile !== undefined) {
+        if (!fs.existsSync(fromFile)) {
+          throw new NotFoundError(`File not found: ${fromFile}`, "FILE_NOT_FOUND");
+        }
+        const buf = fs.readFileSync(fromFile);
+        if (buf.byteLength > MAX_ENV_VALUE_BYTES) throw new UsageError("Value exceeds the 1 MB limit.");
+        value = buf.toString("utf8");
+      } else if (fromEnv !== undefined) {
+        const v = process.env[fromEnv];
+        if (v === undefined) {
+          throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
+        }
+        value = v;
+      } else {
+        let total = 0;
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of Bun.stdin.stream()) {
+          total += chunk.byteLength;
+          if (total > MAX_ENV_VALUE_BYTES) throw new UsageError("Value exceeds the 1 MB limit.");
+          chunks.push(chunk);
+        }
+        // Strip a single trailing newline so `echo "$VAL" | akm env set` is exact.
+        value = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
+      }
+      setEnvKey(absPath, key, value);
+      // Warn (never block) on process-hijacking key names, matching the env-run audit.
+      const { isDangerousEnvKey } = await import("./commands/lint/env-key-rules.js");
+      if (isDangerousEnvKey(key) && !isQuiet()) {
+        process.stderr.write(
+          `warning: "${key}" can influence process execution when this env is loaded via 'akm env run'.\n`,
+        );
+      }
+      output("env-set", { ref: makeEnvRef(parsed.name, source), key });
+    });
+  },
+});
+
+const envUnsetCommand = defineCommand({
+  meta: {
+    name: "unset",
+    description:
+      "Remove one or more KEYs from an env file: `akm env unset <ref> <KEY...>`. Preserves other keys and comments. To remove the whole file, use `akm env remove`.",
+  },
+  args: {
+    ref: { type: "positional", description: "Env ref (e.g. env:prod or just prod)", required: true },
+    // `key` is read from the raw positionals (one or more) in run(); declared
+    // non-required so citty doesn't block before we emit a structured error.
+    key: { type: "positional", description: "Key name(s) to remove (one or more)", required: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const parsed = parseEnvRef(args.ref);
+      const source = findEnvSource(parsed.origin);
+      const envRoot = path.join(source.path, "env");
+      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+      if (!isWithin(absPath, envRoot)) {
+        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+      }
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
+      }
+      // citty puts every positional in `args._` (incl. the ref at [0]); the keys
+      // are the remaining positionals. citty also mis-captures the space-separated
+      // value of a global flag (`--format json`) as a positional, so drop any
+      // token that is actually a global flag's value (cli.ts:1335 documents this).
+      const globalFlagValues = new Set(
+        ["--format", "--shape", "--detail", "--scope", "--filter", "--target"]
+          .map((flag) => parseFlagValue(process.argv, flag))
+          .filter((v): v is string => typeof v === "string"),
+      );
+      const keys = (Array.isArray(args._) ? (args._ as unknown[]).map(String) : [])
+        .slice(1)
+        .filter((k) => !globalFlagValues.has(k));
+      if (keys.length === 0) {
+        throw new UsageError("Usage: akm env unset <ref> <KEY...> (one or more keys).", "MISSING_REQUIRED_ARGUMENT");
+      }
+      const { ENV_KEY_RE, unsetEnvKeys } = await import("./commands/env.js");
+      const invalid = keys.filter((k) => !ENV_KEY_RE.test(k));
+      if (invalid.length > 0) {
+        throw new UsageError(`Invalid env key(s): ${invalid.join(", ")}.`, "INVALID_FLAG_VALUE");
+      }
+      const { removed, missing } = unsetEnvKeys(absPath, keys);
+      output("env-unset", { ref: makeEnvRef(parsed.name, source), removed, missing });
+    });
+  },
+});
+
 const envCommand = defineCommand({
   meta: {
     name: "env",
@@ -2628,6 +2749,8 @@ const envCommand = defineCommand({
     export: envExportCommand,
     run: envRunCommand,
     create: envCreateCommand,
+    set: envSetCommand,
+    unset: envUnsetCommand,
     remove: envRemoveCommand,
   },
   run({ args }) {
@@ -2642,10 +2765,10 @@ const envCommand = defineCommand({
 // ── vault (DEPRECATED) ────────────────────────────────────────────────────────
 //
 // `akm vault` is deprecated in 0.8.0 and removed in 0.9.0. The verb now warns
-// to stderr and delegates to the `env` handlers. Entry management (`set` /
-// `unset`) and the single-key `run <ref>/KEY` form are hard-errors with a
-// signpost to `akm secret` — silent behaviour changes around secret material
-// are unacceptable.
+// to stderr and delegates to the `env` handlers. The legacy `vault set` /
+// `vault unset` and single-key `run <ref>/KEY` forms are hard-errors that
+// signpost their current spelling (`akm env set` / `akm env unset` / `akm
+// secret`) — silent behaviour changes around secret material are unacceptable.
 
 function emitVaultDeprecation(sub: string): void {
   process.stderr.write(
@@ -2679,8 +2802,7 @@ const vaultSetCommand = defineCommand({
   run() {
     return runWithJsonErrors(async () => {
       throw new UsageError(
-        "'akm vault set' was removed: akm no longer manages individual env entries.\n" +
-          "       Edit the .env file directly (then run with `akm env run <ref> -- <cmd>`),\n" +
+        "'akm vault set' was removed. Use `akm env set <ref> <KEY>` (value via stdin/--from-env/--from-file),\n" +
           "       or store a single value as a secret: `akm secret set secret:<name>`.",
         "INVALID_FLAG_VALUE",
       );
@@ -2697,8 +2819,8 @@ const vaultUnsetCommand = defineCommand({
   run() {
     return runWithJsonErrors(async () => {
       throw new UsageError(
-        "'akm vault unset' was removed: akm no longer manages individual env entries.\n" +
-          "       Edit the .env file directly, or remove a secret with `akm secret remove secret:<name>`.",
+        "'akm vault unset' was removed. Use `akm env unset <ref> <KEY...>`,\n" +
+          "       or remove a secret with `akm secret remove secret:<name>`.",
         "INVALID_FLAG_VALUE",
       );
     });
@@ -4741,7 +4863,7 @@ export const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);
-const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "remove"]);
+const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "set", "unset", "remove"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);
 const WIKI_SUBCOMMAND_SET = new Set([
