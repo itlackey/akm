@@ -62,16 +62,23 @@ const USER_PROMPT_PREFIX = userPromptTemplate
 /**
  * Detect whether an error message indicates a context size exceeded condition.
  * Covers common patterns from OpenAI-compatible APIs (LM Studio, Ollama, etc).
+ *
+ * Requires BOTH a context keyword AND token-count/overflow evidence so that
+ * model prose merely mentioning "context size" / "context length" (e.g. gemma
+ * narrating about a document) does not get misclassified as a provider
+ * context-limit error (#496).
  */
-function isContextSizeError(message: string): boolean {
+export function isContextSizeError(message: string): boolean {
   const lower = message.toLowerCase();
-  return (
-    lower.includes("context size") ||
-    lower.includes("context length") ||
-    lower.includes("context_window") ||
-    lower.includes("prompt too long") ||
-    (lower.includes("exceeds") && lower.includes("context"))
-  );
+  const contextKw = /context (size|length|window)|prompt too long|exceeds.*context/.test(lower);
+  if (!contextKw) {
+    return false;
+  }
+  const evidence =
+    /\b\d+\s*(token|tokens|tk)\b/.test(lower) ||
+    /max(imum)?\s+(context|token|input)/.test(lower) ||
+    /exceeded|over.*limit|too.*long/.test(lower);
+  return evidence;
 }
 
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
