@@ -817,6 +817,7 @@ test("akmIndex does not run slow passes", async () => {
     unaccounted: 0,
     htmlErrorCount: 0,
     cacheHits: 0,
+    retryAttempts: 0,
   });
   const graphSpy = spyOn(graphExtract, "runGraphExtractionPass").mockResolvedValue({
     considered: 0,

@@ -253,6 +253,8 @@ export interface ImproveHealthMetrics {
      * collapses toward zero just because the cache absorbs most candidates.
      */
     cacheHits: number;
+    /** Single bounded retries triggered for transient LLM failures during inference. */
+    retryAttempts: number;
     /** `considered - cacheHits - skippedAborted` — the number of parents that actually hit the LLM. Budget-abort items return {aborted:true} with no LLM call; excluding them from the denominator prevents budget-exhaustion from appearing as a quality regression. */
     freshAttempts: number;
     splitParents: number;
@@ -338,6 +340,8 @@ export interface ImproveHealthMetrics {
      * telemetry's `htmlErrorCount`.
      */
     htmlErrors: number;
+    /** Single bounded retries triggered for transient LLM failures during extraction. */
+    retryAttempts: number;
     durationMs: number;
   };
   /**
@@ -559,6 +563,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       ran: false,
       considered: 0,
       cacheHits: 0,
+      retryAttempts: 0,
       freshAttempts: 0,
       splitParents: 0,
       written: 0,
@@ -585,6 +590,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       truncations: 0,
       failures: 0,
       htmlErrors: 0,
+      retryAttempts: 0,
       durationMs: 0,
     },
     sessionExtraction: {
@@ -817,6 +823,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     const writtenFacts = toFiniteNumber(memoryInference.writtenFacts);
     metrics.memoryInference.considered += considered;
     metrics.memoryInference.cacheHits += toFiniteNumber(memoryInference.cacheHits);
+    metrics.memoryInference.retryAttempts += toFiniteNumber(memoryInference.retryAttempts);
     metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
     metrics.memoryInference.written += writtenFacts;
     metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
@@ -852,6 +859,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
       metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
       metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
       metrics.graphExtraction.htmlErrors += toFiniteNumber(telemetry.htmlErrorCount);
+      metrics.graphExtraction.retryAttempts += toFiniteNumber(telemetry.retryAttempts);
     }
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);

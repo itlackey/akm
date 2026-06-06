@@ -74,6 +74,12 @@ export interface MemoryInferenceResult {
    * rate (`writtenFacts / freshAttempts`) doesn't drift as the cache warms.
    */
   cacheHits: number;
+  /**
+   * Count of single bounded retries triggered for transient LLM failures
+   * during inference. Bumped only on the retry path — never together with a
+   * failure for the same call.
+   */
+  retryAttempts: number;
   /** Parents whose inference returned a derived memory. */
   splitParents: number;
   /** Derived memory files actually written to disk. */
@@ -161,6 +167,7 @@ export async function runMemoryInferencePass(
   const result: MemoryInferenceResult = {
     considered: 0,
     cacheHits: 0,
+    retryAttempts: 0,
     splitParents: 0,
     writtenFacts: 0,
     skippedNoFacts: 0,
@@ -235,6 +242,14 @@ export async function runMemoryInferencePass(
       // the hit count separately so the operational yield rate
       // (writtenFacts / freshAttempts) is interpretable as the cache warms.
       let fromCache = false;
+      // Count single bounded retries for transient LLM failures on this
+      // candidate. Bumped via the `onRetryAttempt` callback threaded into
+      // `chatCompletion`; surfaced as `retryAttempts` telemetry, never as a
+      // failure for the same call.
+      let retryAttempts = 0;
+      const onRetryAttempt = () => {
+        retryAttempts += 1;
+      };
       const derived = db
         ? await withLlmCache<DerivedMemoryDraft>(
             db,
@@ -251,6 +266,7 @@ export async function runMemoryInferencePass(
                   warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
                 },
                 inferTelemetry,
+                onRetryAttempt,
               ),
             validate,
             undefined,
@@ -270,22 +286,23 @@ export async function runMemoryInferencePass(
               warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
             },
             inferTelemetry,
+            onRetryAttempt,
           );
 
       if (!derived) {
-        return { skipped: true, fromCache } as const;
+        return { skipped: true, fromCache, retryAttempts } as const;
       }
       const written = await writeDerivedMemory(record, derived);
       if (written > 0) {
         markParentProcessed(record);
-        return { skipped: false, splitParent: true, written, fromCache } as const;
+        return { skipped: false, splitParent: true, written, fromCache, retryAttempts } as const;
       }
       // LLM produced a valid derived draft but no file was written — either
       // because `<parent>.derived.md` already exists on disk or
       // `writeAssetToSource` threw. Categorise as `childExists` so the
       // attempt is accounted for in health metrics rather than vanishing
       // into the freshAttempts denominator.
-      return { skipped: false, splitParent: false, written: 0, fromCache, childExists: true } as const;
+      return { skipped: false, splitParent: false, written: 0, fromCache, retryAttempts, childExists: true } as const;
     },
     // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
     // in config.json for local model servers (LM Studio, Ollama).
@@ -309,6 +326,9 @@ export async function runMemoryInferencePass(
     }
     if (res.fromCache) {
       result.cacheHits += 1;
+    }
+    if ("retryAttempts" in res) {
+      result.retryAttempts += res.retryAttempts;
     }
     if (res.skipped) {
       result.skippedNoFacts += 1;

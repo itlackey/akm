@@ -124,6 +124,7 @@ export interface GraphRuntimeTelemetry {
   truncationCount?: number;
   failureCount?: number;
   htmlErrorCount?: number;
+  retryAttempts?: number;
   filteredGenericEntities?: number;
   filteredInvalidRelations?: number;
   filteredLowConfidenceRelations?: number;
@@ -658,6 +659,7 @@ export async function extractGraphFromBodies(
             temperature: 0.1,
             timeoutMs: llmConfig.timeoutMs,
             signal,
+            onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
           },
         );
         if (!raw) return null;
@@ -845,7 +847,12 @@ export async function extractGraphFromBody(
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: userPrompt },
           ],
-          { temperature: 0.1, timeoutMs: llmConfig.timeoutMs, signal },
+          {
+            temperature: 0.1,
+            timeoutMs: llmConfig.timeoutMs,
+            signal,
+            onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
+          },
         );
         if (!raw) return empty();
         const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);

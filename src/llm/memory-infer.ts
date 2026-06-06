@@ -101,6 +101,7 @@ export async function compressMemoryToDerivedMemory(
   akmConfig?: AkmConfig,
   onFallback?: (evt: TryLlmFeatureFallbackEvent) => void,
   telemetry?: MemoryInferTelemetry,
+  onRetryAttempt?: () => void,
 ): Promise<DerivedMemoryDraft | undefined> {
   const trimmedBody = body.trim();
   if (!trimmedBody) return undefined;
@@ -123,6 +124,7 @@ export async function compressMemoryToDerivedMemory(
             timeoutMs: llmConfig.timeoutMs,
             signal,
             responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
+            onRetryAttempt,
           },
         );
         if (!raw) return undefined;

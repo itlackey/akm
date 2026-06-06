@@ -186,6 +186,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
     expect(result).toEqual({
       considered: 0,
       cacheHits: 0,
+      retryAttempts: 0,
       splitParents: 0,
       writtenFacts: 0,
       skippedNoFacts: 0,
@@ -265,6 +266,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     expect(result).toEqual({
       considered: 0,
       cacheHits: 0,
+      retryAttempts: 0,
       splitParents: 0,
       writtenFacts: 0,
       skippedNoFacts: 0,
@@ -340,6 +342,7 @@ describe("runMemoryInferencePass — enabled", () => {
     expect(result).toEqual({
       considered: 1,
       cacheHits: 0,
+      retryAttempts: 0,
       splitParents: 1,
       writtenFacts: 1,
       skippedNoFacts: 0,

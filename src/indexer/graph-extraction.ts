@@ -104,6 +104,8 @@ export interface GraphExtractionTelemetry {
    * rather than folded into the generic failure count (#497).
    */
   htmlErrorCount?: number;
+  /** Count of single bounded retries triggered for transient LLM failures. */
+  retryAttempts: number;
 }
 
 /** Persisted graph shape loaded from SQLite. */
@@ -190,6 +192,7 @@ const EMPTY_RESULT: GraphExtractionResult = {
     cacheMisses: 0,
     truncationCount: 0,
     failureCount: 0,
+    retryAttempts: 0,
   },
   warnings: [],
 };
@@ -524,12 +527,14 @@ export async function runGraphExtractionPass(
     truncationCount: 0,
     failureCount: 0,
     htmlErrorCount: 0,
+    retryAttempts: 0,
   };
   const canReusePreviousGraph = previousGraph.telemetry?.extractorId === extractorId;
   const runtimeTelemetry: graphExtract.GraphRuntimeTelemetry = {
     truncationCount: 0,
     failureCount: 0,
     htmlErrorCount: 0,
+    retryAttempts: 0,
     filteredGenericEntities: 0,
     filteredInvalidRelations: 0,
     filteredLowConfidenceRelations: 0,
@@ -817,6 +822,7 @@ export async function runGraphExtractionPass(
   telemetry.truncationCount = runtimeTelemetry.truncationCount ?? 0;
   telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
   telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
+  telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
 
   const qualityConsidered = mergedNodes.length;
   const qualityExtracted = mergedNodes.filter((node) => node.status === "extracted" && node.entities.length > 0).length;

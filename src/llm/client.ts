@@ -15,6 +15,7 @@
 import { fetchWithTimeout } from "../core/common";
 import { type LlmConnectionConfig, resolveSecret } from "../core/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+import { warnVerbose } from "../core/warn";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
 // to resolve `parseJsonResponse` and `parseEmbeddedJsonResponse` from this module.
@@ -140,14 +141,134 @@ export interface ChatCompletionOptions {
   responseSchema?: Record<string, unknown>;
   /** Override the config's enableThinking for this call. */
   enableThinking?: boolean;
+  /**
+   * Invoked exactly once when a retryable first failure triggers a single
+   * bounded retry. Callers use this to bump their own `retryAttempts`
+   * telemetry without touching `failureCount`. Fired regardless of whether
+   * the retry ultimately succeeds or fails.
+   */
+  onRetryAttempt?: () => void;
+}
+
+// ── Single bounded retry for transient failures ─────────────────────────────
+
+/** Lower bound of the jittered retry backoff (inclusive), in milliseconds. */
+const RETRY_BACKOFF_MIN_MS = 200;
+/** Upper bound of the jittered retry backoff (exclusive-ish), in milliseconds. */
+const RETRY_BACKOFF_MAX_MS = 800;
+/**
+ * Fraction of the effective timeout budget that, once consumed by the first
+ * attempt, causes the retry to be skipped — there is not enough budget left
+ * for a meaningful second attempt.
+ */
+const RETRY_BUDGET_FRACTION = 0.9;
+
+/**
+ * Sleep for `ms` milliseconds. Extracted as a named helper so tests can stub
+ * the backoff via the internal `sleep` option on {@link chatCompletion} and
+ * avoid real delays.
+ */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Compute a uniform jittered backoff in the [200, 800)ms range. */
+function retryBackoffMs(): number {
+  return RETRY_BACKOFF_MIN_MS + Math.random() * (RETRY_BACKOFF_MAX_MS - RETRY_BACKOFF_MIN_MS);
+}
+
+/**
+ * Detect whether an error message indicates a context-size-exceeded condition.
+ * Mirrors the heuristic in `graph-extract.ts` — retrying a context overflow
+ * cannot shrink the input, so it must not be retried.
+ */
+function looksLikeContextOverflow(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("context") &&
+    (lower.includes("context size") ||
+      lower.includes("context length") ||
+      lower.includes("context_window") ||
+      lower.includes("prompt too long") ||
+      lower.includes("exceeds"))
+  );
+}
+
+/**
+ * Decide whether a first-attempt {@link LlmCallError} is eligible for a single
+ * retry. Retryable: HTTP 5xx (`provider_error` with statusCode >= 500) and
+ * `network_error` whose message looks like a transient connection reset
+ * (ECONNRESET / EPIPE / "fetch failed"). NOT retryable: 4xx, `rate_limited`
+ * (429), `timeout`, `parse_error`, and context-overflow-classified errors.
+ */
+function isRetryable(err: LlmCallError): boolean {
+  if (looksLikeContextOverflow(err.message)) return false;
+  if (err.code === "provider_error") {
+    return typeof err.statusCode === "number" && err.statusCode >= 500;
+  }
+  if (err.code === "network_error") {
+    const lower = err.message.toLowerCase();
+    return lower.includes("econnreset") || lower.includes("epipe") || lower.includes("fetch failed");
+  }
+  return false;
+}
+
+/**
+ * Internal options for {@link chatCompletion} not exposed on the public
+ * {@link ChatCompletionOptions}. Tests inject a fast `sleep` so the retry
+ * backoff does not actually delay the suite.
+ */
+interface ChatCompletionInternalOptions extends ChatCompletionOptions {
+  /** Override the backoff sleep (defaults to the real {@link sleep}). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export async function chatCompletion(
   config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
   messages: ChatMessage[],
-  options?: ChatCompletionOptions,
+  options?: ChatCompletionInternalOptions,
 ): Promise<string> {
-  const timeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+  const effectiveTimeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+
+  const started = Date.now();
+  try {
+    return await chatCompletionAttempt(config, messages, options, effectiveTimeoutMs);
+  } catch (err) {
+    if (!(err instanceof LlmCallError) || !isRetryable(err)) throw err;
+
+    // Timeout-budget guard: if the first attempt already burned most of the
+    // budget, a second attempt cannot complete — skip the retry.
+    const elapsed = Date.now() - started;
+    const remaining = effectiveTimeoutMs - elapsed;
+    if (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || remaining <= 0) {
+      throw err;
+    }
+
+    // Signal the caller so it can bump `retryAttempts` (NOT `failureCount`).
+    options?.onRetryAttempt?.();
+    // Log the first failure at debug (verbose-only) level; the retry outcome is
+    // authoritative.
+    warnVerbose(`[akm] LLM transient failure (${err.code}); retrying once: ${err.message}`);
+
+    const wait = retryBackoffMs();
+    await (options?.sleep ?? sleep)(wait);
+
+    // The retry must not exceed the original budget.
+    return await chatCompletionAttempt(config, messages, options, remaining);
+  }
+}
+
+/**
+ * A single chat-completion attempt: one HTTP request/response cycle with no
+ * retry. {@link chatCompletion} wraps this with a single bounded retry for
+ * transient failures.
+ */
+async function chatCompletionAttempt(
+  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
+  messages: ChatMessage[],
+  options: ChatCompletionOptions | undefined,
+  timeoutMs: number,
+): Promise<string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const resolvedKey = resolveSecret(config.apiKey);
   if (resolvedKey) {
