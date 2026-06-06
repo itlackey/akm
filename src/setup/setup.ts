@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { akmInit, type InitResponse } from "../commands/init";
+import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../commands/tasks";
 import { isHttpUrl } from "../core/common";
 import type {
   AkmConfig,
@@ -46,6 +47,10 @@ import {
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
+import { saveGitStash } from "../sources/providers/git";
+import { backendNameForPlatform } from "../tasks/backends";
+import { type EmbeddedTask, listEmbeddedTasks } from "../tasks/embedded";
+import { parseSchedule } from "../tasks/schedule";
 import { detectAgentPlatforms, detectLMStudio, detectOllama, type LMStudioDetectionResult } from "./detect";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 import { loadSetupStashes } from "./registry-stash-loader";
@@ -1843,6 +1848,153 @@ export function stepAgentCliDetection(
 // ── Main Wizard ─────────────────────────────────────────────────────────────
 
 /**
+ * Normalise a task id the same way `akm tasks` does (strip a trailing `.yml`
+ * / `.md` suffix, trim) so the wizard can match embedded template ids against
+ * the ids reported by `akmTasksList()`.
+ */
+function normaliseTaskIdForMatch(raw: string): string {
+  return raw.trim().replace(/\.(yml|md)$/, "");
+}
+
+/**
+ * Interactive-only setup step: enable/disable embedded core tasks.
+ *
+ * Presents a multi-select of the bundled core task templates pre-checked
+ * against the user's currently-enabled tasks. On confirm:
+ *   - newly-checked & absent  → copy template (with edited schedule) into the
+ *     primary stash via `akmTasksAdd`, then `akmTasksSync`, then `akm sync`
+ *     (a no-op for non-git stashes).
+ *   - newly-checked & present-but-disabled → `akmTasksSetEnabled(id, true)`.
+ *   - previously-enabled & now unchecked    → `akmTasksSetEnabled(id, false)`
+ *     (keeps the stash file, removes the scheduler entry).
+ *   - unchanged → no action.
+ *
+ * Exported for testing. Not registered as `nonInteractive`, so `akm init` /
+ * `--yes` never reach it.
+ *
+ * The task primitives + git-sync helper are injected via `deps` (defaulting
+ * to the real implementations) so tests can supply fakes without
+ * `mock.module`-ing the shared `commands/tasks` / `sources/providers/git`
+ * modules — which would leak into unrelated test files (Bun's `mock.module`
+ * is process-global and not reverted by `mock.restore()`).
+ */
+export interface ScheduledTasksDeps {
+  list: typeof akmTasksList;
+  add: typeof akmTasksAdd;
+  setEnabled: typeof akmTasksSetEnabled;
+  sync: typeof akmTasksSync;
+  gitSync: typeof saveGitStash;
+}
+
+const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
+  list: akmTasksList,
+  add: akmTasksAdd,
+  setEnabled: akmTasksSetEnabled,
+  sync: akmTasksSync,
+  gitSync: saveGitStash,
+};
+
+export async function stepScheduledTasks(deps: ScheduledTasksDeps = DEFAULT_SCHEDULED_TASKS_DEPS): Promise<void> {
+  const embedded = listEmbeddedTasks();
+  if (embedded.length === 0) return;
+
+  // Snapshot current state so we can diff against the user's selection.
+  let installed: Awaited<ReturnType<typeof akmTasksList>>["tasks"] = [];
+  try {
+    installed = (await deps.list()).tasks;
+  } catch {
+    // A missing/empty tasks dir is fine — treat as nothing installed.
+    installed = [];
+  }
+  const byId = new Map<string, (typeof installed)[number]>();
+  for (const t of installed) byId.set(normaliseTaskIdForMatch(t.id), t);
+
+  // Pre-check tasks that are installed AND enabled.
+  const preChecked = embedded.filter((e) => byId.get(e.id)?.enabled === true).map((e) => e.id);
+
+  const stateLabel = (e: EmbeddedTask): string => {
+    const cur = byId.get(e.id);
+    if (!cur) return "not installed";
+    return cur.enabled ? "enabled" : "disabled";
+  };
+
+  const selected = await prompt(() =>
+    p.multiselect({
+      message: "Enable scheduled core tasks? (space to toggle, enter to confirm)",
+      required: false,
+      initialValues: preChecked,
+      options: embedded.map((e) => ({
+        value: e.id,
+        label: e.label,
+        hint: `${e.description} — ${e.schedule} [${stateLabel(e)}]`,
+      })),
+    }),
+  );
+
+  const selectedSet = new Set(selected as string[]);
+
+  // Resolve per-task schedule edits for newly-checked, not-yet-installed tasks.
+  const scheduleFor = new Map<string, string>();
+  for (const e of embedded) {
+    const cur = byId.get(e.id);
+    if (selectedSet.has(e.id) && !cur) {
+      const edited = await prompt(() =>
+        p.text({
+          message: `Schedule for ${e.label}?`,
+          initialValue: e.schedule,
+          validate(value) {
+            const candidate = (value ?? "").trim() || e.schedule;
+            try {
+              parseSchedule(candidate, backendNameForPlatform());
+            } catch (err) {
+              return err instanceof Error ? err.message : "Invalid schedule.";
+            }
+            return undefined;
+          },
+        }),
+      );
+      const sched = ((edited as string) ?? "").trim() || e.schedule;
+      scheduleFor.set(e.id, sched);
+    }
+  }
+
+  let syncNeeded = false;
+  for (const e of embedded) {
+    const cur = byId.get(e.id);
+    const checked = selectedSet.has(e.id);
+    if (checked && !cur) {
+      // New task: copy template into the primary stash + install scheduler entry.
+      const schedule = scheduleFor.get(e.id) ?? e.schedule;
+      await deps.add({
+        id: e.id,
+        schedule,
+        command: e.command,
+        description: e.description,
+      });
+      syncNeeded = true;
+    } else if (checked && cur && !cur.enabled) {
+      // Present but disabled → re-enable.
+      await deps.setEnabled(e.id, true);
+    } else if (!checked && cur?.enabled) {
+      // Previously enabled, now unchecked → disable (keep the stash file).
+      await deps.setEnabled(e.id, false);
+    }
+    // No state change → no action.
+  }
+
+  if (syncNeeded) {
+    // Reconcile scheduler entries with on-disk YAML, then commit the new file
+    // to git (a no-op for non-git stashes).
+    await deps.sync();
+    try {
+      deps.gitSync(undefined, "akm setup: enable scheduled tasks");
+    } catch {
+      // Non-fatal — the task is installed regardless of git sync outcome.
+    }
+  }
+}
+
+/**
  * Build the canonical list of `SetupStep`s for the interactive wizard.
  * Exposed (and exported) so tests and `akm init` can compose subsets.
  *
@@ -1967,6 +2119,15 @@ export function buildSetupSteps(options: {
       async run(ctx) {
         const output = await stepOutputConfig(ctx.config);
         ctx.apply({ output });
+      },
+    },
+    {
+      id: "scheduled-tasks",
+      label: "Scheduled Tasks",
+      // Interactive-only: `akm init` / `--yes` skip this step so headless
+      // runs never enable a scheduled task (see issue #512).
+      async run() {
+        await stepScheduledTasks();
       },
     },
   ];

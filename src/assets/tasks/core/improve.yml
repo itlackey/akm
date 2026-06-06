@@ -1,0 +1,4 @@
+schedule: "0 2 * * *"
+command: akm improve --auto-accept safe
+enabled: true
+description: Run improve pipeline nightly
