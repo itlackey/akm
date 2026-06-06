@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { getWorkflowDbPath } from "../core/paths";
+import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 
 /**
  * workflow.db — Durable SQLite database for workflow run state.
@@ -112,21 +113,12 @@ function ensureBaseSchema(db: Database): void {
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────
-
-/**
- * A single migration: a stable string `id` and idempotent SQL `up` script.
- *
- * Rules:
- *   - `id` is permanent and must never be reused.
- *   - `up` must be idempotent (use IF NOT EXISTS, etc.).
- *   - `up` must not DROP any table that holds durable data.
- *   - `up` must not RENAME or change the type of an existing column.
- *   - To add a column: use `ALTER TABLE … ADD COLUMN … DEFAULT …`.
- */
-interface Migration {
-  id: string;
-  up: string;
-}
+//
+// The runner itself (ensureMigrationsTable + runMigrations) lives in the shared
+// engine at src/storage/engines/sqlite-migrations.ts. This module owns its own
+// MIGRATIONS array plus the pre-versioning `bootstrap` hook, and delegates
+// application to that shared runner. The {@link Migration} interface is imported
+// from there.
 
 /**
  * All workflow.db migrations in application order. New migrations are
@@ -189,19 +181,6 @@ const MIGRATIONS: Migration[] = [
 const SCOPE_KEY_MIGRATION_ID = "001-add-scope-key";
 
 /**
- * Create the migrations table if it does not exist. Called unconditionally on
- * every open so a fresh database bootstraps correctly.
- */
-function ensureMigrationsTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-}
-
-/**
  * Detect whether a column exists on a given table.
  */
 function hasColumn(db: Database, table: string, column: string): boolean {
@@ -235,26 +214,13 @@ function bootstrapPreVersioningDb(db: Database): void {
 /**
  * Apply every pending migration in a single transaction per migration.
  *
- * Each migration is applied in its own transaction so a failure in migration N
- * does not roll back already-applied migrations 1..N-1. The migration row is
- * inserted AFTER the DDL succeeds — a crash mid-migration leaves no row and
- * the migration is retried on next open.
+ * Delegates to the shared SQLite migration engine, passing the
+ * `bootstrapPreVersioningDb` hook so databases created before this file gained
+ * migration tracking back-fill their scope_key row instead of re-running the
+ * ALTER.
  *
  * Called automatically by {@link openWorkflowDatabase}.
  */
 export function runMigrations(db: Database): void {
-  ensureMigrationsTable(db);
-  bootstrapPreVersioningDb(db);
-
-  const appliedRows = db.prepare("SELECT id FROM schema_migrations").all() as Array<{ id: string }>;
-  const applied = new Set(appliedRows.map((r) => r.id));
-
-  for (const migration of MIGRATIONS) {
-    if (applied.has(migration.id)) continue;
-
-    db.transaction(() => {
-      db.exec(migration.up);
-      db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
-    })();
-  }
+  runSqliteMigrations(db, MIGRATIONS, { bootstrap: bootstrapPreVersioningDb });
 }
