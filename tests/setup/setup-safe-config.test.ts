@@ -176,7 +176,7 @@ describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () =>
 });
 
 describe("runSetupWithDefaults — idempotency", () => {
-  test("preserves every existing value and is byte-identical across runs", async () => {
+  test("preserves every existing value and is idempotent across runs", async () => {
     seedFullConfig();
 
     await runSetupWithDefaults({ noInit: true });
@@ -185,7 +185,13 @@ describe("runSetupWithDefaults — idempotency", () => {
     await runSetupWithDefaults({ noInit: true });
     const second = fs.readFileSync(getConfigPath(), "utf8");
 
-    expect(second).toBe(first);
+    // Idempotency contract: running N times == running once. Detection
+    // (#514) may legitimately inject profiles (e.g. a live local LLM), so the
+    // first run is not a no-op — but the SECOND run must add/change nothing.
+    // Compare structurally rather than byte-for-byte: JSON object key
+    // insertion order is not part of the config's identity, and the apply
+    // helpers can reorder `profiles`/`defaults` keys without altering content.
+    expect(JSON.parse(second)).toEqual(JSON.parse(first));
 
     // No pre-existing value was overwritten by a default.
     const written = JSON.parse(first) as Record<string, unknown>;
@@ -193,7 +199,10 @@ describe("runSetupWithDefaults — idempotency", () => {
     expect(written.output).toEqual({ format: "json", detail: "full" });
     expect(written.sources).toEqual([{ path: "/home/tester/akm/skills", type: "filesystem" }]);
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
-    expect(written.defaults).toEqual({ agent: "claude" });
+    // The pre-existing agent default must survive untouched. Detection (#514)
+    // may ADD other defaults (e.g. an `llm` default when a live local server is
+    // present on the host), but it must never overwrite the seeded `agent`.
+    expect((written.defaults as Record<string, unknown>).agent).toBe("claude");
   });
 
   test("on a fresh install writes config and takes no backup", async () => {
