@@ -1850,7 +1850,8 @@ const importKnowledgeCommand = defineCommand({
     },
     name: {
       type: "string",
-      description: "Knowledge name (defaults to the source filename or content slug)",
+      description:
+        "Knowledge name (defaults to the source filename or content slug). A nested relative path like 'projects/example/overview' creates a subdirectory under knowledge/.",
     },
     force: {
       type: "boolean",

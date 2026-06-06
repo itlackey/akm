@@ -54,7 +54,8 @@ export const rememberCommand = defineCommand({
     },
     name: {
       type: "string",
-      description: "Memory name (defaults to a slug from the content)",
+      description:
+        "Memory name (defaults to a slug from the content). A nested relative path like 'personal/grocery-list' creates a subdirectory under memories/.",
     },
     force: {
       type: "boolean",
