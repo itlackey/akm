@@ -192,6 +192,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
     });
   });
 
@@ -270,6 +271,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
     });
     expect(invocations).toBe(0);
     // Parent is not mutated when the feature gate blocks.
@@ -344,6 +346,7 @@ describe("runMemoryInferencePass — enabled", () => {
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
     });
 
     const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));

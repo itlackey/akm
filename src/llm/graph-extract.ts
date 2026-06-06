@@ -26,7 +26,7 @@ import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" 
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { warn, warnVerbose } from "../core/warn";
-import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
+import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 
 /**
@@ -116,6 +116,7 @@ export interface GraphBatchState {
 export interface GraphRuntimeTelemetry {
   truncationCount?: number;
   failureCount?: number;
+  htmlErrorCount?: number;
   filteredGenericEntities?: number;
   filteredInvalidRelations?: number;
   filteredLowConfidenceRelations?: number;
@@ -866,6 +867,12 @@ export async function extractGraphFromBody(
               `Consider increasing llm.contextLength in config.json.`,
           );
           return empty("context_limit", "failed");
+        } else if (err instanceof LlmCallError && err.code === "provider_html_error") {
+          bumpTelemetry(options.telemetry, "htmlErrorCount");
+          warn(
+            `graph extraction: provider returned HTML instead of JSON for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}: ${errMsg}`,
+          );
+          return empty("llm_error", "failed");
         } else {
           bumpTelemetry(options.telemetry, "failureCount");
           warn(

@@ -23,7 +23,7 @@
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { warn } from "../core/warn";
-import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
+import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 
 /** Hard cap on body chars sent to the model — pragmatic and matches `runLlmEnrich`. */
@@ -46,6 +46,17 @@ export interface DerivedMemoryDraft {
   tags: string[];
   searchHints: string[];
   content: string;
+}
+
+/**
+ * Mutable telemetry sink for the memory-inference pass. `compressMemoryToDerivedMemory`
+ * does not carry a telemetry struct of its own, so the caller passes a small
+ * sink that the helper bumps when it categorizes a distinct failure class
+ * (currently: a provider returning HTML where JSON was expected).
+ */
+export interface MemoryInferTelemetry {
+  /** Calls where the provider returned an HTML body instead of JSON. */
+  htmlErrorCount?: number;
 }
 
 /**
@@ -89,6 +100,7 @@ export async function compressMemoryToDerivedMemory(
   signal?: AbortSignal,
   akmConfig?: AkmConfig,
   onFallback?: (evt: TryLlmFeatureFallbackEvent) => void,
+  telemetry?: MemoryInferTelemetry,
 ): Promise<DerivedMemoryDraft | undefined> {
   const trimmedBody = body.trim();
   if (!trimmedBody) return undefined;
@@ -142,6 +154,11 @@ export async function compressMemoryToDerivedMemory(
         }
         return { title, description, tags, searchHints, content };
       } catch (err) {
+        if (err instanceof LlmCallError && err.code === "provider_html_error") {
+          if (telemetry) telemetry.htmlErrorCount = (telemetry.htmlErrorCount ?? 0) + 1;
+          warn(`memory inference: provider returned HTML instead of JSON; skipping memory: ${toErrorMessage(err)}`);
+          return undefined;
+        }
         warn(`memory inference failed: ${toErrorMessage(err)}`);
         return undefined;
       }

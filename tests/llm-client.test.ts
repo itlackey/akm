@@ -212,6 +212,99 @@ describe("chatCompletion error redaction", () => {
   });
 });
 
+// ── HTML / non-JSON response categorization (#497) ──────────────────────────
+
+function createResponseServer(
+  statusCode: number,
+  body: string,
+  contentType = "text/html",
+): { url: string; server: ReturnType<typeof Bun.serve> } {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(body, { status: statusCode, headers: { "Content-Type": contentType } });
+    },
+  });
+  return { url: `http://localhost:${server.port}`, server };
+}
+
+const LM_STUDIO_HTML =
+  '<!DOCTYPE html>\n<html lang="en"><head><title>LM Studio</title></head>' +
+  '<body><div id="app">Loading…</div></body></html>';
+
+describe("chatCompletion HTML response categorization", () => {
+  async function callExpectingError(config: LlmConnectionConfig): Promise<LlmCallError> {
+    let caught: unknown;
+    try {
+      await chatCompletion(config, [{ role: "user", content: "hi" }]);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(LlmCallError);
+    return caught as LlmCallError;
+  }
+
+  test("HTML 500 body produces provider_html_error (not provider_error)", async () => {
+    const { url, server } = createResponseServer(500, LM_STUDIO_HTML);
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_html_error");
+      expect(err.statusCode).toBe(500);
+      expect(err.message).toContain("(500)");
+      expect(err.message).toContain(url);
+      // Excerpt should be plain text (tags stripped).
+      expect(err.message).not.toContain("<html");
+      expect(err.message).toContain("LM Studio");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("HTML 502 body also produces provider_html_error", async () => {
+    const { url, server } = createResponseServer(502, LM_STUDIO_HTML);
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_html_error");
+      expect(err.statusCode).toBe(502);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("JSON 500 body still produces the generic provider_error path", async () => {
+    const { url, server } = createResponseServer(500, '{"error":"upstream exploded"}', "application/json");
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_error");
+      expect(err.statusCode).toBe(500);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("non-error HTML 200 (where JSON expected) surfaces provider_html_error, not a raw SyntaxError", async () => {
+    const { url, server } = createResponseServer(200, LM_STUDIO_HTML);
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_html_error");
+      expect(err.statusCode).toBe(200);
+      expect(err.message).not.toContain("<html");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("malformed (non-HTML) JSON 200 still maps to parse_error", async () => {
+    const { url, server } = createResponseServer(200, "this is not json {", "application/json");
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("parse_error");
+    } finally {
+      server.stop();
+    }
+  });
+});
+
 describe("parseEmbeddedJsonResponse", () => {
   test("parses direct JSON", () => {
     expect(parseEmbeddedJsonResponse<{ ok: boolean }>('{"ok":true}')).toEqual({ ok: true });
