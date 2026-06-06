@@ -25,7 +25,13 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "../core/config";
-import { DEFAULT_CONFIG, getDefaultLlmConfig, loadUserConfig, saveConfig } from "../core/config";
+import {
+  DEFAULT_CONFIG,
+  getDefaultLlmConfig,
+  getEffectiveRegistries,
+  loadUserConfig,
+  saveConfig,
+} from "../core/config";
 import { backupExistingConfig } from "../core/config-io";
 import { ConfigError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
@@ -42,6 +48,7 @@ import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectLMStudio, detectOllama, type LMStudioDetectionResult } from "./detect";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
+import { loadSetupStashes } from "./registry-stash-loader";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
 
 // ── Setup sandbox guard ─────────────────────────────────────────────────────
@@ -199,36 +206,6 @@ function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape | unde
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-type RecommendedGitHubRepo = {
-  url: string;
-  name: string;
-  hint: string;
-  defaultSelected?: boolean;
-};
-
-type ConfiguredSourceOption = {
-  value: string;
-  label: string;
-  hint: string;
-};
-
-/**
- * Recommended GitHub repositories shown during setup.
- */
-const RECOMMENDED_GITHUB_REPOS: RecommendedGitHubRepo[] = [
-  {
-    url: "https://github.com/itlackey/akm-stash",
-    name: "itlackey/akm-stash",
-    hint: "official onboarding stash",
-    defaultSelected: true,
-  },
-  {
-    url: "https://github.com/andrewyng/context-hub",
-    name: "andrewyng/context-hub",
-    hint: "optional community prompt and context stash",
-  },
-];
-
 // Approximate first-download sizes used in the setup note.
 // LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
 const LOCAL_MODEL_APPROX_SIZE_MB = 130;
@@ -293,6 +270,12 @@ async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null>
 function configuredSourceKey(source: SourceConfigEntry): string {
   return `${source.type}:${source.path ?? source.url ?? source.name ?? "unknown"}`;
 }
+
+type ConfiguredSourceOption = {
+  value: string;
+  label: string;
+  hint: string;
+};
 
 function describeConfiguredSource(source: SourceConfigEntry): ConfiguredSourceOption {
   const target = source.path ?? source.url ?? "(unknown target)";
@@ -1122,49 +1105,59 @@ export async function stepAddSources(
     p.note(renderInstalledSourceList(current.installed ?? []), "Installed managed stashes (preserved)");
   }
 
-  // ── Recommended GitHub repos ───────────────────────────────────────────
-  // Skip the prompt entirely when there are no recommendations to show.
-  // The infrastructure is retained for a future registry-driven version.
-  if (RECOMMENDED_GITHUB_REPOS.length > 0) {
+  // ── Registry-driven stash recommendations ─────────────────────────────
+  // Fetch available stashes from the official registry (cached, stale-ok).
+  // Falls back to the bundled list when the registry is unreachable.
+  const registryUrl =
+    getEffectiveRegistries(current)[0]?.url ??
+    "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json";
+
+  const availableStashes = await loadSetupStashes(registryUrl);
+
+  if (availableStashes.length > 0) {
     const existingUrls = new Set(sources.map((s) => s.url));
 
-    const repoOptions = RECOMMENDED_GITHUB_REPOS.map((r) => ({
-      value: r.url,
-      label: r.name,
-      hint: existingUrls.has(r.url) ? `${r.hint} (already added)` : r.hint,
+    const stashOptions = availableStashes.map((s) => ({
+      value: s.url,
+      label: s.name,
+      hint: existingUrls.has(s.url) ? `${s.description} (already added)` : s.description || s.source,
     }));
 
+    // Pre-check: already-installed stashes OR default-selected on fresh install
     const initialValues =
       sources.length > 0
-        ? repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value)
-        : RECOMMENDED_GITHUB_REPOS.filter((r) => r.defaultSelected).map((r) => r.url);
+        ? stashOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value)
+        : availableStashes.filter((s) => s.defaultSelected).map((s) => s.url);
 
-    const selectedRepos = await prompt(() =>
+    const selectedUrls = await prompt(() =>
       p.multiselect({
-        message: "Recommended GitHub repositories — toggle to add or remove:",
-        options: repoOptions,
+        message:
+          availableStashes[0]?.source === "registry"
+            ? "Available stashes from the AKM registry — toggle to add or remove:"
+            : "Recommended stash sources — toggle to add or remove:",
+        options: stashOptions,
         initialValues,
         required: false,
       }),
     );
 
-    // Add newly selected repos
-    for (const url of selectedRepos) {
+    // Add newly selected stashes
+    for (const url of selectedUrls) {
       if (!existingUrls.has(url)) {
-        const rec = RECOMMENDED_GITHUB_REPOS.find((r) => r.url === url);
-        sources.push({ type: "git", url, name: rec?.name });
+        const entry = availableStashes.find((s) => s.url === url);
+        sources.push({ type: "git", url, name: entry?.name });
         existingUrls.add(url);
       }
     }
 
-    // Remove deselected repos that were previously configured
-    for (const rec of RECOMMENDED_GITHUB_REPOS) {
-      if (existingUrls.has(rec.url) && !selectedRepos.includes(rec.url)) {
-        const idx = sources.findIndex((s) => s.url === rec.url);
+    // Remove deselected stashes that were previously configured
+    for (const entry of availableStashes) {
+      if (existingUrls.has(entry.url) && !selectedUrls.includes(entry.url)) {
+        const idx = sources.findIndex((s) => s.url === entry.url);
         if (idx !== -1) {
           sources.splice(idx, 1);
-          existingUrls.delete(rec.url);
-          p.log.info(`Removed ${rec.name}.`);
+          existingUrls.delete(entry.url);
+          p.log.info(`Removed ${entry.name}.`);
         }
       }
     }
