@@ -1442,6 +1442,26 @@
         }
       },
       "additionalProperties": false
+    },
+    "setup": {
+      "type": "object",
+      "properties": {
+        "taskSchedules": {
+          "type": "object",
+          "properties": {
+            "improve": {
+              "type": "string",
+              "minLength": 1
+            },
+            "index": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -2883,6 +2903,26 @@
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "setup": {
+          "type": "object",
+          "properties": {
+            "taskSchedules": {
+              "type": "object",
+              "properties": {
+                "improve": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "index": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

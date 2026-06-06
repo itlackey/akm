@@ -34,7 +34,7 @@ import {
   saveConfig,
 } from "../core/config";
 import { backupExistingConfig } from "../core/config-io";
-import { ConfigError } from "../core/errors";
+import { ConfigError, UsageError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
@@ -51,7 +51,15 @@ import { saveGitStash } from "../sources/providers/git";
 import { backendNameForPlatform } from "../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../tasks/embedded";
 import { parseSchedule } from "../tasks/schedule";
-import { detectAgentPlatforms, detectLMStudio, detectOllama, type LMStudioDetectionResult } from "./detect";
+import {
+  type DetectedEnvironment,
+  detectAgentPlatforms,
+  detectEnvironment,
+  detectLMStudio,
+  detectOllama,
+  type LMStudioDetectionResult,
+  renderDetectionSummary,
+} from "./detect";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 import { loadSetupStashes } from "./registry-stash-loader";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
@@ -2006,6 +2014,7 @@ export function buildSetupSteps(options: {
   online: boolean;
   semanticSearchOutcome: { mode: "off" | "auto"; prepareAssets: boolean };
   preferredStashDir?: string;
+  detection?: DetectedEnvironment;
 }): {
   steps: SetupStep[];
   /** Latest semantic-search choice; populated by the semantic-search step. */
@@ -2017,8 +2026,9 @@ export function buildSetupSteps(options: {
   let ollamaEndpoint: string | undefined;
   let ollamaChatModels: string[] | undefined;
   let lmStudioResult: LMStudioDetectionResult | undefined;
-  // Harness configs detected once and shared with the LLM step.
-  const harnessConfigs = detectHarnessConfigs();
+  // Harness configs detected once and shared with the LLM step. Reuse the
+  // aggregate detection's harness configs when available so we detect once.
+  const harnessConfigs = options.detection?.harnessConfigs ?? detectHarnessConfigs();
 
   const steps: SetupStep[] = [
     {
@@ -2164,11 +2174,32 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
     );
   }
 
+  // Aggregate environment detection — run once before any prompt and surface
+  // a summary so the user sees what was auto-detected. NAMES only, never
+  // API key values.
+  const detection = await detectEnvironment({ existingStashDir: current.stashDir });
+  p.note(renderDetectionSummary(detection), "Detected environment");
+
+  // Interactive entry point for `--reset-recommended`: offer to apply the
+  // opinionated, detection-derived defaults and skip the step-by-step wizard.
+  const useRecommended = await prompt(() =>
+    p.confirm({
+      message: "Apply recommended defaults from the detected environment (merged into your existing config)?",
+      initialValue: false,
+    }),
+  );
+  if (useRecommended) {
+    const result = await runResetRecommended({ dir: opts?.dir, noInit: opts?.noInit });
+    p.outro(`Recommended configuration saved to ${result.configPath}`);
+    return;
+  }
+
   const ctx = createSetupContext(current, { nonInteractive: false });
   const { steps, outcome } = buildSetupSteps({
     online,
     semanticSearchOutcome: { mode: current.semanticSearchMode, prepareAssets: false },
     preferredStashDir: resolvedStashDir,
+    detection,
   });
 
   // Wrap each step with a `p.log.step()` header so the wizard UI is
@@ -2374,10 +2405,39 @@ export async function runSetupWithDefaults(opts: {
   // Ensure stashDir is set
   if (!ctx.config.stashDir) ctx.apply({ stashDir });
 
+  // Aggregate environment detection — apply detected values directly.
+  const env = await detectEnvironment({ existingStashDir: ctx.config.stashDir });
+
+  // Apply a detected LLM (live local server) when the config has none yet.
+  if (!getDefaultLlmConfig(ctx.config)) {
+    const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);
+    if (liveLocal?.defaultModel) {
+      const llm: LlmConnectionConfig = {
+        provider: "local",
+        endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1`,
+        model: liveLocal.defaultModel,
+      };
+      // A required field being unresolvable must fail loudly rather than write
+      // a broken config (--yes acceptance criterion).
+      if (!llm.endpoint?.trim() || !llm.model?.trim()) {
+        throw new UsageError(
+          "Detected a local LLM server but could not resolve a required field (endpoint/model). Re-run `akm setup` interactively.",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      ctx.apply(applyLegacyLlm(ctx.config, llm));
+    }
+  }
+
   // Auto-detect agent CLI if not already configured
   if (!ctx.config.defaults?.agent) {
-    const detected = detectAgentCliProfiles(undefined);
-    const defaultProfile = pickDefaultAgentProfile(detected, undefined);
+    let defaultProfile: string | undefined;
+    if (env.harness !== "none") {
+      defaultProfile = env.harness;
+    } else {
+      const detected = detectAgentCliProfiles(undefined);
+      defaultProfile = pickDefaultAgentProfile(detected, undefined);
+    }
     if (defaultProfile) {
       ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
     }
@@ -2426,6 +2486,131 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Run ONLY environment detection and return the typed result. Performs no
+ * config writes and shows no prompts. Backs `akm setup --detect-only`.
+ *
+ * SAFETY: The returned object carries env var NAMES only — never any API key
+ * value.
+ */
+export async function runDetectOnly(): Promise<DetectedEnvironment> {
+  const current = loadUserConfig();
+  return detectEnvironment({ existingStashDir: current.stashDir });
+}
+
+/**
+ * Derive opinionated defaults from a detection result.
+ *
+ * - Best harness → agent default (when a profile maps to it).
+ * - Fastest live local model, else the first detected cloud key's provider.
+ * - `nomic-embed-text` embeddings when a local LLM is live.
+ * - improve task `0 2 * * *`, index task `0 4 * * *`.
+ *
+ * Returns a partial `AkmConfig`-shaped object plus a legacy `llm` block, ready
+ * to merge. Never includes an API key value.
+ */
+export function deriveRecommendedConfig(env: DetectedEnvironment): {
+  llm?: LlmConnectionConfig;
+  embedding?: EmbeddingConnectionConfig;
+  agentDefault?: string;
+  taskSchedules?: { improve?: string; index?: string };
+} {
+  const result: ReturnType<typeof deriveRecommendedConfig> = {};
+
+  // Best harness → agent default.
+  if (env.harness === "opencode-sdk") result.agentDefault = "opencode-sdk";
+  else if (env.harness === "opencode") result.agentDefault = "opencode";
+  else if (env.harness === "claude") result.agentDefault = "claude";
+
+  // LLM: prefer a live local server, else a detected cloud provider key.
+  const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);
+  if (liveLocal?.defaultModel) {
+    result.llm = {
+      provider: "local",
+      endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1`,
+      model: liveLocal.defaultModel,
+    };
+    // Local LLM live → use a local embedding model.
+    result.embedding = { provider: "ollama", model: "nomic-embed-text", endpoint: `${liveLocal.baseUrl}/v1` };
+  } else {
+    // Map a detected cloud API-key provider to an llm endpoint. NAMES only —
+    // the value lives in the env var the user already set; we never read it.
+    const cloud = env.providers.find((pr) => pr.kind === "apiKey");
+    if (cloud) {
+      const endpoint = cloudEndpointForProvider(cloud.provider);
+      const model = cloudDefaultModelForProvider(cloud.provider);
+      if (endpoint && model) {
+        result.llm = { provider: cloud.provider, endpoint, model };
+      }
+    }
+  }
+
+  result.taskSchedules = { improve: "0 2 * * *", index: "0 4 * * *" };
+
+  return result;
+}
+
+function cloudEndpointForProvider(provider: string): string | undefined {
+  switch (provider) {
+    case "anthropic":
+      return "https://api.anthropic.com/v1";
+    case "openai":
+      return "https://api.openai.com/v1";
+    case "gemini":
+      return "https://generativelanguage.googleapis.com/v1beta/openai";
+    case "groq":
+      return "https://api.groq.com/openai/v1";
+    default:
+      return undefined;
+  }
+}
+
+function cloudDefaultModelForProvider(provider: string): string | undefined {
+  switch (provider) {
+    case "anthropic":
+      return "claude-sonnet-4-5";
+    case "openai":
+      return "gpt-4o-mini";
+    case "gemini":
+      return "gemini-1.5-flash";
+    case "groq":
+      return "llama-3.3-70b-versatile";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * `akm setup --reset-recommended`: merge opinionated, detection-derived
+ * defaults into the existing config WITHOUT removing pre-existing custom keys.
+ * Uses the same merge path as {@link runSetupFromConfig} so custom keys survive
+ * (follows #511 semantics).
+ */
+export async function runResetRecommended(opts: {
+  dir?: string;
+  noInit?: boolean;
+  probe?: boolean;
+}): Promise<SetupSummary> {
+  const current = loadUserConfig();
+  const env = await detectEnvironment({ existingStashDir: current.stashDir });
+  const recommended = deriveRecommendedConfig(env);
+
+  const incoming: Partial<AkmConfig> & { llm?: LlmConnectionConfig; agent?: LegacyAgentBlockShape } = {};
+  if (recommended.llm) incoming.llm = recommended.llm;
+  if (recommended.embedding) incoming.embedding = recommended.embedding;
+  if (recommended.agentDefault) incoming.agent = { default: recommended.agentDefault };
+  if (recommended.taskSchedules) {
+    (incoming as Record<string, unknown>).setup = { taskSchedules: recommended.taskSchedules };
+  }
+
+  return runSetupFromConfig({
+    configJson: JSON.stringify(incoming),
+    dir: opts.dir,
+    noInit: opts.noInit,
+    probe: opts.probe,
+  });
+}
+
+/**
  * Apply a JSON config blob non-interactively, merging it with the current config.
  * Validates required sub-fields and strips unknown/restricted keys.
  */
@@ -2463,6 +2648,7 @@ export async function runSetupFromConfig(opts: {
     "output",
     "profiles",
     "defaults",
+    "setup",
   ]);
   for (const key of Object.keys(incoming)) {
     if (!ALLOWED_KEYS.has(key)) {

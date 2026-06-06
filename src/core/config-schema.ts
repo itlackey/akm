@@ -542,6 +542,28 @@ export const IndexConfigSchema = z.preprocess(
     .catchall(IndexPassConfigSchema),
 );
 
+// ── Setup-derived recommendations ──────────────────────────────────────────
+
+/**
+ * Cron-style schedule hints derived by `akm setup --reset-recommended`.
+ *
+ * These record the *recommended* cadence for the improve and index background
+ * tasks. They are advisory metadata persisted into config so the value
+ * survives a re-run; actual task scheduling lives in the tasks subsystem.
+ */
+export const SetupTaskSchedulesSchema = z
+  .object({
+    improve: z.string().min(1).optional(),
+    index: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const SetupConfigSchema = z
+  .object({
+    taskSchedules: SetupTaskSchedulesSchema.optional(),
+  })
+  .strict();
+
 // ── Top-level AkmConfig ────────────────────────────────────────────────────
 
 /**
@@ -572,6 +594,7 @@ export const AkmConfigShape = {
   feedback: FeedbackConfigSchema.optional(),
   archiveRetentionDays: nonNegativeNumber.optional(),
   improve: ImproveConfigSchema.optional(),
+  setup: SetupConfigSchema.optional(),
 } as const;
 
 export const AkmConfigBaseSchema = z.object(AkmConfigShape).strict();
