@@ -163,3 +163,50 @@ describe("akm import — --path", () => {
     expect(json.error).toMatch(/--path/);
   });
 });
+
+describe("akm workflow create — --path", () => {
+  test("places the workflow under --path and returns a nested ref", async () => {
+    const result = await runCli(["workflow", "create", "myflow", "--path", "release"]);
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { ref: string; path: string };
+    expect(json.ref).toBe("workflow:release/myflow");
+    expect(fs.existsSync(path.join(currentStashDir, "workflows", "release", "myflow.md"))).toBe(true);
+  });
+
+  test("rejects a '/' in the name positional and points at --path", async () => {
+    const result = await runCli(["workflow", "create", "release/myflow"]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatch(/--path/);
+    expect(fs.existsSync(path.join(currentStashDir, "workflows", "release"))).toBe(false);
+  });
+});
+
+describe("akm env create — --path", () => {
+  test("places the env file under --path", async () => {
+    const result = await runCli(["env", "create", "prod", "--path", "staging"]);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(currentStashDir, "env", "staging", "prod.env"))).toBe(true);
+  });
+
+  test("rejects a '/' in the env name and points at --path", async () => {
+    const result = await runCli(["env", "create", "staging/prod"]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatch(/--path/);
+    expect(fs.existsSync(path.join(currentStashDir, "env", "staging"))).toBe(false);
+  });
+});
+
+describe("akm secret set / akm propose — flat-name enforcement", () => {
+  test("secret set rejects a '/' in the ref name and points at --path", async () => {
+    const result = await runCli(["secret", "set", "team/deploy-key"]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatch(/--path/);
+    expect(fs.existsSync(path.join(currentStashDir, "secrets", "team"))).toBe(false);
+  });
+
+  test("propose rejects a '/' in the name positional before invoking any agent", async () => {
+    const result = await runCli(["propose", "skill", "team/helper", "--task", "do a thing"]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatch(/--path/);
+  });
+});

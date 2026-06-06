@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset-create";
 import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isHttpUrl, isWithin, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config";
@@ -48,38 +49,9 @@ export function normalizeMarkdownAssetName(name: string | undefined, fallback: s
   return trimmed;
 }
 
-/**
- * Normalise an optional `--path` value: a relative directory, applied rooted
- * at the asset's type directory (e.g. `personal/projects` under `memories/`).
- * Rejects absolute paths and `.`/`..` segments. Returns `""` when unset.
- */
-export function normalizeCreateSubPath(subPath: string | undefined): string {
-  if (subPath === undefined) return "";
-  const trimmed = subPath
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "");
-  if (!trimmed) return "";
-  if (trimmed.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new UsageError("--path must be a relative directory without '.' or '..' segments.");
-  }
-  return trimmed;
-}
-
-/**
- * Enforce that an explicit, user-supplied `--name` is a flat (single-segment)
- * name. Subdirectory placement is the job of `--path`, not `--name`. This is
- * applied at the command layer to the *user's* `--name` only — system-derived
- * names (e.g. a URL-path-derived knowledge name) may still be nested.
- */
-export function assertFlatAssetName(name: string | undefined): void {
-  if (name?.replace(/\\/g, "/").replace(/\.md$/i, "").includes("/")) {
-    throw new UsageError(
-      "Asset --name must be a flat name without '/'. Use --path to choose a subdirectory " +
-        "(e.g. --path personal --name grocery-list).",
-    );
-  }
-}
+// `--path`/`--name` create semantics are shared across all asset-creating
+// commands; re-exported here so existing `./knowledge` importers keep working.
+export { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath };
 
 function slugifyAssetName(value: string, fallbackPrefix: string): string {
   const slug = value
@@ -188,7 +160,7 @@ export async function writeMarkdownAsset(options: {
     options.name,
     inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
   );
-  const normalizedName = subPath ? `${subPath}/${baseName}` : baseName;
+  const normalizedName = combineCreatePath(subPath, baseName);
   // Pre-flight: existence + force semantics. The helper itself overwrites
   // unconditionally; the CLI surfaces a friendlier UsageError before any
   // disk activity when --force is absent.

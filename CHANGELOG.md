@@ -8,13 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`--path` for subdirectory asset creation** (#503) — `akm remember` and
-  `akm import` accept `--path <relative-dir>`, a directory applied rooted at the
-  asset's type directory (e.g. `akm remember "buy milk" --path personal --name
-  grocery-list` → `memories/personal/grocery-list.md`). The filename still comes
-  from `--name` or the content/source slug. `--name` is now a **flat** name: a
-  `/` in an explicit `--name` is rejected with guidance to use `--path`.
-  (Replaces the earlier approach of overloading `--name` with nested paths.)
+- **`--path` for subdirectory asset creation** (#503) — a consistent `--path
+  <relative-dir>` flag across the asset-creating command surface: `akm remember`,
+  `akm import`, `akm propose`, `akm workflow create`, `akm env create`, and
+  `akm secret set`. `--path` is a directory applied rooted at the asset's type
+  directory (e.g. `akm remember "buy milk" --path personal --name grocery-list`
+  → `memories/personal/grocery-list.md`; `akm workflow create ship --path
+  release` → `workflows/release/ship.md`). The filename/name still comes from the
+  `--name`/name positional (or, for `remember`/`import`, the content/source slug).
+  The explicit name is now a **flat** name everywhere: a `/` in it is rejected
+  with guidance to use `--path`. System-derived names (e.g. a URL-path-derived
+  knowledge name from `akm import <url>`) may still nest. Shared semantics live in
+  `src/core/asset-create.ts`. (Replaces #503's earlier nested-`--name` approach.)
 - **Workflow runs record agent harness + session identity** — `akm workflow start`
   now persists the agent harness (e.g. `claude-code`, `opencode`) and the
   platform-native session id that owns each run. Identity is resolved best-effort

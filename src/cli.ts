@@ -102,11 +102,12 @@ import { improveCommand } from "./commands/improve-cli";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
-import { assertFlatAssetName, readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
+import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
 import { registryCommand } from "./commands/registry-cli";
 import { rememberCommand } from "./commands/remember-cli";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./core/asset-create";
 
 /**
  * Resolve the event source from the environment. When `AKM_EVENT_SOURCE` is
@@ -1742,7 +1743,16 @@ const workflowCreateCommand = defineCommand({
     description: "Create a workflow markdown document in the working stash",
   },
   args: {
-    name: { type: "positional", description: "Workflow name", required: true },
+    name: {
+      type: "positional",
+      description: "Workflow name (flat, no '/'; use --path for a subdirectory)",
+      required: true,
+    },
+    path: {
+      type: "string",
+      description:
+        "Relative subdirectory under workflows/ to place the workflow in (e.g. 'release'). The filename comes from the name.",
+    },
     from: { type: "string", description: "Import and validate markdown from an existing file" },
     force: {
       type: "boolean",
@@ -1757,8 +1767,11 @@ const workflowCreateCommand = defineCommand({
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
+      // `name` is flat; subdirectory placement is `--path`'s job.
+      assertFlatAssetName(args.name);
+      const effectiveName = combineCreatePath(normalizeCreateSubPath(args.path), args.name);
       const namePattern = /^[a-z0-9][a-z0-9._/-]*$/;
-      if (!namePattern.test(args.name)) {
+      if (!namePattern.test(effectiveName)) {
         throw new UsageError(
           "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, underscores, and slashes.",
         );
@@ -1769,7 +1782,7 @@ const workflowCreateCommand = defineCommand({
         );
       }
       const result = createWorkflowAsset({
-        name: args.name,
+        name: effectiveName,
         from: args.from,
         force: args.force,
       });
@@ -2238,7 +2251,16 @@ const envCreateCommand = defineCommand({
       "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given.",
   },
   args: {
-    name: { type: "positional", description: "Env name (e.g. prod) — file becomes <name>.env", required: true },
+    name: {
+      type: "positional",
+      description: "Env name (flat, e.g. prod → prod.env; use --path for a subdirectory)",
+      required: true,
+    },
+    path: {
+      type: "string",
+      description:
+        "Relative subdirectory under env/ to place the env file in (e.g. 'staging'). The filename comes from the name.",
+    },
     "from-file": { type: "string", description: "Seed the env file from an existing .env at this path" },
     "from-stdin": { type: "boolean", description: "Seed the env file from stdin", default: false },
     sensitive: {
@@ -2252,6 +2274,9 @@ const envCreateCommand = defineCommand({
       const { createEnv, writeEnv } = await import("./commands/env.js");
       // `create` always targets env/, never the frozen vaults/ copy.
       const parsed = parseEnvRef(args.name);
+      // `name` is flat; subdirectory placement is `--path`'s job.
+      assertFlatAssetName(parsed.name);
+      parsed.name = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), parsed.name);
       const source = findEnvSource(parsed.origin);
       const envRoot = path.join(source.path, "env");
       const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
@@ -2790,7 +2815,12 @@ function makeSecretRef(name: string, source?: IndexSearchSource): string {
   return source?.registryId ? `${source.registryId}//secret:${name}` : `secret:${name}`;
 }
 
-function resolveSecretPath(ref: string): {
+function resolveSecretPath(
+  ref: string,
+  // Create-only (`secret set`): enforce a flat ref name and apply `--path` as
+  // the subdirectory. Lookup callers omit this so nested refs keep resolving.
+  create?: { subPath?: string },
+): {
   name: string;
   absPath: string;
   source: IndexSearchSource;
@@ -2798,6 +2828,10 @@ function resolveSecretPath(ref: string): {
   const parsed = parseSecretRef(ref);
   if (parsed.type !== "secret") {
     throw new UsageError(`Expected a secret ref (secret:<name>); got "${ref}".`);
+  }
+  if (create) {
+    assertFlatAssetName(parsed.name);
+    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
   }
   // Source resolution is identical for every asset type; reuse the env helper.
   const source = findEnvSource(parsed.origin);
@@ -2856,14 +2890,23 @@ const secretSetCommand = defineCommand({
       "Create or overwrite a secret. The value is read from stdin by default (never via argv). Use --from-file <path> to import an existing file byte-exact, or --from-env <VAR> to read from an environment variable. Multi-line values are allowed.",
   },
   args: {
-    ref: { type: "positional", description: "Secret ref (e.g. secret:deploy-key or just deploy-key)", required: true },
+    ref: {
+      type: "positional",
+      description: "Secret ref (flat name, e.g. secret:deploy-key or just deploy-key; use --path for a subdirectory)",
+      required: true,
+    },
+    path: {
+      type: "string",
+      description:
+        "Relative subdirectory under secrets/ to place the secret in (e.g. 'team'). The filename comes from the name.",
+    },
     "from-file": { type: "string", description: "Read the value from this file (stored byte-exact)" },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { setSecret } = await import("./commands/secret.js");
-      const { name, absPath, source } = resolveSecretPath(args.ref);
+      const { name, absPath, source } = resolveSecretPath(args.ref, { subPath: getStringArg(args, "path") });
 
       const fromEnv = getHyphenatedArg<string>(args, "from-env");
       const fromFile = getHyphenatedArg<string>(args, "from-file");
@@ -4332,7 +4375,16 @@ const proposeCommand = defineCommand({
     // below to surface a structured UsageError (exit 2) instead of citty's
     // default help-banner exit-0.
     type: { type: "positional", description: "Asset type (skill, command, knowledge, lesson, ...)", required: false },
-    name: { type: "positional", description: "Asset name (slug or path under the type dir)", required: false },
+    name: {
+      type: "positional",
+      description: "Asset name (flat, no '/'; use --path for a subdirectory)",
+      required: false,
+    },
+    path: {
+      type: "string",
+      description:
+        "Relative subdirectory under the type dir to place the proposed asset in (e.g. 'release'). The filename comes from the name.",
+    },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
     profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
@@ -4355,11 +4407,14 @@ const proposeCommand = defineCommand({
       if (taskFromFlag && fileFromFlag) {
         throw new UsageError("Pass exactly one of --task or --file.", "INVALID_FLAG_VALUE");
       }
+      // `name` is flat; subdirectory placement is `--path`'s job.
+      assertFlatAssetName(String(args.name));
+      const proposedName = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), String(args.name));
       const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
       const result = await akmPropose({
         type: String(args.type),
-        name: String(args.name),
+        name: proposedName,
         task: taskText,
         profile: getStringArg(args, "profile"),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),

@@ -973,14 +973,18 @@ describe("workflow create — name validation", async () => {
     expect(json.ref).toBe("workflow:my-workflow");
   });
 
-  test("hierarchical name with forward slash is accepted", async () => {
-    // Slashes are allowed for hierarchical naming (e.g. release/ship)
+  test("hierarchical placement uses --path; a slash in the name positional is rejected", async () => {
     const env = createWorkflowEnv();
 
-    const result = await runCli(["workflow", "create", "release/ship"], env);
-    expect(result.status).toBe(0);
-    const json = JSON.parse(result.stdout) as { ref: string };
-    expect(json.ref).toBe("workflow:release/ship");
+    // --path provides the subdirectory under workflows/; the name stays flat.
+    const ok = await runCli(["workflow", "create", "ship", "--path", "release"], env);
+    expect(ok.status).toBe(0);
+    expect((JSON.parse(ok.stdout) as { ref: string }).ref).toBe("workflow:release/ship");
+
+    // A '/' in the name positional is rejected and points at --path.
+    const bad = await runCli(["workflow", "create", "release/ship"], env);
+    expect(bad.status).toBe(2);
+    expect((JSON.parse(bad.stderr) as { error: string }).error).toMatch(/--path/);
   });
 
   test("name validation error message mentions slashes", async () => {
