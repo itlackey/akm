@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, IS_WINDOWS } from "../core/common";
+import { compareSemver } from "../core/runtime";
 import { warn } from "../core/warn";
 import { githubHeaders } from "../integrations/github";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../sources/types";
@@ -97,7 +98,7 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
   return {
     currentVersion,
     latestVersion,
-    updateAvailable: latestVersion !== "" && Bun.semver.order(currentVersion, latestVersion) < 0,
+    updateAvailable: latestVersion !== "" && compareSemver(currentVersion, latestVersion) < 0,
     installMethod,
   };
 }

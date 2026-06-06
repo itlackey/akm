@@ -10,10 +10,12 @@
  * Collects all choices and writes config once at the end.
  */
 
+import { spawnSync } from "node:child_process";
 import { promises as dnsPromises } from "node:dns";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as p from "@clack/prompts";
 import { akmInit, type InitResponse } from "../commands/init";
 import { isHttpUrl } from "../core/common";
@@ -35,6 +37,7 @@ import {
 import { backupExistingConfig } from "../core/config-io";
 import { ConfigError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
+import { installCommand, isBun } from "../core/runtime";
 import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
 import { akmIndex } from "../indexer/indexer";
@@ -488,16 +491,22 @@ async function prepareSemanticSearchAssets(
       const spin = p.spinner();
       spin.start("Installing @huggingface/transformers...");
       try {
-        const pkgRoot = path.resolve(import.meta.dir, "../..");
-        const proc = Bun.spawn(["bun", "add", "@huggingface/transformers"], {
+        const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+        // Pick the package manager for the detected runtime so the auto-install
+        // works under both Bun (`bun add`) and standard Node.js (`npm install`).
+        const [installCmd, ...installArgs] = isBun()
+          ? ["bun", "add", "@huggingface/transformers"]
+          : ["npm", "install", "@huggingface/transformers"];
+        // spawnSync from node:child_process works on both runtimes.
+        const proc = spawnSync(installCmd, installArgs, {
           cwd: pkgRoot,
-          stdout: "pipe",
-          stderr: "pipe",
+          stdio: "pipe",
+          maxBuffer: 64 * 1024 * 1024,
         });
-        await proc.exited;
-        if (proc.exitCode !== 0) {
-          const stderr = await new Response(proc.stderr).text();
-          throw new Error(stderr || `exit code ${proc.exitCode}`);
+        if (proc.error) throw proc.error;
+        if (proc.status !== 0) {
+          const stderr = proc.stderr ? proc.stderr.toString("utf8") : "";
+          throw new Error(stderr || `exit code ${proc.status}`);
         }
         spin.stop("@huggingface/transformers installed.");
       } catch (err) {
@@ -505,7 +514,7 @@ async function prepareSemanticSearchAssets(
         spin.stop("Could not install @huggingface/transformers.");
         p.log.warn(
           `Automatic install failed: ${msg}\n` +
-            "Install it manually with: bun add @huggingface/transformers\n" +
+            `Install it manually with: ${installCommand("@huggingface/transformers")}\n` +
             "Then re-run `akm setup` or `akm index --full --verbose`.",
         );
         return { ok: false, reason: "missing-package", message: `Automatic install failed: ${msg}` };
@@ -530,7 +539,7 @@ async function prepareSemanticSearchAssets(
       return { ok: false, reason: "remote-network", message: "The remote embedding endpoint is not reachable." };
     } else if (result.reason === "missing-package") {
       p.log.warn(
-        "@huggingface/transformers is not installed. Install it with: bun add @huggingface/transformers\n" +
+        `@huggingface/transformers is not installed. Install it with: ${installCommand("@huggingface/transformers")}\n` +
           "Then re-run `akm setup` or `akm index --full --verbose`.",
       );
       return { ok: false, reason: "missing-package", message: "@huggingface/transformers is not installed." };
