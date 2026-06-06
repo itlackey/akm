@@ -58,28 +58,25 @@ describe("akm init", () => {
     expect(fs.existsSync(path.join(stashDir, "lessons"))).toBe(true);
   });
 
-  test("writes README.md to a newly created stash", async () => {
-    const stashDir = makeTempDir("akm-init-readme-");
+  test("copies stash skeleton files to a newly created stash", async () => {
+    const stashDir = makeTempDir("akm-init-skeleton-");
     fs.rmSync(stashDir, { recursive: true, force: true });
     const result = await akmInit({ dir: stashDir });
     expect(result.created).toBe(true);
     const readmePath = path.join(stashDir, "README.md");
     expect(fs.existsSync(readmePath)).toBe(true);
     const content = fs.readFileSync(readmePath, "utf8");
-    // Heading uses the stash directory name
-    expect(content).toContain(`# ${path.basename(stashDir)}`);
-    // Contains the agent usage section
+    expect(content).toContain("AKM Stash");
     expect(content).toContain("akm curate");
     expect(content).toContain("akm search");
   });
 
-  test("does not overwrite a README.md that already exists", async () => {
-    const stashDir = makeTempDir("akm-init-readme-existing-");
+  test("does not overwrite skeleton files that already exist", async () => {
+    const stashDir = makeTempDir("akm-init-skeleton-existing-");
     fs.rmSync(stashDir, { recursive: true, force: true });
     await akmInit({ dir: stashDir });
     const readmePath = path.join(stashDir, "README.md");
     fs.writeFileSync(readmePath, "custom content", "utf8");
-    // Second init on existing stash should not touch the README
     await akmInit({ dir: stashDir });
     expect(fs.readFileSync(readmePath, "utf8")).toBe("custom content");
   });
