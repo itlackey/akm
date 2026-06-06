@@ -1,0 +1,4 @@
+schedule: "0 9 * * 1"
+command: akm info --check-version
+enabled: true
+description: Weekly check for new akm releases

@@ -1,0 +1,4 @@
+schedule: "0 1 * * *"
+command: akm update
+enabled: true
+description: Pull latest changes for all managed stash sources
