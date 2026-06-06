@@ -94,18 +94,34 @@ const MAX_CONFIG_BACKUPS = 5;
  * timestamped set to {@link MAX_CONFIG_BACKUPS} most-recent entries.
  *
  * No-op when the source file does not exist (cold-start safe).
+ *
+ * Returns the written backup paths (the timestamped copy plus the
+ * `config.latest.json` pointer), or `undefined` when there was nothing to
+ * back up. Callers use the timestamped path to print the real backup
+ * location instead of a generic display string.
  */
-export function backupExistingConfig(configPath: string): void {
-  if (!fs.existsSync(configPath)) return;
+export interface ConfigBackupResult {
+  /** Absolute path to the timestamped `config-<timestamp>.json` snapshot. */
+  timestamped: string;
+  /** Absolute path to the rolling `config.latest.json` pointer. */
+  latest: string;
+}
+
+export function backupExistingConfig(configPath: string): ConfigBackupResult | undefined {
+  if (!fs.existsSync(configPath)) return undefined;
 
   const backupDir = path.join(getCacheDir(), "config-backups");
   fs.mkdirSync(backupDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  fs.copyFileSync(configPath, path.join(backupDir, `config-${timestamp}.json`));
-  fs.copyFileSync(configPath, path.join(backupDir, "config.latest.json"));
+  const timestamped = path.join(backupDir, `config-${timestamp}.json`);
+  const latest = path.join(backupDir, "config.latest.json");
+  fs.copyFileSync(configPath, timestamped);
+  fs.copyFileSync(configPath, latest);
 
   pruneOldBackups(backupDir);
+
+  return { timestamped, latest };
 }
 
 function pruneOldBackups(backupDir: string): void {

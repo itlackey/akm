@@ -335,6 +335,8 @@ const setupCommand = defineCommand({
         // `~`, resolves relative paths against cwd, picks the YAML or JSON
         // parser based on the file extension, and surfaces any
         // read/parse/shape errors as ConfigError("INVALID_CONFIG_FILE").
+        // `runSetupFromConfig` is fully non-interactive; with `--yes` it also
+        // fills defaults for keys the file leaves missing.
         const { loadSetupConfigFromFile, runSetupFromConfig } = await import("./setup/setup");
         const loaded = await loadSetupConfigFromFile(args.from);
         const result = await runSetupFromConfig({
@@ -342,17 +344,20 @@ const setupCommand = defineCommand({
           dir: args.dir,
           noInit,
           probe: args.probe,
+          applyDefaults: args.yes,
         });
         output("setup", result);
         printSetupTtyHint(result);
       } else if (args.config) {
-        // Non-interactive config mode
+        // Non-interactive config mode. With `--yes`, defaults fill any keys
+        // the JSON blob leaves missing after the deep merge.
         const { runSetupFromConfig } = await import("./setup/setup");
         const result = await runSetupFromConfig({
           configJson: args.config,
           dir: args.dir,
           noInit,
           probe: args.probe,
+          applyDefaults: args.yes,
         });
         output("setup", result);
         printSetupTtyHint(result);
