@@ -16,5 +16,15 @@
   },
   "files": {
     "includes": ["src/**", "tests/**"]
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "tests/env-secret-tokens.test.ts",
+        "tests/env-path-run.test.ts",
+        "tests/commands/env-set-unset.test.ts"
+      ],
+      "linter": { "rules": { "suspicious": { "noTemplateCurlyInString": "off" } } }
+    }
+  ]
 }
