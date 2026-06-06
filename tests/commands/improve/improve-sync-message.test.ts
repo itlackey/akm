@@ -19,6 +19,8 @@ function fakeResult(
     scope: { mode: string; value?: string };
     plannedRefs: unknown[];
     gateAutoAcceptedCount?: number;
+    triage?: { promoted: number; rejected: number; deferred: number; skippedByCap: number };
+    runId?: string;
   }> = {},
 ) {
   return {
@@ -52,9 +54,32 @@ describe("renderSyncCommitMessage", () => {
   });
 
   test("unknown tokens pass through verbatim (forward-compatible)", () => {
-    expect(renderSyncCommitMessage("a {nope} b {triage_promoted} c", fakeResult(), NOW)).toBe(
-      "a {nope} b {triage_promoted} c",
+    expect(renderSyncCommitMessage("a {nope} b {alsoNope} c", fakeResult(), NOW)).toBe("a {nope} b {alsoNope} c");
+  });
+
+  test("triage + runId tokens render from the result when triage ran and a runId is present", () => {
+    const out = renderSyncCommitMessage(
+      "akm improve {runId}: +{triage_promoted} triaged, -{triage_rejected}, {accepted} accepted @ {timestamp}",
+      fakeResult({
+        gateAutoAcceptedCount: 4,
+        triage: { promoted: 5, rejected: 2, deferred: 1, skippedByCap: 0 },
+        runId: "run-abc123",
+      }),
+      NOW,
     );
+    expect(out).toBe("akm improve run-abc123: +5 triaged, -2, 4 accepted @ 2026-06-02 21:30:45");
+  });
+
+  test("triage tokens default to 0 when the result has no triage field (triage did not run)", () => {
+    expect(renderSyncCommitMessage("{triage_promoted}/{triage_rejected}", fakeResult(), NOW)).toBe("0/0");
+  });
+
+  test("runId renders the empty string when the result has no runId", () => {
+    expect(renderSyncCommitMessage("[{runId}]", fakeResult(), NOW)).toBe("[]");
+  });
+
+  test("runId renders the run's id when present", () => {
+    expect(renderSyncCommitMessage("{runId}", fakeResult({ runId: "run-xyz" }), NOW)).toBe("run-xyz");
   });
 
   test("a template with no tokens (the default) renders unchanged", () => {
