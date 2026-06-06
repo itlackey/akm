@@ -7,7 +7,7 @@ import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import type { SourceSearchHit } from "../sources/types";
-import { inferAssetName, writeMarkdownAsset } from "./knowledge";
+import { assertFlatAssetName, inferAssetName, writeMarkdownAsset } from "./knowledge";
 import {
   buildMemoryFrontmatter,
   parseDuration,
@@ -54,8 +54,12 @@ export const rememberCommand = defineCommand({
     },
     name: {
       type: "string",
+      description: "Memory name (flat, no '/'; defaults to a slug from the content). Use --path for a subdirectory.",
+    },
+    path: {
+      type: "string",
       description:
-        "Memory name (defaults to a slug from the content). A nested relative path like 'personal/grocery-list' creates a subdirectory under memories/.",
+        "Relative subdirectory under memories/ to place the memory in (e.g. 'personal/projects'). The filename still comes from --name or the content slug.",
     },
     force: {
       type: "boolean",
@@ -118,6 +122,9 @@ export const rememberCommand = defineCommand({
     return runWithJsonErrors(async () => {
       const body = readMemoryContent(resolveRememberContentArg(args.content));
 
+      // `--name` is a flat name; subdirectory placement is `--path`'s job.
+      assertFlatAssetName(args.name);
+
       // Determine if the user has requested any structured metadata mode.
       // Collect all --tag occurrences directly from process.argv because citty
       // only exposes the last value for repeated string flags.
@@ -155,6 +162,7 @@ export const rememberCommand = defineCommand({
           preferredName: inferAssetName(body, "memory"),
           force: args.force,
           target: args.target,
+          path: args.path,
         });
         appendEvent({
           eventType: "remember",
@@ -252,6 +260,7 @@ export const rememberCommand = defineCommand({
         fallbackPrefix: "memory",
         force: args.force,
         target: args.target,
+        path: args.path,
       });
       appendEvent({
         eventType: "remember",

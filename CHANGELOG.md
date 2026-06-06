@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`--path` for subdirectory asset creation** (#503) — `akm remember` and
+  `akm import` accept `--path <relative-dir>`, a directory applied rooted at the
+  asset's type directory (e.g. `akm remember "buy milk" --path personal --name
+  grocery-list` → `memories/personal/grocery-list.md`). The filename still comes
+  from `--name` or the content/source slug. `--name` is now a **flat** name: a
+  `/` in an explicit `--name` is rejected with guidance to use `--path`.
+  (Replaces the earlier approach of overloading `--name` with nested paths.)
 - **Workflow runs record agent harness + session identity** — `akm workflow start`
   now persists the agent harness (e.g. `claude-code`, `opencode`) and the
   platform-native session id that owns each run. Identity is resolved best-effort

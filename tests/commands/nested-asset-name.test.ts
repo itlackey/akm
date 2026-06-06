@@ -1,26 +1,24 @@
 /**
- * Nested asset-name creation (issue #503).
+ * Subdirectory asset creation via `--path` (issue #503).
  *
- * Users can place a created asset inside a subdirectory of its type folder by
- * passing an explicit `--name` containing `/`-separated segments, e.g.
- *   akm remember "buy milk" --name personal/grocery-list
+ * A created asset is placed inside a subdirectory of its type folder by passing
+ * `--path` — a relative directory applied rooted at the type directory. The
+ * filename still comes from `--name` (or the content/source slug):
+ *   akm remember "buy milk" --path personal --name grocery-list
  *     → <stash>/memories/personal/grocery-list.md  (ref memory:personal/grocery-list)
- *   akm import doc.md --name projects/example/overview
- *     → <stash>/knowledge/projects/example/overview.md (ref knowledge:projects/example/overview)
+ *   akm remember "buy milk" --path personal
+ *     → <stash>/memories/personal/<slug>.md
+ *   akm import doc.md --path projects/example --name overview
+ *     → <stash>/knowledge/projects/example/overview.md
  *
- * These tests lock in:
- *   - the file lands at the nested path and parent dirs are auto-created,
- *   - the returned ref carries the nested name with no `.md`,
- *   - `..` traversal in a nested name is rejected (UsageError) and writes nothing,
- *   - re-creating without --force errors RESOURCE_ALREADY_EXISTS; --force overwrites.
- *
- * Unit-level guards on the shared normaliser are also asserted directly.
+ * `--name` is a FLAT name: a `/` in `--name` is rejected and points the user at
+ * `--path`. `..`/`.` segments in either are rejected and write nothing.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { normalizeMarkdownAssetName } from "../../src/commands/knowledge";
+import { assertFlatAssetName, normalizeCreateSubPath } from "../../src/commands/knowledge";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -61,25 +59,34 @@ afterEach(() => {
   for (const d of disposers.splice(0)) d.cleanup();
 });
 
-describe("normalizeMarkdownAssetName — nested-path guards", () => {
-  test("accepts a nested relative path and strips .md", () => {
-    expect(normalizeMarkdownAssetName("personal/grocery-list", "fallback")).toBe("personal/grocery-list");
-    expect(normalizeMarkdownAssetName("projects/example/overview.md", "fallback")).toBe("projects/example/overview");
+describe("normalizeCreateSubPath — --path guards", () => {
+  test("returns '' when unset or empty, strips surrounding slashes", () => {
+    expect(normalizeCreateSubPath(undefined)).toBe("");
+    expect(normalizeCreateSubPath("")).toBe("");
+    expect(normalizeCreateSubPath("/personal/projects/")).toBe("personal/projects");
   });
 
-  test("rejects a '..' traversal segment", () => {
-    expect(() => normalizeMarkdownAssetName("../escape", "fallback")).toThrow(/relative path/);
-    expect(() => normalizeMarkdownAssetName("a/../../escape", "fallback")).toThrow(/relative path/);
-  });
-
-  test("rejects a '.' segment", () => {
-    expect(() => normalizeMarkdownAssetName("a/./b", "fallback")).toThrow(/relative path/);
+  test("rejects '.'/'..' segments and absolute traversal", () => {
+    expect(() => normalizeCreateSubPath("../escape")).toThrow(/relative directory/);
+    expect(() => normalizeCreateSubPath("a/../../escape")).toThrow(/relative directory/);
+    expect(() => normalizeCreateSubPath("a/./b")).toThrow(/relative directory/);
   });
 });
 
-describe("akm remember — nested --name", () => {
-  test("writes memory to a nested subdirectory and returns a nested ref", async () => {
-    const result = await runCli(["remember", "buy milk", "--name", "personal/grocery-list"]);
+describe("assertFlatAssetName — flat-name enforcement", () => {
+  test("accepts a flat name or undefined", () => {
+    expect(() => assertFlatAssetName("grocery-list")).not.toThrow();
+    expect(() => assertFlatAssetName(undefined)).not.toThrow();
+  });
+
+  test("rejects a '/' in --name and points at --path", () => {
+    expect(() => assertFlatAssetName("personal/grocery-list")).toThrow(/--path/);
+  });
+});
+
+describe("akm remember — --path", () => {
+  test("places the memory under --path with name from --name", async () => {
+    const result = await runCli(["remember", "buy milk", "--path", "personal", "--name", "grocery-list"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -89,40 +96,54 @@ describe("akm remember — nested --name", () => {
     const expectedPath = path.join(currentStashDir, "memories", "personal", "grocery-list.md");
     expect(json.path).toBe(expectedPath);
     expect(fs.existsSync(expectedPath)).toBe(true);
-    // Parent subdirectory was auto-created.
     expect(fs.existsSync(path.join(currentStashDir, "memories", "personal"))).toBe(true);
   });
 
-  test("rejects a '..' traversal name and writes nothing", async () => {
-    const result = await runCli(["remember", "should not persist", "--name", "../escape"]);
-    expect(result.status).toBe(2);
+  test("places the memory under a multi-segment --path with an auto-slug name", async () => {
+    const result = await runCli(["remember", "# Sprint retro\n\nNotes.", "--path", "team/projects"]);
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { ref: string; path: string };
+    expect(json.ref).toMatch(/^memory:team\/projects\//);
+    expect(json.path.startsWith(path.join(currentStashDir, "memories", "team", "projects"))).toBe(true);
+    expect(fs.existsSync(json.path)).toBe(true);
+  });
 
+  test("rejects a '/' in --name and writes nothing", async () => {
+    const result = await runCli(["remember", "should not persist", "--name", "personal/grocery-list"]);
+    expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { error: string };
-    expect(json.error).toMatch(/relative path/);
+    expect(json.error).toMatch(/--path/);
+    expect(fs.existsSync(path.join(currentStashDir, "memories", "personal"))).toBe(false);
+  });
+
+  test("rejects a '..' traversal --path and writes nothing", async () => {
+    const result = await runCli(["remember", "should not persist", "--path", "../escape", "--name", "x"]);
+    expect(result.status).toBe(2);
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toMatch(/relative directory/);
     expect(fs.existsSync(path.join(currentStashDir, "memories", "escape.md"))).toBe(false);
   });
 
-  test("re-creating a nested memory without --force errors; --force overwrites", async () => {
-    const first = await runCli(["remember", "original body", "--name", "team/handbook"]);
+  test("re-creating without --force errors; --force overwrites", async () => {
+    const first = await runCli(["remember", "original body", "--path", "team", "--name", "handbook"]);
     expect(first.status).toBe(0);
     const filePath = path.join(currentStashDir, "memories", "team", "handbook.md");
     expect(fs.existsSync(filePath)).toBe(true);
 
-    const dup = await runCli(["remember", "second body", "--name", "team/handbook"]);
+    const dup = await runCli(["remember", "second body", "--path", "team", "--name", "handbook"]);
     expect(dup.status).not.toBe(0);
-    const dupJson = JSON.parse(dup.stderr) as { error: string; code?: string };
-    expect(JSON.stringify(dupJson)).toContain("RESOURCE_ALREADY_EXISTS");
+    expect(JSON.stringify(JSON.parse(dup.stderr))).toContain("RESOURCE_ALREADY_EXISTS");
 
-    const forced = await runCli(["remember", "overwritten body", "--name", "team/handbook", "--force"]);
+    const forced = await runCli(["remember", "overwritten body", "--path", "team", "--name", "handbook", "--force"]);
     expect(forced.status).toBe(0);
     expect(fs.readFileSync(filePath, "utf8")).toContain("overwritten body");
   });
 });
 
-describe("akm import — nested --name", () => {
-  test("writes knowledge to a nested subdirectory and returns a nested ref", async () => {
+describe("akm import — --path", () => {
+  test("places knowledge under --path with name from --name", async () => {
     const sourcePath = makeSourceFile("doc.md", "# Overview\n\nProject overview content.\n");
-    const result = await runCli(["import", sourcePath, "--name", "projects/example/overview"]);
+    const result = await runCli(["import", sourcePath, "--path", "projects/example", "--name", "overview"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -132,16 +153,13 @@ describe("akm import — nested --name", () => {
     const expectedPath = path.join(currentStashDir, "knowledge", "projects", "example", "overview.md");
     expect(json.path).toBe(expectedPath);
     expect(fs.existsSync(expectedPath)).toBe(true);
-    expect(fs.existsSync(path.join(currentStashDir, "knowledge", "projects", "example"))).toBe(true);
   });
 
-  test("rejects a '..' traversal name and writes nothing", async () => {
+  test("rejects a '/' in --name and writes nothing", async () => {
     const sourcePath = makeSourceFile("doc.md", "# Nope\n\nContent.\n");
-    const result = await runCli(["import", sourcePath, "--name", "../escape"]);
+    const result = await runCli(["import", sourcePath, "--name", "projects/overview"]);
     expect(result.status).toBe(2);
-
     const json = JSON.parse(result.stderr) as { error: string };
-    expect(json.error).toMatch(/relative path/);
-    expect(fs.existsSync(path.join(currentStashDir, "knowledge", "escape.md"))).toBe(false);
+    expect(json.error).toMatch(/--path/);
   });
 });

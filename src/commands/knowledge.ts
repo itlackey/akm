@@ -48,6 +48,39 @@ export function normalizeMarkdownAssetName(name: string | undefined, fallback: s
   return trimmed;
 }
 
+/**
+ * Normalise an optional `--path` value: a relative directory, applied rooted
+ * at the asset's type directory (e.g. `personal/projects` under `memories/`).
+ * Rejects absolute paths and `.`/`..` segments. Returns `""` when unset.
+ */
+export function normalizeCreateSubPath(subPath: string | undefined): string {
+  if (subPath === undefined) return "";
+  const trimmed = subPath
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  if (!trimmed) return "";
+  if (trimmed.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new UsageError("--path must be a relative directory without '.' or '..' segments.");
+  }
+  return trimmed;
+}
+
+/**
+ * Enforce that an explicit, user-supplied `--name` is a flat (single-segment)
+ * name. Subdirectory placement is the job of `--path`, not `--name`. This is
+ * applied at the command layer to the *user's* `--name` only — system-derived
+ * names (e.g. a URL-path-derived knowledge name) may still be nested.
+ */
+export function assertFlatAssetName(name: string | undefined): void {
+  if (name !== undefined && name.replace(/\\/g, "/").replace(/\.md$/i, "").includes("/")) {
+    throw new UsageError(
+      "Asset --name must be a flat name without '/'. Use --path to choose a subdirectory " +
+        "(e.g. --path personal --name grocery-list).",
+    );
+  }
+}
+
 function slugifyAssetName(value: string, fallbackPrefix: string): string {
   const slug = value
     .toLowerCase()
@@ -136,16 +169,26 @@ export async function writeMarkdownAsset(options: {
   force?: boolean;
   /** Optional explicit `--target` override naming a configured source. */
   target?: string;
+  /**
+   * Optional `--path`: a relative directory under the type root in which to
+   * place the asset. The filename still comes from `name` (or the content
+   * slug). e.g. `path: "personal/projects"` → `memories/personal/projects/<name>.md`.
+   */
+  path?: string;
 }): Promise<{ ref: string; path: string; stashDir: string }> {
   const cfg = loadConfig();
   const target = resolveWriteTarget(cfg, options.target);
   const { source, config } = target;
 
   const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
-  const normalizedName = normalizeMarkdownAssetName(
+  // `--name` is the flat asset name; `--path` is the subdirectory under the
+  // type root. Combine them into the nested name the path resolver expects.
+  const subPath = normalizeCreateSubPath(options.path);
+  const baseName = normalizeMarkdownAssetName(
     options.name,
     inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
   );
+  const normalizedName = subPath ? `${subPath}/${baseName}` : baseName;
   // Pre-flight: existence + force semantics. The helper itself overwrites
   // unconditionally; the CLI surfaces a friendlier UsageError before any
   // disk activity when --force is absent.

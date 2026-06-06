@@ -102,7 +102,7 @@ import { improveCommand } from "./commands/improve-cli";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
-import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
+import { assertFlatAssetName, readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
 import { registryCommand } from "./commands/registry-cli";
@@ -1895,7 +1895,12 @@ const importKnowledgeCommand = defineCommand({
     name: {
       type: "string",
       description:
-        "Knowledge name (defaults to the source filename or content slug). A nested relative path like 'projects/example/overview' creates a subdirectory under knowledge/.",
+        "Knowledge name (flat, no '/'; defaults to the source filename or content slug). Use --path for a subdirectory.",
+    },
+    path: {
+      type: "string",
+      description:
+        "Relative subdirectory under knowledge/ to place the document in (e.g. 'projects/example'). The filename still comes from --name or the source slug.",
     },
     force: {
       type: "boolean",
@@ -1910,6 +1915,8 @@ const importKnowledgeCommand = defineCommand({
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
+      // `--name` is a flat name; subdirectory placement is `--path`'s job.
+      assertFlatAssetName(args.name);
       const { content, preferredName } = await readKnowledgeInput(args.source);
       const result = await writeMarkdownAsset({
         type: "knowledge",
@@ -1919,6 +1926,7 @@ const importKnowledgeCommand = defineCommand({
         preferredName,
         force: args.force,
         target: args.target,
+        path: args.path,
       });
       appendEvent({
         eventType: "import",
