@@ -270,7 +270,7 @@ function healSandboxEnv(): void {
   // ever leaves it pointing at the real home, fail HARD before a test can run.
   if (!isUnderTmp(process.env.HOME ?? "")) {
     throw new Error(
-      `[harness-safety] HOME escaped the sandbox: ${process.env.HOME}. ` + `Refusing to run to protect real user data.`,
+      `[harness-safety] HOME escaped the sandbox: ${process.env.HOME}. Refusing to run to protect real user data.`,
     );
   }
 }

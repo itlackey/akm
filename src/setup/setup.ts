@@ -860,10 +860,12 @@ export async function stepLlm(
       maxTokens: 1024,
     };
   } else if (choice === "custom") {
+    const currentCustomLlm = currentLlm?.provider === "custom" ? currentLlm : undefined;
     const endpoint = await prompt(() =>
       p.text({
         message: "OpenAI-compatible chat completions endpoint:",
-        placeholder: "https://your-host/v1/chat/completions",
+        placeholder: currentCustomLlm?.endpoint ?? "https://your-host/v1/chat/completions",
+        ...(currentCustomLlm?.endpoint ? { defaultValue: currentCustomLlm.endpoint } : {}),
         validate: (v) => {
           if (!v?.trim()) return "Endpoint cannot be empty";
           if (!v.startsWith("http://") && !v.startsWith("https://"))
@@ -874,7 +876,8 @@ export async function stepLlm(
     const model = await prompt(() =>
       p.text({
         message: "Model name:",
-        placeholder: "gpt-4o-mini",
+        placeholder: currentCustomLlm?.model ?? "gpt-4o-mini",
+        ...(currentCustomLlm?.model ? { defaultValue: currentCustomLlm.model } : {}),
         validate: (v) => {
           if (!v?.trim()) return "Model name cannot be empty";
         },
@@ -1244,11 +1247,13 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
         );
       }
     } else {
+      const currentOllamaModel =
+        currentLlmSmall?.provider === "ollama" ? (currentLlmSmall.model ?? "llama3.2") : "llama3.2";
       model = await prompt(() =>
         p.text({
           message: "Model name (e.g. llama3.2):",
-          placeholder: "llama3.2",
-          defaultValue: "llama3.2",
+          placeholder: currentOllamaModel,
+          defaultValue: currentOllamaModel,
           validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
         }),
       );
@@ -1261,11 +1266,13 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
       maxTokens: 1024,
     };
   } else if (providerChoice === "openai") {
+    const currentOpenAiModel =
+      currentLlmSmall?.provider === "openai" ? (currentLlmSmall.model ?? "gpt-4o-mini") : "gpt-4o-mini";
     const model = await prompt(() =>
       p.text({
         message: "Model name:",
-        placeholder: "gpt-4o-mini",
-        defaultValue: "gpt-4o-mini",
+        placeholder: currentOpenAiModel,
+        defaultValue: currentOpenAiModel,
         validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
       }),
     );
@@ -1275,16 +1282,21 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     llm = {
       provider: "openai",
       endpoint: "https://api.openai.com/v1/chat/completions",
-      model: model.trim() || "gpt-4o-mini",
+      model: model.trim() || currentOpenAiModel,
       temperature: 0.3,
       maxTokens: 1024,
     };
   } else if (providerChoice === "lmstudio") {
+    const currentLmsEndpoint =
+      currentLlmSmall?.provider === "lmstudio"
+        ? (currentLlmSmall.endpoint ?? "http://localhost:1234/v1/chat/completions")
+        : "http://localhost:1234/v1/chat/completions";
+    const currentLmsModel = currentLlmSmall?.provider === "lmstudio" ? currentLlmSmall.model : undefined;
     const endpoint = await prompt(() =>
       p.text({
         message: "Endpoint URL:",
-        placeholder: "http://localhost:1234/v1/chat/completions",
-        defaultValue: "http://localhost:1234/v1/chat/completions",
+        placeholder: currentLmsEndpoint,
+        defaultValue: currentLmsEndpoint,
         validate: (v) => {
           if (!v?.trim()) return "Endpoint cannot be empty";
           if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
@@ -1294,7 +1306,8 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     const model = await prompt(() =>
       p.text({
         message: "Model name:",
-        placeholder: "local-model",
+        placeholder: currentLmsModel ?? "local-model",
+        ...(currentLmsModel ? { defaultValue: currentLmsModel } : {}),
         validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
       }),
     );
@@ -1307,10 +1320,13 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     };
   } else {
     // custom
+    const currentCustomEndpoint = currentLlmSmall?.provider === "custom" ? currentLlmSmall.endpoint : undefined;
+    const currentCustomModel = currentLlmSmall?.provider === "custom" ? currentLlmSmall.model : undefined;
     const endpoint = await prompt(() =>
       p.text({
         message: "OpenAI-compatible chat completions endpoint:",
-        placeholder: "https://your-host/v1/chat/completions",
+        placeholder: currentCustomEndpoint ?? "https://your-host/v1/chat/completions",
+        ...(currentCustomEndpoint ? { defaultValue: currentCustomEndpoint } : {}),
         validate: (v) => {
           if (!v?.trim()) return "Endpoint cannot be empty";
           if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
@@ -1320,7 +1336,8 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     const model = await prompt(() =>
       p.text({
         message: "Model name:",
-        placeholder: "gpt-4o-mini",
+        placeholder: currentCustomModel ?? "gpt-4o-mini",
+        ...(currentCustomModel ? { defaultValue: currentCustomModel } : {}),
         validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
       }),
     );
@@ -1460,14 +1477,17 @@ export async function stepAgentConnection(
     } else {
       const baseEndpoint = smallModel.llm.endpoint.replace("/v1/chat/completions", "");
       p.log.info(`Endpoint: ${baseEndpoint} (from Step 1)`);
+      const profileName = smallModel.llm.provider ?? "default";
+      // Pre-populate from existing agent profile for this provider, if any.
+      const existingAgentModel = currentAgentBlock?.profiles?.[profileName]?.model ?? smallModel.llm.model ?? undefined;
       const agentModel = await prompt(() =>
         p.text({
           message: "Model to use for agent tasks (same model is fine, larger models work better):",
-          placeholder: "qwen2.5-coder:32b",
+          placeholder: existingAgentModel ?? "qwen2.5-coder:32b",
+          ...(existingAgentModel ? { defaultValue: existingAgentModel } : {}),
           validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
         }),
       );
-      const profileName = smallModel.llm.provider ?? "default";
       return {
         ...(currentAgentBlock ?? {}),
         profiles: {
@@ -1510,10 +1530,15 @@ export async function stepAgentConnection(
   }
 
   // "new-connection" (also fall-through from "same-provider" when Step 1 was skipped)
+  // Pre-populate from current "custom" agent profile if available.
+  const currentCustomAgentProfile = currentAgentBlock?.profiles?.custom;
+  const currentNewEndpoint = currentCustomAgentProfile?.endpoint ?? undefined;
+  const currentNewModel = currentCustomAgentProfile?.model ?? undefined;
   const newEndpoint = await prompt(() =>
     p.text({
       message: "OpenAI-compatible chat completions endpoint:",
-      placeholder: "https://your-host/v1/chat/completions",
+      placeholder: currentNewEndpoint ?? "https://your-host/v1/chat/completions",
+      ...(currentNewEndpoint ? { defaultValue: currentNewEndpoint } : {}),
       validate: (v) => {
         if (!v?.trim()) return "Endpoint cannot be empty";
         if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
@@ -1529,7 +1554,8 @@ export async function stepAgentConnection(
   const newModel = await prompt(() =>
     p.text({
       message: "Model name (larger is better, e.g. gpt-4o):",
-      placeholder: "gpt-4o",
+      placeholder: currentNewModel ?? "gpt-4o",
+      ...(currentNewModel ? { defaultValue: currentNewModel } : {}),
       validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
     }),
   );
