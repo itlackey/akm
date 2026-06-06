@@ -48,6 +48,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   task runner to record the health report as failed. `URLError` is now caught and
   logged as a warning with a clean exit.
 
+### Added
+
+- **Default stash skeleton** — `akm init` (and `akm setup`) now copies
+  `src/assets/stash-skeleton/` into every newly created stash. Currently ships
+  a `README.md` covering what the stash contains and how agents use `akm` to
+  access assets. Existing files are never overwritten. Add files to
+  `src/assets/stash-skeleton/` to extend what ships with a fresh install.
+
 ### Improved
 
 - **Setup wizard pre-populates from existing config** — on re-run, `akm setup`
