@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **Bun/Node compatibility — non-SQLite runtime ports (#465).** Bun-specific
+  globals outside the SQLite layer now have Node-compatible code paths so that
+  the eventual cross-runtime SQLite driver is the only remaining blocker to full
+  Node support:
+  - `Bun.spawnSync` in the git stash walker → `node:child_process` `spawnSync`
+    (`src/indexer/walker.ts`).
+  - `Bun.write` in the registry index builder → `fs/promises` `writeFile`
+    (`src/registry/build-index.ts`).
+  - `Bun.resolveSync` in the local embedder availability check → `node:module`
+    `createRequire` + `node:url` `fileURLToPath` (`src/llm/embedders/local.ts`).
+  - `Bun.semver.order` in self-update → an inline `compareSemver` comparator
+    (`src/commands/self-update.ts`).
+  - Optional-dependency install messages and the `@huggingface/transformers`
+    auto-install now detect the runtime and emit `bun add` vs `npm install`
+    accordingly (`src/setup/setup.ts`, `src/llm/embedders/local.ts`), via the new
+    `src/core/runtime.ts` helpers (`isBun`, `installCommand`, `compareSemver`).
+  - The SQLite layer (`bun:sqlite`, 26 source files) remains Bun-only by an
+    explicit decision recorded in `docs/technical/sqlite-runtime-adr.md`; a
+    cross-runtime driver seam and Node CI matrix are scoped there as follow-up.
+
 ## [0.8.2] - 2026-06-05
 
 ### Added

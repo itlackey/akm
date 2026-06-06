@@ -11,8 +11,11 @@
  * shared instance for the production code path.
  */
 
+import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getCacheDir } from "../../core/paths";
+import { installCommand } from "../../core/runtime";
 import { warn } from "../../core/warn";
 import type { Embedder, EmbeddingVector } from "./types";
 
@@ -151,7 +154,7 @@ export class LocalEmbedder implements Embedder {
               ? "You are running the prebuilt akm binary, which cannot load optional native dependencies. " +
                 "To enable semantic search, install akm-cli via Bun: `curl -fsSL https://bun.sh/install | bash && bun install -g akm-cli`. " +
                 "To keep using the binary, set `semanticSearchMode: off` in your config and use keyword-only FTS."
-              : "Install it with: `bun add @huggingface/transformers` (or `npm install @huggingface/transformers`).";
+              : `Install it with: \`${installCommand("@huggingface/transformers")}\`.`;
             throw new Error(`Semantic search requires @huggingface/transformers. ${hint}`);
           }
           throw new Error(`Failed to load embedding runtime: ${msg}. Check platform compatibility.`);
@@ -198,29 +201,29 @@ function shouldRetryWithoutExplicitDtype(error: unknown): boolean {
 
 /**
  * Check whether the `@huggingface/transformers` package can be resolved.
- * Uses `Bun.resolveSync` so we never load the module (which would trigger
- * heavy WASM/model side-effects) just to test availability.
+ * Uses module resolution (never an actual import) so we don't trigger the
+ * heavy WASM/model side-effects just to test availability.
  *
- * Falls back to `require.resolve` when `Bun.resolveSync` is unavailable
- * (e.g. running under Node), so the function still works in mixed runtimes.
+ * Resolution is performed with `require.resolve` anchored at this module via
+ * `node:module`'s `createRequire` + `node:url`'s `fileURLToPath`, which works
+ * under both Bun and standard Node.js. `Bun.resolveSync` is used as a fast
+ * path when present.
  */
 export function isTransformersAvailable(): boolean {
   try {
-    if (typeof Bun !== "undefined" && typeof Bun.resolveSync === "function") {
-      Bun.resolveSync("@huggingface/transformers", import.meta.dir);
+    const bun = (globalThis as { Bun?: { resolveSync?: (id: string, dir: string) => string } }).Bun;
+    if (bun && typeof bun.resolveSync === "function") {
+      bun.resolveSync("@huggingface/transformers", path.dirname(fileURLToPath(import.meta.url)));
       return true;
     }
   } catch {
     return false;
   }
   try {
-    const req = (globalThis as { require?: { resolve?: (id: string) => string } }).require;
-    if (req && typeof req.resolve === "function") {
-      req.resolve("@huggingface/transformers");
-      return true;
-    }
+    const req = createRequire(import.meta.url);
+    req.resolve("@huggingface/transformers");
+    return true;
   } catch {
     return false;
   }
-  return false;
 }

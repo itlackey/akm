@@ -10,6 +10,7 @@
  * directories and group files by parent directory.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "../core/asset-spec";
@@ -88,12 +89,17 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   // Quick check: is this a git repo? Look for .git in this dir or parents.
   if (!isInsideGitRepo(stashRoot)) return null;
 
-  // Get tracked + untracked (non-ignored) files
-  const result = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
+  // Get tracked + untracked (non-ignored) files.
+  // Uses node:child_process spawnSync so the walk works under both Bun and
+  // standard Node.js (Bun.spawnSync is unavailable off-Bun).
+  const result = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
     cwd: stashRoot,
+    maxBuffer: 64 * 1024 * 1024,
   });
-  // result.success is false if the process exited non-zero OR git was not found
-  if (!result.success) return null;
+  // status is non-zero if the process exited non-zero; error is set when git
+  // was not found / could not be spawned. Either case means we cannot trust
+  // the output, so fall back to the manual walk.
+  if (result.error || result.status !== 0) return null;
 
   const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 

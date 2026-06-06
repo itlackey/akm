@@ -294,7 +294,10 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
     if (!response.ok) {
       throw new Error(`Failed to fetch archive (${response.status}) from ${url}`);
     }
-    await Bun.write(archivePath, response);
+    // Stream the response body to disk via fs/promises so this works under
+    // both Bun and standard Node.js (Bun.write is unavailable off-Bun).
+    const archiveBytes = Buffer.from(await response.arrayBuffer());
+    await fs.promises.writeFile(archivePath, archiveBytes);
 
     // Reuse the secure extraction from registry-install which validates entries,
     // uses --no-same-owner, strips components, and runs a post-extraction scan.
