@@ -791,16 +791,22 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     metrics.consolidation.mergedSecondaries += toFiniteNumber(consolidation.mergedSecondaries);
     metrics.consolidation.failedChunkMemories += toFiniteNumber(consolidation.failedChunkMemories);
     // Structured emitter (new on this branch): consolidate.ts now pushes
-    // `{op, ref, reason}` entries to `skipReasons` for every deterministic
-    // post-LLM rejection. Pre-fix envelopes have neither field, so be
-    // defensive.
+    // per-ref grouped `{ref, skips: [{op, reason}]}` entries to `skipReasons`
+    // for every deterministic post-LLM rejection. Each ref appears once but
+    // may carry multiple skips; aggregate every reason. Pre-fix envelopes have
+    // neither field, so be defensive.
     const skipReasons = consolidation.skipReasons;
     if (Array.isArray(skipReasons)) {
       for (const entry of skipReasons) {
         if (!entry || typeof entry !== "object") continue;
-        const reason = (entry as Record<string, unknown>).reason;
-        if (typeof reason !== "string" || !reason.trim()) continue;
-        metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
+        const skips = (entry as Record<string, unknown>).skips;
+        if (!Array.isArray(skips)) continue;
+        for (const skip of skips) {
+          if (!skip || typeof skip !== "object") continue;
+          const reason = (skip as Record<string, unknown>).reason;
+          if (typeof reason !== "string" || !reason.trim()) continue;
+          metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
+        }
       }
     }
   }

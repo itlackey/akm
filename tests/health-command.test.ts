@@ -670,12 +670,19 @@ describe("akmHealth", () => {
             totalChunks: 3,
             judgedNoAction: 78,
             skipReasons: [
-              { op: "promote", ref: "memory:a", reason: "dedup_pending_proposal" },
-              { op: "promote", ref: "memory:b", reason: "dedup_pending_proposal" },
-              { op: "delete", ref: "memory:c", reason: "captureMode_hot_refused" },
-              { op: "delete", ref: "memory:d", reason: "captureMode_hot_refused" },
-              { op: "merge", ref: "memory:e", reason: "merge_missing_description" },
-              { op: "merge", ref: "memory:f", reason: "merge_sanitization_failed" },
+              { ref: "memory:a", skips: [{ op: "promote", reason: "dedup_pending_proposal" }] },
+              { ref: "memory:b", skips: [{ op: "promote", reason: "dedup_pending_proposal" }] },
+              { ref: "memory:c", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
+              { ref: "memory:d", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
+              // Multi-reason ref: one entry whose skips[] carries two ops.
+              // Health must aggregate BOTH reasons (today it counted one/ref).
+              {
+                ref: "memory:e",
+                skips: [
+                  { op: "merge", reason: "merge_missing_description" },
+                  { op: "merge", reason: "merge_sanitization_failed" },
+                ],
+              },
             ],
             warnings: [],
             durationMs: 37771,
