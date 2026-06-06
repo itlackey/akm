@@ -37,6 +37,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exhaustion timer called `process.exit(1)`, causing every budget-limited run to be
   recorded as a task failure. Changed to `process.exit(0)`; budget exhaustion is a
   normal exit condition.
+- **`improve_runs.started_at` always equal to `completed_at`** — `writeImproveResultFile`
+  was called at end-of-run, so `new Date()` captured the completion time and both
+  columns held the same value (649/661 real runs affected, regressed ~May 26).
+  `started_at` now uses the timestamp captured at process launch, passed in from the
+  CLI entry point. A regex-based fallback decodes the timestamp embedded in the run ID
+  for any call site that does not supply an explicit value (#524).
+- **`akm-health-report` task fails on transient DNS errors** — the Discord webhook
+  script caught `HTTPError` but not the parent `URLError`, so DNS blips caused the
+  task runner to record the health report as failed. `URLError` is now caught and
+  logged as a warning with a clean exit.
 
 ### Improved
 
