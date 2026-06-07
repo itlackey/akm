@@ -10,7 +10,10 @@ import { akmExtract, parseSinceArg } from "../src/commands/extract";
 import { EXTRACT_JSON_SCHEMA } from "../src/commands/extract-prompt";
 import type { AkmConfig } from "../src/core/config";
 import { UsageError } from "../src/core/errors";
+import { parseFrontmatter } from "../src/core/frontmatter";
+import { isValidDescription } from "../src/core/proposal-quality-validators";
 import { listProposals } from "../src/core/proposals";
+import { detectTruncatedDescription } from "../src/core/text-truncation";
 import type {
   SessionData,
   SessionLogHarness,
@@ -316,6 +319,57 @@ describe("akmExtract — candidate → proposal routing", () => {
     // Sources field tracks the originating session
     expect(lessonProp?.payload.content).toMatch(/sources:/);
     expect(lessonProp?.payload.content).toMatch(/session:claude-code:ses_abc/);
+  });
+
+  test("repairs a truncated description so the auto-accept validator passes (#556)", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_trunc", Date.now() - 60_000);
+
+    // The LLM produced a description sliced mid-clause (ends with "to"). On the
+    // pre-#556 path this lands as-is and the description-quality validator
+    // rejects it at accept time. The repair pass must complete it first.
+    const truncatedDesc = "Always connect to the corporate VPN before running deploy.sh to";
+    expect(detectTruncatedDescription(truncatedDesc)).not.toBeNull();
+    expect(isValidDescription(truncatedDesc, "lesson:vpn-before-deploy").ok).toBe(false);
+
+    const result = await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_trunc",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeFakeHarness([session])],
+      chat: async () =>
+        JSON.stringify({
+          candidates: [
+            {
+              type: "lesson",
+              name: "vpn-before-deploy",
+              description: truncatedDesc,
+              when_to_use: "When initiating a production deploy from a fresh shell or after a laptop reboot.",
+              body: "Deploy.sh hangs at the 'pushing to stage' step when the VPN is not connected. The error message reports a misleading network failure.",
+              confidence: 0.92,
+              evidence: "agent message at session midpoint, then user correction",
+            },
+          ],
+        }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.candidatesCreated).toBe(1);
+
+    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
+    const prop = pending.find((p) => p.ref === "lesson:vpn-before-deploy");
+    expect(prop).toBeDefined();
+
+    // The persisted content's frontmatter description must now be valid.
+    const fm = parseFrontmatter(prop?.payload.content ?? "").data as Record<string, unknown>;
+    expect(typeof fm.description).toBe("string");
+    expect(detectTruncatedDescription(fm.description as string)).toBeNull();
+    expect(isValidDescription(fm.description, "lesson:vpn-before-deploy").ok).toBe(true);
+
+    // The payload frontmatter mirror must carry the same repaired value.
+    const payloadDesc = (prop?.payload.frontmatter as Record<string, unknown> | undefined)?.description;
+    expect(payloadDesc).toBe(fm.description as string);
   });
 
   test("dry-run reports candidates without creating proposals", async () => {
