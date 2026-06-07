@@ -6,9 +6,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+import { parse as yamlParse } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
-import { assembleAssetFromString } from "../core/asset-serialize";
+import { assembleAssetFromString, serializeFrontmatter } from "../core/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
@@ -996,7 +996,7 @@ function archiveMemory(
       ...(supersededBy ? { superseded_by: supersededBy } : {}),
       superseded_reason: reason,
     };
-    content = assembleAssetFromString(yamlStringify(newFm).trimEnd(), parsed.content);
+    content = assembleAssetFromString(serializeFrontmatter(newFm), parsed.content);
   } catch {
     if (warnings) warnings.push(`archiveMemory: could not parse frontmatter for ${ref} — archiving raw`);
   }
@@ -1953,7 +1953,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
           ...(parsedMemory.data ?? {}),
           description,
         };
-        const serializedMergedFm = yamlStringify(mergedBodyFm).trimEnd();
+        const serializedMergedFm = serializeFrontmatter(mergedBodyFm);
         const proposalContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
 
         // Pre-emit dedup against pending consolidate proposals from the
@@ -2255,7 +2255,7 @@ export function sanitizeMergedContent(
   // Recovery: if the strict yaml library fails, fall back to the lenient
   // hand-rolled parseFrontmatter parser, which tolerates common LLM YAML
   // quirks (unescaped special chars, bare scalars, etc.). If it recovers
-  // at least one key, proceed — yamlStringify below will re-serialize
+  // at least one key, proceed — serializeFrontmatter below will re-serialize
   // cleanly. Only reject if both parsers fail to extract any data.
   let parsedFm: unknown;
   try {
@@ -2282,7 +2282,7 @@ export function sanitizeMergedContent(
   // Re-serialise via yaml.stringify to fix any quoting quirks.
   let serialized: string;
   try {
-    serialized = yamlStringify(fm).trimEnd();
+    serialized = serializeFrontmatter(fm);
   } catch (e) {
     return { ok: false, reason: `YAML_STRINGIFY_FAILED: ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -2666,7 +2666,7 @@ async function generateMergedContent(
             : (secFm.data as Record<string, unknown>)[key];
       }
       normalizeUpdatedField(repairedFmData);
-      const repairedYaml = yamlStringify(repairedFmData).trimEnd();
+      const repairedYaml = serializeFrontmatter(repairedFmData);
       const bodyPart = mergedFm.content ?? "";
       return { content: `---\n${repairedYaml}\n---\n${bodyPart}` };
     }

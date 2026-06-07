@@ -26,8 +26,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { stringify as yamlStringify } from "yaml";
-import { assembleAssetFromString } from "../core/asset-serialize";
+import { assembleAsset } from "../core/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
@@ -190,8 +189,7 @@ function buildCandidateProposal(candidate: ExtractCandidate, sourceRef: SessionR
   if (candidate.type === "lesson" && candidate.when_to_use) {
     fm.when_to_use = candidate.when_to_use;
   }
-  const serialized = yamlStringify(fm).trimEnd();
-  const content = assembleAssetFromString(serialized, candidate.body);
+  const content = assembleAsset(fm, candidate.body);
   return { ref, content };
 }
 
