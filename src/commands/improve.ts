@@ -386,6 +386,15 @@ interface ImprovePreparationResult {
   recentErrors: Record<string, string[]>;
   gateAutoAcceptedCount: number;
   gateAutoAcceptFailedCount: number;
+  /**
+   * Consolidation result (#551). Consolidation now runs in the preparation
+   * stage BEFORE the session-extract pass, so it only ever judges memories
+   * promoted by PRIOR runs — files written by extract auto-accept in the
+   * current run do not exist yet when the pool-delta gate is evaluated.
+   */
+  consolidation: ConsolidateResult;
+  /** Whether the consolidation pass actually ran (vs profile-disabled / pool-delta skip). Drives graph-extraction reindex. */
+  consolidationRan: boolean;
 }
 
 interface ImproveLoopResult {
@@ -397,7 +406,6 @@ interface ImproveLoopResult {
 
 interface ImprovePostLoopResult {
   allWarnings: string[];
-  consolidation: ConsolidateResult;
   gateAutoAcceptedCount: number;
   gateAutoAcceptFailedCount: number;
   deadUrls?: DeadUrl[];
@@ -1206,9 +1214,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       improveProfile,
     });
 
+    // #551: consolidation now runs in the preparation stage (before extract);
+    // its result and run-flag are read from `preparation`, not the post-loop.
+    const consolidation = preparation.consolidation;
+
     const {
       allWarnings,
-      consolidation,
       deadUrls,
       memoryInference,
       graphExtraction,
@@ -1227,13 +1238,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       actionableRefs: preparation.actionableRefs,
       appliedCleanup: preparation.appliedCleanup,
       cleanupWarnings: preparation.cleanupWarnings,
-      memorySummary,
       memoryRefsForInference,
       reindexFn,
       eventsCtx,
       // O-1 (#364): propagate wall-clock budget signal to post-loop maintenance.
       budgetSignal: budgetAbortController.signal,
       improveProfile,
+      consolidationRan: preparation.consolidationRan,
     });
 
     const finalActions =
@@ -1539,6 +1550,264 @@ function emitImproveCompletedEvent(
   );
 }
 
+/**
+ * Result of the consolidation pass (#551).
+ *
+ * Consolidation moved OUT of the post-loop stage and into the preparation
+ * stage, where it runs BEFORE the session-extract pass. This guarantees the
+ * pool-delta gate (and akmConsolidate itself) only ever observe memories that
+ * existed at the start of the run — files written by extract auto-accept in
+ * the CURRENT run are not on disk yet, so they cannot make the gate fire.
+ */
+interface ConsolidationPassResult {
+  consolidation: ConsolidateResult;
+  /** True iff consolidation actually processed memories this run (drives graph reindex). */
+  consolidationRan: boolean;
+  gateAutoAcceptedCount: number;
+  gateAutoAcceptFailedCount: number;
+}
+
+/**
+ * Run (or gate-skip) the memory consolidation pass.
+ *
+ * #551 — two coordinated changes live here:
+ *
+ *   1. STRUCTURAL: this runs before extract in the improve pipeline (see
+ *      `runImprovePreparationStage`). Consolidation therefore only ever judges
+ *      PRIOR-run memories; current-run extract promotions are invisible to it.
+ *
+ *   2. SMARTER POOL-DELTA GATE: even among on-disk files, a memory whose only
+ *      post-`lastConsolidateTs` mtime bump came from its OWN auto-accept
+ *      promotion (i.e. it was just promoted by extract in the immediately
+ *      preceding run and has not had a full improve cycle to settle) does NOT
+ *      count as "work to do". We exclude those paths from the pool-delta check
+ *      using the `promoted` events already emitted with each promotion's
+ *      `assetPath`. A genuinely-settled prior memory — one edited by feedback,
+ *      reflect, manual edit, or simply older than the last consolidate — still
+ *      triggers the run. This is gate-option (a) from the issue (same-run /
+ *      adjacent-run promotion exclusion), chosen over option (b) because there
+ *      is no `extract_completed` event in the data model to gate against;
+ *      `promoted` events with `assetPath` already carry exactly the signal we
+ *      need, so the fix is non-invasive and provably correct.
+ */
+async function runConsolidationPass(args: {
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  memorySummary: { eligible: number; derived: number };
+  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
+  eventsCtx?: EventsContext;
+}): Promise<ConsolidationPassResult> {
+  const { options, primaryStashDir, memorySummary, improveProfile, eventsCtx } = args;
+
+  const baseConfig = options.config ?? loadConfig();
+  const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
+  const hasLlm = !!(baseConfig.defaults?.llm || baseConfig.defaults?.agent);
+  const volumeTriggered =
+    typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
+  // When volume triggers a consolidation pass, force-enable the consolidate
+  // process on the default improve profile so the gate accepts the run even
+  // if the user's config disabled it. We synthesise a new profile override
+  // rather than mutating connection settings.
+  const consolidationConfig: AkmConfig = volumeTriggered
+    ? {
+        ...baseConfig,
+        profiles: {
+          ...(baseConfig.profiles ?? {}),
+          improve: {
+            ...(baseConfig.profiles?.improve ?? {}),
+            default: {
+              ...(baseConfig.profiles?.improve?.default ?? {}),
+              processes: {
+                ...(baseConfig.profiles?.improve?.default?.processes ?? {}),
+                consolidate: {
+                  ...(baseConfig.profiles?.improve?.default?.processes?.consolidate ?? {}),
+                  enabled: true,
+                },
+              },
+            },
+          },
+        },
+      }
+    : baseConfig;
+
+  // 0.8.0 pool-delta gate for consolidate: re-eligible iff at least one
+  // memory file has been updated since the most recent successful
+  // consolidate_completed event. Time-based cooldowns produced the same
+  // synchronised-wave failure mode the reflect/distill cooldowns did; the
+  // pool-delta gate ties consolidation to actual work-to-do.
+  const recentConsolidations = readEvents({ type: "consolidate_completed" });
+  const lastConsolidation = recentConsolidations.events
+    .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
+    .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
+  const lastConsolidateTs = lastConsolidation?.ts;
+
+  // #551 smarter gate: build the set of memory asset paths whose only delta
+  // since the last consolidate is their OWN auto-accept promotion. Those files
+  // have not had a full improve cycle to settle, so they offer no merge /
+  // contradiction candidates yet — excluding them stops the gate firing on
+  // freshly-promoted single-source memories. We read `promoted` events emitted
+  // after the last consolidate; each carries the written `assetPath`.
+  const promotedSinceConsolidate = (() => {
+    const paths = new Set<string>();
+    try {
+      const promoted = readEvents({
+        type: "promoted",
+        ...(lastConsolidateTs ? { since: lastConsolidateTs } : {}),
+      }).events;
+      for (const e of promoted) {
+        const ap = e.metadata?.assetPath;
+        if (typeof ap === "string" && ap.length > 0) paths.add(path.resolve(ap));
+      }
+    } catch {
+      // best-effort: if the events query fails, fall back to no exclusions
+      // (preserves pre-#551 behaviour rather than over-skipping).
+    }
+    return paths;
+  })();
+
+  // Pool-delta: any memory file with mtime > lastConsolidateTs flags work to do,
+  // EXCEPT files whose only post-consolidate change was their own promotion.
+  // Using file mtime keeps this query DB-free and matches what the indexer
+  // already uses as the canonical `memory.updated_at` proxy.
+  //
+  // Bootstrap: when no successful consolidate_completed event has ever been
+  // recorded, we cannot evaluate the pool-delta — treat as eligible so a
+  // fresh stash runs consolidate once before the steady-state gate kicks in.
+  const memoryUpdatedAfterLastConsolidate = (() => {
+    if (volumeTriggered) return true; // volume override forces the run regardless.
+    if (!lastConsolidateTs) return true; // bootstrap path: never consolidated.
+    if (!primaryStashDir) return false;
+    const memoriesDir = path.join(primaryStashDir, "memories");
+    if (!fs.existsSync(memoriesDir)) return false;
+    try {
+      return fs.readdirSync(memoriesDir).some((f) => {
+        if (!f.endsWith(".md")) return false;
+        const filePath = path.join(memoriesDir, f);
+        // #551: skip files that were only touched by their own promotion this
+        // cohort — they have no settled merge/contradiction candidates yet.
+        if (promotedSinceConsolidate.has(path.resolve(filePath))) return false;
+        try {
+          return fs.statSync(filePath).mtime.toISOString() > lastConsolidateTs;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      return false;
+    }
+  })();
+
+  const consolidationOnCooldown = !volumeTriggered && !memoryUpdatedAfterLastConsolidate;
+
+  // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
+  const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
+
+  let consolidation: ConsolidateResult = {
+    schemaVersion: 1,
+    ok: true,
+    shape: "consolidate-result",
+    dryRun: false,
+    previewOnly: false,
+    target: "",
+    processed: 0,
+    merged: 0,
+    deleted: 0,
+    promoted: [],
+    contradicted: 0,
+    warnings: [],
+    durationMs: 0,
+  };
+  let gateAutoAcceptedCount = 0;
+  let gateAutoAcceptFailedCount = 0;
+  const consolidateGateCfg = makeGateConfig(
+    "consolidate",
+    {
+      globalThreshold: options.autoAccept,
+      dryRun: options.dryRun ?? false,
+      stashDir: primaryStashDir,
+      config: consolidationConfig,
+      eventsCtx,
+    },
+    { minimumThreshold: 95 },
+  );
+
+  if (consolidateDisabledByProfile) {
+    info("[improve] consolidation skipped (disabled by improve profile)");
+  } else if (!consolidationOnCooldown) {
+    consolidation = await akmConsolidate({
+      ...options.consolidateOptions,
+      config: consolidationConfig,
+      stashDir: options.stashDir,
+      autoTriggered: volumeTriggered,
+      // Tie consolidate proposals back to this improve invocation so
+      // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
+      sourceRun: `consolidate-${Date.now()}`,
+      // Incremental consolidation: pass the last-consolidation timestamp so
+      // akmConsolidate skips chunks with no memory changed since then. Converts
+      // consolidation cost from O(pool) to O(changed clusters) — the fix for
+      // the rising p95 tail where full-pool re-judging produced 5–10 min runs
+      // that promoted ~0. undefined → full pass on first-ever run (bootstrap).
+      // volumeTriggered correctly forces the run past cooldown but must NOT
+      // override incrementalSince — the stash has ~1400 eligible memories so
+      // volumeTriggered=true on every run, permanently forcing full 12-chunk
+      // scans (~264s) instead of the intended 1-2 chunk incremental path (~44s).
+      incrementalSince: lastConsolidateTs,
+      maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
+      // Honor profile.autoAccept (already merged into options.autoAccept at the
+      // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
+      // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
+      // (which maps to undefined) from disabling consolidation auto-accept.
+      // options.consolidateOptions.autoAccept (if explicitly provided by caller)
+      // still wins because the spread above runs first.
+      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
+    });
+    {
+      const consolidateGr = await runAutoAcceptGate(
+        consolidation.promoted.map((proposalId) => {
+          try {
+            if (!primaryStashDir) return { proposalId, confidence: undefined };
+            const proposal = getProposal(primaryStashDir, proposalId);
+            return { proposalId, confidence: proposal.confidence };
+          } catch {
+            return { proposalId, confidence: undefined };
+          }
+        }),
+        consolidateGateCfg,
+      );
+      gateAutoAcceptedCount += consolidateGr.promoted.length;
+      gateAutoAcceptFailedCount += consolidateGr.failed.length;
+    }
+    if (consolidation.processed > 0) {
+      appendEvent(
+        {
+          eventType: "consolidate_completed",
+          ref: "memory:_consolidation",
+          metadata: { processed: consolidation.processed, merged: consolidation.merged },
+        },
+        eventsCtx,
+      );
+    }
+  } else {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: "memory:_consolidation",
+        metadata: {
+          reason: "consolidation_no_memory_updates",
+          lastEventTs: lastConsolidation?.ts ?? null,
+        },
+      },
+      eventsCtx,
+    );
+    info("[improve] consolidation skipped (no memory updates since last run)");
+  }
+
+  // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
+  const consolidationRan = !consolidateDisabledByProfile && !consolidationOnCooldown && consolidation.processed > 0;
+
+  return { consolidation, consolidationRan, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
+}
+
 async function runImprovePreparationStage(args: {
   scope: ImproveScope;
   options: AkmImproveOptions;
@@ -1561,15 +1830,13 @@ async function runImprovePreparationStage(args: {
     plannedRefs,
     memoryCleanupPlan,
     primaryStashDir,
+    memorySummary,
     reindexFn,
     startMs,
     budgetMs,
     eventsCtx,
     initialCleanupWarnings,
-    // improveProfile is part of the preparation-stage signature for future use
-    // (per-process gating moved into the in-loop stage). Kept here so the
-    // signature does not drift away from the rest of the planner stack.
-    improveProfile: _improveProfile,
+    improveProfile,
   } = args;
 
   const actions: ImproveActionResult[] = [];
@@ -1593,6 +1860,24 @@ async function runImprovePreparationStage(args: {
     }
   }
 
+  // Phase 0.3 — memory consolidation pass (#551).
+  //
+  // Consolidation runs BEFORE the session-extract pass. This is the structural
+  // half of the #551 fix: extract auto-accept writes brand-new memory .md files
+  // on every run, which previously made the consolidation pool-delta gate fire
+  // unconditionally (any new file => "memory updated since last consolidate").
+  // By running consolidation first, the gate and akmConsolidate only ever see
+  // memories that existed at the start of the run — current-run extract
+  // promotions are not on disk yet. The complementary smarter-gate logic
+  // (excluding adjacent-run promotions) lives in `runConsolidationPass`.
+  const consolidationPass = await runConsolidationPass({
+    options,
+    primaryStashDir,
+    memorySummary,
+    improveProfile,
+    eventsCtx,
+  });
+
   // Phase 0.4 — session-extract pass.
   //
   // Reads native session files (claude-code JSONL, opencode storage tree)
@@ -1610,8 +1895,11 @@ async function runImprovePreparationStage(args: {
   // Failures are non-fatal — one harness throwing doesn't abort improve.
   // The extract envelope's own `warnings` field surfaces what went wrong.
   let extractResults: AkmExtractResult[] | undefined;
-  let gateAutoAcceptedCount = 0;
-  let gateAutoAcceptFailedCount = 0;
+  // Seed the preparation-stage gate counters with consolidation's auto-accept
+  // gate results (#551: consolidation now runs in this stage), then accumulate
+  // extract's gate results on top.
+  let gateAutoAcceptedCount = consolidationPass.gateAutoAcceptedCount;
+  let gateAutoAcceptFailedCount = consolidationPass.gateAutoAcceptFailedCount;
   const extractConfig = options.config ?? loadConfig();
   const extractGateCfg = makeGateConfig("extract", {
     globalThreshold: options.autoAccept,
@@ -2148,6 +2436,8 @@ async function runImprovePreparationStage(args: {
     utilityMap,
     gateAutoAcceptedCount,
     gateAutoAcceptFailedCount,
+    consolidation: consolidationPass.consolidation,
+    consolidationRan: consolidationPass.consolidationRan,
   };
 }
 
@@ -2700,7 +2990,6 @@ async function runImprovePostLoopStage(args: {
   actionableRefs: ImproveEligibleRef[];
   appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
   cleanupWarnings: string[];
-  memorySummary: { eligible: number; derived: number };
   memoryRefsForInference: Set<string>;
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   eventsCtx?: EventsContext;
@@ -2708,6 +2997,13 @@ async function runImprovePostLoopStage(args: {
   budgetSignal?: AbortSignal;
   /** Active improve profile, resolved from profile name + config. */
   improveProfile?: import("./improve-profiles").ImproveProfileConfig;
+  /**
+   * #551: whether the consolidation pass (now run in the preparation stage,
+   * before extract) actually processed memories. Drives the graph-extraction
+   * reindex below — graph extraction must re-read the index if consolidation
+   * mutated the memory pool.
+   */
+  consolidationRan: boolean;
 }): Promise<ImprovePostLoopResult> {
   const {
     scope,
@@ -2716,192 +3012,14 @@ async function runImprovePostLoopStage(args: {
     actionableRefs,
     appliedCleanup,
     cleanupWarnings,
-    memorySummary,
     memoryRefsForInference,
     reindexFn,
     eventsCtx,
     budgetSignal,
     improveProfile,
+    consolidationRan,
   } = args;
   const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
-
-  const baseConfig = options.config ?? loadConfig();
-  const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
-  const hasLlm = !!(baseConfig.defaults?.llm || baseConfig.defaults?.agent);
-  const volumeTriggered =
-    typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
-  // When volume triggers a consolidation pass, force-enable the consolidate
-  // process on the default improve profile so the gate accepts the run even
-  // if the user's config disabled it. We synthesise a new profile override
-  // rather than mutating connection settings.
-  const consolidationConfig: AkmConfig = volumeTriggered
-    ? {
-        ...baseConfig,
-        profiles: {
-          ...(baseConfig.profiles ?? {}),
-          improve: {
-            ...(baseConfig.profiles?.improve ?? {}),
-            default: {
-              ...(baseConfig.profiles?.improve?.default ?? {}),
-              processes: {
-                ...(baseConfig.profiles?.improve?.default?.processes ?? {}),
-                consolidate: {
-                  ...(baseConfig.profiles?.improve?.default?.processes?.consolidate ?? {}),
-                  enabled: true,
-                },
-              },
-            },
-          },
-        },
-      }
-    : baseConfig;
-
-  // 0.8.0 pool-delta gate for consolidate: re-eligible iff at least one
-  // memory file has been updated since the most recent successful
-  // consolidate_completed event. Time-based cooldowns produced the same
-  // synchronised-wave failure mode the reflect/distill cooldowns did; the
-  // pool-delta gate ties consolidation to actual work-to-do.
-  const recentConsolidations = readEvents({ type: "consolidate_completed" });
-  const lastConsolidation = recentConsolidations.events
-    .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
-    .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-  const lastConsolidateTs = lastConsolidation?.ts;
-
-  // Pool-delta: any memory file with mtime > lastConsolidateTs flags work to do.
-  // Using file mtime keeps this query DB-free and matches what the indexer
-  // already uses as the canonical `memory.updated_at` proxy.
-  //
-  // Bootstrap: when no successful consolidate_completed event has ever been
-  // recorded, we cannot evaluate the pool-delta — treat as eligible so a
-  // fresh stash runs consolidate once before the steady-state gate kicks in.
-  const memoryUpdatedAfterLastConsolidate = (() => {
-    if (volumeTriggered) return true; // volume override forces the run regardless.
-    if (!lastConsolidateTs) return true; // bootstrap path: never consolidated.
-    if (!primaryStashDir) return false;
-    const memoriesDir = path.join(primaryStashDir, "memories");
-    if (!fs.existsSync(memoriesDir)) return false;
-    try {
-      return fs.readdirSync(memoriesDir).some((f) => {
-        if (!f.endsWith(".md")) return false;
-        try {
-          return fs.statSync(path.join(memoriesDir, f)).mtime.toISOString() > lastConsolidateTs;
-        } catch {
-          return false;
-        }
-      });
-    } catch {
-      return false;
-    }
-  })();
-
-  const consolidationOnCooldown = !volumeTriggered && !memoryUpdatedAfterLastConsolidate;
-
-  // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
-  const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
-
-  let consolidation: ConsolidateResult = {
-    schemaVersion: 1,
-    ok: true,
-    shape: "consolidate-result",
-    dryRun: false,
-    previewOnly: false,
-    target: "",
-    processed: 0,
-    merged: 0,
-    deleted: 0,
-    promoted: [],
-    contradicted: 0,
-    warnings: [],
-    durationMs: 0,
-  };
-  let gateAutoAcceptedCount = 0;
-  let gateAutoAcceptFailedCount = 0;
-  const consolidateGateCfg = makeGateConfig(
-    "consolidate",
-    {
-      globalThreshold: options.autoAccept,
-      dryRun: options.dryRun ?? false,
-      stashDir: primaryStashDir,
-      config: consolidationConfig,
-      eventsCtx,
-    },
-    { minimumThreshold: 95 },
-  );
-
-  if (consolidateDisabledByProfile) {
-    info("[improve] consolidation skipped (disabled by improve profile)");
-  } else if (!consolidationOnCooldown) {
-    consolidation = await akmConsolidate({
-      ...options.consolidateOptions,
-      config: consolidationConfig,
-      stashDir: options.stashDir,
-      autoTriggered: volumeTriggered,
-      // Tie consolidate proposals back to this improve invocation so
-      // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
-      sourceRun: `consolidate-${Date.now()}`,
-      // Incremental consolidation: pass the last-consolidation timestamp so
-      // akmConsolidate skips chunks with no memory changed since then. Converts
-      // consolidation cost from O(pool) to O(changed clusters) — the fix for
-      // the rising p95 tail where full-pool re-judging produced 5–10 min runs
-      // that promoted ~0. undefined → full pass on first-ever run (bootstrap).
-      // volumeTriggered correctly forces the run past cooldown but must NOT
-      // override incrementalSince — the stash has ~1400 eligible memories so
-      // volumeTriggered=true on every run, permanently forcing full 12-chunk
-      // scans (~264s) instead of the intended 1-2 chunk incremental path (~44s).
-      incrementalSince: lastConsolidateTs,
-      maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
-      // Honor profile.autoAccept (already merged into options.autoAccept at the
-      // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
-      // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
-      // (which maps to undefined) from disabling consolidation auto-accept.
-      // options.consolidateOptions.autoAccept (if explicitly provided by caller)
-      // still wins because the spread above runs first.
-      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
-    });
-    {
-      const consolidateGr = await runAutoAcceptGate(
-        consolidation.promoted.map((proposalId) => {
-          try {
-            if (!primaryStashDir) return { proposalId, confidence: undefined };
-            const proposal = getProposal(primaryStashDir, proposalId);
-            return { proposalId, confidence: proposal.confidence };
-          } catch {
-            return { proposalId, confidence: undefined };
-          }
-        }),
-        consolidateGateCfg,
-      );
-      gateAutoAcceptedCount += consolidateGr.promoted.length;
-      gateAutoAcceptFailedCount += consolidateGr.failed.length;
-    }
-    if (consolidation.processed > 0) {
-      appendEvent(
-        {
-          eventType: "consolidate_completed",
-          ref: "memory:_consolidation",
-          metadata: { processed: consolidation.processed, merged: consolidation.merged },
-        },
-        eventsCtx,
-      );
-    }
-  } else {
-    appendEvent(
-      {
-        eventType: "improve_skipped",
-        ref: "memory:_consolidation",
-        metadata: {
-          reason: "consolidation_no_memory_updates",
-          lastEventTs: lastConsolidation?.ts ?? null,
-        },
-      },
-      eventsCtx,
-    );
-    info("[improve] consolidation skipped (no memory updates since last run)");
-  }
-
-  // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
-  const consolidationRan = !consolidateDisabledByProfile && !consolidationOnCooldown && consolidation.processed > 0;
-
   info("[improve] post-loop maintenance starting");
   const maintenanceResult = await runImproveMaintenancePasses({
     options,
@@ -2942,7 +3060,6 @@ async function runImprovePostLoopStage(args: {
 
   return {
     allWarnings,
-    consolidation,
     deadUrls,
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
@@ -2954,8 +3071,10 @@ async function runImprovePostLoopStage(args: {
     graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
     orphansPurged: maintenanceResult.orphansPurged,
     proposalsExpired: maintenanceResult.proposalsExpired,
-    gateAutoAcceptedCount,
-    gateAutoAcceptFailedCount,
+    // Consolidation's auto-accept gate counts now accrue in the preparation
+    // stage (#551); post-loop no longer runs an auto-accept gate of its own.
+    gateAutoAcceptedCount: 0,
+    gateAutoAcceptFailedCount: 0,
   };
 }
 

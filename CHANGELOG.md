@@ -52,6 +52,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`improve`: consolidation runs before extract + smarter pool-delta gate**
+  (#551). The consolidation phase now runs **before** the session-extract pass
+  in the improve pipeline. Extract auto-accept writes new memory `.md` files on
+  every run, which previously made the consolidation pool-delta gate
+  (`memoryUpdatedAfterLastConsolidate`) fire unconditionally — consolidation
+  never skipped and wastefully re-judged freshly-promoted single-source
+  memories with no merge/contradiction candidates yet. Running consolidation
+  first means it only ever sees memories from **prior** runs; current-run
+  extract promotions are not on disk yet. The pool-delta gate is additionally
+  narrowed: a memory whose only mtime bump since the last consolidate came from
+  its **own** auto-accept promotion (tracked via the `promoted` event's
+  `assetPath`) is excluded from the "work to do" check, so adjacent-run
+  promotions get a full improve cycle to settle before consolidation considers
+  them. When the gate now correctly skips, the existing
+  `improve_skipped` / `consolidation_no_memory_updates` event is emitted so
+  health reflects it. No event-shape changes; emitted-event order changes only
+  because consolidation moved earlier.
+
 - **Unified git commit model — single batch-at-boundary commit** (#507). Writing
   or deleting an asset on a git-backed source no longer commits (and optionally
   pushes) **per asset**. `writeAssetToSource` / `deleteAssetFromSource` now
