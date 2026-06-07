@@ -51,7 +51,7 @@ import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
 import { warn } from "../../core/warn";
-import { resolveValidationRunner } from "../../integrations/agent/runner";
+import { resolveValidationRunner, runnerIsLlm } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { findEntryIdByRef } from "../db/db";
@@ -137,7 +137,7 @@ export async function runStalenessDetectionPass(ctx: PassContext): Promise<Stale
     result.durationMs = Date.now() - start;
     return result;
   }
-  if (runner.kind !== "llm") {
+  if (!runnerIsLlm(runner)) {
     // MVP scope: only the LLM runner kind is supported. Agent/SDK runners
     // would require a different prompt-dispatch path that is out of scope
     // for the initial Phase 4A implementation.

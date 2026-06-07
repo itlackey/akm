@@ -41,7 +41,7 @@ import {
 } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
-import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
@@ -432,7 +432,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   let llmConfig: (LlmConnectionConfig & { supportsJsonSchema?: boolean }) | undefined;
   const runnerSpec = resolveImproveProcessRunnerFromProfile(extractProcess, config);
   if (runnerSpec) {
-    if (runnerSpec.kind !== "llm") {
+    if (!runnerIsLlm(runnerSpec)) {
       throw new ConfigError(
         `Extract only supports mode: "llm" (in-tree LLM call). Got mode: "${runnerSpec.kind}" from profiles.improve.default.processes.extract — change it to "llm" or remove the override.`,
         "INVALID_CONFIG_FILE",

@@ -26,6 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertNever } from "../../core/assert";
 import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -52,7 +53,12 @@ import {
   parseAgentProposalPayload,
   type RejectedProposalContext,
 } from "../../integrations/agent/prompts";
-import { type RunnerSpec, resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import {
+  type RunnerSpec,
+  resolveImproveProcessRunnerFromProfile,
+  runnerIsLlm,
+  runnerSupportsFileWrite,
+} from "../../integrations/agent/runner";
 import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isLlmFeatureEnabled } from "../../llm/feature-gate";
@@ -933,10 +939,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Derive a display name for logging — either from the resolved profile or the runnerSpec.
   const resolvedProfileName: string =
     profile?.name ??
-    (runnerSpec?.kind === "llm"
+    (runnerSpec && runnerIsLlm(runnerSpec)
       ? `llm:${runnerSpec.connection.model}`
-      : runnerSpec?.kind !== undefined
-        ? `${runnerSpec.kind}:${(runnerSpec as { profile?: { name?: string } }).profile?.name ?? "unknown"}`
+      : runnerSpec
+        ? `${runnerSpec.kind}:${runnerSpec.profile.name ?? "unknown"}`
         : "unknown");
 
   // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
@@ -968,7 +974,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // `profile.sdkMode` fallback also runs the SDK so it counts as file-writable.
   // Test seams (`options.runAgentOptions.spawn`) emulate agent CLI behaviour so
   // they participate as well — tests opt out by simply not writing the file.
-  const runnerSupportsFileWrite = runnerSpec ? runnerSpec.kind !== "llm" : true;
+  const canRunnerWriteFile = runnerSpec ? runnerSupportsFileWrite(runnerSpec) : true;
 
   // Initialized to a sentinel; always overwritten in the first loop iteration
   // (maxRefineIters is clamped to >= 1 above). TypeScript cannot prove a
@@ -1005,7 +1011,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     for (let iter = 0; iter < maxRefineIters; iter++) {
       // Synthesize a fresh tmp path per iteration so refinement passes never
       // clobber an earlier draft (and so reading back is unambiguous).
-      const iterDraftPath = runnerSupportsFileWrite ? synthesizeReflectDraftPath(options.ref) : undefined;
+      const iterDraftPath = canRunnerWriteFile ? synthesizeReflectDraftPath(options.ref) : undefined;
       if (iterDraftPath) {
         draftPathsToCleanup.push(iterDraftPath);
         lastDraftPath = iterDraftPath;
@@ -1085,6 +1091,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
               ...(runnerSpec.timeoutMs !== undefined ? { timeoutMs: runnerSpec.timeoutMs } : {}),
             });
             break;
+          default:
+            // Exhaustiveness arm (H1): a 4th RunnerSpec kind becomes a compile
+            // error here instead of leaving `iterResult` unassigned at runtime.
+            assertNever(runnerSpec);
         }
       } else {
         // Production path (v1): dispatch directly to the appropriate runner.

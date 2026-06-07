@@ -46,7 +46,7 @@ import {
   getNeighborsByEntryId,
   openExistingDatabase,
 } from "../../indexer/db/db";
-import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
@@ -1035,7 +1035,7 @@ function archiveMemory(
 function resolveConsolidateLlmConfig(config: AkmConfig) {
   const consolidateProcess = config.profiles?.improve?.default?.processes?.consolidate;
   const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
-  if (runnerSpec && runnerSpec.kind === "llm") {
+  if (runnerSpec && runnerIsLlm(runnerSpec)) {
     return runnerSpec.connection;
   }
   // Non-LLM runner modes (agent/sdk) don't apply to consolidate's HTTP path;
