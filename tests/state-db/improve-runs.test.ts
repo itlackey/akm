@@ -14,9 +14,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { AkmImproveResult } from "../../src/commands/improve";
 import {
   computeImproveRunMetrics,
@@ -24,21 +21,9 @@ import {
   purgeOldImproveRuns,
   recordImproveRun,
 } from "../../src/core/state-db";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
-const savedEnv = {
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
-
-const tempDirs: string[] = [];
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+let storage: IsolatedAkmStorage;
 
 function buildMinimalResult(overrides: Partial<AkmImproveResult> = {}): AkmImproveResult {
   return {
@@ -54,20 +39,11 @@ function buildMinimalResult(overrides: Partial<AkmImproveResult> = {}): AkmImpro
 }
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-impr-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-impr-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-impr-data-");
-  process.env.XDG_STATE_HOME = makeTempDir("akm-impr-state-");
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
-  for (const [key, value] of Object.entries(savedEnv)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  storage.cleanup();
 });
 
 describe("migration 003 — improve_runs", () => {
