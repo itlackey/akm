@@ -16,7 +16,7 @@ import { warn } from "../core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { resolveSourceEntries } from "../indexer/search-source";
-import { insertUsageEvent } from "../indexer/usage-events";
+import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage-events";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -276,17 +276,7 @@ export const feedbackCommand = defineCommand({
         // usage_events so the delta reflects the entire signal history.
         // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
         try {
-          const counts = db
-            .prepare(
-              `SELECT
-                 SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
-                 SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
-               FROM usage_events
-               WHERE event_type = 'feedback' AND entry_id = ?`,
-            )
-            .get(entryId) as { pos: number | null; neg: number | null } | undefined;
-          const pos = counts?.pos ?? 0;
-          const neg = counts?.neg ?? 0;
+          const { pos, neg } = countFeedbackSignals(db, entryId);
           utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
         } catch {
           // best-effort — feedback recording succeeds even if utility update fails

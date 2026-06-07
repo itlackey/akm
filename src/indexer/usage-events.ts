@@ -44,6 +44,12 @@ export interface UsageEventFilters {
   event_type?: string;
   entry_ref?: string;
   source?: "user" | "improve";
+  /**
+   * Inclusive lower bound on `created_at` (SQLite `YYYY-MM-DD HH:MM:SS`
+   * timestamp). When set, only events with `created_at >= since` are returned.
+   * Mirrors the `--since` filter formerly hand-rolled in `akm history`.
+   */
+  since?: string;
 }
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -114,6 +120,10 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
     conditions.push("source = ?");
     params.push(filters.source);
   }
+  if (filters?.since) {
+    conditions.push("created_at >= ?");
+    params.push(filters.since);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
@@ -121,6 +131,38 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
                ORDER BY id ASC`;
 
   return db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as UsageEventRow[];
+}
+
+/**
+ * Aggregate positive/negative feedback counts for a single entry.
+ *
+ * Lifted verbatim from `akm feedback` (feedback-cli.ts) where the same
+ * SUM(CASE …) query was hand-rolled inline. Returns plain numbers (NULL SUMs
+ * over an empty set are coalesced to 0) so the result fully materialises before
+ * any owning connection closes.
+ */
+export function countFeedbackSignals(db: Database, entryId: number): { pos: number; neg: number } {
+  const counts = db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+         SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
+       FROM usage_events
+       WHERE event_type = 'feedback' AND entry_id = ?`,
+    )
+    .get(entryId) as { pos: number | null; neg: number | null } | undefined;
+  return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };
+}
+
+/**
+ * Count usage events of a given `event_type`.
+ *
+ * Lifted verbatim from `akm improve` (improve.ts) where the show-event count
+ * was hand-rolled inline to drive the zero-feedback fallback warning.
+ */
+export function countUsageEventsByType(db: Database, eventType: string): number {
+  return (db.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = ?").get(eventType) as { cnt: number })
+    .cnt;
 }
 
 /**
