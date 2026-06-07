@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatSearchPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("search", (r, detail) => formatSearchPlain(r, detail));
+export const searchFormatters: TextFormatterEntry[] = [
+  { command: "search", handler: (r, detail) => formatSearchPlain(r, detail) },
+];

@@ -11,10 +11,12 @@ import {
   formatRegistryRemovePlain,
   formatRegistrySearchPlain,
 } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("registry-list", (r) => formatRegistryListPlain(r));
-registerTextFormatter("registry-add", (r) => formatRegistryAddPlain(r));
-registerTextFormatter("registry-remove", (r) => formatRegistryRemovePlain(r));
-registerTextFormatter("registry-search", (r, detail) => formatRegistrySearchPlain(r, detail));
-registerTextFormatter("registry-build-index", (r) => formatRegistryBuildIndexPlain(r));
+export const registryCommandFormatters: TextFormatterEntry[] = [
+  { command: "registry-list", handler: (r) => formatRegistryListPlain(r) },
+  { command: "registry-add", handler: (r) => formatRegistryAddPlain(r) },
+  { command: "registry-remove", handler: (r) => formatRegistryRemovePlain(r) },
+  { command: "registry-search", handler: (r, detail) => formatRegistrySearchPlain(r, detail) },
+  { command: "registry-build-index", handler: (r) => formatRegistryBuildIndexPlain(r) },
+];

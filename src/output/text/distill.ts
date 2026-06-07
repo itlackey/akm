@@ -5,6 +5,6 @@
 // Output text formatter for `akm distill <ref>` (#228).
 
 import { formatDistillPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("distill", (r) => formatDistillPlain(r));
+export const distillFormatters: TextFormatterEntry[] = [{ command: "distill", handler: (r) => formatDistillPlain(r) }];

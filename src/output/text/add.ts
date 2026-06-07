@@ -3,6 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatAddPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("add", (r) => formatAddPlain(r));
+export const addFormatters: TextFormatterEntry[] = [{ command: "add", handler: (r) => formatAddPlain(r) }];

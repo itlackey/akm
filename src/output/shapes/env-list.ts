@@ -4,18 +4,23 @@
 
 // env-list strips `path` from each env object (security: avoid leaking
 // absolute disk paths) then stamps the envelope.
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
-registerOutputShape("env-list", (result) => {
-  const r = result as Record<string, unknown>;
-  const envs = Array.isArray(r.envs) ? r.envs : [];
-  return {
-    ...r,
-    shape: (r.shape as string | undefined) ?? "env-list",
-    schemaVersion: (r.schemaVersion as number | undefined) ?? 1,
-    envs: envs.map((v) => {
-      const { path: _path, ...rest } = v as Record<string, unknown>;
-      return rest;
-    }),
-  };
-});
+export const envListShapes: OutputShapeEntry[] = [
+  {
+    command: "env-list",
+    handler: (result) => {
+      const r = result as Record<string, unknown>;
+      const envs = Array.isArray(r.envs) ? r.envs : [];
+      return {
+        ...r,
+        shape: (r.shape as string | undefined) ?? "env-list",
+        schemaVersion: (r.schemaVersion as number | undefined) ?? 1,
+        envs: envs.map((v) => {
+          const { path: _path, ...rest } = v as Record<string, unknown>;
+          return rest;
+        }),
+      };
+    },
+  },
+];

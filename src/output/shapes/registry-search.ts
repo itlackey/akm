@@ -3,8 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { shapeRegistrySearchOutput } from "./helpers";
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
-registerOutputShape("registry-search", (result, detail) =>
-  shapeRegistrySearchOutput(result as Record<string, unknown>, detail),
-);
+export const registrySearchShapes: OutputShapeEntry[] = [
+  {
+    command: "registry-search",
+    handler: (result, detail) => shapeRegistrySearchOutput(result as Record<string, unknown>, detail),
+  },
+];

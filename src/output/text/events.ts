@@ -7,7 +7,9 @@
 // code path via `formatEventLine`.
 
 import { formatEventsPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("events-list", (r) => formatEventsPlain(r));
-registerTextFormatter("events-tail", (r) => formatEventsPlain(r));
+export const eventsFormatters: TextFormatterEntry[] = [
+  { command: "events-list", handler: (r) => formatEventsPlain(r) },
+  { command: "events-tail", handler: (r) => formatEventsPlain(r) },
+];

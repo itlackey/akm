@@ -3,6 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatClonePlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("clone", (r) => formatClonePlain(r));
+export const cloneFormatters: TextFormatterEntry[] = [{ command: "clone", handler: (r) => formatClonePlain(r) }];

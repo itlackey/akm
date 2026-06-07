@@ -14,7 +14,7 @@
 
 import type { DetailLevel, ShapeMode } from "../context";
 import { capDescription, NORMAL_DESCRIPTION_LIMIT, pickFields } from "./helpers";
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
 // Curation is a small, high-signal top-N. Even at `brief` we keep `followUp`
 // (the actionable `akm show <ref>` command) and `reason` (why this asset was
@@ -78,6 +78,9 @@ export function shapeCurateOutput(
   return base;
 }
 
-registerOutputShape("curate", (result, detail, shape) =>
-  shapeCurateOutput(result as Record<string, unknown>, detail, shape),
-);
+export const curateShapes: OutputShapeEntry[] = [
+  {
+    command: "curate",
+    handler: (result, detail, shape) => shapeCurateOutput(result as Record<string, unknown>, detail, shape),
+  },
+];
