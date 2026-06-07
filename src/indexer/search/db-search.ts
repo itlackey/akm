@@ -25,7 +25,7 @@ import type { AkmConfig, ImproveConfig } from "../../core/config";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
-import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
+import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import {
   closeDatabase,
   getAllEntries,

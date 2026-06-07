@@ -41,7 +41,7 @@ import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { takeWorkflowDocument } from "../workflows/document-cache";
+import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import {
   clearStaleCacheEntries,
   closeDatabase,

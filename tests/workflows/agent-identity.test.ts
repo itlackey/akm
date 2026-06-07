@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveAgentIdentity } from "../../src/workflows/agent-identity";
-import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runs";
+import { resolveAgentIdentity } from "../../src/workflows/runtime/agent-identity";
+import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import {
   type Cleanup,
   sandboxStashDir,

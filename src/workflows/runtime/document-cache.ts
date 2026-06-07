@@ -13,8 +13,8 @@
  * two phases without leaking memory if the entry is dropped.
  */
 
-import type { StashEntry } from "../indexer/passes/metadata";
-import type { WorkflowDocument } from "./schema";
+import type { StashEntry } from "../../indexer/passes/metadata";
+import type { WorkflowDocument } from "../schema";
 
 const cache = new WeakMap<StashEntry, WorkflowDocument>();
 

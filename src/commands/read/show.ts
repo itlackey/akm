@@ -41,8 +41,8 @@ import { withIndexDb } from "../../storage/repositories/index-db";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../../sources/types";
-import { getActiveWorkflowRun } from "../../workflows/runs";
-import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
+import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
+import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as

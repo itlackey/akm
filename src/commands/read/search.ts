@@ -21,7 +21,7 @@ import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { searchLocal } from "../../indexer/search/db-search";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
+import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
 import "../../sources/providers/index";

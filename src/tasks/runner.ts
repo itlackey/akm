@@ -37,8 +37,8 @@ import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgen
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { resolveRunner } from "../integrations/agent/runner";
 import { resolveAssetPath } from "../sources/resolve";
-import type { WorkflowRunDetail } from "../workflows/runs";
-import { startWorkflowRun } from "../workflows/runs";
+import type { WorkflowRunDetail } from "../workflows/runtime/runs";
+import { startWorkflowRun } from "../workflows/runtime/runs";
 import { parseTaskDocument } from "./parser";
 import type { TaskDocument } from "./schema";
 

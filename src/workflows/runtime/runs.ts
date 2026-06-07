@@ -4,15 +4,15 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { parseAssetRef } from "../core/asset-ref";
-import { loadConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { getDbPath } from "../core/paths";
-import { closeDatabase, openExistingDatabase } from "../indexer/db";
-import { resolveSourceEntries } from "../indexer/search/search-source";
-import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { resolveAssetPath } from "../sources/resolve";
+import { parseAssetRef } from "../../core/asset-ref";
+import { loadConfig } from "../../core/config";
+import { NotFoundError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { getDbPath } from "../../core/paths";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { resolveAssetPath } from "../../sources/resolve";
 import type {
   WorkflowParameter,
   WorkflowRunStatus,
@@ -20,20 +20,20 @@ import type {
   WorkflowRunStepStatus,
   WorkflowRunSummary,
   WorkflowStepDefinition,
-} from "../sources/types";
+} from "../../sources/types";
 import {
   type WorkflowRunRow,
   type WorkflowRunStepRow,
   type WorkflowRunsRepository,
   withWorkflowRunsRepo,
-} from "../storage/repositories/workflow-runs-repository";
+} from "../../storage/repositories/workflow-runs-repository";
+import { formatWorkflowErrors } from "../authoring/authoring";
+import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
+import { parseWorkflow } from "../parser";
+import type { WorkflowDocument } from "../schema";
+import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
-import { formatWorkflowErrors } from "./authoring";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
-import { parseWorkflow } from "./parser";
-import type { WorkflowDocument } from "./schema";
-import { getCurrentWorkflowScopeKey } from "./scope-key";
-import { type SummaryJudge, validateStepSummary } from "./validate-summary";
 
 type WorkflowAsset = {
   ref: string;
@@ -654,10 +654,10 @@ function deriveRunState(steps: WorkflowRunStepRow[]): {
  * imports the client/config so the workflow engine has no hard LLM dependency.
  */
 function buildDefaultSummaryJudge(): SummaryJudge | null {
-  let llm: import("../core/config").LlmConnectionConfig | undefined;
+  let llm: import("../../core/config").LlmConnectionConfig | undefined;
   try {
     const config = loadConfig();
-    const { getDefaultLlmConfig } = require("../core/config") as typeof import("../core/config");
+    const { getDefaultLlmConfig } = require("../../core/config") as typeof import("../../core/config");
     llm = getDefaultLlmConfig(config);
   } catch {
     return null;
@@ -665,7 +665,7 @@ function buildDefaultSummaryJudge(): SummaryJudge | null {
   if (!llm) return null;
   const resolved = llm;
   return async ({ system, user }) => {
-    const { chatCompletion } = require("../llm/client") as typeof import("../llm/client");
+    const { chatCompletion } = require("../../llm/client") as typeof import("../../llm/client");
     return chatCompletion(resolved, [
       { role: "system", content: system },
       { role: "user", content: user },

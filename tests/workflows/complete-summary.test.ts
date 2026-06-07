@@ -13,7 +13,7 @@ import {
   getNextWorkflowStep,
   getWorkflowStatus,
   type SummaryValidationFailure,
-} from "../../src/workflows/runs";
+} from "../../src/workflows/runtime/runs";
 
 /**
  * In-process tests for summary capture + the completion-criteria validation

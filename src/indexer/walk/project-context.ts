@@ -22,7 +22,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveWorkflowScopeAnchor } from "../../workflows/scope-key.js";
+import { resolveWorkflowScopeAnchor } from "../../workflows/authoring/scope-key.js";
 
 // Words that appear in almost every project name and carry no discriminating
 // signal for ranking. Filtered out after token splitting.

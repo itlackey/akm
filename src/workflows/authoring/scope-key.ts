@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, resolveStashDir, safeRealpath, toPosix } from "../core/common";
+import { isWithin, resolveStashDir, safeRealpath, toPosix } from "../../core/common";
 
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
 
