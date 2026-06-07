@@ -15,18 +15,11 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef } from "../core/asset-ref";
-import { TYPE_DIRS } from "../core/asset-spec";
-import { resolveStashDir } from "../core/common";
-import { ConfigError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import {
-  type CreateProposalInput,
-  createProposal,
-  isProposalSkipped,
-  type Proposal,
-  type ProposalsContext,
-} from "../core/proposals";
+import { parseAssetRef } from "../../core/asset-ref";
+import { TYPE_DIRS } from "../../core/asset-spec";
+import { resolveStashDir } from "../../core/common";
+import { ConfigError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
 import {
   type AgentConfig,
   type AgentFailureReason,
@@ -34,17 +27,24 @@ import {
   type AgentRunResult,
   type RunAgentOptions,
   runAgent,
-} from "../integrations/agent";
-import { resolveProcessAgentProfile } from "../integrations/agent/config";
-import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
-import { runAgentSdk } from "../integrations/agent/sdk-runner";
+} from "../../integrations/agent";
+import { resolveProcessAgentProfile } from "../../integrations/agent/config";
+import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
+import { runAgentSdk } from "../../integrations/agent/sdk-runner";
 import {
   baseFailureFields,
   enoentHintMessage,
   isEnoentFailure,
   loadAgentConfigFromDisk,
   resolveAgentProfile,
-} from "./agent-support";
+} from "../agent-support";
+import {
+  type CreateProposalInput,
+  createProposal,
+  isProposalSkipped,
+  type Proposal,
+  type ProposalsContext,
+} from "./validators/proposals";
 
 export interface AkmProposeOptions {
   type: string;

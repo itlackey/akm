@@ -16,15 +16,15 @@ import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { parseFrontmatter } from "../../core/frontmatter";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { createProposal, isProposalSkipped, listProposals } from "../../core/proposals";
+import { detectTruncatedDescription } from "../../core/text-truncation";
 import {
   hasHotCaptureMode,
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
   MERGE_SHRINK_RATIO_MIN,
   validateProposalFrontmatter,
-} from "../../core/proposal-quality-validators";
-import { createProposal, isProposalSkipped, listProposals } from "../../core/proposals";
-import { detectTruncatedDescription } from "../../core/text-truncation";
+} from "../proposal/validators/proposal-quality-validators";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.

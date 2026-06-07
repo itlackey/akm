@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
-import { akmPropose } from "../../src/commands/propose";
+import { akmPropose } from "../../src/commands/proposal/propose";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";

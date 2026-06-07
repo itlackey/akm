@@ -33,7 +33,7 @@ import { UsageError } from "../core/errors";
 import { getHyphenatedArg } from "../output/context";
 import { akmAgentDispatch } from "./agent-dispatch";
 import { akmLint } from "./lint";
-import { akmPropose } from "./propose";
+import { akmPropose } from "./proposal/propose";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
 

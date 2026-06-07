@@ -36,7 +36,6 @@ import { appendEvent, readEvents } from "../../core/events";
 import { parseFrontmatter } from "../../core/frontmatter";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { stripMarkdownFences } from "../../core/markdown";
-import { checkReflectSize } from "../../core/proposal-quality-validators";
 import {
   type CreateProposalInput,
   createProposal,
@@ -72,6 +71,7 @@ import {
   loadAgentConfigFromDisk,
   resolveAgentProfile,
 } from "../agent-support";
+import { checkReflectSize } from "../proposal/validators/proposal-quality-validators";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 
 export interface AkmReflectOptions {

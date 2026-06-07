@@ -12,13 +12,15 @@
  */
 
 import { defineCommand } from "citty";
-import { hasSubcommand, parsePositiveIntFlag } from "../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
-import { resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
-import { UsageError } from "../core/errors";
-import { resolveTriageJudgmentRunner } from "../integrations/agent/runner";
-import { resolveImproveProfile } from "./improve/improve-profiles";
+import { hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { resolveStashDir } from "../../core/common";
+import { loadConfig } from "../../core/config";
+import { UsageError } from "../../core/errors";
+import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
+import { resolveImproveProfile } from "../improve/improve-profiles";
+import { drainProposals } from "./drain";
+import { resolveDrainPolicy } from "./drain-policies";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -27,8 +29,6 @@ import {
   akmProposalRevert,
   akmProposalShow,
 } from "./proposal";
-import { drainProposals } from "./proposal/drain";
-import { resolveDrainPolicy } from "./proposal/drain-policies";
 
 function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | "reverted" | undefined {
   if (raw === undefined) return undefined;
@@ -107,7 +107,7 @@ const proposalAcceptCommand = defineJsonCommand({
     const generator = args.generator as string | undefined;
     // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
     if (generator && !args.id) {
-      const { confirmDestructive } = await import("../cli/confirm.js");
+      const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
         `Bulk-accept all matching proposals from generator "${generator}"? This cannot be undone.`,
         { yes: args.yes === true || args["dry-run"] === true },
@@ -116,7 +116,7 @@ const proposalAcceptCommand = defineJsonCommand({
         process.stderr.write("Aborted.\n");
         return;
       }
-      const { listProposals } = await import("../core/proposals");
+      const { listProposals } = await import("../../core/proposals");
       const stashDir = resolveStashDir();
       const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
       if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
@@ -211,7 +211,7 @@ const proposalRejectCommand = defineJsonCommand({
     }
     // F-6 / #393: Bulk-reject when --generator is provided without a positional id.
     if (generator && !args.id) {
-      const { confirmDestructive } = await import("../cli/confirm.js");
+      const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
         `Bulk-reject all matching proposals from generator "${generator}"? This cannot be undone.`,
         { yes: args.yes === true || args["dry-run"] === true },
@@ -220,7 +220,7 @@ const proposalRejectCommand = defineJsonCommand({
         process.stderr.write("Aborted.\n");
         return;
       }
-      const { listProposals } = await import("../core/proposals");
+      const { listProposals } = await import("../../core/proposals");
       const stashDir = resolveStashDir();
       const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
       if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
@@ -262,7 +262,7 @@ const proposalRejectCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    const { confirmDestructive } = await import("../cli/confirm.js");
+    const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Reject proposal "${args.id}"? This cannot be undone.`, {
       yes: args.yes === true,
     });
@@ -419,7 +419,7 @@ const proposalDrainCommand = defineJsonCommand({
 
     // Promotion in promote mode is destructive (commits to git, no batch revert).
     if (applyMode === "promote" && !dryRun) {
-      const { confirmDestructive } = await import("../cli/confirm.js");
+      const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
         `Drain and promote matching pending proposals under policy "${policy.name}"? Promotions commit to git and cannot be batch-reverted.`,
         { yes: args.yes === true },
@@ -437,7 +437,7 @@ const proposalDrainCommand = defineJsonCommand({
     // second read (engine API owned by another agent — not changed here).
     let excludeIds: Set<string> | undefined;
     if (olderThanMs !== undefined) {
-      const { listProposals } = await import("../core/proposals");
+      const { listProposals } = await import("../../core/proposals");
       const now = Date.now();
       excludeIds = new Set(
         listProposals(stashDir, { status: "pending" })

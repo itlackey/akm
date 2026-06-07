@@ -61,9 +61,9 @@
 
 // ── Reflect-size guard ───────────────────────────────────────────────────────
 
-import { parseFrontmatter } from "./frontmatter";
+import { parseFrontmatter } from "../../../core/frontmatter";
+import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
 import type { ProposalValidator } from "./proposal-validators";
-import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "./text-truncation";
 
 // ── Description / when_to_use shape ─────────────────────────────────────────
 

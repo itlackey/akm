@@ -49,7 +49,7 @@ import { type AgentRunResult, runAgent } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
-import { akmProposalAccept, akmProposalReject } from "../proposal";
+import { akmProposalAccept, akmProposalReject } from "./proposal";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmDistill } from "../../src/commands/improve/distill";
 import { akmReflect } from "../../src/commands/improve/reflect";
-import { akmPropose } from "../../src/commands/propose";
+import { akmPropose } from "../../src/commands/proposal/propose";
 import type { AkmConfig } from "../../src/core/config";
 import { readEvents } from "../../src/core/events";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";

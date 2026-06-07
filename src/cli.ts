@@ -86,7 +86,7 @@ import { extractCommand } from "./commands/improve/extract-cli";
 import { improveCommand } from "./commands/improve/improve-cli";
 import { renderMigrationHelp } from "./commands/migration-help";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
-import { proposalCommand } from "./commands/proposal-cli";
+import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { registryCommand } from "./commands/registry-cli";
 import { rememberCommand } from "./commands/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/search-cli";

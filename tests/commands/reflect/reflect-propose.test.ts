@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
-import { akmPropose } from "../../../src/commands/propose";
+import { akmPropose } from "../../../src/commands/proposal/propose";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { listProposals } from "../../../src/core/proposals";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";

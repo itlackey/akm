@@ -13,11 +13,11 @@
  * `src/output/shapes.ts` and `src/output/text.ts`.
  */
 
-import { resolveStashDir } from "../core/common";
-import type { AkmConfig } from "../core/config";
-import { loadConfig } from "../core/config";
-import { UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
+import { resolveStashDir } from "../../core/common";
+import type { AkmConfig } from "../../core/config";
+import { loadConfig } from "../../core/config";
+import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
 import {
   archiveProposal,
   type CreateProposalInput,
@@ -32,7 +32,7 @@ import {
   resolveProposalId,
   revertProposal,
   validateProposal,
-} from "../core/proposals";
+} from "./validators/proposals";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 

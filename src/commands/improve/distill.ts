@@ -282,14 +282,18 @@ interface DistillValidationFinding {
   message: string;
 }
 
+import { repairTruncatedDescription } from "../../core/text-truncation";
 // ── Content quality validators ──────────────────────────────────────────────
 //
 // The actual implementations now live in `core/proposal-quality-validators.ts`
 // so the same checks run inside `runProposalValidators` on `proposal accept`.
 // We re-export the public-facing helpers here so existing imports
 // (`from "../../src/commands/distill"`) continue to resolve.
-import { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse } from "../../core/proposal-quality-validators";
-import { repairTruncatedDescription } from "../../core/text-truncation";
+import {
+  detectDoubleFrontmatter,
+  isValidDescription,
+  isValidWhenToUse,
+} from "../proposal/validators/proposal-quality-validators";
 
 export { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse };
 
