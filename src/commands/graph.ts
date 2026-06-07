@@ -9,7 +9,14 @@ import { type AkmConfig, loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, findEntryIdByRef, getEntryById, openDatabase, openExistingDatabase } from "../indexer/db";
+import {
+  closeDatabase,
+  findEntryIdByRef,
+  getEntryById,
+  getEntryRefRowsForStashRoot,
+  openDatabase,
+  openExistingDatabase,
+} from "../indexer/db";
 import { listRelatedPathsForFile } from "../indexer/graph-boost";
 import { loadStoredGraphSnapshot } from "../indexer/graph-db";
 import type {
@@ -365,18 +372,11 @@ function normalizeGraphName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-interface EntryRefLookupRow {
-  file_path: string;
-  entry_json: string;
-}
-
 function buildRefByPath(
   stashRoot: string,
   db: import("bun:sqlite").Database,
 ): Map<string, { ref: string; type: string }> {
-  const rows = db
-    .prepare("SELECT file_path, entry_json FROM entries WHERE stash_dir = ? OR file_path LIKE ?")
-    .all(stashRoot, `${stashRoot}%`) as EntryRefLookupRow[];
+  const rows = getEntryRefRowsForStashRoot(db, stashRoot);
   const map = new Map<string, { ref: string; type: string }>();
   for (const row of rows) {
     if (map.has(row.file_path)) continue;
