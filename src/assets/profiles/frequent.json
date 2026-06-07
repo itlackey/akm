@@ -1,0 +1,13 @@
+{
+  "description": "Frequent extract + inference pass — sessions, memory inference, graph, reflect.",
+  "processes": {
+    "reflect": { "enabled": true },
+    "distill": { "enabled": false },
+    "consolidate": { "enabled": false },
+    "memoryInference": { "enabled": true },
+    "graphExtraction": { "enabled": true },
+    "extract": { "enabled": true },
+    "triage": { "enabled": false }
+  },
+  "sync": { "enabled": true, "push": true }
+}

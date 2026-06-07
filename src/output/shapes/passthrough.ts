@@ -73,6 +73,7 @@ const PASSTHROUGH_COMMANDS = [
   "tasks-doctor",
   "tasks-enable",
   "tasks-history",
+  "tasks-init",
   "tasks-list",
   "tasks-remove",
   "tasks-run",
