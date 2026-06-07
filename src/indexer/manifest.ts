@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef } from "../core/asset-ref";
 import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset-spec";
+import type { AkmAssetType } from "../core/common";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
@@ -49,7 +50,7 @@ function toManifestEntry(
   try {
     const canonical = deriveCanonicalAssetNameFromStashRoot(entry.type, stashDir, filePath);
     const refName = canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : entry.name;
-    const ref = makeAssetRef(entry.type, refName, registryId);
+    const ref = makeAssetRef(entry.type as AkmAssetType, refName, registryId);
 
     const result: ManifestEntry = {
       name: entry.name,

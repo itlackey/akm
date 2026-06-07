@@ -6,7 +6,7 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { daysToMs, isAssetType } from "../core/common";
+import { type AkmAssetType, daysToMs, isAssetType } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
@@ -600,7 +600,7 @@ async function collectEligibleRefs(
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
-      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+      const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
       const isDerived = indexed.entry.name.endsWith(".derived");
       // `.derived` memories are LLM-inferred and intentionally skip reflect
       // (see the synthetic `derived-memory-reflect-skipped` branch in the
@@ -3364,7 +3364,7 @@ function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
     const allDbEntries = getAllEntries(db);
     const idToRef = new Map<number, string>();
     for (const indexed of allDbEntries) {
-      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+      const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     const ids = [...idToRef.keys()];
