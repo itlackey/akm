@@ -19,15 +19,15 @@
  * `runWithJsonErrors` wrapper) rather than wrapping inline.
  */
 import { defineCommand } from "citty";
-import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
-import { loadConfig } from "../core/config";
-import { UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { getHyphenatedBoolean, parseFlagValue } from "../output/context";
-import { resolveWritableOverride, saveGitStash } from "../sources/providers/git";
-import type { SourceKind } from "../sources/types";
-import { pkgVersion } from "../version";
+import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { loadConfig } from "../../core/config";
+import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { resolveSourceEntries } from "../../indexer/search-source";
+import { getHyphenatedBoolean, parseFlagValue } from "../../output/context";
+import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
+import type { SourceKind } from "../../sources/types";
+import { pkgVersion } from "../../version";
 import { akmHistory } from "./history";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
 import { checkForUpdate, performUpgrade } from "./self-update";
@@ -65,7 +65,7 @@ export const removeCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
   },
   async run({ args }) {
-    const { confirmDestructive } = await import("../cli/confirm.js");
+    const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove source "${args.target}"? This cannot be undone.`, {
       yes: args.yes === true,
     });

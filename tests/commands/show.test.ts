@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmShowUnified as akmShow } from "../../src/commands/show";
+import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { saveConfig } from "../../src/core/config";
 
 // Trigger source-provider self-registration

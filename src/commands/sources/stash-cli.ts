@@ -29,20 +29,20 @@
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
-import { hasSubcommand } from "../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
-import { assertFlatAssetName } from "../core/asset-create";
-import { isHttpUrl } from "../core/common";
-import { UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { getCacheDir } from "../core/paths";
-import { clearLogFile, info, isVerbose, setLogFile } from "../core/warn";
-import { akmIndex } from "../indexer/indexer";
-import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../output/context";
-import { akmDbBackups } from "./db-cli";
+import { hasSubcommand } from "../../cli/parse-args";
+import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { assertFlatAssetName } from "../../core/asset-create";
+import { isHttpUrl } from "../../core/common";
+import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { getCacheDir } from "../../core/paths";
+import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
+import { akmIndex } from "../../indexer/indexer";
+import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
+import { akmDbBackups } from "../db-cli";
+import { readKnowledgeInput, writeMarkdownAsset } from "../read/knowledge";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
-import { readKnowledgeInput, writeMarkdownAsset } from "./knowledge";
 
 export const initCommand = defineJsonCommand({
   meta: {

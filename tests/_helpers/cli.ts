@@ -61,7 +61,7 @@
 import { renderUsage, runCommand } from "citty";
 import { main } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
-import { normalizeShowArgv } from "../../src/commands/show";
+import { normalizeShowArgv } from "../../src/commands/read/show";
 import { loadConfig, resetConfigCache } from "../../src/core/config";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";

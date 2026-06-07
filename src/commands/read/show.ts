@@ -20,36 +20,36 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
-import { asNonEmptyString } from "../core/common";
-import { loadConfig } from "../core/config";
-import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
-import { appendEvent, readEvents } from "../core/events";
-import { parseFrontmatter } from "../core/frontmatter";
-import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../core/stash-meta";
-import { findEntryIdByRef } from "../indexer/db";
-import { ensureIndex } from "../indexer/ensure-index";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
-import { listRelatedPathsForFile } from "../indexer/graph-boost";
-import { lookup } from "../indexer/indexer";
-import type { StashEntryScope } from "../indexer/metadata";
-import { resolveAssetPath } from "../indexer/path-resolver";
-import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
-import { insertUsageEvent } from "../indexer/usage-events";
-import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { withIndexDb } from "../storage/repositories/index-db";
+import { parseAssetRef } from "../../core/asset-ref";
+import { asNonEmptyString } from "../../core/common";
+import { loadConfig } from "../../core/config";
+import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { appendEvent, readEvents } from "../../core/events";
+import { parseFrontmatter } from "../../core/frontmatter";
+import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/stash-meta";
+import { findEntryIdByRef } from "../../indexer/db";
+import { ensureIndex } from "../../indexer/ensure-index";
+import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../indexer/file-context";
+import { listRelatedPathsForFile } from "../../indexer/graph-boost";
+import { lookup } from "../../indexer/indexer";
+import type { StashEntryScope } from "../../indexer/metadata";
+import { resolveAssetPath } from "../../indexer/path-resolver";
+import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search-source";
+import { insertUsageEvent } from "../../indexer/usage-events";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { withIndexDb } from "../../storage/repositories/index-db";
 // Eagerly import source providers to trigger self-registration.
-import "../sources/providers/index";
-import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/types";
-import { getActiveWorkflowRun } from "../workflows/runs";
-import { getCurrentWorkflowScopeKey } from "../workflows/scope-key";
+import "../../sources/providers/index";
+import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../../sources/types";
+import { getActiveWorkflowRun } from "../../workflows/runs";
+import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as
  * `akm wiki show <name>`.
  */
 async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowResponse> {
-  const { showWiki } = await import("../wiki/wiki.js");
+  const { showWiki } = await import("../../wiki/wiki.js");
   const result = showWiki(stashDir, wikiName);
   return {
     type: "wiki",
@@ -70,7 +70,7 @@ async function showWikiRootForSource(
   source: { path: string; wikiName?: string },
   wikiName: string,
 ): Promise<ShowResponse> {
-  const { showWikiAtPath } = await import("../wiki/wiki.js");
+  const { showWikiAtPath } = await import("../../wiki/wiki.js");
   if (source.wikiName === wikiName) {
     const result = showWikiAtPath(wikiName, source.path);
     return {

@@ -15,12 +15,12 @@
  * `deriveCurateFallbackQueries`) by importing them directly.
  */
 
-import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { closeDatabase, openExistingDatabase } from "../indexer/db";
-import { insertUsageEvent } from "../indexer/usage-events";
-import { truncateDescription } from "../output/shapes";
-import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../sources/types";
+import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db";
+import { insertUsageEvent } from "../../indexer/usage-events";
+import { truncateDescription } from "../../output/shapes";
+import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 

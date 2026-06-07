@@ -15,7 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
-import { akmInit, type InitResponse } from "../commands/init";
+import { akmInit, type InitResponse } from "../commands/sources/init";
 import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../commands/tasks/default-tasks";
 import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../commands/tasks/tasks";
 import { isHttpUrl } from "../core/common";

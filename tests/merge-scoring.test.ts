@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mergeSearchHits } from "../src/commands/search";
+import { mergeSearchHits } from "../src/commands/read/search";
 import type { RegistrySearchResultHit, SourceSearchHit } from "../src/sources/types";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed

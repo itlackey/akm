@@ -90,7 +90,7 @@ export const agentCommand = defineCommand({
       let assetTools: import("../../sources/types.js").ShowResponse["toolPolicy"] | undefined;
 
       if (agentRef) {
-        const { akmShowUnified } = await import("../show.js");
+        const { akmShowUnified } = await import("../read/show.js");
         const asset = await akmShowUnified({ ref: agentRef, detail: "full" });
         systemPrompt = typeof asset.content === "string" ? asset.content : undefined;
         assetModel = typeof asset.modelHint === "string" ? asset.modelHint : undefined;

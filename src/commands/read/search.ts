@@ -13,19 +13,19 @@
  * Provider `search()` methods do not exist.
  */
 
-import { loadConfig } from "../core/config";
-import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { isTransientStashPath } from "../core/paths";
-import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../indexer/db";
-import { searchLocal } from "../indexer/db-search";
-import type { StashEntryScope } from "../indexer/metadata";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { getCurrentWorkflowScopeKey } from "../workflows/scope-key";
+import { loadConfig } from "../../core/config";
+import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { isTransientStashPath } from "../../core/paths";
+import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db";
+import { searchLocal } from "../../indexer/db-search";
+import type { StashEntryScope } from "../../indexer/metadata";
+import { resolveSourceEntries } from "../../indexer/search-source";
+import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
-import "../sources/providers/index";
-import { insertUsageEvent } from "../indexer/usage-events";
+import "../../sources/providers/index";
+import { insertUsageEvent } from "../../indexer/usage-events";
 import type {
   AkmSearchType,
   BeliefFilterMode,
@@ -34,8 +34,8 @@ import type {
   SearchResponse,
   SearchSource,
   SourceSearchHit,
-} from "../sources/types";
-import { withIndexDb } from "../storage/repositories/index-db";
+} from "../../sources/types";
+import { withIndexDb } from "../../storage/repositories/index-db";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;

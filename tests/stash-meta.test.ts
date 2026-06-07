@@ -7,8 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmInit } from "../src/commands/init";
-import { scaffoldStashMeta } from "../src/commands/stash-skeleton";
+import { akmInit } from "../src/commands/sources/init";
+import { scaffoldStashMeta } from "../src/commands/sources/stash-skeleton";
 import { UsageError } from "../src/core/errors";
 import { META_DEFAULT_NAME, parseMetaRef, resolveMetaFilePath } from "../src/core/stash-meta";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";

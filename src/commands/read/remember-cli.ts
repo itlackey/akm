@@ -3,11 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { defineCommand } from "citty";
-import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
-import { UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import type { SourceSearchHit } from "../sources/types";
-import { assertFlatAssetName, inferAssetName, writeMarkdownAsset } from "./knowledge";
+import { output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
+import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import type { SourceSearchHit } from "../../sources/types";
 import {
   buildMemoryFrontmatter,
   parseDuration,
@@ -15,7 +14,8 @@ import {
   resolveRememberContentArg,
   runAutoHeuristics,
   runLlmEnrich,
-} from "./remember";
+} from "../remember";
+import { assertFlatAssetName, inferAssetName, writeMarkdownAsset } from "./knowledge";
 import { akmSearch } from "./search";
 
 // ── Helper: similar memory search ────────────────────────────────────────────

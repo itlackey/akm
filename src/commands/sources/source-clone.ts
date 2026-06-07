@@ -4,13 +4,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { TYPE_DIRS } from "../core/asset-spec";
-import { NotFoundError, UsageError } from "../core/errors";
-import { findSourceForPath, getPrimarySource, resolveSourceEntries, type SearchSource } from "../indexer/search-source";
-import { isRemoteOrigin, resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { syncFromRef } from "../sources/providers/sync-from-ref";
-import { resolveAssetPath } from "../sources/resolve";
+import { makeAssetRef, parseAssetRef } from "../../core/asset-ref";
+import { TYPE_DIRS } from "../../core/asset-spec";
+import { NotFoundError, UsageError } from "../../core/errors";
+import {
+  findSourceForPath,
+  getPrimarySource,
+  resolveSourceEntries,
+  type SearchSource,
+} from "../../indexer/search-source";
+import { isRemoteOrigin, resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { syncFromRef } from "../../sources/providers/sync-from-ref";
+import { resolveAssetPath } from "../../sources/resolve";
 
 export interface CloneOptions {
   /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */

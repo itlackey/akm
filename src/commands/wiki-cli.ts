@@ -19,9 +19,9 @@ import { isHttpUrl, resolveStashDir } from "../core/common";
 import { loadConfig, resolveConfiguredSources } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
-import { buildWebsiteOptions } from "./add-cli";
 import { akmAgentDispatch } from "./agent-dispatch";
-import { readKnowledgeInput } from "./knowledge";
+import { readKnowledgeInput } from "./read/knowledge";
+import { buildWebsiteOptions } from "./sources/add-cli";
 
 const WIKI_SUBCOMMAND_SET = new Set([
   "create",
@@ -67,7 +67,7 @@ const wikiRegisterCommand = defineJsonCommand({
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
   async run({ args }) {
-    const { registerWikiSource } = await import("./source-add");
+    const { registerWikiSource } = await import("./sources/source-add");
     const result = await registerWikiSource({
       ref: args.ref.trim(),
       name: args.name,

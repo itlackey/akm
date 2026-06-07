@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmHistory } from "../../src/commands/history";
+import { akmHistory } from "../../src/commands/sources/history";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";

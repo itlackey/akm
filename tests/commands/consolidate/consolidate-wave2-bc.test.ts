@@ -237,17 +237,17 @@ describe("search empty-query guard (#14, #24)", () => {
   // requires a meaningful query.
 
   test("akmCurate throws UsageError for empty string query", async () => {
-    const { akmCurate } = await import("../../../src/commands/curate");
+    const { akmCurate } = await import("../../../src/commands/read/curate");
     await expect(akmCurate({ query: "" })).rejects.toThrow(/query is required/i);
   });
 
   test("akmCurate throws UsageError for whitespace-only query", async () => {
-    const { akmCurate } = await import("../../../src/commands/curate");
+    const { akmCurate } = await import("../../../src/commands/read/curate");
     await expect(akmCurate({ query: "   " })).rejects.toThrow(/query is required/i);
   });
 
   test("akmCurate UsageError has MISSING_REQUIRED_ARGUMENT code", async () => {
-    const { akmCurate } = await import("../../../src/commands/curate");
+    const { akmCurate } = await import("../../../src/commands/read/curate");
     const { UsageError } = await import("../../../src/core/errors");
     try {
       await akmCurate({ query: "" });

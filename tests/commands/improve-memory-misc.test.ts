@@ -445,7 +445,7 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
 
 describe("M-3: schema-repair routes through proposal queue (#387)", () => {
   test("runSchemaRepairPass queues a proposal instead of writing directly to disk", async () => {
-    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+    const { runSchemaRepairPass } = await import("../../src/commands/sources/schema-repair");
     const { listProposals } = await import("../../src/core/proposals");
 
     const stashDir = makeTempDir("akm-m3-schema-repair-");
@@ -482,7 +482,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
   });
 
   test("runSchemaRepairPass falls back to direct write when stashDir is absent", async () => {
-    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+    const { runSchemaRepairPass } = await import("../../src/commands/sources/schema-repair");
 
     const stashDir = makeTempDir("akm-m3-fallback-");
     const memFile = path.join(stashDir, "memories", "auth2.md");

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assembleInfo } from "../src/commands/info";
+import { assembleInfo } from "../src/commands/sources/info";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config";
 import {
   closeDatabase,

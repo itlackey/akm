@@ -16,7 +16,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmShowUnified } from "../../src/commands/show";
+import { akmShowUnified } from "../../src/commands/read/show";
 import { parseAssetRef } from "../../src/core/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";

@@ -12,18 +12,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset-create";
-import { resolveAssetPathFromName } from "../core/asset-spec";
-import { isHttpUrl, isWithin, tryReadStdinText } from "../core/common";
-import { loadConfig } from "../core/config";
-import { UsageError } from "../core/errors";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset-create";
+import { resolveAssetPathFromName } from "../../core/asset-spec";
+import { isHttpUrl, isWithin, tryReadStdinText } from "../../core/common";
+import { loadConfig } from "../../core/config";
+import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,
   formatRefForMessage,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../core/write-source";
-import { fetchWebsiteMarkdownSnapshot } from "../sources/website-ingest";
+} from "../../core/write-source";
+import { fetchWebsiteMarkdownSnapshot } from "../../sources/website-ingest";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 

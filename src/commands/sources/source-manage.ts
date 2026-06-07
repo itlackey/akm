@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { isRemoteUrl } from "../core/common";
-import type { SourceConfigEntry } from "../core/config";
-import { getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
-import { ConfigError, UsageError } from "../core/errors";
-import { resolveSourceEntries } from "../indexer/search-source";
+import { isRemoteUrl } from "../../core/common";
+import type { SourceConfigEntry } from "../../core/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config";
+import { ConfigError, UsageError } from "../../core/errors";
+import { resolveSourceEntries } from "../../indexer/search-source";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

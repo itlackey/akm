@@ -6,10 +6,10 @@ import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, IS_WINDOWS } from "../core/common";
-import { warn } from "../core/warn";
-import { githubHeaders } from "../integrations/github";
-import type { UpgradeCheckResponse, UpgradeResponse } from "../sources/types";
+import { fetchWithRetry, IS_WINDOWS } from "../../core/common";
+import { warn } from "../../core/warn";
+import { githubHeaders } from "../../integrations/github";
+import type { UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
@@ -426,7 +426,7 @@ function normalizePathSeparators(value: string | undefined): string {
 
 function getInstalledPackageName(): string {
   try {
-    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../../package.json");
+    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../../../package.json");
     if (fs.existsSync(pkgPath)) {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: unknown };
       if (typeof pkg.name === "string" && pkg.name.trim()) {

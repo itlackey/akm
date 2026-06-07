@@ -24,7 +24,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../src/commands/improve/improve";
-import { akmSearch } from "../src/commands/search";
+import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/metadata";

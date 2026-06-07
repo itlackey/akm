@@ -68,7 +68,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
-import { addCommand } from "./commands/add-cli";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
@@ -85,13 +84,14 @@ import {
 } from "./commands/health";
 import { extractCommand } from "./commands/improve/extract-cli";
 import { improveCommand } from "./commands/improve/improve-cli";
-import { renderMigrationHelp } from "./commands/migration-help";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
+import { rememberCommand } from "./commands/read/remember-cli";
+import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
+import { normalizeShowArgv } from "./commands/read/show";
 import { registryCommand } from "./commands/registry-cli";
-import { rememberCommand } from "./commands/remember-cli";
-import { curateCommand, searchCommand, showCommand } from "./commands/search-cli";
-import { normalizeShowArgv } from "./commands/show";
+import { addCommand } from "./commands/sources/add-cli";
+import { renderMigrationHelp } from "./commands/sources/migration-help";
 import {
   cloneCommand,
   historyCommand,
@@ -100,8 +100,14 @@ import {
   syncCommand,
   updateCommand,
   upgradeCommand,
-} from "./commands/sources-cli";
-import { dbCommand, importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/stash-cli";
+} from "./commands/sources/sources-cli";
+import {
+  dbCommand,
+  importKnowledgeCommand,
+  indexCommand,
+  infoCommand,
+  initCommand,
+} from "./commands/sources/stash-cli";
 import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";

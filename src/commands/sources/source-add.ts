@@ -4,19 +4,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isHttpUrl, resolveStashDir } from "../core/common";
-import type { SourceConfigEntry, SourceSpec } from "../core/config";
-import { getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
-import { ConfigError, UsageError } from "../core/errors";
-import { akmIndex } from "../indexer/indexer";
-import { upsertLockEntry } from "../integrations/lockfile";
-import { parseRegistryRef } from "../registry/resolve";
-import type { InstalledStashEntry } from "../registry/types";
-import { detectStashRoot } from "../sources/providers/provider-utils";
-import { syncFromRef } from "../sources/providers/sync-from-ref";
-import type { AddResponse } from "../sources/types";
-import { ensureWebsiteMirror, validateWebsiteInputUrl } from "../sources/website-ingest";
-import { ensureWikiNameAvailable, validateWikiName } from "../wiki/wiki";
+import { isHttpUrl, resolveStashDir } from "../../core/common";
+import type { SourceConfigEntry, SourceSpec } from "../../core/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config";
+import { ConfigError, UsageError } from "../../core/errors";
+import { akmIndex } from "../../indexer/indexer";
+import { upsertLockEntry } from "../../integrations/lockfile";
+import { parseRegistryRef } from "../../registry/resolve";
+import type { InstalledStashEntry } from "../../registry/types";
+import { detectStashRoot } from "../../sources/providers/provider-utils";
+import { syncFromRef } from "../../sources/providers/sync-from-ref";
+import type { AddResponse } from "../../sources/types";
+import { ensureWebsiteMirror, validateWebsiteInputUrl } from "../../sources/website-ingest";
+import { ensureWikiNameAvailable, validateWikiName } from "../../wiki/wiki";
 
 const VALID_OVERRIDE_TYPES = new Set(["wiki"]);
 

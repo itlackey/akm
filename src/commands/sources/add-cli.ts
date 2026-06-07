@@ -6,11 +6,11 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
-import { output, runWithJsonErrors } from "../cli/shared";
-import { UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { warn } from "../core/warn";
-import { getHyphenatedBoolean } from "../output/context";
+import { output, runWithJsonErrors } from "../../cli/shared";
+import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { warn } from "../../core/warn";
+import { getHyphenatedBoolean } from "../../output/context";
 import { akmRemove } from "./installed-stashes";
 import { akmAdd } from "./source-add";
 import { addStash } from "./source-manage";
@@ -187,7 +187,7 @@ export const addCommand = defineCommand({
           result.installed?.stashRoot ??
           (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
         if (installedStashRoot) {
-          const { checkEnvForDangerousKeys } = await import("./lint/env-key-rules.js");
+          const { checkEnvForDangerousKeys } = await import("../lint/env-key-rules.js");
 
           // Collect all dangerous-key findings across every env file in the
           // freshly-installed stash.

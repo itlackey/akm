@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const SKELETON_DIR = path.join(import.meta.dir, "../assets/stash-skeleton");
+const SKELETON_DIR = path.join(import.meta.dir, "../../assets/stash-skeleton");
 
 /**
  * Copy the default stash skeleton into a newly created stash directory.

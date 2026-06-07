@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
-import { akmSearch } from "../../src/commands/search";
+import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";

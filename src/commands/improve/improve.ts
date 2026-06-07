@@ -56,7 +56,7 @@ import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../s
 import { akmLint } from "../lint/index";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
-import { runSchemaRepairPass } from "../schema-repair";
+import { runSchemaRepairPass } from "../sources/schema-repair";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";

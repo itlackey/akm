@@ -12,11 +12,11 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../core/asset-spec";
-import { loadUserConfig, saveConfig } from "../core/config";
-import { ConfigError } from "../core/errors";
-import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
-import { ensureRg } from "../core/ripgrep/install";
+import { TYPE_DIRS } from "../../core/asset-spec";
+import { loadUserConfig, saveConfig } from "../../core/config";
+import { ConfigError } from "../../core/errors";
+import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
+import { ensureRg } from "../../core/ripgrep/install";
 import { copyStashSkeleton, scaffoldStashMeta } from "./stash-skeleton";
 
 /**

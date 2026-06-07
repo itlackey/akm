@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
+import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config";
 import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";

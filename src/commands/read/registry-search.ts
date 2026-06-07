@@ -2,20 +2,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { toErrorMessage } from "../core/common";
-import { DEFAULT_CONFIG, type RegistryConfigEntry } from "../core/config";
-import { warn } from "../core/warn";
-import { resolveProviderFactory } from "../registry/factory";
-import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../registry/types";
+import { toErrorMessage } from "../../core/common";
+import { DEFAULT_CONFIG, type RegistryConfigEntry } from "../../core/config";
+import { warn } from "../../core/warn";
+import { resolveProviderFactory } from "../../registry/factory";
+import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../../registry/types";
 
 // ── Eagerly import providers to trigger self-registration ───────────────────
 
-import "../registry/providers/index";
+import "../../registry/providers/index";
 
 // ── Re-exports for backward compatibility ───────────────────────────────────
 
-export type { RegistryIndex, RegistryStashEntry } from "../registry/providers/static-index";
-export type { RegistryAssetSearchHit } from "../registry/types";
+export type { RegistryIndex, RegistryStashEntry } from "../../registry/providers/static-index";
+export type { RegistryAssetSearchHit } from "../../registry/types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

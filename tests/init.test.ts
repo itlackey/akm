@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmInit } from "../src/commands/init";
+import { akmInit } from "../src/commands/sources/init";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 function makeTempDir(prefix: string): string {

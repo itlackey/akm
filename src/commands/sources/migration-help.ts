@@ -16,12 +16,12 @@ const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migrat
  * `files[]` array in `package.json`.
  */
 function releaseNotesDir(): string {
-  return path.resolve(import.meta.dir, "../../docs/migration/release-notes");
+  return path.resolve(import.meta.dir, "../../../docs/migration/release-notes");
 }
 
 function loadChangelog(): string | undefined {
   try {
-    const changelogPath = path.resolve(import.meta.dir, "../../CHANGELOG.md");
+    const changelogPath = path.resolve(import.meta.dir, "../../../CHANGELOG.md");
     if (fs.existsSync(changelogPath)) {
       return fs.readFileSync(changelogPath, "utf8");
     }

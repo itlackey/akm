@@ -11,18 +11,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, resolveStashDir } from "../core/common";
-import { getSources, loadConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
-import { akmIndex } from "../indexer/indexer";
-import { removeLockEntry, upsertLockEntry } from "../integrations/lockfile";
-import { parseRegistryRef } from "../registry/resolve";
-import type { InstalledStashEntry } from "../registry/types";
-import { parseGitRepoUrl, syncMirroredRepo } from "../sources/providers/git";
-import { syncFromRef } from "../sources/providers/sync-from-ref";
-import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../sources/types";
-import { ensureWebsiteMirror } from "../sources/website-ingest";
-import { listWikis, resolveWikisRoot } from "../wiki/wiki";
+import { isWithin, resolveStashDir } from "../../core/common";
+import { getSources, loadConfig } from "../../core/config";
+import { NotFoundError, UsageError } from "../../core/errors";
+import { akmIndex } from "../../indexer/indexer";
+import { removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
+import { parseRegistryRef } from "../../registry/resolve";
+import type { InstalledStashEntry } from "../../registry/types";
+import { parseGitRepoUrl, syncMirroredRepo } from "../../sources/providers/git";
+import { syncFromRef } from "../../sources/providers/sync-from-ref";
+import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../../sources/types";
+import { ensureWebsiteMirror } from "../../sources/website-ingest";
+import { listWikis, resolveWikisRoot } from "../../wiki/wiki";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
 
