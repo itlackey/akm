@@ -167,20 +167,39 @@ export const improveCommand = defineCommand({
         }
       };
 
-      const sigtermHandler = () => {
-        persistTerminated("SIGTERM");
-        process.stderr.write(`[improve] received SIGTERM; recorded terminated run ${runId}\n`);
-        process.exit(143);
+      // M5 (code-health round 2): signal -> {exit code, reason, ack message}
+      // as an explicit table instead of three near-identical handlers. The
+      // persist of the terminated-run row MUST complete before process.exit so
+      // a SIGTERM'd run (e.g. cron timeout) always leaves a row in
+      // improve_runs. recordTerminatedImproveRun is fully synchronous
+      // (bun:sqlite writes are sync), so the in-line call below blocks until
+      // the row is flushed before we exit.
+      const SIGNAL_TABLE = {
+        SIGTERM: { code: 143, reason: "SIGTERM" as const, ack: true },
+        SIGINT: { code: 130, reason: "SIGINT" as const, ack: true },
+        SIGHUP: { code: 129, reason: "SIGHUP" as const, ack: false },
+      } satisfies Record<string, { code: number; reason: TerminationReason; ack: boolean }>;
+      const makeSignalHandler = (sig: keyof typeof SIGNAL_TABLE) => () => {
+        const { code, reason, ack } = SIGNAL_TABLE[sig];
+        // Hard-exit fallback: if the synchronous persist ever hangs (e.g. a
+        // stuck sqlite lock under contention), the watchdog still exits with
+        // the correct code instead of leaving a zombie process. .unref() keeps
+        // the timer from holding the loop open on the normal (fast) path.
+        const watchdog = setTimeout(() => process.exit(code), 2000);
+        if (typeof watchdog.unref === "function") watchdog.unref();
+        try {
+          persistTerminated(reason);
+        } finally {
+          clearTimeout(watchdog);
+        }
+        if (ack) {
+          process.stderr.write(`[improve] received ${sig}; recorded terminated run ${runId}\n`);
+        }
+        process.exit(code);
       };
-      const sigintHandler = () => {
-        persistTerminated("SIGINT");
-        process.stderr.write(`[improve] received SIGINT; recorded terminated run ${runId}\n`);
-        process.exit(130);
-      };
-      const sighupHandler = () => {
-        persistTerminated("SIGHUP");
-        process.exit(129);
-      };
+      const sigtermHandler = makeSignalHandler("SIGTERM");
+      const sigintHandler = makeSignalHandler("SIGINT");
+      const sighupHandler = makeSignalHandler("SIGHUP");
       process.once("SIGTERM", sigtermHandler);
       process.once("SIGINT", sigintHandler);
       process.once("SIGHUP", sighupHandler);
