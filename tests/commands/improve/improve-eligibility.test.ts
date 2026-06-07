@@ -64,6 +64,18 @@ async function buildIndex(stashDir: string): Promise<void> {
   await akmIndex({ stashDir, full: true });
 }
 
+// #553: these pool-delta / #551-gate tests use single-memory sandboxed pools.
+// The default consolidate minPoolSize guard (500) would otherwise short-circuit
+// the consolidation pass before the mtime-delta gate runs. Disable the pool-size
+// guard (minPoolSize: 0) so these tests exercise the gate they pin, not the new
+// guard. (A dedicated suite covers the minPoolSize guard itself.)
+function configWithoutPoolGuard(): import("../../../src/core/config").AkmConfig {
+  return {
+    semanticSearchMode: "off",
+    profiles: { improve: { default: { processes: { consolidate: { minPoolSize: 0 } } } } },
+  } as import("../../../src/core/config").AkmConfig;
+}
+
 const okReflect = (ref: string): AkmReflectResult => ({
   schemaVersion: 1,
   ok: true,
@@ -380,6 +392,7 @@ describe("consolidate pool-delta eligibility", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
@@ -409,6 +422,7 @@ describe("consolidate pool-delta eligibility", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
@@ -446,6 +460,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
@@ -498,6 +513,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
@@ -527,6 +543,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,

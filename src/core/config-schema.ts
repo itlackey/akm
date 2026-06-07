@@ -145,6 +145,10 @@ export const ImproveProcessConfigSchema = z
     profile: z.string().min(1).optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
     allowedTypes: z.array(z.string().min(1)).optional(),
+    // Consolidate process: minimum eligible-memory pool size below which the
+    // consolidation pass skips entirely (emits `pool_below_min_size`). 0 disables
+    // the guard. Only meaningful on the `consolidate` process. Default 500.
+    minPoolSize: z.number().int().min(0).optional(),
     qualityGate: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     // Extract process config (only meaningful for extract process)

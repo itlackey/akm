@@ -1468,7 +1468,9 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           profiles: {
             llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
+            improve: {
+              default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
+            },
           },
           defaults: { llm: "default" },
         },
@@ -1491,7 +1493,9 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           profiles: {
             llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
+            improve: {
+              default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
+            },
           },
           defaults: { llm: "default" },
         },
@@ -1534,7 +1538,9 @@ describe("akm improve memory cleanup", () => {
         semanticSearchMode: "off",
         profiles: {
           llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
+          improve: {
+            default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
+          },
         },
         defaults: { llm: "default" },
       },
