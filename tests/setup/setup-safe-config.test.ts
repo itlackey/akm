@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { resetConfigCache } from "../../src/core/config";
+import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
 import {

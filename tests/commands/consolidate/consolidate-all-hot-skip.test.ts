@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmConsolidate } from "../../../src/commands/improve/consolidate";
-import type { AkmConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let cleanup: Cleanup;

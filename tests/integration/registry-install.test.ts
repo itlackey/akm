@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../../src/core/config";
+import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { syncFromRef } from "../../src/sources/providers/sync-from-ref";
 import { validateTarEntries } from "../../src/sources/providers/tar-utils";
 

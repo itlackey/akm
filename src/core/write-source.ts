@@ -27,12 +27,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getCachePaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
-import type { AssetRef } from "./asset-ref";
-import { makeAssetRef } from "./asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
+import type { AssetRef } from "./asset/asset-ref";
+import { makeAssetRef } from "./asset/asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "./asset/asset-spec";
 import { isWithin, resolveStashDir } from "./common";
-import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config";
-import { resolveConfiguredSources } from "./config";
+import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
+import { resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 
 // ── Types ───────────────────────────────────────────────────────────────────

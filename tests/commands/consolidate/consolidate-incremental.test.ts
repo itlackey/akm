@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { narrowToIncrementalCandidates } from "../../../src/commands/improve/consolidate";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, openDatabase, upsertEmbedding, upsertEntry } from "../../../src/indexer/db";
+import { closeDatabase, openDatabase, upsertEmbedding, upsertEntry } from "../../../src/indexer/db/db";
 import type { StashEntry } from "../../../src/indexer/passes/metadata";
 import { type Cleanup, sandboxXdgDataHome } from "../../_helpers/sandbox";
 

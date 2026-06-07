@@ -9,10 +9,10 @@ import path from "node:path";
 import { akmExtract, parseSinceArg } from "../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../src/commands/improve/extract-prompt";
 import { isValidDescription } from "../src/commands/proposal/validators/proposal-quality-validators";
-import type { AkmConfig } from "../src/core/config";
+import { listProposals } from "../src/commands/proposal/validators/proposals";
+import { parseFrontmatter } from "../src/core/asset/frontmatter";
+import type { AkmConfig } from "../src/core/config/config";
 import { UsageError } from "../src/core/errors";
-import { parseFrontmatter } from "../src/core/frontmatter";
-import { listProposals } from "../src/core/proposals";
 import { detectTruncatedDescription } from "../src/core/text-truncation";
 import type {
   SessionData,

@@ -27,7 +27,7 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 
 /** Agent-returned proposal payload (after JSON parse). */

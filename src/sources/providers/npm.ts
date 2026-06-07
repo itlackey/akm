@@ -13,7 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { SourceConfigEntry } from "../../core/config";
+import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir } from "../../core/paths";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";

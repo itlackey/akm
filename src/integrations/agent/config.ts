@@ -13,7 +13,7 @@
  * No LLM SDK is imported here. The runtime path is shell-out only (see
  * `./spawn.ts`).
  */
-import type { AgentProfileConfigV2, AkmConfig } from "../../core/config";
+import type { AgentProfileConfigV2, AkmConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import {

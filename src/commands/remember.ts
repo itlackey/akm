@@ -12,7 +12,7 @@
 
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
-import { getDefaultLlmConfig, loadConfig } from "../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/passes/metadata";

@@ -15,8 +15,8 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset-ref";
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { resolveStashDir } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";

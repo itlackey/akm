@@ -39,7 +39,7 @@ export interface SandboxedDir {
  *
  * Single source of truth for the "freshly initialized stash" layout used by
  * the test sandbox. Mirrors the `stashDir` values of the default asset specs
- * that `akm init` scaffolds (src/core/asset-spec.ts → src/commands/init.ts).
+ * that `akm init` scaffolds (src/core/asset/asset-spec.ts → src/commands/init.ts).
  * Kept as a literal here (rather than importing TYPE_DIRS) so the helper has
  * no production-module dependency and so the set is stable regardless of any
  * runtime asset-type (de)registration a test performs.

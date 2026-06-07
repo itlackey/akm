@@ -8,7 +8,7 @@
  * an OpenAI-compatible endpoint (or inherits from config.llm) for the SDK.
  */
 
-import { type LlmConnectionConfig, resolveSecret } from "../../core/config";
+import { type LlmConnectionConfig, resolveSecret } from "../../core/config/config";
 import type { AgentProfile } from "./profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "./spawn";
 

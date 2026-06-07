@@ -5,9 +5,9 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { fetchWithRetry } from "../../core/common";
-import type { SourceSpec } from "../../core/config";
+import type { SourceSpec } from "../../core/config/config";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));

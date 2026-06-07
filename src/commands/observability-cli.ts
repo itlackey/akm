@@ -28,7 +28,7 @@ import path from "node:path";
 import { defineCommand } from "citty";
 import { parsePositiveIntFlag } from "../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
-import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from "../indexer/db";
+import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from "../indexer/db/db";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "../output/cli-hints";
 import { getHyphenatedArg, getOutputMode, parseDetailLevel } from "../output/context";
 import { formatEventLine } from "../output/text";

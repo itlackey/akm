@@ -11,7 +11,7 @@ import {
   resetConfigCache,
   saveConfig,
   updateConfig,
-} from "../src/core/config";
+} from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { setQuiet } from "../src/core/warn";

@@ -10,11 +10,11 @@ import profileGraphRefresh from "../../assets/profiles/graph-refresh.json" with 
 import profileMemoryFocus from "../../assets/profiles/memory-focus.json" with { type: "json" };
 import profileQuick from "../../assets/profiles/quick.json" with { type: "json" };
 import profileThorough from "../../assets/profiles/thorough.json" with { type: "json" };
-import { parseAssetRef } from "../../core/asset-ref";
-import type { AkmConfig, ImproveProfileConfig } from "../../core/config";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { warn } from "../../core/warn";
 
-export type { ImproveProfileConfig } from "../../core/config";
+export type { ImproveProfileConfig } from "../../core/config/config";
 
 /** Profile name used as the final fallback when nothing else resolves. */
 const FALLBACK_PROFILE_NAME = "default";

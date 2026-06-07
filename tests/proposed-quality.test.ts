@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
-import { saveConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config/config";
 import { setQuiet } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { _resetUnknownQualityWarnings, isProposedQuality, validateStashEntry } from "../src/indexer/passes/metadata";

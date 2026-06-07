@@ -1,7 +1,7 @@
 # AKM migration helper scripts
 
 When AKM ships a destructive DB schema change (the `handleVersionUpgrade()`
-path in `src/indexer/db.ts` drops every table and forces a full reindex), the
+path in `src/indexer/db/db.ts` drops every table and forces a full reindex), the
 running binary writes a pre-upgrade snapshot of the entire data directory to:
 
 ```

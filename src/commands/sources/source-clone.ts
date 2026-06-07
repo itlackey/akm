@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../core/asset-ref";
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { NotFoundError, UsageError } from "../../core/errors";
 import {
   findSourceForPath,

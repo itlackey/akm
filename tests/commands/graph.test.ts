@@ -11,9 +11,9 @@ import {
   akmGraphRelations,
   akmGraphSummary,
 } from "../../src/commands/graph/graph";
-import { saveConfig } from "../../src/core/config";
+import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";
+import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
@@ -574,7 +574,7 @@ describe("graph row cascade delete on entries removal", () => {
     const db = openDatabase(dbPath);
     try {
       // Defensive: confirm FK enforcement is actually on. openDatabase enables
-      // it (PRAGMA foreign_keys = ON in src/indexer/db.ts) but the assertion
+      // it (PRAGMA foreign_keys = ON in src/indexer/db/db.ts) but the assertion
       // would silently pass without cascading if a future regression turned
       // it off.
       const fkRow = db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number };

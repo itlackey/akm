@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ASSET_SPECS } from "../../src/core/asset-spec";
+import { ASSET_SPECS } from "../../src/core/asset/asset-spec";
 import { isAssetType } from "../../src/core/common";
 import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 

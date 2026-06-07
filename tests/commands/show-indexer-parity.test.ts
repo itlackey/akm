@@ -17,9 +17,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
-import { parseAssetRef } from "../../src/core/asset-ref";
-import { resetConfigCache, saveConfig } from "../../src/core/config";
-import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
+import { parseAssetRef } from "../../src/core/asset/asset-ref";
+import { resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
 import "../../src/sources/providers/index";
 import {

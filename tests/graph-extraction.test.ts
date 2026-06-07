@@ -18,8 +18,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AkmConfig } from "../src/core/config";
-import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
+import type { AkmConfig } from "../src/core/config/config";
+import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/db/graph-db";
 import { buildSearchText } from "../src/indexer/search/search-fields";
 import type { SearchSource } from "../src/indexer/search/search-source";

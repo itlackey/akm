@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../src/core/config";
+import type { LlmConnectionConfig } from "../src/core/config/config";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { enhanceMetadata } from "../src/llm/metadata-enhance";
 

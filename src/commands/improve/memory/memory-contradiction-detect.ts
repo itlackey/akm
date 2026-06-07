@@ -38,9 +38,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
-import type { AkmConfig, LlmConnectionConfig } from "../../../core/config";
-import { getDefaultLlmConfig } from "../../../core/config";
-import { parseFrontmatter } from "../../../core/frontmatter";
+import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
+import { getDefaultLlmConfig } from "../../../core/config/config";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { tryLlmFeature } from "../../../llm/feature-gate";
 

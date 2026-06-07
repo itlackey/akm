@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmExtract } from "../src/commands/improve/extract";
-import type { AkmConfig } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
 import {
   getExtractedSession,
   getExtractedSessionsMap,

@@ -19,11 +19,11 @@
 import fs from "node:fs";
 import { z } from "zod";
 import { UsageError } from "../../core/errors";
-import { PROPOSAL_SOURCES } from "../../core/proposals";
 import type { DrainPolicy } from "./drain";
+import { PROPOSAL_SOURCES } from "./validators/proposals";
 
 // Valid `generator` values for a drain rule are exactly the canonical proposal
-// `source` values (see {@link PROPOSAL_SOURCES} in src/core/proposals.ts). The
+// `source` values (see {@link PROPOSAL_SOURCES} in src/commands/proposal/validators/proposals.ts). The
 // engine matches rules via `policy.accept.find(r => r.generator === proposal.source)`,
 // so a generator that is not a real source can never match — it would be a
 // silent permanent no-op. Validate against the closed set to surface typos.

@@ -16,10 +16,10 @@
 import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { parseAssetRef } from "./asset-ref";
-import { resolveAssetPathFromName } from "./asset-spec";
+import { parseAssetRef } from "./asset/asset-ref";
+import { resolveAssetPathFromName } from "./asset/asset-spec";
 import { isWithin } from "./common";
-import { loadConfig } from "./config";
+import { loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 
 export type { IndexSearchSource };

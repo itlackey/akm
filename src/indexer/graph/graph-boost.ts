@@ -22,7 +22,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { AkmConfig } from "../../core/config";
+import type { AkmConfig } from "../../core/config/config";
 import { loadStoredGraphMeta, loadStoredGraphSnapshot } from "../db/graph-db";
 import type { GraphFile, GraphFileNode } from "./graph-extraction";
 

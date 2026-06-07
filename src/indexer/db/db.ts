@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset-ref";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { getDbPath } from "../../core/paths";
 import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -97,7 +97,7 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
  */
 function resolveConfiguredEmbeddingDim(): number | undefined {
   try {
-    const { loadConfig } = require("../../core/config") as typeof import("../../core/config");
+    const { loadConfig } = require("../../core/config/config") as typeof import("../../core/config/config");
     const dim = loadConfig().embedding?.dimension;
     if (typeof dim === "number" && Number.isInteger(dim) && dim > 0 && dim <= 4096) {
       return dim;

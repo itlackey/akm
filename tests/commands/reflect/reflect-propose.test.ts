@@ -18,8 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../src/commands/proposal/propose";
+import { listProposals } from "../../../src/commands/proposal/validators/proposals";
 import { appendEvent, readEvents } from "../../../src/core/events";
-import { listProposals } from "../../../src/core/proposals";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
@@ -467,7 +467,7 @@ describe("akm propose", () => {
 
   // ── #284 GAP-HIGH 3: registered custom type ──────────────────────────────
   test("akmPropose accepts a custom type registered via registerAssetType", async () => {
-    const { registerAssetType, deregisterAssetType } = await import("../../../src/core/asset-spec");
+    const { registerAssetType, deregisterAssetType } = await import("../../../src/core/asset/asset-spec");
     registerAssetType("widget", {
       stashDir: "widgets",
       isRelevantFile: (f: string) => f.endsWith(".md"),

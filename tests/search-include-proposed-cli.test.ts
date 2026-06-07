@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resetConfigCache, saveConfig } from "../src/core/config";
+import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
 import { runCliCapture } from "./_helpers/cli";
 import {

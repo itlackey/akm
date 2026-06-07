@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseDocument } from "yaml";
-import { parseFrontmatterBlock } from "../src/core/frontmatter";
+import { parseFrontmatterBlock } from "../src/core/asset/frontmatter";
 
 type Options = {
   fix: boolean;

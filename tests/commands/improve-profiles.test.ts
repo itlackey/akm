@@ -5,7 +5,7 @@ import {
   resolveProcessEnabled,
   shouldSkipRef,
 } from "../../src/commands/improve/improve-profiles";
-import type { AkmConfig } from "../../src/core/config";
+import type { AkmConfig } from "../../src/core/config/config";
 
 const MINIMAL_CONFIG: AkmConfig = {
   semanticSearchMode: "off",

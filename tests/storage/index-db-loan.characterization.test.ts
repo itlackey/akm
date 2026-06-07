@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openDatabase } from "../../src/indexer/db";
+import { openDatabase } from "../../src/indexer/db/db";
 import { getUsageEvents, insertUsageEvent } from "../../src/indexer/usage/usage-events";
 import { withIndexDb } from "../../src/storage/repositories/index-db";
 

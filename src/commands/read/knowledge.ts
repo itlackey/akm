@@ -13,9 +13,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { resolveAssetPathFromName } from "../../core/asset-spec";
+import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isHttpUrl, isWithin, tryReadStdinText } from "../../core/common";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,

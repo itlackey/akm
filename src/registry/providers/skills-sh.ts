@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { fetchWithRetry } from "../../core/common";
-import type { RegistryConfigEntry } from "../../core/config";
+import type { RegistryConfigEntry } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
-import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
+import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type {

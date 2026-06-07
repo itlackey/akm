@@ -22,7 +22,7 @@ import {
   type MemoryEntry,
 } from "../../../src/commands/improve/consolidate";
 import { writeContradictEdge } from "../../../src/commands/improve/memory/memory-belief";
-import { parseFrontmatter } from "../../../src/core/frontmatter";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

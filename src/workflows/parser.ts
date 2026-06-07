@@ -13,8 +13,8 @@
  */
 
 import { parse as yamlParse } from "yaml";
+import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
-import { parseFrontmatterBlock } from "../core/frontmatter";
 import {
   type SourceRef,
   WORKFLOW_SCHEMA_VERSION,

@@ -40,10 +40,10 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
-import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../../core/config";
-import { parseFrontmatter } from "../../core/frontmatter";
+import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../../core/config/config";
 import { warn, warnVerbose } from "../../core/warn";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../../llm/graph-extract";
@@ -56,7 +56,7 @@ import {
   getLlmCacheEntry,
   type LlmCacheEntry,
   upsertLlmCacheEntry,
-} from "../db";
+} from "../db/db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";

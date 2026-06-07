@@ -16,8 +16,8 @@
 
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
-import { parseAssetRef } from "../../core/asset-ref";
 import { UsageError } from "../../core/errors";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
 import type { KnowledgeView, ShowDetailLevel } from "../../sources/types";

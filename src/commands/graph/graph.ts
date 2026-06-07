@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset-ref";
-import { type AkmConfig, loadConfig } from "../../core/config";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
@@ -16,7 +16,7 @@ import {
   getEntryRefRowsForStashRoot,
   openDatabase,
   openExistingDatabase,
-} from "../../indexer/db";
+} from "../../indexer/db/db";
 import { loadStoredGraphSnapshot } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import type {

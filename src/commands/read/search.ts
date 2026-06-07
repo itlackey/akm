@@ -13,11 +13,11 @@
  * Provider `search()` methods do not exist.
  */
 
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isTransientStashPath } from "../../core/paths";
-import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db";
+import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db/db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { searchLocal } from "../../indexer/search/db-search";
 import { resolveSourceEntries } from "../../indexer/search/search-source";

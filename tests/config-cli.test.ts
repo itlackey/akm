@@ -6,7 +6,7 @@ import {
   setConfigValue,
   unsetConfigValue,
 } from "../src/commands/config-cli";
-import type { AkmConfig } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
 
 describe("config CLI helpers", () => {
   test("listConfig omits unconfigured embedding and llm", () => {

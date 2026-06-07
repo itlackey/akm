@@ -50,7 +50,7 @@
  *    would (UsageError → 2, ConfigError → 78, others → 1).
  *
  * State note: back-to-back in-process runs in a SINGLE test would otherwise
- * share `cachedConfig` (a module-level singleton in `src/core/config.ts`) and
+ * share `cachedConfig` (a module-level singleton in `src/core/config/config.ts`) and
  * the output-mode singleton. `runCliCapture` calls `resetConfigCache()` and
  * `resetOutputMode()` before each run so every invocation re-reads config from
  * the (sandboxed) environment, exactly as a fresh subprocess would. The
@@ -62,7 +62,7 @@ import { renderUsage, runCommand } from "citty";
 import { main } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
 import { normalizeShowArgv } from "../../src/commands/read/show";
-import { loadConfig, resetConfigCache } from "../../src/core/config";
+import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
 

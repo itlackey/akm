@@ -38,18 +38,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset-spec";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
-import { parseFrontmatter } from "../../core/frontmatter";
-import { listProposals, type Proposal } from "../../core/proposals";
 import { info, warn } from "../../core/warn";
 import { type AgentRunResult, runAgent } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject } from "./proposal";
+import { listProposals, type Proposal } from "./validators/proposals";
 
 // ---------------------------------------------------------------------------
 // Types

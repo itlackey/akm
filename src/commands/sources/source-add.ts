@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
-import type { SourceConfigEntry, SourceSpec } from "../../core/config";
-import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config";
+import type { SourceConfigEntry, SourceSpec } from "../../core/config/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
 import { upsertLockEntry } from "../../integrations/lockfile";

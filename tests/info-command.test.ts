@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { assembleInfo } from "../src/commands/sources/info";
-import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import {
   closeDatabase,
   openDatabase,
@@ -12,7 +12,7 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
-} from "../src/indexer/db";
+} from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { runCliCapture } from "./_helpers/cli";
 import {

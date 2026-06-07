@@ -11,7 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "../db";
+import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 
 /**
  * Optional cache-event sink. Passes that want to track cache hit rate

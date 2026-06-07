@@ -20,7 +20,7 @@
  */
 import { defineCommand } from "citty";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";

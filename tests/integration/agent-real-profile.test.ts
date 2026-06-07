@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
-import { listProposals } from "../../src/core/proposals";
+import { listProposals } from "../../src/commands/proposal/validators/proposals";
 import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 

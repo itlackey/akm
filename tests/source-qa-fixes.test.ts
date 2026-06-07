@@ -16,7 +16,7 @@ import path from "node:path";
 import { akmListSources, akmUpdate } from "../src/commands/sources/installed-stashes";
 import { akmAdd } from "../src/commands/sources/source-add";
 import { addStash } from "../src/commands/sources/source-manage";
-import { loadConfig, saveConfig } from "../src/core/config";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import * as gitProvider from "../src/sources/providers/git";
 

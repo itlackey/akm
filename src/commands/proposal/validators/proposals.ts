@@ -41,10 +41,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { AssetRef } from "../../../core/asset-ref";
-import { makeAssetRef, parseAssetRef } from "../../../core/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../../core/asset-spec";
-import type { AkmConfig } from "../../../core/config";
+import type { AssetRef } from "../../../core/asset/asset-ref";
+import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../../../core/asset/asset-spec";
+import type { AkmConfig } from "../../../core/config/config";
 import { NotFoundError, UsageError } from "../../../core/errors";
 import { appendEvent } from "../../../core/events";
 import { warn } from "../../../core/warn";

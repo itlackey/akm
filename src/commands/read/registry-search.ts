@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { toErrorMessage } from "../../core/common";
-import { DEFAULT_CONFIG, type RegistryConfigEntry } from "../../core/config";
+import { DEFAULT_CONFIG, type RegistryConfigEntry } from "../../core/config/config";
 import { warn } from "../../core/warn";
 import { resolveProviderFactory } from "../../registry/factory";
 import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../../registry/types";

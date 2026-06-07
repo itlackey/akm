@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AkmConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 import {
   isProcessEnabled,
   resolveImproveProcessRunnerFromProfile,

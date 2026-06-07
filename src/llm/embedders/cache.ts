@@ -10,7 +10,7 @@
  * an entry to the most-recently-used end).
  */
 
-import type { EmbeddingConnectionConfig } from "../../core/config";
+import type { EmbeddingConnectionConfig } from "../../core/config/config";
 import type { EmbeddingVector } from "./types";
 
 const EMBED_CACHE_MAX = 100;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig, EmbeddingConnectionConfig } from "../src/core/config";
+import type { AkmConfig, EmbeddingConnectionConfig } from "../src/core/config/config";
 import { setQuiet } from "../src/core/warn";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
@@ -221,7 +221,7 @@ describe("dimension consistency on model change", () => {
     // This is already tested in db.test.ts but we verify the concept:
     // when embedding dimensions change (due to model change), the
     // database handles it by recreating the vec table
-    const { openDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../src/indexer/db");
+    const { openDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../src/indexer/db/db");
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -276,7 +276,7 @@ describe("config file parsing for localModel", () => {
   });
 
   test("parseEmbeddingConfig preserves localModel from raw config object", async () => {
-    const { loadConfig } = await import("../src/core/config");
+    const { loadConfig } = await import("../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",
@@ -301,7 +301,7 @@ describe("config file parsing for localModel", () => {
   });
 
   test("local-only config: endpoint and model are undefined when only localModel is set", async () => {
-    const { loadConfig } = await import("../src/core/config");
+    const { loadConfig } = await import("../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",
@@ -344,7 +344,7 @@ describe("parseEmbeddingConfig edge cases", () => {
   test("endpoint+localModel without model passes through as-is (no sentinel, no warn)", async () => {
     // warn-and-drop preprocessing was removed in 393de77; partial embedding
     // configs are now passed through by Zod as-is.
-    const { loadConfig } = await import("../src/core/config");
+    const { loadConfig } = await import("../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",
@@ -371,7 +371,7 @@ describe("parseEmbeddingConfig edge cases", () => {
     // The old parseEmbeddingConfig returned undefined when only endpoint was
     // set (no model/localModel). That helper was deleted in 393de77; the Zod
     // schema now accepts any combination of optional fields.
-    const { loadConfig } = await import("../src/core/config");
+    const { loadConfig } = await import("../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",

@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getAssetTypes, TYPE_DIRS } from "./asset-spec";
+import { getAssetTypes, TYPE_DIRS } from "./asset/asset-spec";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir } from "./paths";
 

@@ -111,7 +111,7 @@ import {
 import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
-import { loadConfig } from "./core/config";
+import { loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";

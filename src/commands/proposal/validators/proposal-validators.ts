@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AssetRef } from "../../../core/asset-ref";
-import { parseAssetRef } from "../../../core/asset-ref";
-import { parseFrontmatter } from "../../../core/frontmatter";
+import type { AssetRef } from "../../../core/asset/asset-ref";
+import { parseAssetRef } from "../../../core/asset/asset-ref";
+import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { lintLessonContent } from "../../../core/lesson-lint";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
 import type { Proposal, ProposalValidationFinding, ProposalValidationReport } from "./proposals";

@@ -4,7 +4,7 @@
  *
  * The v17 schema bump was a purely additive column change: `entries` gained a
  * nullable `derived_from TEXT` column. The `handleVersionUpgrade()` path in
- * `src/indexer/db.ts` nonetheless treats every version mismatch as a full
+ * `src/indexer/db/db.ts` nonetheless treats every version mismatch as a full
  * drop-and-rebuild because it can't tell additive changes from destructive
  * ones without a per-version migration table — that fix is on the 0.9.0
  * roadmap.

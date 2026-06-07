@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase } from "../../src/indexer/db";
+import { closeDatabase, openDatabase } from "../../src/indexer/db/db";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 

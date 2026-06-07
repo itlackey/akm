@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildShellExportScript, createEnv, injectIntoEnv, listKeys, loadEnv } from "../src/commands/env/env";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";

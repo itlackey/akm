@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listKeys as listVaultKeys } from "../commands/env/env";
+import { parseFrontmatter } from "../core/asset/frontmatter";
 import {
   extractFrontmatterOnly,
   extractLineRange,
@@ -22,7 +23,6 @@ import {
   parseMarkdownToc,
 } from "../core/asset/markdown";
 import { asNonEmptyString, hasErrnoCode } from "../core/common";
-import { parseFrontmatter } from "../core/frontmatter";
 import type { StashEntry } from "../indexer/passes/metadata";
 import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";

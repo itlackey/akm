@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { resolveStorageLocations } from "../locations";
 
 /**

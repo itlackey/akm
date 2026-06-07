@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { spawnSync } from "node:child_process";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
 import type { AgentProfile } from "../../integrations/agent";
 import { detectAgentCliProfiles, requireAgentProfile } from "../../integrations/agent";

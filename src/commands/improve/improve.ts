@@ -5,14 +5,14 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../core/asset-ref";
+import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AkmAssetType, daysToMs, isAssetType } from "../../core/common";
-import type { AkmConfig } from "../../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import type { AkmConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
-import { parseFrontmatter } from "../../core/frontmatter";
 import type {
   AkmImproveResult,
   ImproveActionResult,
@@ -20,14 +20,6 @@ import type {
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
 import { getDbPath } from "../../core/paths";
-import {
-  createProposal,
-  expireStaleProposals,
-  getProposal,
-  isProposalSkipped,
-  listProposals,
-  purgeOrphanProposals,
-} from "../../core/proposals";
 import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import {
@@ -39,7 +31,7 @@ import {
   getZeroResultSearches,
   openDatabase,
   openExistingDatabase,
-} from "../../indexer/db";
+} from "../../indexer/db/db";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { akmIndex } from "../../indexer/indexer";
@@ -56,6 +48,14 @@ import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../s
 import { akmLint } from "../lint/index";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
+import {
+  createProposal,
+  expireStaleProposals,
+  getProposal,
+  isProposalSkipped,
+  listProposals,
+  purgeOrphanProposals,
+} from "../proposal/validators/proposals";
 import { runSchemaRepairPass } from "../sources/schema-repair";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";

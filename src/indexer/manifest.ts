@@ -13,15 +13,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef } from "../core/asset-ref";
-import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset-spec";
+import { makeAssetRef } from "../core/asset/asset-ref";
+import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset/asset-spec";
 import type { AkmAssetType } from "../core/common";
 import { resolveStashDir } from "../core/common";
-import { type AkmConfig, loadConfig } from "../core/config";
+import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
-import { closeDatabase, getAllEntries, getEntryCount, getMeta, openExistingDatabase } from "./db";
+import { closeDatabase, getAllEntries, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./passes/metadata";
 import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search/search-source";
 import { walkStashFlat } from "./walk/walker";

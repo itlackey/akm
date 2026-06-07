@@ -13,9 +13,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
-import { resolveAssetPathFromName } from "../../core/asset-spec";
+import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
 import { listAgentProfileNames } from "../../integrations/agent";

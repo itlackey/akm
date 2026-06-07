@@ -16,7 +16,7 @@ import { defineCommand } from "citty";
 import { getStringArg, hasSubcommand, parsePositiveIntFlag } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { isHttpUrl, resolveStashDir } from "../core/common";
-import { loadConfig, resolveConfiguredSources } from "../core/config";
+import { loadConfig, resolveConfiguredSources } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
 import { akmAgentDispatch } from "./agent/agent-dispatch";
@@ -297,7 +297,7 @@ const wikiIngestCommand = defineJsonCommand({
     const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
     const model = getStringArg(args, "model");
 
-    const { getDefaultLlmConfig } = await import("../core/config.js");
+    const { getDefaultLlmConfig } = await import("../core/config/config.js");
     const dispatchResult = await akmAgentDispatch({
       profileName,
       agentConfig: config,

@@ -4,10 +4,10 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { getAssetTypes } from "../../core/asset-spec";
-import { getSources, loadConfig } from "../../core/config";
+import { getAssetTypes } from "../../core/asset/asset-spec";
+import { getSources, loadConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
-import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../../indexer/db";
+import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../../indexer/db/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../../indexer/search/semantic-status";
 import type { InfoResponse } from "../../sources/types";
 import { pkgVersion } from "../../version";

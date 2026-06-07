@@ -31,7 +31,7 @@
 
 import fs from "node:fs";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../../core/frontmatter";
+import { parseFrontmatter } from "../../../core/asset/frontmatter";
 
 // ── Re-exported belief-state types ───────────────────────────────────────────
 

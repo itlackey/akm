@@ -11,7 +11,7 @@ import {
   resolveAssetPathFromName,
   SCRIPT_EXTENSIONS,
   TYPE_DIRS,
-} from "../src/core/asset-spec";
+} from "../src/core/asset/asset-spec";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

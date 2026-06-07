@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap } from "../core/common";
-import type { SourceConfigEntry } from "../core/config";
+import type { SourceConfigEntry } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getRegistryIndexCacheDir } from "../core/paths";
 import { warn } from "../core/warn";

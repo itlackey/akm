@@ -25,10 +25,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
-import type { AkmConfig } from "../src/core/config";
-import { resetConfigCache, saveConfig } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, openExistingDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import {
+  closeDatabase,
+  openDatabase,
+  openExistingDatabase,
+  rebuildFts,
+  setMeta,
+  upsertEntry,
+} from "../src/indexer/db/db";
 import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/db/graph-db";
 import {
   computeGraphBoost,

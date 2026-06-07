@@ -8,13 +8,13 @@ import { rethrowIfTestIsolationError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
 import type { GraphRelation } from "../../llm/graph-extract";
-import { closeDatabase, openExistingDatabase } from "../db";
 import type {
   GraphExtractionTelemetry,
   GraphFile,
   GraphFileNode,
   GraphQualityTelemetry,
 } from "../graph/graph-extraction";
+import { closeDatabase, openExistingDatabase } from "./db";
 
 export interface StoredGraphSnapshot {
   stashPath: string;

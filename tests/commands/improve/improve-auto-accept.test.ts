@@ -5,7 +5,7 @@ import {
   resolveExtractConfidence,
   runAutoAcceptGate,
 } from "../../../src/commands/improve/improve-auto-accept";
-import type { AkmConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 import type { EventsContext } from "../../../src/core/events";
 
 // ---------------------------------------------------------------------------

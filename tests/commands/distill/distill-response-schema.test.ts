@@ -28,9 +28,9 @@ import {
   DISTILL_KNOWLEDGE_JSON_SCHEMA,
   DISTILL_LESSON_JSON_SCHEMA,
 } from "../../../src/commands/improve/distill";
-import type { AkmConfig } from "../../../src/core/config";
+import { listProposals } from "../../../src/commands/proposal/validators/proposals";
+import type { AkmConfig } from "../../../src/core/config/config";
 import type { readEvents } from "../../../src/core/events";
-import { listProposals } from "../../../src/core/proposals";
 
 // ── Scaffolding ─────────────────────────────────────────────────────────────
 

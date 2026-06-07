@@ -758,7 +758,7 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<StepResult> 
     }
     const snapshot = validation.data;
 
-    const { openExistingDatabase, closeDatabase } = await import("../src/indexer/db");
+    const { openExistingDatabase, closeDatabase } = await import("../src/indexer/db/db");
     const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/db/graph-db");
 
     const db = openExistingDatabase(ctx.paths.indexDbPath);
