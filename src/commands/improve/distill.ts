@@ -54,8 +54,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assembleAssetFromString } from "../../core/asset/asset-serialize";
+import { stripMarkdownFences } from "../../core/asset/markdown";
 import { parseAssetRef } from "../../core/asset-ref";
-import { assembleAssetFromString } from "../../core/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config";
@@ -63,7 +64,6 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import { parseFrontmatter } from "../../core/frontmatter";
 import { lintLessonContent } from "../../core/lesson-lint";
-import { stripMarkdownFences } from "../../core/markdown";
 import {
   createProposal,
   isProposalSkipped,

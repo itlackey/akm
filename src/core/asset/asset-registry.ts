@@ -15,7 +15,7 @@
  * entirely.
  */
 
-import { buildWorkflowAction } from "../output/renderers";
+import { buildWorkflowAction } from "../../output/renderers";
 
 /** Map asset types to their primary renderer names. */
 export const TYPE_TO_RENDERER: Record<string, string> = {

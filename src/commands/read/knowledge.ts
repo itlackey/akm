@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset-create";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { resolveAssetPathFromName } from "../../core/asset-spec";
 import { isHttpUrl, isWithin, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config";

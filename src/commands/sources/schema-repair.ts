@@ -16,8 +16,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseAssetRef } from "../../core/asset-ref";
-import { assembleAsset } from "../../core/asset-serialize";
 import type { LlmConnectionConfig } from "../../core/config";
 import { appendEvent, readEvents } from "../../core/events";
 import { parseFrontmatter } from "../../core/frontmatter";

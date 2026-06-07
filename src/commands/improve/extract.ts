@@ -26,7 +26,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { assembleAsset } from "../../core/asset-serialize";
+import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config";

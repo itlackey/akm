@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { TocHeading } from "../../core/asset/markdown";
 import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,
@@ -11,7 +12,6 @@ import {
 } from "../../core/asset-spec";
 import { asNonEmptyString, isAssetType, writeFileAtomic } from "../../core/common";
 import { parseFrontmatter } from "../../core/frontmatter";
-import type { TocHeading } from "../../core/markdown";
 import { isVerbose, warn } from "../../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
 import { applyMetadataContributors } from "./metadata-contributors";

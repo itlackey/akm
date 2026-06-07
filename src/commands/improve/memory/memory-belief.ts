@@ -30,7 +30,7 @@
  */
 
 import fs from "node:fs";
-import { assembleAsset } from "../../../core/asset-serialize";
+import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../../core/frontmatter";
 
 // ── Re-exported belief-state types ───────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset-registry";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset/asset-registry";
 import type { AssetSpec } from "../src/core/asset-spec";
 import { deregisterAssetType, registerAssetType } from "../src/core/asset-spec";
 

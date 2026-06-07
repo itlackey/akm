@@ -20,13 +20,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
 import { parseAssetRef } from "../../core/asset-ref";
 import { asNonEmptyString } from "../../core/common";
 import { loadConfig } from "../../core/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import { parseFrontmatter } from "../../core/frontmatter";
-import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/stash-meta";
 import { findEntryIdByRef } from "../../indexer/db";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";

@@ -18,8 +18,8 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
+import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
 import { makeAssetRef } from "../../core/asset-ref";
-import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset-registry";
 import type { AkmAssetType } from "../../core/common";
 import type { AkmConfig, ImproveConfig } from "../../core/config";
 import { getDbPath } from "../../core/paths";

@@ -20,7 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { UsageError } from "./errors";
+import { UsageError } from "../errors";
 
 /** Root-relative directory holding a stash's meta docs. */
 export const META_DIR = ".meta";

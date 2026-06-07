@@ -16,7 +16,7 @@
  * explicit name should be flat-checked, at the command layer.
  */
 
-import { UsageError } from "./errors";
+import { UsageError } from "../errors";
 
 /**
  * Normalise an optional `--path` value: a relative directory, applied rooted

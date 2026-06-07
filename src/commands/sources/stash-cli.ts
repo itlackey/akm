@@ -31,7 +31,7 @@ import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
 import { hasSubcommand } from "../../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
-import { assertFlatAssetName } from "../../core/asset-create";
+import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { isHttpUrl } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";

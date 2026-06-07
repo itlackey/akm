@@ -27,7 +27,7 @@ import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset-create";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { loadConfig } from "../../core/config";
 import { UsageError } from "../../core/errors";
 import { getHyphenatedArg } from "../../output/context";

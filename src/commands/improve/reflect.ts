@@ -26,8 +26,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
+import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, parseAssetRef } from "../../core/asset-ref";
-import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset-serialize";
 import { resolveStashDir } from "../../core/common";
 import type { LlmConnectionConfig } from "../../core/config";
 import { loadConfig } from "../../core/config";
@@ -35,7 +36,6 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import { parseFrontmatter } from "../../core/frontmatter";
 import { lintLessonContent } from "../../core/lesson-lint";
-import { stripMarkdownFences } from "../../core/markdown";
 import {
   type CreateProposalInput,
   createProposal,

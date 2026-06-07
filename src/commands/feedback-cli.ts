@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
+import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseAssetRef } from "../core/asset-ref";
-import { assembleAsset } from "../core/asset-serialize";
 import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";

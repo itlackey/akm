@@ -38,8 +38,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseAssetRef } from "../../core/asset-ref";
-import { assembleAsset } from "../../core/asset-serialize";
 import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/frontmatter";

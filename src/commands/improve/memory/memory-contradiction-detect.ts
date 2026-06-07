@@ -37,7 +37,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assembleAsset } from "../../../core/asset-serialize";
+import { assembleAsset } from "../../../core/asset/asset-serialize";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config";
 import { getDefaultLlmConfig } from "../../../core/config";
 import { parseFrontmatter } from "../../../core/frontmatter";

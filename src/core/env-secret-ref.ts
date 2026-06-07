@@ -15,7 +15,7 @@
 
 import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset-create";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { parseAssetRef } from "./asset-ref";
 import { resolveAssetPathFromName } from "./asset-spec";
 import { isWithin } from "./common";

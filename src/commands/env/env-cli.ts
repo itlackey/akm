@@ -23,7 +23,7 @@ import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, hasSubcommand } from "../../cli/parse-args";
 import { output, runWithJsonErrors } from "../../cli/shared";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset-create";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "../../core/asset-spec";
 import { isWithin, writeFileAtomic } from "../../core/common";
 import { loadConfig } from "../../core/config";

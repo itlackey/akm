@@ -14,15 +14,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listKeys as listVaultKeys } from "../commands/env/env";
-import { asNonEmptyString, hasErrnoCode } from "../core/common";
-import { parseFrontmatter } from "../core/frontmatter";
 import {
   extractFrontmatterOnly,
   extractLineRange,
   extractSection,
   formatToc,
   parseMarkdownToc,
-} from "../core/markdown";
+} from "../core/asset/markdown";
+import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { parseFrontmatter } from "../core/frontmatter";
 import type { StashEntry } from "../indexer/passes/metadata";
 import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";

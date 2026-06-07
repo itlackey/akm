@@ -12,7 +12,7 @@
  * cloned defensive serializer.  These tests pin the corrected behaviour.
  */
 import { describe, expect, it } from "bun:test";
-import { assembleAsset, serializeFrontmatter } from "../src/core/asset-serialize";
+import { assembleAsset, serializeFrontmatter } from "../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../src/core/frontmatter";
 
 describe("parseFrontmatter — |‑block scalar support", () => {

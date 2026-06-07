@@ -10,7 +10,7 @@
  * CLI entry point stays focused on argument parsing + output routing.
  */
 
-import { serializeFrontmatter } from "../core/asset-serialize";
+import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";

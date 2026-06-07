@@ -47,7 +47,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { assembleAsset } from "../../core/asset-serialize";
+import { assembleAsset } from "../../core/asset/asset-serialize";
 import { concurrentMap } from "../../core/concurrent";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/frontmatter";
 import { warn } from "../../core/warn";
