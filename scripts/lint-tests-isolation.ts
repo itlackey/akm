@@ -224,10 +224,6 @@ const ALLOWED_FILES = new Set<string>([
   // migration is deferred to a follow-up PR.
   "tests/commands/improve-memory-misc.test.ts",
   "tests/commands/improve-planner-profile-prefilter.test.ts",
-  "tests/commands/health-distill-skipped-by-reason.test.ts",
-  "tests/extract-command.test.ts",
-  "tests/extract-session-tracking.test.ts",
-  "tests/health-command-window.test.ts",
   "tests/commands/improve/improve-eligibility.test.ts",
   "tests/integration/indexer.test.ts",
 ]);
@@ -245,7 +241,7 @@ const ALLOWED_FILES = new Set<string>([
  *
  * KPI (WS4): drive this from ~73 toward ~5.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 72;
+export const ALLOWLIST_RATCHET_BASELINE = 68;
 
 /** Live size of the combined grandfather allowlist (both rule sets). */
 export function combinedAllowlistSize(): number {

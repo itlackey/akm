@@ -17,16 +17,12 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../src/integrations/session-logs/types";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
-const savedEnv: Record<string, string | undefined> = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-};
+let storage: IsolatedAkmStorage;
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
@@ -40,15 +36,10 @@ function makeStashDir(): string {
   return stash;
 }
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-extract-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-extract-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-extract-data-");
+  storage = withIsolatedAkmStorage();
 });
 afterEach(() => {
-  for (const [k, v] of Object.entries(savedEnv)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
+  storage.cleanup();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
