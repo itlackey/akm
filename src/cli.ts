@@ -66,15 +66,12 @@ process.on("uncaughtException", (err) => {
 
 import fs from "node:fs";
 import path from "node:path";
-import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
-import { hasSubcommand } from "./cli/parse-args";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { addCommand } from "./commands/add-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/contribute-cli";
-import { akmDbBackups } from "./commands/db-cli";
 import { envCommand } from "./commands/env-cli";
 import { extractCommand } from "./commands/extract-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
@@ -87,9 +84,6 @@ import {
   type WindowSpec,
 } from "./commands/health";
 import { improveCommand } from "./commands/improve-cli";
-import { assembleInfo } from "./commands/info";
-import { akmInit } from "./commands/init";
-import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { renderMigrationHelp } from "./commands/migration-help";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal-cli";
@@ -107,18 +101,15 @@ import {
   updateCommand,
   upgradeCommand,
 } from "./commands/sources-cli";
+import { dbCommand, importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/stash-cli";
 import { tasksCommand } from "./commands/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
-import { assertFlatAssetName } from "./core/asset-create";
-import { isHttpUrl } from "./core/common";
 import { loadConfig } from "./core/config";
 import { UsageError } from "./core/errors";
-import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
-import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
-import { akmIndex } from "./indexer/indexer";
+import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { getHyphenatedBoolean, getOutputMode, initOutputMode, parseFlagValue } from "./output/context";
 import { pkgVersion } from "./version";
 
@@ -327,115 +318,6 @@ const setupCommand = defineCommand({
   },
 });
 
-const initCommand = defineCommand({
-  meta: {
-    name: "init",
-    description: "Initialize akm's working stash directory and persist stashDir in config",
-  },
-  args: {
-    dir: { type: "string", description: "Custom stash directory path (default: ~/akm)" },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      // Accept both historical spellings for backwards compatibility with
-      // older docs/scripts that used `--stashDir`.
-      const legacyDir = parseFlagValue(process.argv, "--stashDir") ?? parseFlagValue(process.argv, "--stash-dir");
-      const result = await akmInit({ dir: args.dir ?? legacyDir });
-      output("init", result);
-    });
-  },
-});
-
-const indexCommand = defineCommand({
-  meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
-  args: {
-    full: { type: "boolean", description: "Force full reindex", default: false },
-    clean: {
-      type: "boolean",
-      description: "After indexing, remove any entries whose source file no longer exists on disk.",
-      default: false,
-    },
-    "dry-run": {
-      type: "boolean",
-      description: "When combined with --clean, report stale entries without deleting them.",
-      default: false,
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      if (getHyphenatedBoolean(args, "enrich") || parseFlagValue(process.argv, "--enrich") !== undefined) {
-        throw new UsageError(
-          "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
-        );
-      }
-      if (getHyphenatedBoolean(args, "re-enrich") || parseFlagValue(process.argv, "--re-enrich") !== undefined) {
-        throw new UsageError(
-          "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
-        );
-      }
-      const outputMode = getOutputMode();
-      const controller = new AbortController();
-      const abort = (): void => controller.abort(new Error("index interrupted"));
-      process.once("SIGINT", abort);
-      process.once("SIGTERM", abort);
-      const indexLogFile = path.join(
-        getCacheDir(),
-        "logs",
-        "index",
-        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
-      );
-      setLogFile(indexLogFile);
-      const verbose = isVerbose();
-      const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
-      if (spin) {
-        spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
-      }
-      let latestMessage = "";
-      try {
-        const result = await akmIndex({
-          full: args.full,
-          clean: args.clean,
-          dryRun: args["dry-run"],
-          onProgress: ({ phase, message, processed, total }) => {
-            latestMessage = message;
-            const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (verbose) {
-              info(`[index:${phase}] ${progressPrefix}${message}`);
-            } else if (spin) {
-              spin.stop(`${progressPrefix}${message}`);
-              spin.start(`${progressPrefix}${message}`);
-            }
-          },
-          signal: controller.signal,
-        });
-        if (spin) {
-          spin.stop(`Indexed ${result.totalEntries} assets.`);
-        }
-        output("index", result);
-      } catch (error) {
-        if (spin) {
-          spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
-        }
-        throw error;
-      } finally {
-        clearLogFile();
-        process.off("SIGINT", abort);
-        process.off("SIGTERM", abort);
-      }
-    });
-  },
-});
-
-const infoCommand = defineCommand({
-  meta: { name: "info", description: "Show system capabilities, configuration, and index stats" },
-  run() {
-    return runWithJsonErrors(() => {
-      const result = assembleInfo();
-      output("info", result);
-    });
-  },
-});
-
 const healthCommand = defineCommand({
   meta: { name: "health", description: "Check akm runtime health, artifacts, and improve metrics" },
   args: {
@@ -496,96 +378,6 @@ const healthCommand = defineCommand({
     if (resultStatus === "warn") {
       process.exit(EXIT_HEALTH_WARN);
     }
-  },
-});
-
-// MVP DB administration. Currently only `akm db backups`; restore is manual —
-// stop akm and run `scripts/migrations/restore-data-dir.sh <backup>`.
-const DB_SUBCOMMAND_SET = new Set(["backups"]);
-
-const dbCommand = defineCommand({
-  meta: {
-    name: "db",
-    description:
-      "Inspect the AKM SQLite data directory. Currently exposes `backups`; to restore from a snapshot, stop akm and run scripts/migrations/restore-data-dir.sh against the chosen backup.",
-  },
-  subCommands: {
-    backups: defineCommand({
-      meta: {
-        name: "backups",
-        description:
-          "List pre-upgrade snapshots of the data directory (newest first). Backups are created automatically before destructive DB version upgrades unless AKM_DB_BACKUP=0.",
-      },
-      run() {
-        return runWithJsonErrors(() => {
-          output("db-backups", akmDbBackups());
-        });
-      },
-    }),
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      if (hasSubcommand(args, DB_SUBCOMMAND_SET)) return;
-      // Default action: list backups.
-      output("db-backups", akmDbBackups());
-    });
-  },
-});
-
-const importKnowledgeCommand = defineCommand({
-  meta: {
-    name: "import",
-    description: "Import a knowledge document or URL into the default stash",
-  },
-  args: {
-    source: {
-      type: "positional",
-      description: 'Source file path, URL, or "-" to read from stdin',
-      required: true,
-    },
-    name: {
-      type: "string",
-      description:
-        "Knowledge name (flat, no '/'; defaults to the source filename or content slug). Use --path for a subdirectory.",
-    },
-    path: {
-      type: "string",
-      description:
-        "Relative subdirectory under knowledge/ to place the document in (e.g. 'projects/example'). The filename still comes from --name or the source slug.",
-    },
-    force: {
-      type: "boolean",
-      description: "Overwrite an existing knowledge document with the same name",
-      default: false,
-    },
-    target: {
-      type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
-    },
-  },
-  async run({ args }) {
-    return runWithJsonErrors(async () => {
-      // `--name` is a flat name; subdirectory placement is `--path`'s job.
-      assertFlatAssetName(args.name);
-      const { content, preferredName } = await readKnowledgeInput(args.source);
-      const result = await writeMarkdownAsset({
-        type: "knowledge",
-        content,
-        name: args.name ?? (isHttpUrl(args.source) ? preferredName : undefined),
-        fallbackPrefix: "knowledge",
-        preferredName,
-        force: args.force,
-        target: args.target,
-        path: args.path,
-      });
-      appendEvent({
-        eventType: "import",
-        ref: result.ref,
-        metadata: { source: args.source, path: result.path, force: args.force === true },
-      });
-      output("import", { ok: true, source: args.source, ...result });
-    });
   },
 });
 
