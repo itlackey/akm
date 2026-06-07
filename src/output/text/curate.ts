@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatCuratePlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("curate", (r, detail) => formatCuratePlain(r, detail));
+export const curateFormatters: TextFormatterEntry[] = [
+  { command: "curate", handler: (r, detail) => formatCuratePlain(r, detail) },
+];

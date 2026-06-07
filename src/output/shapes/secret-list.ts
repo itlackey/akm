@@ -4,18 +4,23 @@
 
 // secret-list strips `path` from each secret object (same as vault-list: avoid
 // leaking absolute disk paths) then stamps the envelope.
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
-registerOutputShape("secret-list", (result) => {
-  const r = result as Record<string, unknown>;
-  const secrets = Array.isArray(r.secrets) ? r.secrets : [];
-  return {
-    ...r,
-    shape: (r.shape as string | undefined) ?? "secret-list",
-    schemaVersion: (r.schemaVersion as number | undefined) ?? 1,
-    secrets: secrets.map((s) => {
-      const { path: _path, ...rest } = s as Record<string, unknown>;
-      return rest;
-    }),
-  };
-});
+export const secretListShapes: OutputShapeEntry[] = [
+  {
+    command: "secret-list",
+    handler: (result) => {
+      const r = result as Record<string, unknown>;
+      const secrets = Array.isArray(r.secrets) ? r.secrets : [];
+      return {
+        ...r,
+        shape: (r.shape as string | undefined) ?? "secret-list",
+        schemaVersion: (r.schemaVersion as number | undefined) ?? 1,
+        secrets: secrets.map((s) => {
+          const { path: _path, ...rest } = s as Record<string, unknown>;
+          return rest;
+        }),
+      };
+    },
+  },
+];

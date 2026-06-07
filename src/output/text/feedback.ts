@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatFeedbackPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("feedback", (r) => formatFeedbackPlain(r));
+export const feedbackFormatters: TextFormatterEntry[] = [
+  { command: "feedback", handler: (r) => formatFeedbackPlain(r) },
+];

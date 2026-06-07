@@ -5,15 +5,48 @@
 /**
  * Plain-text formatters for command output.
  *
- * `formatPlain` dispatches to per-command formatters registered via
- * `registerTextFormatter`. Returning `null` means "no plain rendering
- * available — fall back to YAML".
+ * Built-in formatters are assembled EXPLICITLY here: each per-command module
+ * under `src/output/text/` EXPORTS a pure `TextFormatterEntry[]` (no top-level
+ * side effect), and this barrel imports those exports and registers them in a
+ * single deterministic, order-independent pass (`BUILT_IN_TEXT_FORMATTERS`).
+ * Dropping a module from the assembly array is a COMPILE error, not a silent
+ * runtime gap.
+ *
+ * `formatPlain` dispatches to those formatters. Returning `null` means "no
+ * plain rendering available — fall back to YAML".
  *
  * Pure functions — no IO.
  */
 
 import type { DetailLevel } from "./context";
-import { getTextFormatterHandler } from "./text/registry";
+import { addFormatters } from "./text/add";
+import { cloneFormatters } from "./text/clone";
+import { configFormatters } from "./text/config";
+import { curateFormatters } from "./text/curate";
+import { distillFormatters } from "./text/distill";
+import { enableDisableFormatters } from "./text/enable-disable";
+import { envFormatters } from "./text/env";
+import { eventsFormatters } from "./text/events";
+import { feedbackFormatters } from "./text/feedback";
+import { historyFormatters } from "./text/history";
+import { importFormatters } from "./text/import";
+import { indexFormatters } from "./text/index";
+import { infoFormatters } from "./text/info";
+import { initFormatters } from "./text/init";
+import { listFormatters } from "./text/list";
+import { proposalProducerFormatters } from "./text/proposal/producer";
+import { proposalFormatters } from "./text/proposal/proposal";
+import { getTextFormatterHandler, registerTextFormatters, type TextFormatterEntry } from "./text/registry";
+import { registryCommandFormatters } from "./text/registry-commands";
+import { rememberFormatters } from "./text/remember";
+import { removeFormatters } from "./text/remove";
+import { saveFormatters } from "./text/save";
+import { searchFormatters } from "./text/search";
+import { showFormatters } from "./text/show";
+import { updateFormatters } from "./text/update";
+import { upgradeFormatters } from "./text/upgrade";
+import { wikiFormatters } from "./text/wiki";
+import { workflowFormatters } from "./text/workflow";
 
 // Re-export helpers so existing imports from `text.ts` keep working.
 export {
@@ -71,35 +104,43 @@ export type { TextFormatterHandler } from "./text/registry";
 // point (backward compat).
 export { deregisterTextFormatter, registerTextFormatter } from "./text/registry";
 
-// ── Per-command text formatter modules (self-register at import time) ─────────
-// Importing these modules triggers their `registerTextFormatter(...)` calls.
-import "./text/init";
-import "./text/index";
-import "./text/show";
-import "./text/search";
-import "./text/curate";
-import "./text/wiki";
-import "./text/workflow";
-import "./text/list";
-import "./text/add";
-import "./text/remove";
-import "./text/update";
-import "./text/upgrade";
-import "./text/clone";
-import "./text/history";
-import "./text/events";
-import "./text/proposal";
-import "./text/proposal-producer";
-import "./text/distill";
-import "./text/info";
-import "./text/config";
-import "./text/feedback";
-import "./text/remember";
-import "./text/import";
-import "./text/save";
-import "./text/enable-disable";
-import "./text/registry-commands";
-import "./text/env";
+// ── Explicit built-in formatter assembly ──────────────────────────────────────
+// Each entry below is a pure exported `TextFormatterEntry[]` from a per-command
+// module. The set is registered ONCE, deterministically, with no reliance on
+// import order. Removing a module from this list removes its registration —
+// and because each name is referenced statically, a deleted export fails to
+// compile instead of silently disappearing at runtime.
+const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
+  ...initFormatters,
+  ...indexFormatters,
+  ...showFormatters,
+  ...searchFormatters,
+  ...curateFormatters,
+  ...wikiFormatters,
+  ...workflowFormatters,
+  ...listFormatters,
+  ...addFormatters,
+  ...removeFormatters,
+  ...updateFormatters,
+  ...upgradeFormatters,
+  ...cloneFormatters,
+  ...historyFormatters,
+  ...eventsFormatters,
+  ...proposalFormatters,
+  ...proposalProducerFormatters,
+  ...distillFormatters,
+  ...infoFormatters,
+  ...configFormatters,
+  ...feedbackFormatters,
+  ...rememberFormatters,
+  ...importFormatters,
+  ...saveFormatters,
+  ...enableDisableFormatters,
+  ...registryCommandFormatters,
+  ...envFormatters,
+];
+
+registerTextFormatters(BUILT_IN_TEXT_FORMATTERS);
 
 // ── JSONL output (unchanged — not part of the formatPlain dispatch) ───────────
 

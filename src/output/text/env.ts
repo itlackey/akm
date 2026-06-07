@@ -12,11 +12,13 @@ import {
   formatEnvSetPlain,
   formatEnvUnsetPlain,
 } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("env-list", (r) => formatEnvListPlain(r));
-registerTextFormatter("env-create", (r) => formatEnvCreatePlain(r));
-registerTextFormatter("env-export", (r) => formatEnvExportPlain(r));
-registerTextFormatter("env-remove", (r) => formatEnvRemovePlain(r));
-registerTextFormatter("env-set", (r) => formatEnvSetPlain(r));
-registerTextFormatter("env-unset", (r) => formatEnvUnsetPlain(r));
+export const envFormatters: TextFormatterEntry[] = [
+  { command: "env-list", handler: (r) => formatEnvListPlain(r) },
+  { command: "env-create", handler: (r) => formatEnvCreatePlain(r) },
+  { command: "env-export", handler: (r) => formatEnvExportPlain(r) },
+  { command: "env-remove", handler: (r) => formatEnvRemovePlain(r) },
+  { command: "env-set", handler: (r) => formatEnvSetPlain(r) },
+  { command: "env-unset", handler: (r) => formatEnvUnsetPlain(r) },
+];

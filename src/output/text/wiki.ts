@@ -15,14 +15,16 @@ import {
   formatWikiShowPlain,
   formatWikiStashPlain,
 } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("wiki-list", (r) => formatWikiListPlain(r));
-registerTextFormatter("wiki-show", (r) => formatWikiShowPlain(r));
-registerTextFormatter("wiki-create", (r) => formatWikiCreatePlain(r));
-registerTextFormatter("wiki-remove", (r) => formatWikiRemovePlain(r));
-registerTextFormatter("wiki-pages", (r) => formatWikiPagesPlain(r));
-registerTextFormatter("wiki-stash", (r) => formatWikiStashPlain(r));
-registerTextFormatter("wiki-lint", (r) => formatWikiLintPlain(r));
-registerTextFormatter("wiki-ingest", (r) => formatWikiIngestPlain(r));
-registerTextFormatter("wiki-register", (r) => formatWikiRegisterPlain(r));
+export const wikiFormatters: TextFormatterEntry[] = [
+  { command: "wiki-list", handler: (r) => formatWikiListPlain(r) },
+  { command: "wiki-show", handler: (r) => formatWikiShowPlain(r) },
+  { command: "wiki-create", handler: (r) => formatWikiCreatePlain(r) },
+  { command: "wiki-remove", handler: (r) => formatWikiRemovePlain(r) },
+  { command: "wiki-pages", handler: (r) => formatWikiPagesPlain(r) },
+  { command: "wiki-stash", handler: (r) => formatWikiStashPlain(r) },
+  { command: "wiki-lint", handler: (r) => formatWikiLintPlain(r) },
+  { command: "wiki-ingest", handler: (r) => formatWikiIngestPlain(r) },
+  { command: "wiki-register", handler: (r) => formatWikiRegisterPlain(r) },
+];

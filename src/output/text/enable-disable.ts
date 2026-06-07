@@ -3,7 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatToggleComponentPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("enable", (r) => formatToggleComponentPlain("enable", r));
-registerTextFormatter("disable", (r) => formatToggleComponentPlain("disable", r));
+export const enableDisableFormatters: TextFormatterEntry[] = [
+  { command: "enable", handler: (r) => formatToggleComponentPlain("enable", r) },
+  { command: "disable", handler: (r) => formatToggleComponentPlain("disable", r) },
+];

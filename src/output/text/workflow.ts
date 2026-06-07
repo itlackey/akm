@@ -13,14 +13,16 @@ import {
   formatWorkflowStatusPlain,
   formatWorkflowValidatePlain,
 } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("workflow-start", (r) => formatWorkflowStatusPlain(r));
-registerTextFormatter("workflow-status", (r) => formatWorkflowStatusPlain(r));
-registerTextFormatter("workflow-complete", (r) => formatWorkflowStatusPlain(r));
-registerTextFormatter("workflow-complete-rejected", (r) => formatWorkflowCompleteRejectedPlain(r));
-registerTextFormatter("workflow-next", (r) => formatWorkflowNextPlain(r));
-registerTextFormatter("workflow-list", (r) => formatWorkflowListPlain(r));
-registerTextFormatter("workflow-create", (r) => formatWorkflowCreatePlain(r));
-registerTextFormatter("workflow-validate", (r) => formatWorkflowValidatePlain(r));
-registerTextFormatter("workflow-resume", (r) => formatWorkflowResumePlain(r));
+export const workflowFormatters: TextFormatterEntry[] = [
+  { command: "workflow-start", handler: (r) => formatWorkflowStatusPlain(r) },
+  { command: "workflow-status", handler: (r) => formatWorkflowStatusPlain(r) },
+  { command: "workflow-complete", handler: (r) => formatWorkflowStatusPlain(r) },
+  { command: "workflow-complete-rejected", handler: (r) => formatWorkflowCompleteRejectedPlain(r) },
+  { command: "workflow-next", handler: (r) => formatWorkflowNextPlain(r) },
+  { command: "workflow-list", handler: (r) => formatWorkflowListPlain(r) },
+  { command: "workflow-create", handler: (r) => formatWorkflowCreatePlain(r) },
+  { command: "workflow-validate", handler: (r) => formatWorkflowValidatePlain(r) },
+  { command: "workflow-resume", handler: (r) => formatWorkflowResumePlain(r) },
+];

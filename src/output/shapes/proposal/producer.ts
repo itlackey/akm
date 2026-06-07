@@ -6,11 +6,13 @@
 // Both share the proposal-producer envelope shape (success carries a proposal
 // entry; failure carries an AgentFailureReason discriminant).
 
-import { shapeProposalProducerOutput } from "./helpers";
-import { registerOutputShape } from "./registry";
+import { shapeProposalProducerOutput } from "../helpers";
+import type { OutputShapeEntry } from "../registry";
 
 const handler = (result: unknown, detail: Parameters<typeof shapeProposalProducerOutput>[1]) =>
   shapeProposalProducerOutput(result as Record<string, unknown>, detail);
 
-registerOutputShape("reflect", handler);
-registerOutputShape("propose", handler);
+export const proposalProducerShapes: OutputShapeEntry[] = [
+  { command: "reflect", handler },
+  { command: "propose", handler },
+];

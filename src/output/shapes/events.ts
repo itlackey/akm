@@ -7,10 +7,12 @@
 // names so it can format streaming differently.
 
 import { shapeEventsOutput } from "./helpers";
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
 const handler = (result: unknown, detail: Parameters<typeof shapeEventsOutput>[1]) =>
   shapeEventsOutput(result as Record<string, unknown>, detail);
 
-registerOutputShape("events-list", handler);
-registerOutputShape("events-tail", handler);
+export const eventsShapes: OutputShapeEntry[] = [
+  { command: "events-list", handler },
+  { command: "events-tail", handler },
+];

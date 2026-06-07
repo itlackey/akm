@@ -3,6 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatRemovePlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("remove", (r) => formatRemovePlain(r));
+export const removeFormatters: TextFormatterEntry[] = [{ command: "remove", handler: (r) => formatRemovePlain(r) }];

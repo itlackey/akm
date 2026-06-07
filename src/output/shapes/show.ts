@@ -3,8 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { shapeShowOutput } from "./helpers";
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
-registerOutputShape("show", (result, detail, shape) =>
-  shapeShowOutput(result as Record<string, unknown>, detail, shape),
-);
+export const showShapes: OutputShapeEntry[] = [
+  {
+    command: "show",
+    handler: (result, detail, shape) => shapeShowOutput(result as Record<string, unknown>, detail, shape),
+  },
+];
