@@ -11,7 +11,8 @@
 
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
-import { ConfigError, NotFoundError, UsageError } from "../core/errors";
+import { assertNever } from "../core/assert";
+import { AkmError } from "../core/errors";
 import { getOutputMode, type OutputMode } from "../output/context";
 import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
@@ -26,6 +27,7 @@ import { formatPlain, outputJsonl } from "../output/text";
  *   1  general / not-found
  *   2  usage error
  *   4  health warn (health command only)
+ *  70  internal / unclassified (sysexits EX_SOFTWARE — akm threw unexpectedly)
  *  78  config error
  */
 export const EXIT_CODES = {
@@ -33,16 +35,36 @@ export const EXIT_CODES = {
   GENERAL: 1,
   USAGE: 2,
   HEALTH_WARN: 4,
+  // sysexits.h EX_SOFTWARE. Distinct from GENERAL(1) so scripts can tell an
+  // expected "not found" outcome from akm itself throwing an unexpected error.
+  INTERNAL: 70,
   CONFIG: 78,
 } as const;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Map a thrown value to a process exit code.
+ *
+ * Known, classified errors (instances of `AkmError`) are dispatched through an
+ * exhaustive switch on the `kind` discriminant — `assertNever` makes a missing
+ * case a compile-time error, so adding a new error class can't silently inherit
+ * the wrong code. Anything that is NOT an `AkmError` is treated as a genuinely
+ * unexpected internal failure and maps to INTERNAL(70) rather than GENERAL(1),
+ * so callers can distinguish "akm threw" from a normal not-found outcome.
+ */
 function classifyExitCode(error: unknown): number {
-  if (error instanceof UsageError) return EXIT_CODES.USAGE;
-  if (error instanceof ConfigError) return EXIT_CODES.CONFIG;
-  if (error instanceof NotFoundError) return EXIT_CODES.GENERAL;
-  return EXIT_CODES.GENERAL;
+  if (!(error instanceof AkmError)) return EXIT_CODES.INTERNAL;
+  switch (error.kind) {
+    case "usage":
+      return EXIT_CODES.USAGE;
+    case "config":
+      return EXIT_CODES.CONFIG;
+    case "not-found":
+      return EXIT_CODES.GENERAL;
+    default:
+      return assertNever(error.kind, "classifyExitCode");
+  }
 }
 
 function extractHint(error: unknown): string | undefined {
@@ -60,10 +82,9 @@ export function emitJsonError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
   const hint = extractHint(error);
   const exitCode = classifyExitCode(error);
-  const code =
-    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
-      ? error.code
-      : undefined;
+  // Classified akm errors carry a stable machine-readable `code`; unexpected
+  // internal errors have none.
+  const code = error instanceof AkmError ? error.code : undefined;
   console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
   process.exit(exitCode);
 }

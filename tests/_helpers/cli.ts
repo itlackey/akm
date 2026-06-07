@@ -63,7 +63,7 @@ import { main } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
 import { normalizeShowArgv } from "../../src/commands/read/show";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
-import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
+import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
@@ -99,14 +99,20 @@ export interface CliResult {
 
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
+const EXIT_INTERNAL = 70;
 const EXIT_CONFIG = 78;
 
 /** Mirror of `classifyExitCode` in src/cli/shared.ts for errors that escape. */
 function classifyExitCode(error: unknown): number {
-  if (error instanceof UsageError) return EXIT_USAGE;
-  if (error instanceof ConfigError) return EXIT_CONFIG;
-  if (error instanceof NotFoundError) return EXIT_GENERAL;
-  return EXIT_GENERAL;
+  if (!(error instanceof AkmError)) return EXIT_INTERNAL;
+  switch (error.kind) {
+    case "usage":
+      return EXIT_USAGE;
+    case "config":
+      return EXIT_CONFIG;
+    case "not-found":
+      return EXIT_GENERAL;
+  }
 }
 
 /** Sentinel thrown by the temporary `process.exit` shim to unwind the stack. */

@@ -114,8 +114,31 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   FILE_NOT_FOUND: "Check the path exists and is readable.",
 };
 
+/**
+ * Discriminant identifying which concrete akm error class an instance is,
+ * independent of `instanceof` (which can break across realm / bundle
+ * boundaries). `classifyExitCode` switches exhaustively on this `kind`, so
+ * adding a new error class forces a compile-time error at the switch until a
+ * case is added — there is no silent `default` fall-through to a wrong code.
+ */
+export type AkmErrorKind = "config" | "usage" | "not-found";
+
+/**
+ * Base class for all akm-thrown, classified errors. Carries the `kind`
+ * discriminant consumed by the CLI exit-code classifier. Errors that are NOT
+ * instances of `AkmError` are treated as genuinely unexpected (INTERNAL).
+ */
+export abstract class AkmError extends Error {
+  abstract readonly kind: AkmErrorKind;
+  /** Stable, machine-readable code surfaced in the JSON error envelope. */
+  abstract readonly code: string;
+  /** Actionable hint string, or undefined when none applies. */
+  abstract hint(): string | undefined;
+}
+
 /** Raised when configuration or environment is invalid or missing. */
-export class ConfigError extends Error {
+export class ConfigError extends AkmError {
+  readonly kind = "config" as const;
   readonly code: ConfigErrorCode;
   private readonly _hint?: string;
   constructor(msg: string, code: ConfigErrorCode = "INVALID_CONFIG_FILE", hint?: string) {
@@ -132,7 +155,8 @@ export class ConfigError extends Error {
 }
 
 /** Raised when the user supplies invalid arguments or input. */
-export class UsageError extends Error {
+export class UsageError extends AkmError {
+  readonly kind = "usage" as const;
   readonly code: UsageErrorCode;
   private readonly _hint?: string;
   constructor(msg: string, code: UsageErrorCode = "INVALID_FLAG_VALUE", hint?: string) {
@@ -149,7 +173,8 @@ export class UsageError extends Error {
 }
 
 /** Raised when a requested resource (asset, entry, file) is not found. */
-export class NotFoundError extends Error {
+export class NotFoundError extends AkmError {
+  readonly kind = "not-found" as const;
   readonly code: NotFoundErrorCode;
   private readonly _hint?: string;
   constructor(msg: string, code: NotFoundErrorCode = "ASSET_NOT_FOUND", hint?: string) {

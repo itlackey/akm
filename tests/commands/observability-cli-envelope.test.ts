@@ -68,7 +68,12 @@ describe("akm observability cluster — JSON envelope snapshot (WS6)", () => {
       expect(typeof env.lessonTagCount).toBe("number");
       expect(typeof env.totalTagCount).toBe("number");
     } else {
-      expect(status).toBe(1);
+      // H6 (code-health round-2): when there is no index DB, `coverage` opens
+      // the database and a bare (non-AkmError) failure escapes. That is now
+      // classified as INTERNAL (exit 70, sysexits EX_SOFTWARE) rather than the
+      // old catch-all 1 — the whole point of H6 is that "akm threw
+      // unexpectedly" is distinguishable from an ordinary NotFoundError (1).
+      expect(status).toBe(70);
       const env = JSON.parse(stderr);
       expect(env.ok).toBe(false);
       expect(typeof env.error).toBe("string");

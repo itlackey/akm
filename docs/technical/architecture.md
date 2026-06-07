@@ -244,11 +244,22 @@ carry a stable `code` and a `hint(): string | undefined` method. The CLI
 surfaces hints by calling `error.hint()` directly — there is no regex chain
 parsing error messages.
 
-| Class | Default exit code |
+All three extend a shared abstract base `AkmError` carrying a `kind`
+discriminant (`"config" | "usage" | "not-found"`). The CLI exit-code classifier
+(`classifyExitCode` in `src/cli/shared.ts`) switches exhaustively on `kind`
+(`never`-checked via `assertNever`), so adding a new error class is a
+compile-time error until its exit code is mapped. Any thrown value that is
+**not** an `AkmError` is treated as an unexpected internal failure and maps to
+the distinct INTERNAL exit code **70** (sysexits `EX_SOFTWARE`) — this lets
+scripts tell "akm threw unexpectedly" apart from an ordinary `NotFoundError`
+(exit 1).
+
+| Class / case | Exit code |
 | --- | --- |
-| `ConfigError` | 78 |
-| `UsageError` | 2 |
-| `NotFoundError` | 1 |
+| `ConfigError` (`kind: "config"`) | 78 |
+| `UsageError` (`kind: "usage"`) | 2 |
+| `NotFoundError` (`kind: "not-found"`) | 1 |
+| unclassified / non-`AkmError` (INTERNAL) | 70 |
 
 ---
 
