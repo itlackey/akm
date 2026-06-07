@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
@@ -47,11 +47,16 @@ export function detectStashRoot(extractedDir: string): string {
   return root;
 }
 
+/** A collision-resistant slug used to isolate cache dirs that lack a stable version. */
+function uniqueSlug(): string {
+  return randomUUID();
+}
+
 /**
  * Build a per-source cache directory under `cacheRootDir`.
  *
  * Versioned sources get `${source}-${id}/${version}` for cache reuse;
- * `local` sources get a unique timestamped slug so each install is isolated.
+ * `local` sources get a unique slug so each install is isolated.
  */
 export function buildInstallCacheDir(
   cacheRootDir: string,
@@ -60,10 +65,7 @@ export function buildInstallCacheDir(
   version?: string,
 ): string {
   const slug = `${source}-${id.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "")}`;
-  const versionSlug =
-    source === "local"
-      ? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-      : (version?.replace(/[^a-zA-Z0-9_.-]+/g, "-") ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  const versionSlug = source === "local" ? uniqueSlug() : (version?.replace(/[^a-zA-Z0-9_.-]+/g, "-") ?? uniqueSlug());
   return path.join(cacheRootDir, slug || source, versionSlug);
 }
 
