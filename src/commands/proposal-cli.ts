@@ -18,7 +18,7 @@ import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { resolveTriageJudgmentRunner } from "../integrations/agent/runner";
-import { resolveImproveProfile } from "./improve-profiles";
+import { resolveImproveProfile } from "./improve/improve-profiles";
 import {
   akmProposalAccept,
   akmProposalDiff,

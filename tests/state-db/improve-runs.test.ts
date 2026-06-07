@@ -14,7 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AkmImproveResult } from "../../src/commands/improve";
+import type { AkmImproveResult } from "../../src/commands/improve/improve";
 import {
   computeImproveRunMetrics,
   openStateDatabase,
@@ -381,7 +381,7 @@ describe("purgeOldImproveRuns", () => {
 // `akm health` can see what happened without inferring from task_history.
 describe("recordTerminatedImproveRun", () => {
   test("writes an ok:false row with metadata.terminated.reason for SIGTERM", async () => {
-    const { recordTerminatedImproveRun } = await import("../../src/commands/improve-result-file");
+    const { recordTerminatedImproveRun } = await import("../../src/commands/improve/improve-result-file");
     const db = openStateDatabase();
     try {
       const runId = "2026-05-26T05-07-01-587Z-deadbeef";
@@ -422,7 +422,7 @@ describe("recordTerminatedImproveRun", () => {
   });
 
   test("captures errorMessage for exception terminations and preserves scope_value", async () => {
-    const { recordTerminatedImproveRun } = await import("../../src/commands/improve-result-file");
+    const { recordTerminatedImproveRun } = await import("../../src/commands/improve/improve-result-file");
     const db = openStateDatabase();
     try {
       const runId = "2026-05-26T05-08-00-000Z-cafebabe";

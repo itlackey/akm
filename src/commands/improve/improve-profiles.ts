@@ -2,19 +2,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import profileCatchup from "../assets/profiles/catchup.json" with { type: "json" };
-import profileConsolidate from "../assets/profiles/consolidate.json" with { type: "json" };
-import profileDefault from "../assets/profiles/default.json" with { type: "json" };
-import profileFrequent from "../assets/profiles/frequent.json" with { type: "json" };
-import profileGraphRefresh from "../assets/profiles/graph-refresh.json" with { type: "json" };
-import profileMemoryFocus from "../assets/profiles/memory-focus.json" with { type: "json" };
-import profileQuick from "../assets/profiles/quick.json" with { type: "json" };
-import profileThorough from "../assets/profiles/thorough.json" with { type: "json" };
-import { parseAssetRef } from "../core/asset-ref";
-import type { AkmConfig, ImproveProfileConfig } from "../core/config";
-import { warn } from "../core/warn";
+import profileCatchup from "../../assets/profiles/catchup.json" with { type: "json" };
+import profileConsolidate from "../../assets/profiles/consolidate.json" with { type: "json" };
+import profileDefault from "../../assets/profiles/default.json" with { type: "json" };
+import profileFrequent from "../../assets/profiles/frequent.json" with { type: "json" };
+import profileGraphRefresh from "../../assets/profiles/graph-refresh.json" with { type: "json" };
+import profileMemoryFocus from "../../assets/profiles/memory-focus.json" with { type: "json" };
+import profileQuick from "../../assets/profiles/quick.json" with { type: "json" };
+import profileThorough from "../../assets/profiles/thorough.json" with { type: "json" };
+import { parseAssetRef } from "../../core/asset-ref";
+import type { AkmConfig, ImproveProfileConfig } from "../../core/config";
+import { warn } from "../../core/warn";
 
-export type { ImproveProfileConfig } from "../core/config";
+export type { ImproveProfileConfig } from "../../core/config";
 
 /** Profile name used as the final fallback when nothing else resolves. */
 const FALLBACK_PROFILE_NAME = "default";

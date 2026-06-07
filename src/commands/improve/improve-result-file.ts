@@ -29,7 +29,7 @@
 
 import crypto from "node:crypto";
 import path from "node:path";
-import { openStateDatabase, recordImproveRun } from "../core/state-db";
+import { openStateDatabase, recordImproveRun } from "../../core/state-db";
 import type { AkmImproveResult } from "./improve";
 
 /**

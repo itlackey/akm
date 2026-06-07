@@ -34,9 +34,9 @@ import {
   akmDistill,
   DISTILL_REFUSED_INPUT_TYPES,
   isDistillRefusedInputType,
-} from "../../src/commands/distill";
-import { akmImprove } from "../../src/commands/improve";
-import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/reflect";
+} from "../../src/commands/improve/distill";
+import { akmImprove } from "../../src/commands/improve/improve";
+import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/improve/reflect";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";

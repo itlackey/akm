@@ -7,37 +7,37 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { parse as yamlParse } from "yaml";
-import { parseAssetRef } from "../core/asset-ref";
-import { assembleAssetFromString, serializeFrontmatter } from "../core/asset-serialize";
-import { resolveStashDir, timestampForFilename } from "../core/common";
-import type { AkmConfig } from "../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../core/config";
-import { ConfigError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { parseFrontmatter } from "../core/frontmatter";
-import { writeContradictEdge } from "../core/memory-belief";
-import { parseEmbeddedJsonResponse } from "../core/parse";
+import { parseAssetRef } from "../../core/asset-ref";
+import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset-serialize";
+import { resolveStashDir, timestampForFilename } from "../../core/common";
+import type { AkmConfig } from "../../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import { ConfigError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { parseFrontmatter } from "../../core/frontmatter";
+import { parseEmbeddedJsonResponse } from "../../core/parse";
 import {
   hasHotCaptureMode,
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
   MERGE_SHRINK_RATIO_MIN,
   validateProposalFrontmatter,
-} from "../core/proposal-quality-validators";
-import { createProposal, isProposalSkipped, listProposals } from "../core/proposals";
-import { detectTruncatedDescription } from "../core/text-truncation";
+} from "../../core/proposal-quality-validators";
+import { createProposal, isProposalSkipped, listProposals } from "../../core/proposals";
+import { detectTruncatedDescription } from "../../core/text-truncation";
+import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
 
-import { warn } from "../core/warn";
+import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
   deleteAssetFromSource,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../core/write-source";
-import type { DbIndexedEntry } from "../indexer/db";
+} from "../../core/write-source";
+import type { DbIndexedEntry } from "../../indexer/db";
 import {
   closeDatabase,
   findEntryIdByRef,
@@ -45,11 +45,11 @@ import {
   getEntryById,
   getNeighborsByEntryId,
   openExistingDatabase,
-} from "../indexer/db";
-import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
-import { chatCompletion } from "../llm/client";
-import { cosineSimilarity, embedBatch } from "../llm/embedder";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
+} from "../../indexer/db";
+import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import { chatCompletion } from "../../llm/client";
+import { cosineSimilarity, embedBatch } from "../../llm/embedder";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

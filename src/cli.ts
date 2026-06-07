@@ -73,7 +73,6 @@ import { generateBashCompletions, installBashCompletions } from "./commands/comp
 import { configCommand } from "./commands/config-cli";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/contribute-cli";
 import { envCommand } from "./commands/env-cli";
-import { extractCommand } from "./commands/extract-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { graphCommand } from "./commands/graph-cli";
 import {
@@ -83,7 +82,8 @@ import {
   renderWindowCompareMd,
   type WindowSpec,
 } from "./commands/health";
-import { improveCommand } from "./commands/improve-cli";
+import { extractCommand } from "./commands/improve/extract-cli";
+import { improveCommand } from "./commands/improve/improve-cli";
 import { renderMigrationHelp } from "./commands/migration-help";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal-cli";

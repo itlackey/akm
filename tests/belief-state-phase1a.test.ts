@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmImprove } from "../src/commands/improve";
+import { akmImprove } from "../src/commands/improve/improve";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { akmIndex } from "../src/indexer/indexer";

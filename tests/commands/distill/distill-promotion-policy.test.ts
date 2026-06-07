@@ -5,7 +5,7 @@ import {
   evaluateMemoryPromotionBenchmark,
   getDefaultPromotionPolicySelection,
   type PromotionBenchmarkCase,
-} from "../../../src/commands/distill-promotion-policy";
+} from "../../../src/commands/improve/distill-promotion-policy";
 
 function fixtureByName(name: string): PromotionBenchmarkCase {
   const fixture = DEFAULT_PROMOTION_POLICY_CORPUS.find((candidate) => candidate.name === name);

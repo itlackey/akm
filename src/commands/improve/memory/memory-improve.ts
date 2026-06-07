@@ -4,10 +4,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "./asset-ref";
-import { assembleAsset } from "./asset-serialize";
-import { firstString, groupBy, stringArray } from "./common";
-import { parseFrontmatter } from "./frontmatter";
+import { makeAssetRef, parseAssetRef } from "../../../core/asset-ref";
+import { assembleAsset } from "../../../core/asset-serialize";
+import { firstString, groupBy, stringArray } from "../../../core/common";
+import { parseFrontmatter } from "../../../core/frontmatter";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";

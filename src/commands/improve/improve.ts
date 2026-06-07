@@ -5,23 +5,21 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { type AkmAssetType, daysToMs, isAssetType } from "../core/common";
-import type { AkmConfig } from "../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../core/config";
-import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
-import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../core/events";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
-import { parseFrontmatter } from "../core/frontmatter";
+import { makeAssetRef, parseAssetRef } from "../../core/asset-ref";
+import { type AkmAssetType, daysToMs, isAssetType } from "../../core/common";
+import type { AkmConfig } from "../../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { parseFrontmatter } from "../../core/frontmatter";
 import type {
   AkmImproveResult,
   ImproveActionResult,
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
-} from "../core/improve-types";
-import { detectAndWriteContradictions } from "../core/memory-contradiction-detect";
-import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "../core/memory-improve";
-import { getDbPath } from "../core/paths";
+} from "../../core/improve-types";
+import { getDbPath } from "../../core/paths";
 import {
   createProposal,
   expireStaleProposals,
@@ -29,9 +27,9 @@ import {
   isProposalSkipped,
   listProposals,
   purgeOrphanProposals,
-} from "../core/proposals";
-import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../core/state-db";
-import { info, warn } from "../core/warn";
+} from "../../core/proposals";
+import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
+import { info, warn } from "../../core/warn";
 import {
   closeDatabase,
   getAllEntries,
@@ -41,20 +39,25 @@ import {
   getZeroResultSearches,
   openDatabase,
   openExistingDatabase,
-} from "../indexer/db";
-import { ensureIndex } from "../indexer/ensure-index";
-import { type GraphExtractionResult, runGraphExtractionPass } from "../indexer/graph-extraction";
-import { akmIndex } from "../indexer/indexer";
-import { type MemoryInferenceResult, runMemoryInferencePass } from "../indexer/memory-inference";
-import { resolveAssetPath } from "../indexer/path-resolver";
-import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
-import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
-import { countUsageEventsByType } from "../indexer/usage-events";
-import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
-import { getAvailableHarnesses } from "../integrations/session-logs";
-import type { SessionLogHarness } from "../integrations/session-logs/types";
-import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
-import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../sources/providers/git";
+} from "../../indexer/db";
+import { ensureIndex } from "../../indexer/ensure-index";
+import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph-extraction";
+import { akmIndex } from "../../indexer/indexer";
+import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/memory-inference";
+import { resolveAssetPath } from "../../indexer/path-resolver";
+import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search-source";
+import { runStalenessDetectionPass, type StalenessDetectionResult } from "../../indexer/staleness-detect";
+import { countUsageEventsByType } from "../../indexer/usage-events";
+import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
+import { getAvailableHarnesses } from "../../integrations/session-logs";
+import type { SessionLogHarness } from "../../integrations/session-logs/types";
+import { isLlmFeatureEnabled, isProcessEnabled } from "../../llm/feature-gate";
+import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
+import { akmLint } from "../lint/index";
+import { type DrainResult, drainProposals } from "../proposal/drain";
+import { resolveDrainPolicy } from "../proposal/drain-policies";
+import { runSchemaRepairPass } from "../schema-repair";
+import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
@@ -68,12 +71,9 @@ import {
   resolveProcessEnabled,
   shouldSkipRef,
 } from "./improve-profiles";
-import { akmLint } from "./lint/index";
-import { type DrainResult, drainProposals } from "./proposal/drain";
-import { resolveDrainPolicy } from "./proposal/drain-policies";
+import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
+import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import { type AkmReflectResult, akmReflect } from "./reflect";
-import { runSchemaRepairPass } from "./schema-repair";
-import { checkDeadUrls, type DeadUrl } from "./url-checker";
 
 export interface AkmImproveOptions {
   scope?: string;

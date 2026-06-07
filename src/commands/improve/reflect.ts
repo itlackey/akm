@@ -26,17 +26,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { type AssetRef, parseAssetRef } from "../core/asset-ref";
-import { assembleAssetFromString, serializeFrontmatter } from "../core/asset-serialize";
-import { resolveStashDir } from "../core/common";
-import type { LlmConnectionConfig } from "../core/config";
-import { loadConfig } from "../core/config";
-import { ConfigError, UsageError } from "../core/errors";
-import { appendEvent, readEvents } from "../core/events";
-import { parseFrontmatter } from "../core/frontmatter";
-import { lintLessonContent } from "../core/lesson-lint";
-import { stripMarkdownFences } from "../core/markdown";
-import { checkReflectSize } from "../core/proposal-quality-validators";
+import { type AssetRef, parseAssetRef } from "../../core/asset-ref";
+import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset-serialize";
+import { resolveStashDir } from "../../core/common";
+import type { LlmConnectionConfig } from "../../core/config";
+import { loadConfig } from "../../core/config";
+import { ConfigError, UsageError } from "../../core/errors";
+import { appendEvent, readEvents } from "../../core/events";
+import { parseFrontmatter } from "../../core/frontmatter";
+import { lintLessonContent } from "../../core/lesson-lint";
+import { stripMarkdownFences } from "../../core/markdown";
+import { checkReflectSize } from "../../core/proposal-quality-validators";
 import {
   type CreateProposalInput,
   createProposal,
@@ -44,8 +44,8 @@ import {
   listProposals,
   type Proposal,
   type ProposalsContext,
-} from "../core/proposals";
-import { lookup } from "../indexer/indexer";
+} from "../../core/proposals";
+import { lookup } from "../../indexer/indexer";
 import {
   type AgentConfig,
   type AgentFailureReason,
@@ -53,25 +53,25 @@ import {
   type AgentRunResult,
   type RunAgentOptions,
   runAgent,
-} from "../integrations/agent";
-import { resolveProcessAgentProfile } from "../integrations/agent/config";
+} from "../../integrations/agent";
+import { resolveProcessAgentProfile } from "../../integrations/agent/config";
 import {
   buildReflectPrompt,
   extractDraftConfidence,
   parseAgentProposalPayload,
   type RejectedProposalContext,
-} from "../integrations/agent/prompts";
-import { type RunnerSpec, resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
-import { runOpencodeSdk } from "../integrations/agent/sdk-runner";
-import { type ChatMessage, chatCompletion } from "../llm/client";
-import { isLlmFeatureEnabled } from "../llm/feature-gate";
+} from "../../integrations/agent/prompts";
+import { type RunnerSpec, resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
+import { type ChatMessage, chatCompletion } from "../../llm/client";
+import { isLlmFeatureEnabled } from "../../llm/feature-gate";
 import {
   baseFailureFields,
   enoentHintMessage,
   isEnoentFailure,
   loadAgentConfigFromDisk,
   resolveAgentProfile,
-} from "./agent-support";
+} from "../agent-support";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 
 export interface AkmReflectOptions {
@@ -104,8 +104,8 @@ export interface AkmReflectOptions {
    * Defaults to {@link chatCompletion}. Injected in tests to avoid real LLM calls.
    */
   chat?: (
-    config: import("../core/config").LlmConnectionConfig,
-    messages: import("../llm/client").ChatMessage[],
+    config: import("../../core/config").LlmConnectionConfig,
+    messages: import("../../llm/client").ChatMessage[],
   ) => Promise<string>;
   /**
    * Override the loaded AkmConfig (test seam + for the quality gate).
@@ -113,7 +113,7 @@ export interface AkmReflectOptions {
    * `profiles.improve.default.processes.reflect.qualityGate.enabled`) without
    * a real config file in tests.
    */
-  config?: import("../core/config").AkmConfig;
+  config?: import("../../core/config").AkmConfig;
   /**
    * Named process to use for per-process agent config lookup. Defaults to
    * `"reflect"`. When an explicit `--profile` flag is given, the process

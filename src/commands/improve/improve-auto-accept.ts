@@ -22,11 +22,11 @@
  * touching the filesystem.
  */
 
-import type { AkmConfig } from "../core/config";
-import { loadConfig } from "../core/config";
-import { appendEvent, type EventsContext } from "../core/events";
-import { promoteProposal } from "../core/proposals";
-import { info, warn } from "../core/warn";
+import type { AkmConfig } from "../../core/config";
+import { loadConfig } from "../../core/config";
+import { appendEvent, type EventsContext } from "../../core/events";
+import { promoteProposal } from "../../core/proposals";
+import { info, warn } from "../../core/warn";
 
 // ---------------------------------------------------------------------------
 // Types

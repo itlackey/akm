@@ -17,9 +17,9 @@
  */
 
 import { defineCommand } from "citty";
-import { output, runWithJsonErrors } from "../cli/shared";
-import { UsageError } from "../core/errors";
-import { getAvailableHarnesses } from "../integrations/session-logs";
+import { output, runWithJsonErrors } from "../../cli/shared";
+import { UsageError } from "../../core/errors";
+import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { type AkmExtractResult, akmExtract } from "./extract";
 
 export const extractCommand = defineCommand({

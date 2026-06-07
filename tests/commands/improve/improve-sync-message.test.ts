@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { renderSyncCommitMessage } from "../../../src/commands/improve";
+import { renderSyncCommitMessage } from "../../../src/commands/improve/improve";
 
 // 2026-06-02 21:30:45 UTC
 const NOW = Date.UTC(2026, 5, 2, 21, 30, 45);

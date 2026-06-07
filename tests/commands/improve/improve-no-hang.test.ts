@@ -16,10 +16,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ConsolidateResult } from "../../../src/commands/consolidate";
-import type { AkmDistillResult } from "../../../src/commands/distill";
-import { akmImprove } from "../../../src/commands/improve";
-import type { AkmReflectResult } from "../../../src/commands/reflect";
+import type { ConsolidateResult } from "../../../src/commands/improve/consolidate";
+import type { AkmDistillResult } from "../../../src/commands/improve/distill";
+import { akmImprove } from "../../../src/commands/improve/improve";
+import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { saveConfig } from "../../../src/core/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 

@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "../core/common";
+import { writeFileAtomic } from "../../core/common";
 
 export interface EvalCase {
   ref: string;

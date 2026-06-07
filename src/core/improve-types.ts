@@ -2,14 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { ConsolidateResult } from "../commands/consolidate";
-import type { AkmDistillResult } from "../commands/distill";
-import type { AkmExtractResult } from "../commands/extract";
-import type { AkmReflectResult } from "../commands/reflect";
-import type { DeadUrl } from "../commands/url-checker";
-import type { GraphExtractionResult } from "../indexer/graph-extraction";
-import type { MemoryInferenceResult } from "../indexer/memory-inference";
-import type { StalenessDetectionResult } from "../indexer/staleness-detect";
+import type { ConsolidateResult } from "../commands/improve/consolidate";
+import type { AkmDistillResult } from "../commands/improve/distill";
+import type { AkmExtractResult } from "../commands/improve/extract";
 import type {
   ArchivedMemoryCleanupRecord,
   MemoryBeliefStateTransition,
@@ -17,7 +12,12 @@ import type {
   MemoryContradictionCandidate,
   MemoryPruneCandidate,
   RelativeDateCandidate,
-} from "./memory-improve";
+} from "../commands/improve/memory/memory-improve";
+import type { AkmReflectResult } from "../commands/improve/reflect";
+import type { DeadUrl } from "../commands/url-checker";
+import type { GraphExtractionResult } from "../indexer/graph-extraction";
+import type { MemoryInferenceResult } from "../indexer/memory-inference";
+import type { StalenessDetectionResult } from "../indexer/staleness-detect";
 
 export interface ImproveEligibleRef {
   ref: string;

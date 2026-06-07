@@ -27,7 +27,7 @@ import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from 
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../tasks/schedule";
 import type { TaskDocument } from "../tasks/schema";
 import { validateTaskDocument } from "../tasks/validator";
-import { resolveImproveProfile } from "./improve-profiles";
+import { resolveImproveProfile } from "./improve/improve-profiles";
 
 export interface TasksAddInput {
   id: string;

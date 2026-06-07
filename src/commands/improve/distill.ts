@@ -54,29 +54,29 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
-import { assembleAssetFromString } from "../core/asset-serialize";
-import { resolveStashDir, timestampForFilename } from "../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../core/config";
-import { ConfigError, UsageError } from "../core/errors";
-import { appendEvent, readEvents } from "../core/events";
-import { parseFrontmatter } from "../core/frontmatter";
-import { lintLessonContent } from "../core/lesson-lint";
-import { stripMarkdownFences } from "../core/markdown";
+import { parseAssetRef } from "../../core/asset-ref";
+import { assembleAssetFromString } from "../../core/asset-serialize";
+import { resolveStashDir, timestampForFilename } from "../../core/common";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import { ConfigError, UsageError } from "../../core/errors";
+import { appendEvent, readEvents } from "../../core/events";
+import { parseFrontmatter } from "../../core/frontmatter";
+import { lintLessonContent } from "../../core/lesson-lint";
+import { stripMarkdownFences } from "../../core/markdown";
 import {
   createProposal,
   isProposalSkipped,
   listProposals,
   type Proposal,
   type ProposalsContext,
-} from "../core/proposals";
-import { warnVerbose } from "../core/warn";
-import { resolveAssetPath } from "../indexer/path-resolver";
-import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
+} from "../../core/proposals";
+import { warnVerbose } from "../../core/warn";
+import { resolveAssetPath } from "../../indexer/path-resolver";
+import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import { akmSearch } from "../search";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
-import { akmSearch } from "./search";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -287,9 +287,9 @@ interface DistillValidationFinding {
 // The actual implementations now live in `core/proposal-quality-validators.ts`
 // so the same checks run inside `runProposalValidators` on `proposal accept`.
 // We re-export the public-facing helpers here so existing imports
-// (`from "../src/commands/distill"`) continue to resolve.
-import { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse } from "../core/proposal-quality-validators";
-import { repairTruncatedDescription } from "../core/text-truncation";
+// (`from "../../src/commands/distill"`) continue to resolve.
+import { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse } from "../../core/proposal-quality-validators";
+import { repairTruncatedDescription } from "../../core/text-truncation";
 
 export { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse };
 
@@ -675,7 +675,7 @@ async function fetchTopSimilarLessons(
     });
     const hits = result?.hits ?? [];
     return hits
-      .filter((h): h is import("../sources/types").SourceSearchHit => "path" in h && typeof h.path === "string")
+      .filter((h): h is import("../../sources/types").SourceSearchHit => "path" in h && typeof h.path === "string")
       .slice(0, n)
       .map((h) => {
         let content = "";

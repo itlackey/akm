@@ -26,28 +26,28 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { assembleAsset } from "../core/asset-serialize";
-import { resolveStashDir, timestampForFilename } from "../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../core/config";
-import { ConfigError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { createProposal, isProposalSkipped, type ProposalsContext } from "../core/proposals";
+import { assembleAsset } from "../../core/asset-serialize";
+import { resolveStashDir, timestampForFilename } from "../../core/common";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import { ConfigError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { createProposal, isProposalSkipped, type ProposalsContext } from "../../core/proposals";
 import {
   type ExtractedSessionRow,
   getExtractedSessionsMap,
   openStateDatabase,
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
-} from "../core/state-db";
-import { repairTruncatedDescription } from "../core/text-truncation";
-import { warn } from "../core/warn";
-import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
-import { getAvailableHarnesses } from "../integrations/session-logs";
-import { preFilterSession } from "../integrations/session-logs/pre-filter";
-import type { SessionLogHarness, SessionRef, SessionSummary } from "../integrations/session-logs/types";
-import { type ChatMessage, chatCompletion } from "../llm/client";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
+} from "../../core/state-db";
+import { repairTruncatedDescription } from "../../core/text-truncation";
+import { warn } from "../../core/warn";
+import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import { getAvailableHarnesses } from "../../integrations/session-logs";
+import { preFilterSession } from "../../integrations/session-logs/pre-filter";
+import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
+import { type ChatMessage, chatCompletion } from "../../llm/client";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 
 // ── Options + Result envelopes ──────────────────────────────────────────────

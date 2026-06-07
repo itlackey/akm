@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
-import { akmImprove } from "../../../src/commands/improve";
+import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config";
 import { saveConfig } from "../../../src/core/config";
 import { readEvents } from "../../../src/core/events";

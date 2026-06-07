@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmDistillResult } from "../../src/commands/distill";
-import { akmImprove } from "../../src/commands/improve";
-import type { AkmReflectResult } from "../../src/commands/reflect";
+import type { AkmDistillResult } from "../../src/commands/improve/distill";
+import { akmImprove } from "../../src/commands/improve/improve";
+import type { AkmReflectResult } from "../../src/commands/improve/reflect";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
@@ -344,7 +344,9 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 
 describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)", () => {
   test("detectAndWriteContradictions is a no-op when no LLM is configured", async () => {
-    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
     const stashDir = makeTempDir("akm-m1-no-llm-");
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
     writeMemory(stashDir, "auth-tips.derived2", { inferred: true, source: "memory:auth-tips" }, "VPN is optional.");
@@ -362,7 +364,9 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
   });
 
   test("detectAndWriteContradictions writes contradictedBy edges when LLM judges true", async () => {
-    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
     const stashDir = makeTempDir("akm-m1-detect-");
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
     writeMemory(
@@ -404,7 +408,9 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
   });
 
   test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {
-    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
     const stashDir = makeTempDir("akm-m1-no-contradiction-");
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Use VPN for prod.");
     writeMemory(

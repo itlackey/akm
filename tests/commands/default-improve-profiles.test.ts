@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import profileCatchup from "../../src/assets/profiles/catchup.json";
 import profileConsolidate from "../../src/assets/profiles/consolidate.json";
 import profileFrequent from "../../src/assets/profiles/frequent.json";
-import { resolveImproveProfile } from "../../src/commands/improve-profiles";
+import { resolveImproveProfile } from "../../src/commands/improve/improve-profiles";
 import type { AkmConfig } from "../../src/core/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config-schema";
 
