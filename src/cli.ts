@@ -159,7 +159,7 @@ import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./cor
 import { parseMetaRef } from "./core/stash-meta";
 import { plainize } from "./core/tty";
 import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
-import { closeDatabase, openExistingDatabase } from "./indexer/db";
+import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
 import { resolveTriageJudgmentRunner } from "./integrations/agent/runner";
@@ -3422,36 +3422,6 @@ const lessonsCoverageCommand = defineCommand({
     });
   },
 });
-
-/**
- * Walk indexed entries and collect a deduplicated set of tags. When
- * `entryType` is provided, only entries of that type contribute tags.
- *
- * Pure read; never mutates the DB. Used by `akm lessons coverage` (Phase 7A)
- * to compute the diff between all-asset tags and lesson tags.
- */
-function collectTagSetFromEntries(db: import("bun:sqlite").Database, entryType: string | undefined): Set<string> {
-  const tags = new Set<string>();
-  const stmt = entryType
-    ? db.prepare("SELECT entry_json FROM entries WHERE entry_type = ?")
-    : db.prepare("SELECT entry_json FROM entries");
-  const rows = (entryType ? stmt.all(entryType) : stmt.all()) as Array<{ entry_json: string }>;
-  for (const row of rows) {
-    let parsed: { tags?: unknown };
-    try {
-      parsed = JSON.parse(row.entry_json) as { tags?: unknown };
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(parsed.tags)) continue;
-    for (const tag of parsed.tags) {
-      if (typeof tag === "string" && tag.trim().length > 0) {
-        tags.add(tag.trim().toLowerCase());
-      }
-    }
-  }
-  return tags;
-}
 
 const lessonsCommand = defineCommand({
   meta: {

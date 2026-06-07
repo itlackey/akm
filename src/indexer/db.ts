@@ -2241,3 +2241,38 @@ export function getRegistryIndexCache(
 
   return { indexJson: row.index_json, etag: row.etag, lastModified: row.last_modified };
 }
+
+/**
+ * Walk indexed entries and collect a deduplicated set of tags. When
+ * `entryType` is provided, only entries of that type contribute tags.
+ *
+ * Pure read; never mutates the DB. Used by `akm lessons coverage` (Phase 7A)
+ * to compute the diff between all-asset tags and lesson tags. Tags are
+ * normalised by trimming and lower-casing, and blank tags are dropped.
+ *
+ * SQL owner: this module owns ALL raw SQL against the `entries` table (WS5),
+ * so the `lessons coverage` read lives here rather than leaking into cli.ts.
+ * The result set is fully materialised (`.all()` then iterate) before return.
+ */
+export function collectTagSetFromEntries(db: Database, entryType: string | undefined): Set<string> {
+  const tags = new Set<string>();
+  const stmt = entryType
+    ? db.prepare("SELECT entry_json FROM entries WHERE entry_type = ?")
+    : db.prepare("SELECT entry_json FROM entries");
+  const rows = (entryType ? stmt.all(entryType) : stmt.all()) as Array<{ entry_json: string }>;
+  for (const row of rows) {
+    let parsed: { tags?: unknown };
+    try {
+      parsed = JSON.parse(row.entry_json) as { tags?: unknown };
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed.tags)) continue;
+    for (const tag of parsed.tags) {
+      if (typeof tag === "string" && tag.trim().length > 0) {
+        tags.add(tag.trim().toLowerCase());
+      }
+    }
+  }
+  return tags;
+}
