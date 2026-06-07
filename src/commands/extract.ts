@@ -40,6 +40,7 @@ import {
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../core/state-db";
+import { repairTruncatedDescription } from "../core/text-truncation";
 import { warn } from "../core/warn";
 import { resolveImproveProcessRunnerFromProfile } from "../integrations/agent/runner";
 import { getAvailableHarnesses } from "../integrations/session-logs";
@@ -180,17 +181,24 @@ function resolveHarness(type: string, harnesses?: SessionLogHarness[]): SessionL
  * so the accept-time descriptionQualityValidator passes — same pattern as
  * the consolidate-writer fix at consolidate.ts.
  */
-function buildCandidateProposal(candidate: ExtractCandidate, sourceRef: SessionRef): { ref: string; content: string } {
+function buildCandidateProposal(
+  candidate: ExtractCandidate,
+  sourceRef: SessionRef,
+): { ref: string; content: string; description: string } {
   const ref = `${candidate.type}:${candidate.name}`;
+  // Post-generation repair pass (#556): deterministically complete a
+  // description the LLM sliced mid-sentence before it reaches the
+  // auto-accept validators. No-op (byte-identical) for valid descriptions.
+  const description = repairTruncatedDescription(candidate.description, candidate.body);
   const fm: Record<string, unknown> = {
-    description: candidate.description,
+    description,
     sources: [`session:${sourceRef.harness}:${sourceRef.sessionId}`],
   };
   if (candidate.type === "lesson" && candidate.when_to_use) {
     fm.when_to_use = candidate.when_to_use;
   }
   const content = assembleAsset(fm, candidate.body);
-  return { ref, content };
+  return { ref, content, description };
 }
 
 /**
@@ -310,7 +318,7 @@ async function processSession(
       continue;
     }
     try {
-      const { ref, content } = buildCandidateProposal(candidate, sessionRef);
+      const { ref, content, description } = buildCandidateProposal(candidate, sessionRef);
       const result = createProposal(
         stashDir,
         {
@@ -320,7 +328,7 @@ async function processSession(
           payload: {
             content,
             frontmatter: {
-              description: candidate.description,
+              description,
               ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
               ...(typeof candidate.confidence === "number" ? { confidence: candidate.confidence } : {}),
               sources: [`session:${sessionRef.harness}:${sessionRef.sessionId}`],

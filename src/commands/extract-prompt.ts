@@ -59,7 +59,7 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
             type: "string",
             minLength: 20,
             maxLength: 400,
-            description: "One-sentence summary of the candidate.",
+            description: "One-sentence summary of the candidate. Must be a complete sentence; do not end mid-clause.",
           },
           when_to_use: {
             type: "string",

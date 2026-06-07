@@ -289,6 +289,7 @@ interface DistillValidationFinding {
 // We re-export the public-facing helpers here so existing imports
 // (`from "../src/commands/distill"`) continue to resolve.
 import { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse } from "../core/proposal-quality-validators";
+import { repairTruncatedDescription } from "../core/text-truncation";
 
 export { detectDoubleFrontmatter, isValidDescription, isValidWhenToUse };
 
@@ -1420,6 +1421,27 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           .join("\n");
         content = assembleAssetFromString(swappedFmLines, parsedSwap.content);
         descriptionSwapped = 1;
+      }
+    }
+  }
+
+  // Post-generation truncation repair (#556): if the LLM sliced the
+  // description mid-sentence, deterministically complete it from its own text
+  // / the lesson body BEFORE the lint + quality validators run. No-op
+  // (byte-identical) for already-complete descriptions, so this never alters
+  // a valid proposal. Runs on the lesson path only (knowledge has no
+  // description field gate here).
+  if (effectiveProposalKind !== "knowledge") {
+    const parsedRepair = parseFrontmatter(content);
+    const fmRepair = (parsedRepair.data ?? {}) as Record<string, unknown>;
+    const descRepairRaw = typeof fmRepair.description === "string" ? fmRepair.description : "";
+    if (descRepairRaw) {
+      const repaired = repairTruncatedDescription(descRepairRaw, parsedRepair.content);
+      if (repaired !== descRepairRaw) {
+        const repairedFmLines = Object.entries({ ...fmRepair, description: repaired })
+          .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+          .join("\n");
+        content = assembleAssetFromString(repairedFmLines, parsedRepair.content);
       }
     }
   }
