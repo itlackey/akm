@@ -157,90 +157,200 @@ Sources: hooks https://code.claude.com/docs/en/hooks ; subagents https://code.cl
 
 ---
 
-## 5. Recommended redesign (NO daemon)
+## 5. Redesign v2 (approved direction)
 
-Non-negotiable constraints carried forward: no resident process; state in `workflow.db` at `XDG_DATA_HOME/akm/workflow.db`, never touched by `index`; offline/CI must keep working; identity null-safe; never silently switch agent provider/model — stop and report.
+> **This section supersedes the original "Recommended redesign (NO daemon)".** The hook-based / cron-tick proposal that previously occupied §5 (Stop-hook entry point `akm workflow checkin --stop-hook`, `PostToolUse` heartbeat hook, external `akm workflow reap` cron job, and the LLM-via-`tryLlmFeature` advisory judge) is **withdrawn**. The verdict (§1) and defect register (§3) above are unchanged and remain authoritative; only the redesign, migration, phasing, and follow-up-issue sections are replaced. Where the text below says "supersedes the old hook-based proposal," it means exactly the withdrawn §5A/§5B and their associated §6/§7 entries.
 
-The load-bearing principle: **move the check-in trigger off the agent's voluntary poll onto (a) unskippable harness turn-boundary events and (b) akm's existing periodic cron tick as an external evaluator — both writing durable, idempotent state.**
+Non-negotiable constraints carried forward unchanged: no resident process; state in `workflow.db` at `XDG_DATA_HOME/akm/workflow.db`, never touched by `index`; offline/CI must keep working; identity null-safe; never silently switch agent provider/model — stop and report.
 
-### 5A. Check-in / stall detection (no daemon)
+### 5.0 Owner's locked decisions (binding, stated up front)
 
-**Mechanism — three triggers, none requiring the possibly-stalled agent:**
+Four decisions are **locked by the owner** and constrain everything below. They are not open for re-litigation in implementation:
 
-1. **Harness Stop-hook entry point.** Ship `akm workflow checkin --stop-hook` (reads `session_id`/`cwd` from stdin like a Claude Code hook). The harness wires it to its `Stop`/`SubagentStop` event. The agent stopping invokes akm — converts pull-poll into a harness-fired event. This is purely "polled on the Stop event" instead of "polled on the next command" — fully inside ADR §1's no-daemon rule. The hook writes a durable signal and, when the run is mid-step, emits a structured `{signal, reason, sessionId}` block the harness is contractually required to surface (mirrors `decision:"block"`/exit-2).
+1. **No harness hooks.** akm does not ship or rely on any Claude Code / opencode `Stop`, `SubagentStop`, `PostToolUse`, or other harness-event hook. The withdrawn §5A items 1 and 3 (`--stop-hook`, `PostToolUse` heartbeat) are **out**. akm must work identically whether or not a harness is configured.
+2. **Short-lived spawned monitor instead of a cron/daemon.** Stall detection is performed by a **monitor process that akm spawns for itself** at run start — detached, file-logged, self-terminating by a hard cap. It is not a resident daemon and not registered on the cron surface. The withdrawn §5A item 2 (external `akm workflow reap` cron job) is replaced by this self-spawned monitor plus a cheap on-command reaper safety net.
+3. **No akm-side LLM call in the completion path.** The akm-side LLM-as-judge (`validate-summary.ts`, `buildDefaultSummaryJudge`, the `summaryJudge` seam) is **deleted outright** — not wrapped in `tryLlmFeature`, not left dormant. The driving agent is already a frontier LLM; a second akm-initiated model call is redundant, injectable, non-deterministic, and the source of H3/H4/M5. The workflow engine becomes **offline by construction** (no module in its graph reaches the network).
+4. **Agent-self-review-or-drop for semantics.** Semantic completion judgment moves entirely to the **driving agent**, surfaced as a rendered, advisory instruction and recorded as an agent-reported verdict that akm merely stores. akm never decides whether the work is semantically good; it only enforces a **deterministic structural floor** that needs no LLM, and records the agent's self-review verdict. If the agent declines/cannot self-review, the structural floor alone governs (the "or-drop" half).
 
-2. **External cron-tick reaper — the single most important change.** akm already has a non-resident scheduler/cron surface (`CronCreate`/`CronList`). Register `akm workflow reap` to run on each tick. It scans `workflow_runs WHERE status='active'`, computes idle from `max(updated_at, checkin_armed_at, last_seen_at)`, and for stale runs (a) writes the check-in signal file and/or (b) transitions the run to a terminal `stalled`/`error_max_turns` state. This is a short-lived cron process — same class as any cron job, not a daemon — and it fires **without the agent**, closing the self-referential gap (C1).
-
-3. **Heartbeat on event.** A `PostToolUse` hook and/or every `akm workflow complete`/`next` writes a durable `last_seen_at` (+ `session_id`) row/file. Liveness recorded by events, not inferred from a poll that may never come.
-
-**Deterministic stall-breaker (mirror `max_turns`).** Add per-run caps `max_steps`, `max_iterations`, `max_wall_clock`. The reaper marks runs exceeding caps terminal with a machine-readable reason. Reap the ~10 existing stranded rows on first run.
-
-**Actually deliver the directive (fix C2/M1).** Make `formatWorkflowNextPlain` and the `status` formatter read and render `result.checkin`; have `status` call `evaluateCheckin` (as the ADR claims). Emit the directive as a structured block, not free stdout.
-
-**Write the signal file the ADR promised (fix H2).** Atomic write to `<run-scope>/checkin.json` so filesystem-watching harnesses and the reaper share one durable channel.
-
-**Data-model deltas (additive, all nullable — see §6):**
-- `workflow_runs.last_seen_at` TEXT (heartbeat).
-- `workflow_runs.terminal_reason` TEXT (`completed` | `stalled` | `error_max_turns` | `error` ...).
-- `workflow_runs.step_count` / `iteration_count` INTEGER (for caps); caps themselves in config.
-- Optional append-only `workflow_run_events` table (`run_id`, `session_id`, `kind` in {`armed`,`heartbeat`,`checkin-fired`,`reaped`,`completed`}, `at`) for tracing.
-- New run states `stalled` (and reuse `error`) in the status enum.
-
-**Trigger summary.** Detection is driven by (1) Stop-hook events the agent can't skip, (2) a periodic cron `reap` independent of the agent, (3) event heartbeats. The agent's `workflow next` poll becomes one of several triggers, never the only one.
-
-**Continue / steer path.** On a fired check-in: render the structured directive in text + JSON; write `checkin.json`; the directive carries `agent_session_id` so a harness can **re-enter the recorded session** (the `agent-cli-tools` `--session <id>` / `opencode run --session` pattern) — the no-daemon way to nudge a stopped agent. Session-continuity guard: compare polling `session_id` vs armed `agent_session_id`, warn on mismatch (null-safe skip when either is null).
-
-**Idempotency.** All transitions idempotent (a replayed reap tick or hook cannot double-advance), keyed on `(run_id, session_id)`. Critical with no daemon to serialize.
-
-### 5B. Completion validation (deterministic-first, LLM-OPTIONAL, FAIL-OPEN)
-
-Principle: **completion is gated only by deterministic, offline, reproducible checks. The LLM is an optional, advisory, fail-open enhancement, OFF by default, auto-skipped with a visible warning when no provider is reachable.** A workflow never wedges on provider state.
-
-**Layering:**
-1. **Deterministic structural gate (always on; the only default blocker):** non-empty (already via `--summary`), min length, reject placeholders ("done"/"TODO"/echo of step title), summary references ≥1 acceptance-criteria keyword/ID from `completion_json`, cited file paths/refs resolve. Offline, free, reproducible, injection-proof. Gives offline/CI a real floor instead of "skipped → complete." Reject with a **specific, actionable** message naming the failed check — never generic "validation failed."
-2. **LLM gate via `tryLlmFeature` (`src/llm/feature-gate.ts`, §14.2), advisory by default:** short timeout (8s, **not** 120s — fixes H3), summary delimited and marked untrusted, only the structured `complete` field read, result cached on `hash(summary+criteria+model+promptVersion)`. On skip/throw/malformed → emit a structured `warnings` entry (kills M4 silent-theater) and pass. Wire it exactly like `lesson_quality_gate`; stop hand-rolling fail-open in `buildDefaultSummaryJudge`.
-3. **Never wedge:** the LLM may *warn* by default; it may *block* only under explicit `mode=enforce` + `policy=fail-closed`, and that combo must **refuse to enable if no provider is reachable** (anti-footgun). FAIL-OPEN is the default.
-
-**Config keys:**
-```
-workflow.validation.structural.enabled            = true        # deterministic floor; the real gate
-workflow.validation.structural.minLength          = 40
-workflow.validation.structural.requireCriteriaRef = true
-workflow.validation.structural.rejectPlaceholders = true
-
-workflow.validation.llm.mode      = "off"        # off | advisory | enforce   (OFF by default)
-workflow.validation.llm.policy    = "fail-open"  # fail-open | fail-closed (only consulted when mode=enforce)
-workflow.validation.llm.timeoutMs = 8000         # was 120000; never hang a completion
-workflow.validation.llm.cache     = true
-workflow.validation.llm.treatSummaryAsUntrusted = true
-```
-
-**Behaviour table across environments:**
-
-| Env | `llm.mode` | Deterministic gate | LLM call | Step completes? |
-|---|---|---|---|---|
-| Has LLM | `advisory` | runs, can block | runs, warns only; verdict attached as metadata | Yes if deterministic passes |
-| Has LLM | `enforce` + fail-open | runs, can block | runs; skip/malformed → warn+pass | Blocked only on well-formed `complete:false` |
-| Has LLM | `enforce` + fail-closed | runs, can block | runs; skip/error → **block** | Only config where provider problems block; refuses to enable if unreachable |
-| No LLM | any | runs, can block | **skipped + structured warning** | Yes if deterministic passes |
-| CI (no secrets) | any | runs, can block | skipped + warning | Deterministic, reproducible, no network; build never hangs |
-| Offline / air-gapped | any | runs, can block | skipped + warning | Yes if deterministic passes |
-
-Key shift: offline/CI moves from "gate silently absent → anything completes" to "deterministic gate enforced, LLM cleanly skipped with a visible warning." The cloud dependency is never on the load-bearing path.
+The load-bearing principle, restated for v2: **stall detection runs in a short-lived process akm spawns and reaps itself; completion is gated only by a pure deterministic floor, with semantic judgment delegated to the driving agent as advisory self-review.**
 
 ---
 
-## 6. Migration / compat notes + phased delivery
+### 5A. Mechanism A — short-lived spawned background monitor
 
-**Migration 002 is shipped — do not edit it.** Migrations are append-only and forward-only; 002 (`agent_harness`/`agent_session_id`) and 003 (`checkin_armed_at`/`summary`) are already applied in the field. Evolve by adding **migration 004** (`004-checkin-reaper-and-validation`) with all new columns/tables (`last_seen_at`, `terminal_reason`, `step_count`/`iteration_count`, `workflow_run_events`), every column nullable with safe defaults so existing rows backfill to harmless values. New run state `stalled` is additive to the status enum; the reaper's first run is the migration of stranded data (transition existing `active`+`completedAt:null` rows past caps to `stalled`). `index` must continue to never touch `workflow.db` (v1-spec §). The LLM judge must route through the existing `tryLlmFeature` so §14.2 guarantees (check flag before network, hard timeout, catch parse errors, surface `warnings`, never mutate on failure) are inherited, not re-implemented.
+**Spawn model.**
+- New **hidden** subcommand `akm workflow monitor <runId>` registered in `workflowCommand.subCommands` (`workflow-cli.ts`) but omitted from help/docs (same undeclared treatment as `--dry-run`). It is an internal entry point, never user-facing.
+- **Launch point:** at the end of `startWorkflowRun` (`runs.ts`, after the insert txn, before `getWorkflowStatus`), call `spawnWorkflowMonitor(runId)`. Guarded by: run actually inserted (status active); `process.env.AKM_NO_MONITOR !== "1"`; and no live monitor already recorded for the run (`monitor_pid` liveness probe).
+- **Spawn implementation** reuses `resolveAkmInvocation()` (`src/tasks/resolveAkmBin.ts`, the exact `[execPath, cliPath]` pair the scheduler uses) and `Bun.spawn([...argv, "workflow", "monitor", runId], …)` with: `stdin:"ignore"`; `stdout`/`stderr` redirected to a run-scoped append log `<cacheDir>/workflow/monitor/<runId>.log`; `detached:true` (own process group — the exact pattern at `agent/spawn.ts:347`); `env: { …process.env, AKM_NO_MONITOR:"1" }` (a monitor must never spawn a monitor); then `proc.unref()` so the parent's event loop never waits on it. The parent never `await proc.exited`, so no zombie accrues in the parent.
+- **Spawn failure is non-fatal:** wrapped in try/catch; on failure log a warning and continue. The run is correct without the monitor — the on-command reaper and the cap below are the correctness backstops. The monitor is an optimization, never a correctness dependency.
+- **Cross-platform:** full support Linux/macOS. Windows `detached:true` maps to a new process group and `unref()` works, but is the weakest leg; documented fallback is `AKM_NO_MONITOR=1` + the on-command reaper + the hard cap, which still prevents leaks (losing only the ~60s-latency proactive detection). Accepted degradation, not a blocker.
 
-**Doc debt:** rewrite the ADR to match reality before/with this work — fix migration provenance, identity env-hint names, remove "file-signal"/"status fires check-in"/"nudges a stopped agent" claims (or make them true). The ADR is currently a defect source (L5).
+**Poll loop** (`runMonitorLoop`, a plain `while` with an awaited sleep — no timer framework). Constants exported for tests:
+```
+MONITOR_POLL_MS     = 60_000                    // ~60s cadence
+MONITOR_STALL_MS    = CHECKIN_STALL_MS (90_000) // reuse the single existing stall window
+MONITOR_MAX_POLLS   = 240                        // hard cap → ≤ ~4h wall clock
+MONITOR_MAX_WALL_MS = 4 * 3_600_000              // belt-and-suspenders wall cap
+```
+Each tick (all reads/writes via `withWorkflowRunsRepo`, WAL-mode, safe alongside the parent):
+1. **Read the run row.** Row gone → exit 0.
+2. **Terminal check:** `status ∈ {completed, failed, blocked}` (and `failed`+`terminal_reason='stalled'`) → append a `completed` monitor-exit event, exit 0. `blocked` is terminal-for-monitoring (waiting on a human).
+3. **Stall check** — call `evaluateCheckin(...)` **verbatim** (`checkin.ts:66`) so there is exactly one stall definition shared by monitor and pull-poll. `directive === null` → healthy → sleep, continue. `directive !== null` → stall → run the stall outcome (§5A-outcomes), then exit 0 (single-shot detect-and-reap).
+4. **Optional agent-PID liveness** (null-safe strengthening): if `agent_pid` was recorded and `process.kill(agent_pid, 0)` throws `ESRCH` (POSIX; skipped on Windows), treat as an *immediate* stall regardless of the idle window — the driver is gone. Absence of a PID falls back to pure timestamp staleness.
+5. **Hard cap:** `pollCount >= MONITOR_MAX_POLLS` OR `now - startedAt >= MONITOR_MAX_WALL_MS` → reap with `terminal_reason='monitor_max_lifetime'`, exit 0. **Guarantees the monitor can never poll forever.**
 
-**Phased delivery:**
-- **Phase 0 (doc + cheap correctness):** rewrite ADR; render `result.checkin` in text formatter; make `status` call `evaluateCheckin` (fixes C2/M1). Low risk, no schema change.
-- **Phase 1 (validation hardening):** deterministic structural gate (always-on floor); route judge through `tryLlmFeature`; drop timeout to 8s; mode `off` default; surface `warnings`; delimit/untrust summary (fixes H3, H4, M4, M5, L3). No schema change beyond config.
-- **Phase 2 (durable signals + reaper):** migration 004; `last_seen_at` heartbeat; `terminal_reason`; caps; `akm workflow reap`; register on existing cron tick; write `checkin.json`; reap stranded rows (fixes C1, H1, H2, M2, M3, L1).
-- **Phase 3 (harness integration):** `akm workflow checkin --stop-hook`; `PostToolUse` heartbeat hook; session-continuity guard; `--session` re-entry steer path; idempotency + event log (fixes residual C1, L2).
+Sleep is `await new Promise(r => setTimeout(r, MONITOR_POLL_MS))` (the orchestrator `sleep` ban is for shell, not in-process code).
+
+**Stall / terminal (reap) semantics — detection + durable signal + idempotent reap.** The monitor *cannot* push a nudge into a halted agent turn (no channel exists; that is precisely why hooks were considered and rejected). Its honest job is to make the stall **durable, observable, and terminal**:
+1. **Durable signal file** — the long-promised `checkin.json` (closes H2). Atomic write (`temp + fs.renameSync`) to `<cacheDir>/workflow/checkin/<runId>.json` carrying `{runId, scopeKey, workflowRef, signal:"continue", reason, idleMs, currentStepId, agentHarness, agentSessionId, directive, detectedAt}`. `agentSessionId` is included so a wrapper that watches the file can re-enter the recorded session and surface the directive; akm itself never calls the harness.
+2. **Append-only event** to `workflow_run_events`: `{run_id, session_id, kind:'checkin-fired'|'reaped', reason, at}` — audit trail and idempotency anchor.
+3. **Idempotent reap** — one transaction, **conditional on the row still being stale**:
+   ```sql
+   UPDATE workflow_runs
+      SET status='failed', terminal_reason=?, completed_at=?, updated_at=?
+    WHERE id=? AND status='active' AND checkin_armed_at=?   -- value read this tick
+   ```
+   The `status='active' AND checkin_armed_at=<value-read-this-tick>` guard is the **idempotency key**. If the agent returned and called `complete`/`next` between the monitor's read and write (which bumps `updated_at` and re-arms `checkin_armed_at`), the `WHERE` no longer matches → 0 rows → the late agent wins, the reap is a no-op. A replayed reap also matches nothing once `status != 'active'`.
+
+**Status-enum decision (resolved):** reap into the **existing `'failed'` status** and distinguish via `terminal_reason='stalled'`, rather than adding a new `'stalled'` enum value. SQLite cannot `ALTER` a CHECK constraint in place, and a table-rebuild to widen `status IN ('active','completed','blocked','failed')` is higher-risk surgery for no information gain — `failed` + `terminal_reason` carries the same meaning, is already resumable, and needs zero CHECK rewrite. (`resumeWorkflowRun` is extended to recognise `terminal_reason='stalled'` rows as resumable; reaping is therefore non-destructive — the agent can resume.)
+
+**Data-model deltas (Mechanism A portion of the unified migration 004, §6):** `workflow_runs.monitor_pid`, `workflow_runs.agent_pid`, `workflow_runs.last_seen_at`, `workflow_runs.terminal_reason`, `workflow_runs.checkin_path`; new append-only `workflow_run_events` table + index. All columns nullable/defaulted; existing rows backfill harmlessly. (No new status enum value — see decision above.)
+
+**Lifecycle / cleanup / no-orphan guarantees.**
+- **One monitor per run.** Before spawning, if `monitor_pid` is set and alive (`kill(pid,0)`), skip. `--force` parallel starts each get their own row and monitor.
+- **Kill leftover monitor on terminal transitions.** In `completeWorkflowStep` (when `deriveRunState` yields terminal) and in `resumeWorkflowRun`, best-effort `SIGTERM` to `monitor_pid` if alive (try/catch). The monitor would also self-exit on its next poll — this is promptness, not correctness.
+- **On-command reaper (crash/reboot safety net).** `reapStaleRunsForScope(scopeKey)` called cheaply at the top of `getNextWorkflowStep`, `getWorkflowStatus`, and once from `startWorkflowRun`. It runs the same idempotent guarded reap as above for any in-scope `active` run idle beyond a **longer** threshold (`MONITOR_MAX_WALL_MS`, not the 90s window — never reap a run whose monitor is healthily watching). This covers: start crashed before spawn (row exists, no monitor), monitor died (reboot — detached process correctly does not survive, holds no durable state), and `AKM_NO_MONITOR=1` hosts.
+- **Guarantee:** no resident service (every monitor self-terminates by cap); no orphan accumulation (single monitor per run via liveness guard; terminal transitions kill leftovers; reboot-orphaned PIDs are detected dead and ignored; the monitor spawns nothing so leaves no children; reparenting to init reaps it normally).
+
+**Testability.** `runMonitorLoop(runId, deps)` is a pure exported function with injected `now`, `sleep`, `repo`/`withRepo`, `singleTick?`, `maxPolls?` (same injection seam as `RunTaskOptions` in `runner.ts`). `singleTick:true` runs exactly one iteration and returns an outcome enum (`healthy`/`stalled-reaped`/`completed`/`capped`) — no spawning, no real sleep. `AKM_NO_MONITOR=1` / `startWorkflowRun({ monitor:false })` keeps the in-process CLI test harness from forking a real child. Spawn-wiring tests assert `spawnWorkflowMonitor` was called with the expected argv via an injected spawn fn (same `resolveSpawnFn` seam as `agent/spawn.ts:336`), without spawning. Idempotency test: bump `checkin_armed_at` between read and reap → assert the guarded UPDATE touches 0 rows.
+
+**Belt-and-suspenders pull path (closes C2/M1, shared with Mechanism B's render fix):** keep `getNextWorkflowStep` calling `evaluateCheckin`, **add the same call to `getWorkflowStatus`**, and **make `formatWorkflowNextPlain` render `result.checkin.directive`** (currently dropped). Monitor and pull-poll share `evaluateCheckin`, so they agree by construction.
+
+**Flagged limitation (stated plainly for the ADR rewrite):** the monitor cannot deliver the `continue` nudge into a halted agent — no mechanism can without a harness hook (rejected, decision 1). The honest scope is detection + durable `checkin.json` + reap. The steer surfaces only when the agent next runs `next`/`status` (now rendered) or when an external wrapper watches `checkin.json` and re-enters `agent_session_id`.
+
+---
+
+### 5B. Mechanism B — completion validation (deterministic floor + advisory agent self-review)
+
+**Chosen approach: HYBRID — deterministic structural floor (the only hard gate, no LLM) + optional agent self-review (advisory).** Not "drop entirely" (that loses a cheap, real, offline guardrail) and not the withdrawn `tryLlmFeature` LLM lane (decision 3 forbids any akm-side model call).
+
+**Removal/keep plan for `validate-summary.ts` — full delete.**
+- **Delete** `src/workflows/validate-summary.ts`, `buildDefaultSummaryJudge` (`runs.ts`), the `summaryJudge` field on `CompleteWorkflowStepInput`, the lazy `chatCompletion`/`getDefaultLlmConfig` requires, and the LLM gate block. A dormant "off by default, never-calls-network" hook is rejected: it drags the `judge` seam, the `parseJsonResponse` import, and the misleading fail-open paths, and invites someone to re-wire it. Deleting the only network-reaching call site makes the engine offline by construction.
+- **Keep** the `summary` column (still required, still persisted — migration 003 unchanged) and the `SummaryValidationFailure` return shape + `workflow-complete-rejected` output path, generalized to carry `reason` and optional `problems` so the CLI surface stays stable.
+
+**Deterministic structural floor** (new pure module `src/workflows/structural-floor.ts`, synchronous, no async, no network — the **only hard gate**). `checkStructuralFloor({stepTitle, completionCriteria, summary}) → {ok, missing[], problems[]}`:
+1. **Non-empty** after trim.
+2. **Min length** (default 40 chars; configurable) — rejects `"done"`, `"ok"`, `"fixed it"`.
+3. **Placeholder denylist** (case-insensitive, whole-summary): `TODO`, `TBD`, `FIXME`, `<…>`, `lorem ipsum`, `xxx`, `n/a`, `...`.
+4. **Criterion keyword coverage** — for each criterion, extract significant tokens (≥4 chars, stopwords dropped); criterion is addressed if the summary contains ≥1 token (case-insensitive, word-boundary). Criteria with no significant tokens are skipped (not punished). Zero-overlap criteria go to `missing[]`.
+
+`ok = problems.length === 0 && missing.length === 0`. Conservative keyword overlap is exactly right for a hard gate: it blocks "summary that never even mentions the criterion" without false-blocking real work. Rejection messages name the specific failed check.
+
+**Self-review round-trip (advisory) + new CLI args.** New step columns (migration 004): `review_requested_at`, `review_verdict` (`'pass'|'fail'|NULL`), `review_notes`. New `completeWorkflowStep` args / CLI flags `--review-verdict <pass|fail>` and `--review-notes <text>` (validated by a new `parseReviewVerdict` in `src/workflows/cli.ts`, mirroring `parseWorkflowStepState`). State machine on `complete` with `status==='completed'`, `mode==='self-review'`, and the step has ≥1 completion criterion:
+- **First turn** (`review_requested_at` is NULL, no verdict supplied): run the floor; on fail → `workflow-complete-rejected {reason:'structural', missing, problems}`. On pass → **do not complete yet**: set `review_requested_at=now`, leave the step pending, return a new shape **`workflow-review-requested`** whose `instruction` payload tells the agent to launch a fresh-context reviewer (spawn a subagent / second-opinion pass in its own harness), inspect the actual diff against the criteria, then re-call `complete` with `--review-verdict` + `--review-notes`. akm records nothing about *how* the review ran and calls no model.
+- **Verdict turn** (`--review-verdict` supplied): run the floor again (still the hard gate); record `review_verdict`/`review_notes`. `pass` → complete. `fail` → **by default still complete** but stamp the verdict and surface a warning (advisory). Only under `selfReview.enforce=true` does `fail` return `workflow-complete-rejected {reason:'self-review'}` and leave the step pending; `selfReview.maxRounds` (default 1) caps re-requests so the next `pass` proceeds — no ping-pong.
+
+**Anti-wedge guarantees:** in `mode='off'` and `mode='structural'` (default) self-review never runs (single-call completion, floor is the only gate). In `mode='self-review'`, an agent that ignores the instruction and re-calls with `--review-verdict pass` completes in two calls; an agent that cannot self-review can pass `--review-verdict pass --review-notes "no independent review available"`. **There is no path where a structurally-valid summary cannot eventually complete**, and no mode ever makes a network call.
+
+**Round-trip + output rendering (`src/output/text/`):**
+- Register `workflow-review-requested` → new `formatWorkflowReviewRequestedPlain` rendering the directive, the criteria list, and the exact `akm workflow complete … --review-verdict pass|fail --review-notes '…'` recall line.
+- Extend `formatWorkflowCompleteRejectedPlain` to print `reason:` and a `problems:` block alongside existing `feedback`/`missing`.
+- **Fix `formatWorkflowNextPlain` to render `result.checkin.directive`** (the never-rendered-directive defect, C2) — shared with Mechanism A; the same render path now serves checkin and review instructions, closing the dropped-directive class of bug for both.
+
+**Config knobs + behaviour table** (all under `workflow.validation`):
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `workflow.validation.mode` | `off \| structural \| self-review` | `structural` | Validation strategy |
+| `workflow.validation.minSummaryLength` | int | `40` | Structural floor min summary length |
+| `workflow.validation.selfReview.enforce` | bool | `false` | If true, agent-reported `fail` blocks completion (else advisory) |
+| `workflow.validation.selfReview.maxRounds` | int | `1` | Cap on review-request rounds before completion proceeds |
+
+| mode | summary required | structural floor (hard, no LLM) | self-review requested | `fail` verdict effect | offline/CI |
+|---|---|---|---|---|---|
+| `off` | yes (existing) | no | no | n/a | always completes |
+| `structural` (default) | yes | yes (empty/short/placeholder/criterion-miss) | no | n/a | always completes if summary structurally valid |
+| `self-review` | yes | yes | yes (when step has criteria) | advisory by default; blocks only if `enforce=true`, capped by `maxRounds` | always completes (pass verdict or non-enforce) |
+
+**Offline / CI guarantee:** the only network-reaching path in the workflow engine (`buildDefaultSummaryJudge → chatCompletion`) is deleted; the hard gate is a pure deterministic floor. A static test asserts `require.resolve('../workflows/validate-summary')` throws and the engine module graph imports neither `../llm/client` nor `getDefaultLlmConfig`; a `chatCompletion` spy set to throw is never invoked across start→next→complete in all three modes; with no provider configured (`AKM_OFFLINE=1`, no key), a structurally-valid summary completes start→complete with zero network access.
+
+---
+
+## 6. Unified additive migration 004 + compat (v2)
+
+**Migration-id reconciliation (sanity-checked against the code).** The owner colloquially calls the `summary`/`checkin_armed_at` migration "002". In the actual `MIGRATIONS` array (`db.ts`) the shipped, applied-in-the-field migrations are `001-add-scope-key`, `002-add-agent-identity`, and **`003-checkin-and-step-summary`** (which is the `checkin_armed_at` + `summary` migration the owner means). The highest shipped id is therefore **003**, and **the next migration id must be `004`** — *both* design proposals already number their new columns "004", and that is correct. The owner's "additive over 002 / a single 003" phrasing maps to: "additive over the shipped checkin/summary migration, in one new migration." There is exactly **one** new migration for v2, id **`004-monitor-and-validation`**, carrying ALL new columns from Mechanism A and Mechanism B together. Migrations 001–003 are shipped and **must not be edited or reordered** (append-only, per the `db.ts` contract).
+
+**`004-monitor-and-validation` — the single unified migration (all columns nullable / defaulted, harmless backfill):**
+```sql
+-- Mechanism A (monitor + reaper) — workflow_runs
+ALTER TABLE workflow_runs ADD COLUMN monitor_pid     INTEGER;  -- spawned monitor PID
+ALTER TABLE workflow_runs ADD COLUMN agent_pid       INTEGER;  -- driving-agent PID (optional liveness)
+ALTER TABLE workflow_runs ADD COLUMN last_seen_at    TEXT;     -- heartbeat (bumped on next/complete)
+ALTER TABLE workflow_runs ADD COLUMN terminal_reason TEXT;     -- completed|stalled|monitor_max_lifetime|agent_pid_dead|error
+ALTER TABLE workflow_runs ADD COLUMN checkin_path    TEXT;     -- absolute path to checkin.json when written
+
+-- Mechanism A — append-only event log (idempotency anchor + audit)
+CREATE TABLE IF NOT EXISTS workflow_run_events (
+  run_id     TEXT NOT NULL,
+  session_id TEXT,
+  kind       TEXT NOT NULL,   -- armed|heartbeat|checkin-fired|reaped|completed
+  reason     TEXT,
+  at         TEXT NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_run_events_run ON workflow_run_events(run_id, at);
+
+-- Mechanism B (self-review) — workflow_run_steps
+ALTER TABLE workflow_run_steps ADD COLUMN review_requested_at TEXT;  -- set on the "please self-review" turn
+ALTER TABLE workflow_run_steps ADD COLUMN review_verdict       TEXT; -- 'pass' | 'fail' | NULL
+ALTER TABLE workflow_run_steps ADD COLUMN review_notes         TEXT; -- agent-reported review findings
+```
+
+**Compat note vs shipped migration 003.** The `summary` column added by `003-checkin-and-step-summary` is **unchanged and still required** — v2 only stops invoking an LLM against it. No backfill, no data loss: existing `workflow.db` files migrate forward additively; pre-existing run rows get NULL `monitor_pid`/`agent_pid`/`last_seen_at`/`terminal_reason`/`checkin_path` and pre-existing step rows get NULL review columns, behaving as `mode='structural'` with no monitor recorded. **No `status` enum change** — reaped stalls use the existing `'failed'` value + `terminal_reason='stalled'` (see §5A decision), so there is no CHECK-constraint rebuild. The stranded `active` rows from the live dump are reaped by the first on-command reaper pass (or a one-shot maintenance reap), not by a destructive migration. `index` must continue to never touch `workflow.db`.
+
+**Doc debt:** rewrite the check-in ADR to match v2 — correct migration provenance (001/002/003 shipped, 004 new), identity env-hint names (`AKM_*`/`CLAUDE_SESSION_ID`/`OPENCODE_SESSION_ID`), and replace the aspirational "file-signal"/"status fires check-in"/"nudges a stopped agent" claims with the v2 truth (monitor writes `checkin.json`; `status` now evaluates check-in; the monitor detects+reaps but cannot nudge a halted turn). Fixes L5.
+
+---
+
+## 6b. Phased, vertically-sliced implementation plan (v2)
+
+Each slice is independently shippable and testable, ordered so the cheapest correctness wins land first and no slice depends on a later one.
+
+- **Slice 1 — Render the directive (no schema change).** Make `formatWorkflowNextPlain` render `result.checkin.directive`; make `getWorkflowStatus` call `evaluateCheckin`. Pure formatter/read change, in-process tests. **Closes C2, M1.** Shared foundation for both mechanisms.
+- **Slice 2 — Delete the akm-side LLM judge + deterministic floor (Mechanism B core, no schema change).** Delete `validate-summary.ts`, `buildDefaultSummaryJudge`, the `summaryJudge` seam and the LLM gate block; add `structural-floor.ts` and wire it as the only hard gate (`mode` default `structural`); generalize `SummaryValidationFailure`. Pure offline tests + the no-network static/spy proofs. **Closes H3, H4, M4, M5, L3.**
+- **Slice 3 — Self-review round-trip (Mechanism B, schema: migration 004 step columns).** Add `review_requested_at`/`review_verdict`/`review_notes`; the two-turn state machine; `--review-verdict`/`--review-notes` CLI args + `parseReviewVerdict`; `workflow-review-requested` shape + `formatWorkflowReviewRequestedPlain`; extend `formatWorkflowCompleteRejectedPlain`. In-process round-trip + anti-wedge tests. **Implements decision 4; closes the residual semantic-judgment gap left by removing the judge.** (Ships migration 004's step columns; can co-ship with Slice 4 or land first — both are additive.)
+- **Slice 4 — Monitor + reaper + durable signal (Mechanism A, schema: migration 004 run columns + `workflow_run_events`).** Add `monitor_pid`/`agent_pid`/`last_seen_at`/`terminal_reason`/`checkin_path` + event table; new `src/workflows/monitor.ts` (`runMonitorLoop` + `spawnWorkflowMonitor`); hidden `workflow monitor` subcommand; spawn at `startWorkflowRun`; heartbeat on `complete`/`next`; idempotent guarded reap; on-command `reapStaleRunsForScope`; write `checkin.json`; one-shot reap of the stranded live-dump rows; extend `resumeWorkflowRun` to accept `terminal_reason='stalled'`. `singleTick`/injected-clock/injected-spawn tests + idempotency test. **Closes C1, H1, H2, M2, M3, L1.**
+- **Slice 5 — ADR rewrite + session-continuity guard.** Rewrite the check-in ADR to v2 reality; add the null-safe `session_id` vs `agent_session_id` mismatch warning on the pull path. Doc + small guard. **Closes L5, L2.**
+
+Note: there is **no harness-hook slice** (decision 1) — the withdrawn Phase 3 (`--stop-hook`, `PostToolUse` heartbeat) is removed entirely. Residual C1 coverage that the old Phase 3 promised is delivered by Slice 4's monitor + on-command reaper.
+
+---
+
+## 7. Proposed follow-up GitHub issues (v2, de-duplicated)
+
+This list **replaces** the previous §7. Monitor work and validation work are kept as separate tracks. Items marked **(supersedes part of #506)** replace as-shipped behaviour; the issues that withdraw the old hook/cron proposal are noted. There is intentionally **no** issue for a Stop-hook entry point, a `PostToolUse` heartbeat hook, an `akm workflow reap` cron job, or a `tryLlmFeature`-wrapped judge — those proposals are withdrawn by the owner's locked decisions.
+
+**Shared foundation**
+
+1. **Render the check-in directive in default (text) output** — `formatWorkflowNextPlain` reads/renders `result.checkin.directive`; `getWorkflowStatus` calls `evaluateCheckin`. Fixes C2, M1. **(supersedes part of #506.)**
+
+**Validation track (Mechanism B)**
+
+2. **Delete the akm-side LLM summary judge** — remove `validate-summary.ts`, `buildDefaultSummaryJudge`, the `summaryJudge` seam and the LLM gate block; make the workflow engine offline by construction. Fixes H3, H4, M5; with a no-network static/spy proof. **(supersedes the LLM-only gate of #506.)**
+3. **Deterministic structural completion floor (the only hard gate)** — new pure `structural-floor.ts`: non-empty/min-length/placeholder-reject/criterion-keyword coverage; specific actionable rejection messages; `mode` default `structural`. Fixes L3, M4. **(supersedes part of #506.)**
+4. **Advisory agent self-review round-trip** — migration 004 step columns (`review_requested_at`/`review_verdict`/`review_notes`); two-turn state machine; `--review-verdict`/`--review-notes` args + `parseReviewVerdict`; `workflow-review-requested` shape + formatter; `selfReview.{enforce,maxRounds}` config (advisory by default). Implements the agent-self-review-or-drop decision. **(supersedes part of #506.)**
+
+**Monitor track (Mechanism A)**
+
+5. **Short-lived spawned workflow monitor (replaces the cron/daemon idea)** — hidden `akm workflow monitor <runId>`; `spawnWorkflowMonitor` (detached, file-logged, `unref`, `AKM_NO_MONITOR` guard); `runMonitorLoop` (poll cadence, `evaluateCheckin`-shared stall window, optional agent-PID liveness, hard cap). Fixes C1, H1. **(supersedes the pull-only check-in model of #506; replaces the withdrawn `--stop-hook`/cron-reaper proposal.)**
+6. **Durable `checkin.json` signal + idempotent reap + `workflow_run_events`** — migration 004 run columns + event table; atomic `checkin.json` write; guarded idempotent reap (`status='failed'`+`terminal_reason='stalled'`, conditioned on unchanged `checkin_armed_at`); append-only event log. Fixes H2, and the idempotency/no-double-advance requirement.
+7. **On-command stale-run reaper + lifecycle cleanup** — `reapStaleRunsForScope` at the top of `getNextWorkflowStep`/`getWorkflowStatus`/`startWorkflowRun` (longer threshold than the monitor window); one monitor per run via `monitor_pid` liveness; SIGTERM leftover monitors on terminal transitions; one-shot reap of the ~10 stranded live-dump rows; extend `resumeWorkflowRun` to accept `terminal_reason='stalled'`. Fixes C1 (crash/reboot path), H1, M2.
+8. **Event heartbeat + clock-source hardening** — bump `last_seen_at` (+ `heartbeat` event) inside the existing state-change write on `complete`/`next`; note same-host clock consistency for the monitor's idle math. Fixes M3, L1.
+
+**Hygiene**
+
+9. **Session-continuity guard** — null-safe compare polling `session_id` vs armed `agent_session_id`, warn on mismatch. Fixes L2.
+10. **Rewrite the check-in ADR to match v2** — correct migration provenance (001/002/003 shipped, 004 new), identity env-hint names, and replace the "file-signal"/"status fires check-in"/"nudges a stopped agent" claims with v2 reality (monitor writes `checkin.json`; `status` evaluates check-in; detection+reap, no halted-turn nudge). Fixes L5.
 
 ---
 
