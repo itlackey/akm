@@ -170,6 +170,25 @@ const CONFIG_LOCK_MAX_RETRIES = 10;
 const CONFIG_LOCK_RETRY_DELAY_MS = 50;
 
 /**
+ * Block the current thread for `ms` without busy-spinning (H8).
+ *
+ * Prefers `Bun.sleepSync`, a real blocking sleep that yields the thread to the
+ * OS scheduler. Falls back to a bounded spin only when Bun is unavailable (e.g.
+ * bare-node test harness), mirroring `src/commands/env/secret.ts`.
+ */
+function sleepSyncMs(ms: number): void {
+  const bun = (globalThis as { Bun?: { sleepSync?: (ms: number) => void } }).Bun;
+  if (typeof bun?.sleepSync === "function") {
+    bun.sleepSync(ms);
+    return;
+  }
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    // Fallback spin (non-Bun runtimes only).
+  }
+}
+
+/**
  * Acquire an exclusive sentinel around config writes.
  *
  * Returns a release function. Best-effort: when all retries are exhausted the
@@ -197,11 +216,16 @@ export function acquireConfigLock(): () => void {
       continue; // Reclaimed — retry immediately.
     }
     if (attempt < CONFIG_LOCK_MAX_RETRIES - 1) {
-      // Busy spin (synchronous) — config writes are fast.
-      const deadline = Date.now() + CONFIG_LOCK_RETRY_DELAY_MS;
-      while (Date.now() < deadline) {
-        // spin
-      }
+      // H8: yield the thread between retries instead of busy-spinning.
+      // The previous `while (Date.now() < deadline)` loop burned CPU for up to
+      // 50ms per retry (≈500ms total), freezing the single JS thread and
+      // starving co-scheduled work under parallel load. `Bun.sleepSync` is a
+      // real blocking sleep that releases the thread to the OS scheduler.
+      // Kept synchronous (rather than `await Bun.sleep`) to preserve the sync
+      // `withConfigLock` signature and avoid an async ripple through every
+      // `saveConfig`/`loadConfig` caller. Lock semantics are unchanged: same
+      // retry count, same delay budget, same best-effort fall-through.
+      sleepSyncMs(CONFIG_LOCK_RETRY_DELAY_MS);
     }
   }
   // Best-effort: proceed without lock.
