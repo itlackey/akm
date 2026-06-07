@@ -37,7 +37,7 @@ import {
   isEnoentFailure,
   loadAgentConfigFromDisk,
   resolveAgentProfile,
-} from "../agent-support";
+} from "../agent/agent-support";
 import {
   type CreateProposalInput,
   createProposal,

@@ -5,7 +5,7 @@
 /**
  * Shared ref-resolution helpers for the `env` and `secret` command families
  * (WS6). These were duplicated/co-located inline in `src/cli.ts`; hoisting them
- * here lets `src/commands/env-cli.ts` and `src/commands/secret-cli.ts` import a
+ * here lets `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` import a
  * single copy of the parse/resolve/make + path-traversal-guard logic (the WS6
  * "env traversal-guard copies 5 → 1" KPI). Behaviour is byte-identical to the
  * inline forms: env/secret VALUES are never read or surfaced here — these
