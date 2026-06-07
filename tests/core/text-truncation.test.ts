@@ -5,7 +5,7 @@
  * either prior implementation.
  */
 import { describe, expect, it } from "bun:test";
-import { isValidDescription } from "../../src/core/proposal-quality-validators";
+import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import {
   detectTruncatedDescription,
   repairTruncatedDescription,

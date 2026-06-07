@@ -15,9 +15,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
-import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../commands/default-tasks";
-import { akmInit, type InitResponse } from "../commands/init";
-import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../commands/tasks";
+import { akmInit, type InitResponse } from "../commands/sources/init";
+import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../commands/tasks/default-tasks";
+import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../commands/tasks/tasks";
 import { isHttpUrl } from "../core/common";
 import type {
   AkmConfig,
@@ -34,7 +34,7 @@ import {
   loadUserConfig,
   saveConfig,
 } from "../core/config";
-import { backupExistingConfig } from "../core/config-io";
+import { backupExistingConfig } from "../core/config/config-io";
 import { ConfigError, UsageError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
@@ -44,7 +44,7 @@ import {
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
-} from "../indexer/semantic-status";
+} from "../indexer/search/semantic-status";
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";

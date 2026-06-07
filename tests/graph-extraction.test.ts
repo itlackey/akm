@@ -20,9 +20,9 @@ import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config";
 import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
-import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/graph-db";
-import { buildSearchText } from "../src/indexer/search-fields";
-import type { SearchSource } from "../src/indexer/search-source";
+import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/db/graph-db";
+import { buildSearchText } from "../src/indexer/search/search-fields";
+import type { SearchSource } from "../src/indexer/search/search-source";
 
 // ── Local LLM server ────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ const llmServer = Bun.serve({
 });
 
 const { runGraphExtractionPass, collectEligibleFiles, GRAPH_FILE_SCHEMA_VERSION, getGraphExtractionIncludeTypes } =
-  await import("../src/indexer/graph-extraction");
+  await import("../src/indexer/graph/graph-extraction");
 const { GRAPH_EXTRACT_PROMPT_VERSION: graphExtractPromptVersion } = await import("../src/llm/graph-extract");
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────

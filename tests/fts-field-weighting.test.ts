@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDatabase, DB_VERSION, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
-import { buildSearchFields } from "../src/indexer/search-fields";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { buildSearchFields } from "../src/indexer/search/search-fields";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────

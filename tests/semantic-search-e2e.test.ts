@@ -24,8 +24,8 @@ import {
   getMeta,
   openDatabase,
 } from "../src/indexer/db";
-import { searchLocal } from "../src/indexer/db-search";
 import { akmIndex } from "../src/indexer/indexer";
+import { searchLocal } from "../src/indexer/search/db-search";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 

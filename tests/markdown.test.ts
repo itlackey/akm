@@ -5,7 +5,7 @@ import {
   extractSection,
   formatToc,
   parseMarkdownToc,
-} from "../src/core/markdown";
+} from "../src/core/asset/markdown";
 
 const SAMPLE_DOC = `---
 title: Guide

@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config";
-import type { SearchSource } from "../src/indexer/search-source";
+import type { SearchSource } from "../src/indexer/search/search-source";
 
 // ── Local LLM server (graph extraction) ──────────────────────────────────────
 // A real HTTP server on a random port stands in for the LLM endpoint.
@@ -67,8 +67,8 @@ mock.module("../src/llm/memory-infer", () => ({
 }));
 
 // Import AFTER mock.module so the passes pick up the stubs.
-const { runGraphExtractionPass } = await import("../src/indexer/graph-extraction");
-const { runMemoryInferencePass } = await import("../src/indexer/memory-inference");
+const { runGraphExtractionPass } = await import("../src/indexer/graph/graph-extraction");
+const { runMemoryInferencePass } = await import("../src/indexer/passes/memory-inference");
 const {
   computeBodyHash,
   getLlmCacheEntry,
@@ -78,8 +78,8 @@ const {
   closeDatabase,
   upsertEntry,
 } = await import("../src/indexer/db");
-const { loadStoredGraphSnapshot } = await import("../src/indexer/graph-db");
-const { buildSearchText } = await import("../src/indexer/search-fields");
+const { loadStoredGraphSnapshot } = await import("../src/indexer/db/graph-db");
+const { buildSearchText } = await import("../src/indexer/search/search-fields");
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

@@ -54,9 +54,9 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmImproveResult } from "../commands/improve";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import type { EventEnvelope } from "./events";
+import type { AkmImproveResult } from "./improve-types";
 import { getDataDir } from "./paths";
 import type { Proposal } from "./proposals";
 import { error } from "./warn";

@@ -47,12 +47,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import ingestWorkflowTemplate from "../assets/wiki/ingest-workflow-template.md" with { type: "text" };
-import { akmSearch } from "../commands/search";
+import { akmSearch } from "../commands/read/search";
 import { isWithin, todayIso } from "../core/common";
 import { getSources, loadUserConfig, saveConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
-import { resolveSourceEntries, type SearchSource } from "../indexer/search-source";
+import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import type { SearchResponse, SourceSearchHit } from "../sources/types";
 import { buildIndexMd, buildLogMd, buildSchemaMd } from "./wiki-templates";
 

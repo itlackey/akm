@@ -13,9 +13,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/read/search";
+import { akmShowUnified } from "../../src/commands/read/show";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
-import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/search";
-import { akmShowUnified } from "../../src/commands/show";
 import { saveConfig } from "../../src/core/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { parseFrontmatter } from "../../src/core/frontmatter";

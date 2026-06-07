@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { defaultRendererRegistry, type RendererRegistry } from "./asset-registry";
+import { defaultRendererRegistry, type RendererRegistry } from "./asset/asset-registry";
 
 export interface ActionContext {
   type: string;

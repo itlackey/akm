@@ -11,7 +11,7 @@ import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
 import { buildRegistryIndex, writeRegistryIndex } from "../registry/build-index";
-import { searchRegistry } from "./registry-search";
+import { searchRegistry } from "./read/registry-search";
 
 export const registryCommand = defineCommand({
   meta: { name: "registry", description: "Manage stash registries" },

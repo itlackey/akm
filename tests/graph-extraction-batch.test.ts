@@ -18,9 +18,9 @@ import path from "node:path";
 
 import type { AkmConfig, LlmConnectionConfig } from "../src/core/config";
 import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
-import { loadStoredGraphSnapshot } from "../src/indexer/graph-db";
-import type { GraphExtractionResult } from "../src/indexer/graph-extraction";
-import { buildSearchText } from "../src/indexer/search-fields";
+import { loadStoredGraphSnapshot } from "../src/indexer/db/graph-db";
+import type { GraphExtractionResult } from "../src/indexer/graph/graph-extraction";
+import { buildSearchText } from "../src/indexer/search/search-fields";
 import type { GraphExtraction } from "../src/llm/graph-extract";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ const llmServer = Bun.serve({
   },
 });
 
-const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
+const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph/graph-extraction");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 

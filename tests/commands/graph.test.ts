@@ -10,13 +10,13 @@ import {
   akmGraphRelated,
   akmGraphRelations,
   akmGraphSummary,
-} from "../../src/commands/graph";
+} from "../../src/commands/graph/graph";
 import { saveConfig } from "../../src/core/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";
-import { replaceStoredGraph } from "../../src/indexer/graph-db";
-import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph-extraction";
-import { buildSearchText } from "../../src/indexer/search-fields";
+import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
+import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph/graph-extraction";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;

@@ -4,7 +4,7 @@ import {
   resolveImproveProfile,
   resolveProcessEnabled,
   shouldSkipRef,
-} from "../../src/commands/improve-profiles";
+} from "../../src/commands/improve/improve-profiles";
 import type { AkmConfig } from "../../src/core/config";
 
 const MINIMAL_CONFIG: AkmConfig = {

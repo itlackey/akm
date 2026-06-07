@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { CHECKIN_STALL_MS, evaluateCheckin } from "../../src/workflows/checkin";
+import { CHECKIN_STALL_MS, evaluateCheckin } from "../../src/workflows/runtime/checkin";
 
 describe("evaluateCheckin (#506 — file-signal check-in, no background thread)", () => {
   const base = "2026-01-01T00:00:00.000Z";

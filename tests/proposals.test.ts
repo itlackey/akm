@@ -9,7 +9,7 @@ import {
   akmProposalReject,
   akmProposalRevert,
   akmProposalShow,
-} from "../src/commands/proposal";
+} from "../src/commands/proposal/proposal";
 import type { AkmConfig } from "../src/core/config";
 import { readEvents } from "../src/core/events";
 import {

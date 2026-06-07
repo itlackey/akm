@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config-schema";
+import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config/config-schema";
 
 // Phase 2: triage is a first-class improve process. These guard that a triage
 // block under `processes` parses and is accepted, that the triage-specific

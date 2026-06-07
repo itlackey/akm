@@ -14,7 +14,7 @@ import path from "node:path";
 
 import type { AkmConfig } from "../../src/core/config";
 import { parseFrontmatter } from "../../src/core/frontmatter";
-import type { SearchSource } from "../../src/indexer/search-source";
+import type { SearchSource } from "../../src/indexer/search/search-source";
 
 // ── Module-level LLM stub ───────────────────────────────────────────────────
 //
@@ -35,7 +35,7 @@ mock.module("../../src/llm/client", () => ({
   },
 }));
 
-const { runStalenessDetectionPass, parseStalenessResponse } = await import("../../src/indexer/staleness-detect");
+const { runStalenessDetectionPass, parseStalenessResponse } = await import("../../src/indexer/passes/staleness-detect");
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 

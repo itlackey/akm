@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
+import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config";
 import {
   closeDatabase,
@@ -15,7 +15,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { StashEntry } from "../src/indexer/passes/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import type { SourceSearchHit } from "../src/sources/types";
 import {

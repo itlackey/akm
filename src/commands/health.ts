@@ -17,7 +17,7 @@ import {
   type TaskHistoryRow,
 } from "../core/state-db";
 import { parseSinceToIso } from "../core/time";
-import { readSemanticStatus } from "../indexer/semantic-status";
+import { readSemanticStatus } from "../indexer/search/semantic-status";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { HEALTH_CHECKS, type HealthCheckContext } from "./health/checks";

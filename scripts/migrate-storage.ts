@@ -32,7 +32,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { getCacheDir, getConfigDir, getDefaultStashDir } from "../src/core/paths";
-import { MIGRATED_MARKER } from "../src/indexer/unmigrated-vaults-guard";
+import { MIGRATED_MARKER } from "../src/indexer/usage/unmigrated-vaults-guard";
 
 // ── Argument parsing ─────────────────────────────────────────────────────────
 
@@ -759,7 +759,7 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<StepResult> 
     const snapshot = validation.data;
 
     const { openExistingDatabase, closeDatabase } = await import("../src/indexer/db");
-    const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/graph-db");
+    const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/db/graph-db");
 
     const db = openExistingDatabase(ctx.paths.indexDbPath);
     try {

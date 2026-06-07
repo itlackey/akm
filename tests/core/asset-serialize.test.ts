@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
-import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset-serialize";
+import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 
 describe("serializeFrontmatter — canonical YAML for the frontmatter block", () => {

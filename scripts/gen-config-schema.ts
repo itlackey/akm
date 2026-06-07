@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Generate schemas/akm-config.json from the canonical Zod schema in
- * src/core/config-schema.ts. Run after editing the schema (or wire as a
+ * src/core/config/config-schema.ts. Run after editing the schema (or wire as a
  * pre-build step) so the published JSON Schema never drifts.
  *
  * Usage:
@@ -19,7 +19,7 @@ import {
   LlmProfileConfigSchema,
   RegistryConfigEntrySchema,
   SourceConfigEntrySchema,
-} from "../src/core/config-schema";
+} from "../src/core/config/config-schema";
 
 interface JsonSchema {
   $schema?: string;

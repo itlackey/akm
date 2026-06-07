@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { assertFlatAssetName, normalizeCreateSubPath } from "../../src/commands/knowledge";
+import { assertFlatAssetName, normalizeCreateSubPath } from "../../src/commands/read/knowledge";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,

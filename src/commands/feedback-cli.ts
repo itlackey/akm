@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
+import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseAssetRef } from "../core/asset-ref";
-import { assembleAsset } from "../core/asset-serialize";
 import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
@@ -21,8 +21,8 @@ import {
   openExistingDatabase,
 } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage-events";
+import { resolveSourceEntries } from "../indexer/search/search-source";
+import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 

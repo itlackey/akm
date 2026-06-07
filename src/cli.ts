@@ -68,14 +68,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
-import { addCommand } from "./commands/add-cli";
+import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
-import { agentCommand, lintCommand, proposeCommand } from "./commands/contribute-cli";
-import { envCommand } from "./commands/env-cli";
-import { extractCommand } from "./commands/extract-cli";
+import { envCommand } from "./commands/env/env-cli";
+import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
-import { graphCommand } from "./commands/graph-cli";
+import { graphCommand } from "./commands/graph/graph-cli";
 import {
   akmHealth,
   parseWindowSpec,
@@ -83,15 +82,16 @@ import {
   renderWindowCompareMd,
   type WindowSpec,
 } from "./commands/health";
-import { improveCommand } from "./commands/improve-cli";
-import { renderMigrationHelp } from "./commands/migration-help";
+import { extractCommand } from "./commands/improve/extract-cli";
+import { improveCommand } from "./commands/improve/improve-cli";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
-import { proposalCommand } from "./commands/proposal-cli";
+import { proposalCommand } from "./commands/proposal/proposal-cli";
+import { rememberCommand } from "./commands/read/remember-cli";
+import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
+import { normalizeShowArgv } from "./commands/read/show";
 import { registryCommand } from "./commands/registry-cli";
-import { rememberCommand } from "./commands/remember-cli";
-import { curateCommand, searchCommand, showCommand } from "./commands/search-cli";
-import { secretCommand } from "./commands/secret-cli";
-import { normalizeShowArgv } from "./commands/show";
+import { addCommand } from "./commands/sources/add-cli";
+import { renderMigrationHelp } from "./commands/sources/migration-help";
 import {
   cloneCommand,
   historyCommand,
@@ -100,9 +100,15 @@ import {
   syncCommand,
   updateCommand,
   upgradeCommand,
-} from "./commands/sources-cli";
-import { dbCommand, importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/stash-cli";
-import { tasksCommand } from "./commands/tasks-cli";
+} from "./commands/sources/sources-cli";
+import {
+  dbCommand,
+  importKnowledgeCommand,
+  indexCommand,
+  infoCommand,
+  initCommand,
+} from "./commands/sources/stash-cli";
+import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { loadConfig } from "./core/config";

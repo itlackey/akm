@@ -179,7 +179,7 @@ describe("registry/static-index — loadIndex surfaces guard violations", () => 
 
 describe("indexer/graph-db — loadStoredGraph* surface guard violations", () => {
   test("loadStoredGraphMeta re-throws TEST_ISOLATION_MISSING instead of returning null", async () => {
-    const { loadStoredGraphMeta } = await import("../src/indexer/graph-db");
+    const { loadStoredGraphMeta } = await import("../src/indexer/db/graph-db");
     let caught: unknown;
     try {
       loadStoredGraphMeta("/no/such/stash");
@@ -190,7 +190,7 @@ describe("indexer/graph-db — loadStoredGraph* surface guard violations", () =>
   });
 
   test("loadStoredGraphSnapshot re-throws TEST_ISOLATION_MISSING instead of returning null", async () => {
-    const { loadStoredGraphSnapshot } = await import("../src/indexer/graph-db");
+    const { loadStoredGraphSnapshot } = await import("../src/indexer/db/graph-db");
     let caught: unknown;
     try {
       loadStoredGraphSnapshot("/no/such/stash");
@@ -201,7 +201,7 @@ describe("indexer/graph-db — loadStoredGraph* surface guard violations", () =>
   });
 
   test("loadGraphFilesOnly re-throws TEST_ISOLATION_MISSING instead of returning []", async () => {
-    const { loadGraphFilesOnly } = await import("../src/indexer/graph-db");
+    const { loadGraphFilesOnly } = await import("../src/indexer/db/graph-db");
     let caught: unknown;
     try {
       loadGraphFilesOnly("/no/such/stash");

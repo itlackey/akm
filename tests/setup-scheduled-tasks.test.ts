@@ -73,10 +73,10 @@ function makeDeps(installed: Array<{ id: string; enabled: boolean }>) {
   };
   const deps = {
     list: async () =>
-      ({ tasks: installed }) as Awaited<ReturnType<typeof import("../src/commands/tasks").akmTasksList>>,
+      ({ tasks: installed }) as Awaited<ReturnType<typeof import("../src/commands/tasks/tasks").akmTasksList>>,
     add: async (input: { id: string; schedule: string; command?: string | string[] }) => {
       calls.added.push({ id: input.id, schedule: input.schedule, command: input.command });
-      return { id: input.id } as Awaited<ReturnType<typeof import("../src/commands/tasks").akmTasksAdd>>;
+      return { id: input.id } as Awaited<ReturnType<typeof import("../src/commands/tasks/tasks").akmTasksAdd>>;
     },
     setEnabled: async (id: string, enabled: boolean) => {
       calls.enabled.push({ id, enabled });

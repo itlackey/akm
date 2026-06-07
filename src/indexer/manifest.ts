@@ -22,9 +22,9 @@ import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, getAllEntries, getEntryCount, getMeta, openExistingDatabase } from "./db";
-import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
-import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search-source";
-import { walkStashFlat } from "./walker";
+import { generateMetadataFlat, loadStashFile, type StashEntry } from "./passes/metadata";
+import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search/search-source";
+import { walkStashFlat } from "./walk/walker";
 
 const MAX_DESCRIPTION_LENGTH = 80;
 

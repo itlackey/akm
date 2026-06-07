@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
+import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase } from "../src/indexer/db";

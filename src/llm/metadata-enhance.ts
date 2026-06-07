@@ -11,7 +11,7 @@
  */
 
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
-import type { StashEntry } from "../indexer/metadata";
+import type { StashEntry } from "../indexer/passes/metadata";
 import { chatCompletion, parseJsonResponse } from "./client";
 import { tryLlmFeature } from "./feature-gate";
 

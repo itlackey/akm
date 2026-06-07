@@ -21,7 +21,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmImprove } from "../../../src/commands/improve";
+import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config";
 import { saveConfig } from "../../../src/core/config";
 import { akmIndex } from "../../../src/indexer/indexer";

@@ -23,8 +23,8 @@ async function installRegistryRef(ref: string, options?: { cacheRootDir?: string
   };
 }
 
-import { akmShowUnified as akmShow } from "../../src/commands/show";
-import { akmAdd, registerWikiSource } from "../../src/commands/source-add";
+import { akmShowUnified as akmShow } from "../../src/commands/read/show";
+import { akmAdd, registerWikiSource } from "../../src/commands/sources/source-add";
 import { parseRegistryRef } from "../../src/registry/resolve";
 import { listPages, listWikis, showWiki } from "../../src/wiki/wiki";
 

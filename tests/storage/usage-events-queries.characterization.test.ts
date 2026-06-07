@@ -10,7 +10,7 @@ import {
   ensureUsageEventsSchema,
   getUsageEvents,
   type UsageEventRow,
-} from "../../src/indexer/usage-events";
+} from "../../src/indexer/usage/usage-events";
 
 /**
  * Characterization tests for the `usage_events` read queries that WS5 lifted

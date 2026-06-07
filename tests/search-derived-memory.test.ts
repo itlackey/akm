@@ -14,12 +14,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
+import { akmSearch } from "../src/commands/read/search";
 import { resetConfigCache, saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
-import { buildSearchText } from "../src/indexer/search-fields";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { buildSearchText } from "../src/indexer/search/search-fields";
 import {
   type Cleanup,
   sandboxStashDir,

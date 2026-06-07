@@ -19,8 +19,8 @@ import {
   detectDoubleFrontmatter,
   isValidDescription,
   isValidWhenToUse,
-} from "../src/commands/distill";
-import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/distill-promotion-policy";
+} from "../src/commands/improve/distill";
+import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/improve/distill-promotion-policy";
 import type { AkmConfig } from "../src/core/config";
 import { readEvents } from "../src/core/events";
 import { listProposals } from "../src/core/proposals";
@@ -1331,7 +1331,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     "class ProposalValidator extends BaseValidator",
     "const STALE_THRESHOLD_MS = 86400000 // ms",
     "export function isValidDescription(value: unknown)",
-    "import { isValidDescription } from '../src/commands/distill'",
+    "import { isValidDescription } from '../src/commands/improve/distill'",
     "func handleProposal(p Proposal) error { return nil }",
   ])("rejects code-fragment description %j", (codey) => {
     const r = isValidDescription(codey, "skill:deploy");

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { SearchSource } from "../src/indexer/search-source";
+import type { SearchSource } from "../src/indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "../src/registry/origin-resolve";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

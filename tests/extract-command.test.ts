@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmExtract, parseSinceArg } from "../src/commands/extract";
-import { EXTRACT_JSON_SCHEMA } from "../src/commands/extract-prompt";
+import { akmExtract, parseSinceArg } from "../src/commands/improve/extract";
+import { EXTRACT_JSON_SCHEMA } from "../src/commands/improve/extract-prompt";
+import { isValidDescription } from "../src/commands/proposal/validators/proposal-quality-validators";
 import type { AkmConfig } from "../src/core/config";
 import { UsageError } from "../src/core/errors";
 import { parseFrontmatter } from "../src/core/frontmatter";
-import { isValidDescription } from "../src/core/proposal-quality-validators";
 import { listProposals } from "../src/core/proposals";
 import { detectTruncatedDescription } from "../src/core/text-truncation";
 import type {

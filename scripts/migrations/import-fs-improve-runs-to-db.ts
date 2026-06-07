@@ -43,7 +43,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { computeImproveRunMetrics, openStateDatabase, recordImproveRun } from "../../src/core/state-db";
-import type { AkmImproveResult } from "../../src/commands/improve";
+import type { AkmImproveResult } from "../../src/commands/improve/improve";
 
 type Args = {
   stashDir: string;

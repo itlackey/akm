@@ -177,7 +177,7 @@ test("search pipeline returns ranked results when index exists", async () => {
   await akmIndex({ stashDir });
 
   // Search — TF-IDF should rank docker-related results first
-  const { akmSearch } = await import("../src/commands/search");
+  const { akmSearch } = await import("../src/commands/read/search");
   const result = await akmSearch({ query: "docker", type: "any" });
 
   expect(result.hits.length).toBeGreaterThan(0);

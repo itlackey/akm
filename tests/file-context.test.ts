@@ -9,9 +9,9 @@ import {
   getAllRenderers,
   getRenderer,
   runMatchers,
-} from "../src/indexer/file-context";
-import { directoryMatcher, smartMdMatcher } from "../src/indexer/matchers";
-import { walkStashFlat } from "../src/indexer/walker";
+} from "../src/indexer/walk/file-context";
+import { directoryMatcher, smartMdMatcher } from "../src/indexer/walk/matchers";
+import { walkStashFlat } from "../src/indexer/walk/walker";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
 

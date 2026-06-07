@@ -1,0 +1,187 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import type { ConsolidateResult } from "../commands/improve/consolidate";
+import type { AkmDistillResult } from "../commands/improve/distill";
+import type { AkmExtractResult } from "../commands/improve/extract";
+import type {
+  ArchivedMemoryCleanupRecord,
+  MemoryBeliefStateTransition,
+  MemoryConsolidationCandidate,
+  MemoryContradictionCandidate,
+  MemoryPruneCandidate,
+  RelativeDateCandidate,
+} from "../commands/improve/memory/memory-improve";
+import type { AkmReflectResult } from "../commands/improve/reflect";
+import type { DeadUrl } from "../commands/url-checker";
+import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
+import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
+import type { StalenessDetectionResult } from "../indexer/passes/staleness-detect";
+
+export interface ImproveEligibleRef {
+  ref: string;
+  reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
+}
+
+export interface ImproveActionResult {
+  ref: string;
+  mode:
+    | "reflect"
+    | "reflect-failed"
+    | "reflect-cooldown"
+    | "reflect-skipped"
+    | "reflect-guard-rejected"
+    | "distill"
+    | "distill-skipped"
+    | "memory-prune"
+    | "memory-inference"
+    | "graph-extraction"
+    | "error";
+  result:
+    | AkmReflectResult
+    | AkmDistillResult
+    | MemoryInferenceResult
+    | GraphExtractionResult
+    | { ok: true; pruned: boolean; reason: MemoryPruneCandidate["reason"] }
+    | { ok: true; reason: string }
+    | { ok: false; error: string };
+}
+
+export interface ImproveMemoryCleanupResult {
+  analyzedDerived: number;
+  pruneCandidates: MemoryPruneCandidate[];
+  contradictionCandidates: MemoryContradictionCandidate[];
+  beliefStateTransitions: MemoryBeliefStateTransition[];
+  consolidationCandidates: MemoryConsolidationCandidate[];
+  relativeDateCandidates?: RelativeDateCandidate[];
+  archived?: ArchivedMemoryCleanupRecord[];
+  transitionLogPath?: string;
+  transitionLogEntries?: number;
+  warnings?: string[];
+}
+
+export interface AkmImproveResult {
+  schemaVersion: 1;
+  ok: true;
+  scope: {
+    mode: "all" | "type" | "ref";
+    value?: string;
+  };
+  dryRun: boolean;
+  guidance?: string;
+  memorySummary: {
+    eligible: number;
+    derived: number;
+  };
+  memoryCleanup?: ImproveMemoryCleanupResult;
+  plannedRefs: ImproveEligibleRef[];
+  /**
+   * Refs the planner considered but excluded because every per-ref pass on
+   * the active profile (reflect + distill) would refuse them. Additive
+   * field — pre-2026-05-27 these refs went into `plannedRefs` and produced
+   * 2× synthetic skip actions per run. See
+   * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
+   *
+   * Each ref has its `reason` set to `"profile_filtered_all_passes"`. The
+   * audit trail is also emitted as one `improve_skipped` event per ref.
+   * Omitted entirely when no refs were filtered (keeps the envelope tidy
+   * for stashes whose profile accepts every indexed type).
+   */
+  profileFilteredRefs?: ImproveEligibleRef[];
+  actions?: ImproveActionResult[];
+  validationFailures?: Array<{ ref: string; reason: string }>;
+  schemaRepairs?: Array<{
+    ref: string;
+    reason: string;
+    outcome: "queued" | "written" | "skipped" | "error";
+    proposalId?: string;
+    error?: string;
+  }>;
+  consolidation?: ConsolidateResult;
+  /**
+   * Session-extract pass results (one entry per available harness). Present
+   * when `profiles.improve.default.processes.extract.enabled` is true (default)
+   * and at least one harness reports `isAvailable() === true`.
+   */
+  extract?: AkmExtractResult[];
+  lintSummary?: { fixed: number; flagged: number };
+  memoryIndexHealth?: { lineCount: number; overBudget: boolean };
+  coverageGaps?: string[];
+  evalCasesWritten?: number;
+  deadUrls?: DeadUrl[];
+  /** Number of reflect calls that had at least one error in the rolling window at call time. */
+  reflectsWithErrorContext?: number;
+  memoryInference?: MemoryInferenceResult;
+  graphExtraction?: GraphExtractionResult;
+  /**
+   * Wall-clock duration of the memory-inference pass (ms). Surfaced at the
+   * top level (not inside `memoryInference`) because both
+   * `health.ts#summarizeImproveRuns` (wallTime.byPhase aggregator) and the
+   * existing `metrics.memoryInference.durationMs` rollup read it from here.
+   * Omitted entirely when the pass did not run.
+   */
+  memoryInferenceDurationMs?: number;
+  /**
+   * Wall-clock duration of the graph-extraction pass (ms). Same surfacing
+   * convention as `memoryInferenceDurationMs` — top-level so the
+   * `wallTime.byPhase.graphExtraction` aggregator in health.ts picks it up.
+   * Omitted entirely when the pass did not run.
+   */
+  graphExtractionDurationMs?: number;
+  /** Phase 4A: result of the staleness-detection pass (only present when the feature is enabled and produced telemetry). */
+  stalenessDetection?: StalenessDetectionResult;
+  /** Number of pending proposals purged because their target ref no longer exists on disk. */
+  orphansPurged?: number;
+  /**
+   * Phase 6B (Advantage D6b): pending proposals archived as expired this run
+   * because they aged past `config.archiveRetentionDays`.
+   */
+  proposalsExpired?: number;
+  /** Number of reflect actions that were skipped due to cooldown/dedup signals. */
+  reflectCooldownActions?: number;
+  /** Number of reflect actions skipped because the asset type is not supported by reflect. */
+  reflectSkippedActions?: number;
+  /**
+   * Number of reflect actions where a downstream content-policy guard
+   * (e.g. EXCESSIVE_SHRINKAGE/EXCESSIVE_EXPANSION size rails) blocked an
+   * otherwise valid LLM response. NOT counted as LLM failure. See
+   * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
+   */
+  reflectGuardRejectedActions?: number;
+  /**
+   * Total proposals auto-promoted by the unified gate across all phases
+   * (reflect, extract, distill, consolidate). Populated by summing the
+   * `.promoted.length` from every `runAutoAcceptGate` call in the run.
+   * Omitted when zero to keep the envelope tidy.
+   */
+  gateAutoAcceptedCount?: number;
+  /**
+   * Total proposals that hit the auto-accept gate but failed validation
+   * (e.g. truncated description, invalid frontmatter). These are logged as
+   * warnings and skipped — they remain in the proposal queue for manual review.
+   * Omitted when zero.
+   */
+  gateAutoAcceptFailedCount?: number;
+  /**
+   * Triage pre-pass outcome (array lengths from the pre-pass `DrainResult`
+   * mapped to counts). Present only when the triage pre-pass actually ran
+   * (non-dry-run, triage process enabled, whole-stash / type-scoped run);
+   * omitted entirely otherwise to keep the envelope tidy.
+   */
+  triage?: { promoted: number; rejected: number; deferred: number; skippedByCap: number };
+  /**
+   * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
+   * through `options.runId`. Surfaced on the result so health/run records and
+   * the `{runId}` sync-commit token can read it. Absent for programmatic
+   * callers that did not mint one.
+   */
+  runId?: string;
+  /**
+   * End-of-run auto-sync outcome for a git-backed primary stash. Present only
+   * when sync was attempted (non-dry-run, git-backed stash, sync not disabled).
+   * `skipped: true` covers both a no-op `saveGitStash` and a caught failure
+   * (a sync failure is non-fatal and never fails the run).
+   */
+  sync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
+}

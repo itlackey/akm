@@ -13,7 +13,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { CONSOLIDATE_PLAN_JSON_SCHEMA } from "../../../src/commands/consolidate";
+import { CONSOLIDATE_PLAN_JSON_SCHEMA } from "../../../src/commands/improve/consolidate";
 
 // Internal-shape view of the schema for assertion convenience.
 interface SchemaView {

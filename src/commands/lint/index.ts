@@ -9,7 +9,7 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config";
 import { loadConfig } from "../../core/config";
 import { parseFrontmatter } from "../../core/frontmatter";
-import { resolveSourceEntries } from "../../indexer/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
 import { getLinterForType } from "./registry";
 import type { LintIssue } from "./types";

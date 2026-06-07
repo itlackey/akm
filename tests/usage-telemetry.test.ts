@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDatabase, openDatabase } from "../src/indexer/db";
-import { getUsageEvents, insertUsageEvent } from "../src/indexer/usage-events";
+import { getUsageEvents, insertUsageEvent } from "../src/indexer/usage/usage-events";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────

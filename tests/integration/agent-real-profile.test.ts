@@ -13,9 +13,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { akmPropose } from "../../src/commands/propose";
-import { akmReflect } from "../../src/commands/reflect";
+import { akmReflect } from "../../src/commands/improve/reflect";
+import { akmPropose } from "../../src/commands/proposal/propose";
 import { listProposals } from "../../src/core/proposals";
 import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";

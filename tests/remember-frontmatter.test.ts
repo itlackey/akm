@@ -17,9 +17,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../src/core/frontmatter";
-import { buildFileContext, buildRenderContext } from "../src/indexer/file-context";
-import type { StashEntry } from "../src/indexer/metadata";
-import { applyMetadataContributors } from "../src/indexer/metadata-contributors";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { applyMetadataContributors } from "../src/indexer/passes/metadata-contributors";
+import { buildFileContext, buildRenderContext } from "../src/indexer/walk/file-context";
 import { runCliCapture } from "./_helpers/cli";
 import { withEnv } from "./_helpers/sandbox";
 

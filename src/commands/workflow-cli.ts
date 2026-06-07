@@ -15,12 +15,12 @@
 
 import { defineCommand } from "citty";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset-create";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
-import { resolveSourceEntries } from "../indexer/search-source";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { hasBooleanFlag } from "../output/context";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { resolveAssetPath } from "../sources/resolve";
@@ -29,7 +29,7 @@ import {
   formatWorkflowErrors,
   getWorkflowTemplate,
   validateWorkflowSource,
-} from "../workflows/authoring";
+} from "../workflows/authoring/authoring";
 import {
   hasWorkflowSubcommand,
   parseWorkflowJsonObject,
@@ -43,7 +43,7 @@ import {
   listWorkflowRuns,
   resumeWorkflowRun,
   startWorkflowRun,
-} from "../workflows/runs";
+} from "../workflows/runtime/runs";
 
 const workflowStartCommand = defineJsonCommand({
   meta: {
@@ -93,7 +93,7 @@ const workflowNextCommand = defineJsonCommand({
     // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
     // error before parseAssetRef gets to throw an unhelpful ref-parse error.
     if (looksLikeWorkflowRunId(args.target)) {
-      const { hasWorkflowRun } = await import("../workflows/runs.js");
+      const { hasWorkflowRun } = await import("../workflows/runtime/runs.js");
       if (!(await hasWorkflowRun(args.target))) {
         throw new NotFoundError(
           `Workflow run "${args.target}" not found.`,

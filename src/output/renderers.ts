@@ -13,21 +13,21 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { listKeys as listVaultKeys } from "../commands/env";
-import { asNonEmptyString, hasErrnoCode } from "../core/common";
-import { parseFrontmatter } from "../core/frontmatter";
+import { listKeys as listVaultKeys } from "../commands/env/env";
 import {
   extractFrontmatterOnly,
   extractLineRange,
   extractSection,
   formatToc,
   parseMarkdownToc,
-} from "../core/markdown";
-import type { AssetRenderer, RenderContext } from "../indexer/file-context";
-import { registerRenderer } from "../indexer/file-context";
-import type { StashEntry } from "../indexer/metadata";
-import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/metadata";
-import { registerMetadataContributor } from "../indexer/metadata-contributors";
+} from "../core/asset/markdown";
+import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { parseFrontmatter } from "../core/frontmatter";
+import type { StashEntry } from "../indexer/passes/metadata";
+import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/passes/metadata";
+import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
+import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
+import { registerRenderer } from "../indexer/walk/file-context";
 import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 

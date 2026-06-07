@@ -16,7 +16,7 @@ import {
   type StashFile,
   validateStashEntry,
   writeStashFile,
-} from "../src/indexer/metadata";
+} from "../src/indexer/passes/metadata";
 
 // Renderers auto-register via ensureBuiltinsRegistered in file-context.ts
 

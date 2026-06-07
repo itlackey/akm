@@ -16,7 +16,7 @@ import {
   openDatabase,
 } from "../../src/indexer/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
-import { buildSearchText } from "../../src/indexer/search-fields";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
 import * as embedderModule from "../../src/llm/embedder";
 
 let testConfigDir = "";
@@ -805,8 +805,8 @@ test("akmIndex does not run slow passes", async () => {
     defaults: { llm: "default" },
   });
 
-  const memoryInfer = await import("../../src/indexer/memory-inference");
-  const graphExtract = await import("../../src/indexer/graph-extraction");
+  const memoryInfer = await import("../../src/indexer/passes/memory-inference");
+  const graphExtract = await import("../../src/indexer/graph/graph-extraction");
   const memorySpy = spyOn(memoryInfer, "runMemoryInferencePass").mockResolvedValue({
     considered: 0,
     splitParents: 0,
@@ -1633,8 +1633,8 @@ test("akmIndex removes graph rows when a stash source is no longer configured", 
   await akmIndex({ stashDir: primaryStash, full: true });
 
   // Seed graph rows for the secondary stash directly into the database.
-  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../../src/indexer/graph-db");
-  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph-extraction");
+  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../../src/indexer/db/graph-db");
+  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph/graph-extraction");
   const seedDb = openDatabase();
   try {
     replaceStoredGraph(seedDb, {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmExtract } from "../src/commands/extract";
+import { akmExtract } from "../src/commands/improve/extract";
 import type { AkmConfig } from "../src/core/config";
 import {
   getExtractedSession,

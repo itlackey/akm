@@ -29,7 +29,7 @@ import {
   upsertEmbedding,
   upsertEntry,
 } from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { StashEntry } from "../src/indexer/passes/metadata";
 import { cosineSimilarity } from "../src/llm/embedder";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
