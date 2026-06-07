@@ -53,6 +53,7 @@ import { type MemoryInferenceResult, runMemoryInferencePass } from "../indexer/m
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
+import { countUsageEventsByType } from "../indexer/usage-events";
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
 import { getAvailableHarnesses } from "../integrations/session-logs";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
@@ -1972,11 +1973,7 @@ async function runImprovePreparationStage(args: {
   let dbForRetrieval: import("bun:sqlite").Database | undefined;
   try {
     dbForRetrieval = openExistingDatabase();
-    const showEventCount = (
-      dbForRetrieval.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = 'show'").get() as {
-        cnt: number;
-      }
-    ).cnt;
+    const showEventCount = countUsageEventsByType(dbForRetrieval, "show");
     if (showEventCount === 0) {
       warn(
         "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",

@@ -25,7 +25,7 @@ import { type EventsContext, readEvents } from "../core/events";
 import { listProposals } from "../core/proposals";
 import { isoToSqlite, parseSinceToIso } from "../core/time";
 import { closeDatabase, openExistingDatabase } from "../indexer/db";
-import type { UsageEventRow } from "../indexer/usage-events";
+import { getUsageEvents, type UsageEventRow } from "../indexer/usage-events";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -186,26 +186,11 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
   const db = options.db ?? openExistingDatabase();
   const ownsDb = options.db === undefined;
   try {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (normalizedRef !== undefined) {
-      conditions.push("entry_ref = ?");
-      params.push(normalizedRef);
-    }
-    if (sinceNormalized !== undefined) {
-      conditions.push("created_at >= ?");
-      params.push(sinceNormalized);
-    }
-    if (options.source !== undefined) {
-      conditions.push("source = ?");
-      params.push(options.source);
-    }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
-                 FROM usage_events ${where}
-                 ORDER BY id ASC`;
-
-    const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as UsageEventRow[];
+    const rows: UsageEventRow[] = getUsageEvents(db, {
+      entry_ref: normalizedRef,
+      since: sinceNormalized,
+      source: options.source,
+    });
     const usageEntries = rows.map(toEntry);
 
     // ── Proposal lifecycle events (opt-in) ────────────────────────────────
