@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import profileCatchup from "../assets/profiles/catchup.json" with { type: "json" };
+import profileConsolidate from "../assets/profiles/consolidate.json" with { type: "json" };
 import profileDefault from "../assets/profiles/default.json" with { type: "json" };
+import profileFrequent from "../assets/profiles/frequent.json" with { type: "json" };
 import profileGraphRefresh from "../assets/profiles/graph-refresh.json" with { type: "json" };
 import profileMemoryFocus from "../assets/profiles/memory-focus.json" with { type: "json" };
 import profileQuick from "../assets/profiles/quick.json" with { type: "json" };
@@ -32,6 +35,9 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
   thorough: profileThorough as ImproveProfileConfig,
   "memory-focus": profileMemoryFocus as ImproveProfileConfig,
   "graph-refresh": profileGraphRefresh as ImproveProfileConfig,
+  frequent: profileFrequent as ImproveProfileConfig,
+  consolidate: profileConsolidate as ImproveProfileConfig,
+  catchup: profileCatchup as ImproveProfileConfig,
 };
 
 /**

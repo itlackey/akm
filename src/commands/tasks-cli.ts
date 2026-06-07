@@ -18,6 +18,7 @@ import { defineCommand } from "citty";
 import { hasSubcommand, parsePositiveIntFlag } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { getHyphenatedArg } from "../output/context";
+import { detectServerDefault, registerDefaultTasks } from "./default-tasks";
 import {
   akmTasksAdd,
   akmTasksDoctor,
@@ -33,6 +34,7 @@ import {
 
 const TASKS_SUBCOMMAND_SET = new Set([
   "add",
+  "init",
   "list",
   "show",
   "remove",
@@ -90,6 +92,28 @@ const tasksAddCommand = defineJsonCommand({
       force: args.force === true,
     });
     output("tasks-add", result);
+  },
+});
+
+const tasksInitCommand = defineJsonCommand({
+  meta: {
+    name: "init",
+    description: "Idempotently register the default improve task set (skips when CI=true)",
+  },
+  args: {
+    server: {
+      type: "boolean",
+      description: "Treat this as a server install (enables the nightly sweep). Defaults to platform detection.",
+    },
+    laptop: {
+      type: "boolean",
+      description: "Treat this as a laptop install (leaves the nightly sweep disabled).",
+    },
+  },
+  async run({ args }) {
+    const serverInstall = args.server === true ? true : args.laptop === true ? false : detectServerDefault();
+    const result = await registerDefaultTasks({ serverInstall });
+    output("tasks-init", result);
   },
 });
 
@@ -199,6 +223,7 @@ export const tasksCommand = defineCommand({
   },
   subCommands: {
     add: tasksAddCommand,
+    init: tasksInitCommand,
     list: tasksListCommand,
     show: tasksShowCommand,
     remove: tasksRemoveCommand,

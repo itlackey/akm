@@ -15,6 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
+import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../commands/default-tasks";
 import { akmInit, type InitResponse } from "../commands/init";
 import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../commands/tasks";
 import { isHttpUrl } from "../core/common";
@@ -1886,6 +1887,41 @@ function normaliseTaskIdForMatch(raw: string): string {
  * modules — which would leak into unrelated test files (Bun's `mock.module`
  * is process-global and not reverted by `mock.restore()`).
  */
+/**
+ * Setup sub-step (issue #552): idempotently register the default improve task
+ * set. Asks a single "Is this a server install?" question (defaulting per
+ * platform) to decide whether the nightly sweep is enabled, then delegates to
+ * {@link registerDefaultTasks}, which is CI-aware and never duplicates an
+ * existing task. Skipped entirely under CI (the registration helper short-
+ * circuits, and we never even prompt).
+ *
+ * Exported for testing.
+ */
+export async function stepDefaultImproveTasks(
+  register: typeof registerDefaultTasks = registerDefaultTasks,
+): Promise<void> {
+  // CI: register nothing and don't prompt.
+  if (isCiEnvironment()) {
+    p.log.info("CI detected — skipping default improve task registration.");
+    return;
+  }
+
+  const platformDefault = detectServerDefault();
+  const serverInstall = await prompt(() =>
+    p.confirm({
+      message: "Is this a server install? (enables the nightly quality sweep at 2am)",
+      initialValue: platformDefault,
+    }),
+  );
+
+  const result = await register({ serverInstall: serverInstall === true });
+  if (result.skipped) return;
+  const total = result.created.length + result.existing.length;
+  p.log.success(
+    `Default improve tasks registered (${result.created.length} new, ${result.existing.length} already present, ${total} total).`,
+  );
+}
+
 export interface ScheduledTasksDeps {
   list: typeof akmTasksList;
   add: typeof akmTasksAdd;
@@ -2137,6 +2173,7 @@ export function buildSetupSteps(options: {
       // Interactive-only: `akm init` / `--yes` skip this step so headless
       // runs never enable a scheduled task (see issue #512).
       async run() {
+        await stepDefaultImproveTasks();
         await stepScheduledTasks();
       },
     },
