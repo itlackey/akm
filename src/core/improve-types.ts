@@ -18,26 +18,84 @@ import type { DeadUrl } from "../commands/url-checker";
 import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
 import type { StalenessDetectionResult } from "../indexer/passes/staleness-detect";
+import { assertNever } from "./assert";
 
 export interface ImproveEligibleRef {
   ref: string;
   reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
 }
 
+/**
+ * The mode discriminator on every {@link ImproveActionResult}. Named so the two
+ * audit-counter switches (`computeImproveRunMetrics` in `state-db.ts` and
+ * `emitImproveCompletedEvent` in `improve.ts`) and {@link classifyImproveAction}
+ * all dispatch over the *same* canonical union — a new variant fails to compile
+ * at every consumer rather than silently drifting out of one of them.
+ */
+export type ImproveActionMode =
+  | "reflect"
+  | "reflect-failed"
+  | "reflect-cooldown"
+  | "reflect-skipped"
+  | "reflect-guard-rejected"
+  | "distill"
+  | "distill-skipped"
+  | "memory-prune"
+  | "memory-inference"
+  | "graph-extraction"
+  | "error";
+
+/** Coarse audit bucket an {@link ImproveActionMode} contributes to. */
+export type ImproveActionClass = "accepted" | "rejected" | "error" | "noop";
+
+/**
+ * Map an {@link ImproveActionMode} to its coarse audit bucket. Single source of
+ * truth shared by `state-db.ts#computeImproveRunMetrics` and
+ * `improve.ts#emitImproveCompletedEvent` so the aggregate accepted/rejected/
+ * error counts can never disagree between the persisted `metrics_json` and the
+ * emitted `improve_completed` event.
+ *
+ * Buckets:
+ * - `accepted` — a write/content-authoring action succeeded.
+ * - `rejected` — the action was deliberately not applied (cooldown, skip,
+ *   distill-skip, or a content-policy guard rejection). NOTE: as of the
+ *   round-2 health pass `reflect-guard-rejected` is bucketed here. Previously
+ *   the `state-db.ts` switch omitted it entirely (no case, no default), so a
+ *   guard rejection silently vanished from accepted/rejected/error totals — a
+ *   data-integrity miscount. It is a deliberate non-application of the action,
+ *   so it belongs with the other "rejected" outcomes.
+ * - `error` — the action failed (LLM/runtime error).
+ * - `noop` — bookkeeping that is neither a write nor a rejection (memory-prune);
+ *   intentionally counted in none of the three numeric buckets.
+ *
+ * The `default: assertNever(mode)` arm makes any future union variant a
+ * compile-time error here, forcing an explicit bucket choice.
+ */
+export function classifyImproveAction(mode: ImproveActionMode): ImproveActionClass {
+  switch (mode) {
+    case "reflect":
+    case "distill":
+    case "memory-inference":
+    case "graph-extraction":
+      return "accepted";
+    case "reflect-cooldown":
+    case "reflect-skipped":
+    case "distill-skipped":
+    case "reflect-guard-rejected":
+      return "rejected";
+    case "reflect-failed":
+    case "error":
+      return "error";
+    case "memory-prune":
+      return "noop";
+    default:
+      return assertNever(mode);
+  }
+}
+
 export interface ImproveActionResult {
   ref: string;
-  mode:
-    | "reflect"
-    | "reflect-failed"
-    | "reflect-cooldown"
-    | "reflect-skipped"
-    | "reflect-guard-rejected"
-    | "distill"
-    | "distill-skipped"
-    | "memory-prune"
-    | "memory-inference"
-    | "graph-extraction"
-    | "error";
+  mode: ImproveActionMode;
   result:
     | AkmReflectResult
     | AkmDistillResult

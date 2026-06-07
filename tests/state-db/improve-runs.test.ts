@@ -255,6 +255,33 @@ describe("recordImproveRun", () => {
     }
   });
 
+  test("buckets reflect-guard-rejected as rejected (round-2 health fix)", () => {
+    // Behaviour change (code-health round-2, audit items C1/H3): before the
+    // shared classifyImproveAction was introduced, computeImproveRunMetrics'
+    // switch had no case for `reflect-guard-rejected` and no default arm, so a
+    // guard rejection was silently counted in NONE of accepted/rejected/error —
+    // a data-integrity miscount. Owner-approved decision: bucket it as
+    // "rejected" (a deliberate non-application of the action). This asserts the
+    // corrected total: the guard rejection now contributes to rejectedCount.
+    const metrics = computeImproveRunMetrics(
+      buildMinimalResult({
+        plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
+        actions: [
+          { ref: "lesson:a", mode: "reflect", result: { ok: true } as never },
+          {
+            ref: "lesson:b",
+            mode: "reflect-guard-rejected",
+            result: { ok: true, reason: "EXCESSIVE_SHRINKAGE" },
+          },
+        ],
+      }),
+    );
+    expect(metrics.acceptedCount).toBe(1);
+    // Was 0 before the fix (the variant vanished); now 1.
+    expect(metrics.rejectedCount).toBe(1);
+    expect(metrics.errorCount).toBe(0);
+  });
+
   test("computeImproveRunMetrics is a pure helper consistent with recorded metrics", () => {
     const result = buildMinimalResult({
       plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],

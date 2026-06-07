@@ -5,6 +5,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { assertNever } from "../../core/assert";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AkmAssetType, daysToMs, isAssetType } from "../../core/common";
@@ -19,6 +20,7 @@ import type {
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
+import { classifyImproveAction } from "../../core/improve-types";
 import { getDbPath } from "../../core/paths";
 import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
@@ -1299,6 +1301,7 @@ function emitImproveCompletedEvent(
     reflectFailed: 0,
     reflectCooldown: 0,
     reflectSkipped: 0,
+    reflectGuardRejected: 0,
     distill: 0,
     distillSkipped: 0,
     memoryPrune: 0,
@@ -1306,7 +1309,16 @@ function emitImproveCompletedEvent(
     graphExtraction: 0,
     error: 0,
   };
+  // Coarse audit buckets, derived from the SAME classifyImproveAction the
+  // persisted metrics_json uses (state-db.ts#computeImproveRunMetrics) so the
+  // emitted event and the stored row can never disagree.
+  const classCounts = { accepted: 0, rejected: 0, error: 0, noop: 0 };
   for (const action of result.actions ?? []) {
+    classCounts[classifyImproveAction(action.mode)] += 1;
+    // Per-variant counters for the event metadata. The default arm makes any
+    // new ImproveActionMode variant a compile error so a future variant cannot
+    // be silently dropped from the improve_completed event (the `reflect-guard-
+    // rejected` case below was previously missing here entirely).
     switch (action.mode) {
       case "reflect":
         actionCounts.reflect += 1;
@@ -1319,6 +1331,9 @@ function emitImproveCompletedEvent(
         break;
       case "reflect-skipped":
         actionCounts.reflectSkipped += 1;
+        break;
+      case "reflect-guard-rejected":
+        actionCounts.reflectGuardRejected += 1;
         break;
       case "distill":
         actionCounts.distill += 1;
@@ -1338,6 +1353,8 @@ function emitImproveCompletedEvent(
       case "error":
         actionCounts.error += 1;
         break;
+      default:
+        assertNever(action.mode);
     }
   }
 
@@ -1360,6 +1377,12 @@ function emitImproveCompletedEvent(
         reflectFailedActions: actionCounts.reflectFailed,
         reflectCooldownActions: actionCounts.reflectCooldown,
         reflectSkippedActions: actionCounts.reflectSkipped,
+        // Previously dropped from the event entirely; now emitted so the guard
+        // rejections are visible in improve_completed telemetry.
+        reflectGuardRejectedActions: actionCounts.reflectGuardRejected,
+        acceptedActions: classCounts.accepted,
+        rejectedActions: classCounts.rejected,
+        noopActions: classCounts.noop,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,
         evalCasesWritten: result.evalCasesWritten ?? 0,
