@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   closeDatabase,
+  collectTagSetFromEntries,
   DB_VERSION,
   deleteEntriesByDir,
   getAllEntries,
@@ -789,6 +790,78 @@ describe("rebuildFts incremental", () => {
 
       rebuildFts(db, { incremental: true });
       expect(ftsCount(db)).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── collectTagSetFromEntries (WS5: lessons-coverage SQL moved out of cli.ts) ──
+//
+// Characterization test pinning the exact query results of the tag-collection
+// read that powers `akm lessons coverage`. The SQL + JSON-parse + tag
+// normalisation logic was lifted verbatim from cli.ts into indexer/db.ts so
+// the `entries` table SQL lives with all its siblings and cli.ts holds zero
+// raw SQL. These assertions capture the pre-move behaviour exactly.
+describe("collectTagSetFromEntries", () => {
+  function seedTagged(db: Database, key: string, type: StashEntry["type"], tags: unknown): number {
+    const entry = { description: `Description for ${key}`, type, tags } as unknown as StashEntry;
+    return upsertEntry(db, key, "/test/dir", `/test/dir/${key}.md`, "/test/stash", entry, key);
+  }
+
+  test("collects the union of all tags across all entries, normalised + deduped", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      seedTagged(db, "skill-a", "skill", ["Deploy", "networking"]);
+      seedTagged(db, "memory-b", "memory", ["AUTH", " deploy "]); // dup of deploy after trim/lower
+      seedTagged(db, "lesson-c", "lesson", ["deploy"]);
+
+      const all = collectTagSetFromEntries(db, undefined);
+      expect([...all].sort()).toEqual(["auth", "deploy", "networking"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("filters by entry_type when a type is provided", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      seedTagged(db, "skill-a", "skill", ["deploy", "networking"]);
+      seedTagged(db, "lesson-c", "lesson", ["deploy"]);
+
+      const lessonTags = collectTagSetFromEntries(db, "lesson");
+      expect([...lessonTags].sort()).toEqual(["deploy"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("skips entries with missing, non-array, or blank tags and malformed JSON", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      seedTagged(db, "no-tags", "skill", undefined);
+      seedTagged(db, "non-array", "skill", "deploy");
+      seedTagged(db, "blank", "skill", ["", "   "]);
+      seedTagged(db, "good", "skill", ["valid"]);
+      // Force malformed entry_json directly so the try/catch path is exercised.
+      db.prepare("UPDATE entries SET entry_json = ? WHERE entry_key = ?").run("{not json", "blank");
+
+      const tags = collectTagSetFromEntries(db, undefined);
+      expect([...tags].sort()).toEqual(["valid"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("returns an empty set when there are no entries", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      expect(collectTagSetFromEntries(db, undefined).size).toBe(0);
+      expect(collectTagSetFromEntries(db, "lesson").size).toBe(0);
     } finally {
       closeDatabase(db);
     }
