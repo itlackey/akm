@@ -2155,7 +2155,12 @@ async function runImprovePreparationStage(args: {
 }
 
 // TODO(refactor): 13 args including `actions`/`recentErrors` mutation channels. Restructure into immutable plan + mutable context objects — deferred to dedicated refactor with isolated testing.
-async function runImproveLoopStage(args: {
+/**
+ * Parameter object for {@link runImproveLoopStage} (WS10). Pure type reshape of
+ * the former inline arg struct — every field, name, and type is preserved so the
+ * function body and all runtime values are byte-identical. No control-flow change.
+ */
+export interface ImproveRunContext {
   scope: ImproveScope;
   options: AkmImproveOptions;
   primaryStashDir?: string;
@@ -2178,7 +2183,9 @@ async function runImproveLoopStage(args: {
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
   improveProfile: import("./improve-profiles").ImproveProfileConfig;
-}): Promise<ImproveLoopResult> {
+}
+
+async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoopResult> {
   const {
     scope,
     options,
