@@ -99,7 +99,7 @@ import "./text/import";
 import "./text/save";
 import "./text/enable-disable";
 import "./text/registry-commands";
-import "./text/vault";
+import "./text/env";
 
 // ── JSONL output (unchanged — not part of the formatPlain dispatch) ───────────
 
