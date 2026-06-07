@@ -33,6 +33,38 @@ interface SkillsShEntry {
   source: string;
 }
 
+// ── Cache DB lifecycle ────────────────────────────────────────────────────────
+
+/**
+ * RAII-style lifecycle helper for the registry cache DB. Opens the DB (treating
+ * a failed open exactly like the legacy fall-through: the bun-test isolation
+ * guard is re-thrown, any other failure yields `db = undefined`), runs `fn`,
+ * and guarantees the DB is closed in a `finally` after `fn` has fully settled
+ * (the await is required: the callbacks are async, and closing before they
+ * settle would tear the DB down mid-write).
+ */
+async function withRegistryCacheDb<T>(fn: (db: ReturnType<typeof openDatabase> | undefined) => Promise<T>): Promise<T> {
+  let db: ReturnType<typeof openDatabase> | undefined;
+  try {
+    db = openDatabase();
+  } catch (err) {
+    // Never mask the bun-test isolation guard as "DB unavailable".
+    rethrowIfTestIsolationError(err);
+    db = undefined;
+  }
+  try {
+    return await fn(db);
+  } finally {
+    if (db) {
+      try {
+        closeDatabase(db);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 // ── Provider class ──────────────────────────────────────────────────────────
 
 class SkillsShProvider implements RegistryProvider {
@@ -123,79 +155,72 @@ class SkillsShProvider implements RegistryProvider {
     // Build a stable DB cache key for this query
     const dbCacheKey = this.queryDbCacheKey(query, limit);
 
-    // ── Step 1: Try DB cache (index.db) ───────────────────────────────────
-    let db: ReturnType<typeof openDatabase> | undefined;
-    let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
-    try {
-      db = openDatabase();
-      dbCacheResult = getRegistryIndexCache(db, dbCacheKey, QUERY_CACHE_TTL_MS);
-    } catch (err) {
-      // Never mask the bun-test isolation guard as "DB unavailable" — see
-      // rethrowIfTestIsolationError in src/core/errors.ts. Without this,
-      // a leaky test silently gets a cold cache + fresh fetch instead of
-      // the loud TEST_ISOLATION_MISSING failure the guard intends.
-      rethrowIfTestIsolationError(err);
-      // index.db not available yet (pre-migration install or test env) — fall through
-    }
-
-    if (dbCacheResult) {
+    return withRegistryCacheDb(async (db) => {
+      // ── Step 1: Try DB cache (index.db) ───────────────────────────────────
+      let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
       try {
-        const parsed = JSON.parse(dbCacheResult.indexJson) as unknown;
-        if (Array.isArray(parsed)) {
-          const entries = (parsed as unknown[]).filter(isValidSkillsEntry);
-          if (db) closeDatabase(db);
-          return entries;
+        if (db) {
+          dbCacheResult = getRegistryIndexCache(db, dbCacheKey, QUERY_CACHE_TTL_MS);
         }
-      } catch {
-        /* corrupt DB entry — fall through */
-      }
-    }
-
-    // ── Step 2: Fetch from API ─────────────────────────────────────────────
-    const baseUrl = this.config.url.replace(/\/+$/, "");
-    const url = `${baseUrl}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`;
-
-    try {
-      const response = await fetchWithRetry(url, undefined, { timeout: 10_000, retries: 1 });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      } catch (err) {
+        // Never mask the bun-test isolation guard as "DB unavailable" — see
+        // rethrowIfTestIsolationError in src/core/errors.ts. Without this,
+        // a leaky test silently gets a cold cache + fresh fetch instead of
+        // the loud TEST_ISOLATION_MISSING failure the guard intends.
+        rethrowIfTestIsolationError(err);
+        // index.db not available yet (pre-migration install or test env) — fall through
       }
 
-      const data = (await response.json()) as unknown;
-      const entries = parseSkillsResponse(data);
-
-      // Write to DB cache (primary)
-      if (db) {
-        try {
-          upsertRegistryIndexCache(db, dbCacheKey, JSON.stringify(entries));
-        } catch {
-          /* best-effort */
-        }
-        closeDatabase(db);
-      }
-      return entries;
-    } catch (err) {
-      if (db) {
-        try {
-          closeDatabase(db);
-        } catch {
-          /* ignore */
-        }
-      }
-      // Fetch failed — use stale DB cache if available
       if (dbCacheResult) {
         try {
           const parsed = JSON.parse(dbCacheResult.indexJson) as unknown;
           if (Array.isArray(parsed)) {
             const entries = (parsed as unknown[]).filter(isValidSkillsEntry);
-            if (entries.length > 0) return entries;
+            return entries;
           }
         } catch {
-          /* ignore */
+          /* corrupt DB entry — fall through */
         }
       }
-      throw err;
-    }
+
+      // ── Step 2: Fetch from API ─────────────────────────────────────────────
+      const baseUrl = this.config.url.replace(/\/+$/, "");
+      const url = `${baseUrl}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`;
+
+      try {
+        const response = await fetchWithRetry(url, undefined, { timeout: 10_000, retries: 1 });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = (await response.json()) as unknown;
+        const entries = parseSkillsResponse(data);
+
+        // Write to DB cache (primary)
+        if (db) {
+          try {
+            upsertRegistryIndexCache(db, dbCacheKey, JSON.stringify(entries));
+          } catch {
+            /* best-effort */
+          }
+        }
+        return entries;
+      } catch (err) {
+        // Fetch failed — use stale DB cache if available
+        if (dbCacheResult) {
+          try {
+            const parsed = JSON.parse(dbCacheResult.indexJson) as unknown;
+            if (Array.isArray(parsed)) {
+              const entries = (parsed as unknown[]).filter(isValidSkillsEntry);
+              if (entries.length > 0) return entries;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        throw err;
+      }
+    });
   }
 
   private mapToHits(entries: SkillsShEntry[]): RegistrySearchHit[] {
