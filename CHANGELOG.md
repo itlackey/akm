@@ -38,6 +38,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Stored via additive migration `002-add-agent-identity` and surfaced on
   `WorkflowRunSummary.agentHarness` / `.agentSessionId`. This is the first concrete,
   scoped slice toward workflow session monitoring (#501).
+- **Workflow agent check-in + step-summary validation** (#506) — workflow runs now
+  use a file-signal / command-loop check-in model (no resident background thread, per
+  the ADR in `docs/technical/workflow-agent-checkin-adr.md`). `akm workflow start`
+  arms a durable check-in timestamp; `akm workflow complete --summary` now **requires**
+  a per-step summary and runs it through an LLM completion-criteria validation gate —
+  on failure the step stays pending and structured corrective feedback is returned
+  (`workflow-complete-rejected`). A pure `evaluateCheckin` surfaces a strong `continue`
+  directive through `getNextWorkflowStep` when an active run looks stalled. Migration
+  `002` adds `agent_harness`, `agent_session_id`, `checkin_armed_at` on
+  `workflow_runs` and `summary` on `workflow_run_steps`.
+- **Default improve profiles + scheduled task set** (#552) — three new bundled
+  profiles in `src/assets/profiles/` — `frequent` (extract + inference; distill /
+  consolidate excluded), `consolidate` (consolidation-only), and `catchup` (manual
+  recovery: consolidate + triage drain) — alongside the existing `default` / `quick` /
+  `thorough` / `memory-focus` / `graph-refresh`. `akm setup` and the new `akm tasks
+  init` register a multi-cadence task set **idempotently**: `akm-improve-frequent`
+  (60 min), `akm-improve-consolidate` (4 h), `akm-improve-nightly` (`thorough`, daily
+  2 am, server-gated), `akm-improve-catchup` (registered but unscheduled), and
+  `akm-graph-refresh-weekly` (Sun 3 am). Registration is CI-aware (skips when
+  `CI=true`) and asks a single "Is this a server install?" prompt to gate the nightly
+  task (default yes on Linux-without-battery, no on macOS/laptop).
 
 ### Design notes
 
@@ -81,12 +102,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   incomplete per-asset commits (~25 per improve run) and leaves no dirty
   working-tree residue.
 
+- **`improve/consolidate`: `minPoolSize` guard** (#553). Consolidation now skips
+  itself when the eligible memory pool is below `processes.consolidate.minPoolSize`
+  (default **500**), emitting a `consolidation_skipped` event with
+  `reason: pool_below_min_size` and making **zero** LLM calls — so the always-enabled
+  consolidate task self-activates only once a stash is large enough to have real
+  merge/contradiction candidates. `minPoolSize: 0` disables the guard. The skip
+  surfaces in `akm health` improve output. The bundled `consolidate` profile sets
+  `500`, `catchup` sets `0`.
+
+- **`improve/extract`: `minNewSessions` gate** (#554). The extract phase now counts
+  in-window, not-yet-seen candidate sessions **before** any LLM call and skips the
+  pass (emitting `extract_skipped` / `reason: below_min_new_sessions`, visible in
+  `akm health`) when the count is below `processes.extract.minNewSessions`. The
+  in-code default is **0 (disabled)**, so existing profiles keep always-run behaviour;
+  only the new `frequent` profile opts in with `3`. This removes the ~22% of improve
+  runs that previously ran the full `ensureIndex` + extract pipeline for zero new
+  sessions.
+
 ### Deprecated
 
 - **`options.pushOnCommit`** (#507). The per-asset push-on-commit knob is retired.
   Existing configs still parse — its push intent is mapped onto the batch push
   gate and a one-time deprecation warning is emitted when the option is
   encountered. Remove it and rely on `writable: true` + a configured remote.
+
+### Fixed
+
+- **Memory inference re-queued `hot` parents forever** (#550). `markParentProcessed`
+  was only called when a derived child was newly written; when the child already
+  existed (`written = 0`), the parent never got `inferenceProcessed: true` and was
+  re-queued on every `akm improve` run (~37 wasted LLM calls/run on one production
+  stash). The child-exists path now marks the parent done (a genuine write failure
+  still leaves it unmarked for retry), while `skippedChildExists` accounting is
+  unchanged.
+- **Auto-accept rejected truncated LLM descriptions** (#556). ~9.3% of proposals
+  failed auto-accept validation because the LLM cut the description mid-clause (ending
+  in `to`/`for`/`and`/a comma/etc.) or lost a YAML continuation line. A deterministic
+  post-generation repair pass (`repairTruncatedDescription` in
+  `src/core/text-truncation.ts`) now trims the truncated fragment to the last complete
+  clause or swaps in the first complete sentence from the body — never fabricating
+  text — wired into the extract and distill proposal-write paths before validation.
+  Already-valid descriptions pass through byte-identical. (Plus a one-line prompt
+  tightening requiring a complete sentence.)
+- **Semantic index verification stuck on stashes with vault entries** (#502).
+  Verification compared the stored embedding count against the *full* entry count, but
+  the embedding phase intentionally excludes vault rows — so any index with vault
+  entries reported `embeddingCount < totalEntries` forever and stayed in
+  semantic-blocked / verification-failed state. A new `getEmbeddableEntryCount`
+  (`entry_type != 'vault'`) now feeds the zero-entry short-circuit, the readiness gate,
+  the "Semantic search ready (X/Y)" message, and the persisted `entryCount`; a
+  genuinely missing embedding on an embeddable entry still reports `ok:false`.
+
+### Internal
+
+- **#490 architecture refactor.** Decomposed `src/cli.ts` from **4,589 → 620 LOC**
+  across 16 per-family command modules under `src/commands/*-cli.ts` (adopting a
+  `defineJsonCommand` factory for byte-identical JSON envelopes); converted `akm
+  health` checks to an ordered `HealthCheck` registry; and turned the
+  `migrate-storage` bin's 54 hand-rolled `recordStep` sites into a `MigrationStep`
+  registry with 3 recursive copy helpers unified into one `copyTree`. Shipped as
+  serialized local merges with a zero-behaviour-change contract (byte-identical CLI
+  surface + JSON envelopes), each gated and reviewed; the secret-migrating
+  `migrate-storage` change is pinned by a sha256 + file-mode fixture-stash
+  differential test.
 
 ## [0.8.2] - 2026-06-05
 
