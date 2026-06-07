@@ -14,6 +14,7 @@
  * `./spawn.ts`).
  */
 import type { AgentProfileConfigV2, AkmConfig } from "../../core/config/config";
+import { VALID_HARNESS_IDS } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import {
@@ -214,7 +215,8 @@ export function listResolvedAgentProfiles(config?: AkmConfig): AgentProfile[] {
 export function parseAgentProfilesMapV2(value: unknown): Record<string, AgentProfileConfigV2> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const out: Record<string, AgentProfileConfigV2> = {};
-  const VALID_PLATFORMS = ["opencode", "claude", "opencode-sdk"] as const;
+  // Derives from the canonical harness-id source of truth (#565).
+  const VALID_PLATFORMS = VALID_HARNESS_IDS;
   for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       warn(`[akm] Ignoring profiles.agent["${name}"]: expected an object.`);

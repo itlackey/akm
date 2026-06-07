@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { HarnessId } from "../core/config/config";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 
@@ -398,7 +399,9 @@ function findGitRepoRoot(start: string): string | undefined {
 
 // ── Aggregate Environment Detection ──────────────────────────────────────────
 
-export type DetectedHarness = "opencode-sdk" | "opencode" | "claude" | "none";
+// Derives from the canonical harness-id source of truth (#565) plus the
+// "none" fallback for when no harness is detected.
+export type DetectedHarness = HarnessId | "none";
 
 export interface DetectedEnvironment {
   /** Best available agent harness, in priority order. */
