@@ -172,6 +172,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -292,6 +296,10 @@
                           "type": "string",
                           "minLength": 1
                         }
+                      },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "qualityGate": {
                         "type": "object",
@@ -414,6 +422,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -534,6 +546,10 @@
                           "type": "string",
                           "minLength": 1
                         }
+                      },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "qualityGate": {
                         "type": "object",
@@ -656,6 +672,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -777,6 +797,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -897,6 +921,10 @@
                           "type": "string",
                           "minLength": 1
                         }
+                      },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "qualityGate": {
                         "type": "object",
@@ -1636,6 +1664,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1756,6 +1788,10 @@
                               "type": "string",
                               "minLength": 1
                             }
+                          },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "qualityGate": {
                             "type": "object",
@@ -1878,6 +1914,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1998,6 +2038,10 @@
                               "type": "string",
                               "minLength": 1
                             }
+                          },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "qualityGate": {
                             "type": "object",
@@ -2120,6 +2164,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2241,6 +2289,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2361,6 +2413,10 @@
                               "type": "string",
                               "minLength": 1
                             }
+                          },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "qualityGate": {
                             "type": "object",
@@ -3082,6 +3138,10 @@
             "minLength": 1
           }
         },
+        "minPoolSize": {
+          "type": "integer",
+          "minimum": 0
+        },
         "qualityGate": {
           "type": "object",
           "properties": {
@@ -3213,6 +3273,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3333,6 +3397,10 @@
                     "type": "string",
                     "minLength": 1
                   }
+                },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "qualityGate": {
                   "type": "object",
@@ -3455,6 +3523,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3575,6 +3647,10 @@
                     "type": "string",
                     "minLength": 1
                   }
+                },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "qualityGate": {
                   "type": "object",
@@ -3697,6 +3773,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3818,6 +3898,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3938,6 +4022,10 @@
                     "type": "string",
                     "minLength": 1
                   }
+                },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "qualityGate": {
                   "type": "object",

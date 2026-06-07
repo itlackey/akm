@@ -3,7 +3,7 @@
   "processes": {
     "reflect": { "enabled": false },
     "distill": { "enabled": false },
-    "consolidate": { "enabled": true, "allowedTypes": ["memory"], "maxChunkSize": 50 },
+    "consolidate": { "enabled": true, "allowedTypes": ["memory"], "maxChunkSize": 50, "minPoolSize": 0 },
     "memoryInference": { "enabled": false },
     "graphExtraction": { "enabled": false },
     "extract": { "enabled": false },

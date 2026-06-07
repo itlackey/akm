@@ -154,6 +154,14 @@ export interface ImproveProcessConfig {
    */
   maxChunkSize?: number;
   /**
+   * Minimum eligible-memory pool size for the consolidation pass. When the
+   * eligible pool is below this threshold the pass skips entirely (emitting an
+   * `improve_skipped` event with `reason: "pool_below_min_size"`) and makes
+   * ZERO LLM calls. `0` disables the guard. Absent = default 500. Only
+   * meaningful on the `consolidate` process.
+   */
+  minPoolSize?: number;
+  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.

@@ -1702,6 +1702,22 @@ async function runConsolidationPass(args: {
   // Profile gate: if profile explicitly disables consolidate, skip the entire pass.
   const consolidateDisabledByProfile = improveProfile?.processes?.consolidate?.enabled === false;
 
+  // #553 minPoolSize guard: skip consolidation when the eligible memory pool is
+  // below a minimum size, rather than spending an LLM pass on a handful of
+  // memories. This is an INDEPENDENT skip condition from #551's mtime pool-delta
+  // gate — either can skip. Default 500; `minPoolSize: 0` disables the guard.
+  // Evaluated against the eligible-pool count BEFORE entering the LLM loop so a
+  // skip costs ZERO LLM calls.
+  const CONSOLIDATE_DEFAULT_MIN_POOL_SIZE = 500;
+  const configuredMinPoolSize = improveProfile?.processes?.consolidate?.minPoolSize;
+  const minPoolSize =
+    typeof configuredMinPoolSize === "number" ? configuredMinPoolSize : CONSOLIDATE_DEFAULT_MIN_POOL_SIZE;
+  const eligiblePoolSize = typeof memorySummary.eligible === "number" ? memorySummary.eligible : 0;
+  // volumeTriggered means the pool already exceeds the volume threshold (100),
+  // so a force-triggered run never trips the pool-size guard. The guard only
+  // engages when minPoolSize > 0 and the eligible pool is strictly below it.
+  const poolBelowMinSize = !volumeTriggered && minPoolSize > 0 && eligiblePoolSize < minPoolSize;
+
   let consolidation: ConsolidateResult = {
     schemaVersion: 1,
     ok: true,
@@ -1733,6 +1749,23 @@ async function runConsolidationPass(args: {
 
   if (consolidateDisabledByProfile) {
     info("[improve] consolidation skipped (disabled by improve profile)");
+  } else if (poolBelowMinSize) {
+    // #553: eligible pool below the configured minimum — skip with zero LLM
+    // calls. Reuse the #551 `improve_skipped` emission path so health surfaces
+    // it via the dynamic skipReasons aggregation under `pool_below_min_size`.
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: "memory:_consolidation",
+        metadata: {
+          reason: "pool_below_min_size",
+          poolSize: eligiblePoolSize,
+          minPoolSize,
+        },
+      },
+      eventsCtx,
+    );
+    info(`[improve] consolidation skipped (pool ${eligiblePoolSize} < minPoolSize ${minPoolSize})`);
   } else if (!consolidationOnCooldown) {
     consolidation = await akmConsolidate({
       ...options.consolidateOptions,
@@ -1803,7 +1836,8 @@ async function runConsolidationPass(args: {
   }
 
   // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
-  const consolidationRan = !consolidateDisabledByProfile && !consolidationOnCooldown && consolidation.processed > 0;
+  const consolidationRan =
+    !consolidateDisabledByProfile && !poolBelowMinSize && !consolidationOnCooldown && consolidation.processed > 0;
 
   return { consolidation, consolidationRan, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
 }

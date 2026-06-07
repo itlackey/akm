@@ -45,11 +45,13 @@ describe("default improve profiles (#552)", () => {
     expect(p.sync?.push).toBe(true);
   });
 
-  test("consolidate resolves to consolidation-only with maxChunkSize 25", () => {
+  test("consolidate resolves to consolidation-only with maxChunkSize 25 and minPoolSize 500", () => {
     const p = resolveImproveProfile("consolidate", MINIMAL_CONFIG);
     expect(p.processes?.consolidate?.enabled).toBe(true);
     expect(p.processes?.consolidate?.allowedTypes).toEqual(["memory"]);
     expect(p.processes?.consolidate?.maxChunkSize).toBe(25);
+    // #553: consolidate profile sets the production guard threshold.
+    expect(p.processes?.consolidate?.minPoolSize).toBe(500);
     expect(p.processes?.reflect?.enabled).toBe(false);
     expect(p.processes?.distill?.enabled).toBe(false);
     expect(p.processes?.memoryInference?.enabled).toBe(false);
@@ -63,6 +65,8 @@ describe("default improve profiles (#552)", () => {
     const p = resolveImproveProfile("catchup", MINIMAL_CONFIG);
     expect(p.processes?.consolidate?.enabled).toBe(true);
     expect(p.processes?.consolidate?.maxChunkSize).toBe(50);
+    // #553: catchup disables the pool-size guard (drain regardless of pool size).
+    expect(p.processes?.consolidate?.minPoolSize).toBe(0);
     expect(p.processes?.triage?.enabled).toBe(true);
     expect(p.processes?.triage?.applyMode).toBe("queue");
     expect(p.processes?.triage?.policy).toBe("personal-stash");
@@ -75,13 +79,19 @@ describe("default improve profiles (#552)", () => {
     expect(p.sync?.push).toBe(true);
   });
 
-  test("none of the new profiles carry keys the loader/type does not support yet", () => {
-    // minPoolSize / minNewSessions are added by #553/#554 — they must NOT be in
-    // these JSONs so this branch type-checks and validates standalone.
+  test("minPoolSize (#553) lives only on the consolidate-bearing profiles, not frequent", () => {
+    // #553 added `minPoolSize` to consolidate.json (500) and catchup.json (0).
+    // It must NOT leak into `frequent` (which disables consolidate entirely).
+    expect(JSON.stringify(profileFrequent)).not.toContain("minPoolSize");
+    expect(JSON.stringify(profileConsolidate)).toContain("minPoolSize");
+    expect(JSON.stringify(profileCatchup)).toContain("minPoolSize");
+  });
+
+  test("minNewSessions (#554) is not yet present in any of the new profiles", () => {
+    // minNewSessions is added by #554 — it must NOT be in these JSONs so this
+    // branch type-checks and validates standalone until that issue lands.
     for (const raw of [profileFrequent, profileConsolidate, profileCatchup]) {
-      const json = JSON.stringify(raw);
-      expect(json).not.toContain("minPoolSize");
-      expect(json).not.toContain("minNewSessions");
+      expect(JSON.stringify(raw)).not.toContain("minNewSessions");
     }
   });
 });
