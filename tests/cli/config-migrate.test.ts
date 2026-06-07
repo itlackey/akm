@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { migrateConfigShape } from "../../src/cli/config-migrate";
-import { CURRENT_CONFIG_VERSION, migrateConfigShape as migrateConfigShapeCore } from "../../src/core/config-migration";
+import {
+  CURRENT_CONFIG_VERSION,
+  migrateConfigShape as migrateConfigShapeCore,
+} from "../../src/core/config/config-migration";
 import { setQuiet } from "../../src/core/warn";
 
 describe("migrateConfigShape (CLI wrapper)", () => {

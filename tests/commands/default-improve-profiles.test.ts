@@ -15,7 +15,7 @@ import profileConsolidate from "../../src/assets/profiles/consolidate.json";
 import profileFrequent from "../../src/assets/profiles/frequent.json";
 import { resolveImproveProfile } from "../../src/commands/improve/improve-profiles";
 import type { AkmConfig } from "../../src/core/config";
-import { ImproveProfileConfigSchema } from "../../src/core/config-schema";
+import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 
 const MINIMAL_CONFIG: AkmConfig = { semanticSearchMode: "off" };
 

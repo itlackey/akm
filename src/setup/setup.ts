@@ -34,7 +34,7 @@ import {
   loadUserConfig,
   saveConfig,
 } from "../core/config";
-import { backupExistingConfig } from "../core/config-io";
+import { backupExistingConfig } from "../core/config/config-io";
 import { ConfigError, UsageError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";

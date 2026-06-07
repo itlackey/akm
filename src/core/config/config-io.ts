@@ -15,10 +15,10 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "./common";
-import { ConfigError } from "./errors";
-import { probeLock, releaseLock, tryAcquireLockSync } from "./file-lock";
-import { getCacheDir, getConfigDir } from "./paths";
+import { writeFileAtomic } from "../common";
+import { ConfigError } from "../errors";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../file-lock";
+import { getCacheDir, getConfigDir } from "../paths";
 
 /**
  * Read the raw text of a config file. Returns `undefined` when the file does

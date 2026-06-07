@@ -10,7 +10,7 @@
  * want to import Zod just to get a type. Keep the two in sync — `bunx tsc`
  * will surface the drift through call-site errors.
  */
-import type { InstalledStashEntry } from "../registry/types";
+import type { InstalledStashEntry } from "../../registry/types";
 
 /**
  * Fields shared by every OpenAI-compatible connection config (embedding +

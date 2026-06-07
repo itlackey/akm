@@ -14,7 +14,7 @@
  * new shape. There are no backward-compat shims after this migration.
  */
 
-import { warn } from "./warn";
+import { warn } from "../warn";
 
 /**
  * Current config schema version sentinel.

@@ -21,7 +21,7 @@ import { hasSubcommand } from "../cli/parse-args";
 import { defineJsonCommand, output } from "../cli/shared";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, DEFAULT_CONFIG, getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
-import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config-walker";
+import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { UsageError } from "../core/errors";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
 

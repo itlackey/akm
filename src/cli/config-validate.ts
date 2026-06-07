@@ -10,8 +10,8 @@
  * Exits non-zero on errors so it composes well in CI hooks.
  */
 import fs from "node:fs";
-import { parseConfigText } from "../core/config-io";
-import { validateConfigShape } from "../core/config-schema";
+import { parseConfigText } from "../core/config/config-io";
+import { validateConfigShape } from "../core/config/config-schema";
 import { ConfigError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
 

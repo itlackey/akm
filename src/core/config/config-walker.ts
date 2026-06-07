@@ -22,8 +22,8 @@
  *   - z.record(...)        → JSON-parse value, validate
  */
 import { z } from "zod";
+import { UsageError } from "../errors";
 import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
-import { UsageError } from "./errors";
 
 type Path = string[];
 
