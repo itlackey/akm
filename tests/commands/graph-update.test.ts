@@ -3,15 +3,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmGraphUpdate } from "../../src/commands/graph";
-import type { AkmConfig } from "../../src/core/config";
 import { saveConfig } from "../../src/core/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";
 import { replaceStoredGraph } from "../../src/indexer/graph-db";
-import type { GraphExtractionPassOptions, GraphExtractionResult } from "../../src/indexer/graph-extraction";
+import type {
+  GraphExtractionPassContext,
+  GraphExtractionPassOptions,
+  GraphExtractionResult,
+} from "../../src/indexer/graph-extraction";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search-fields";
-import type { SearchSource } from "../../src/indexer/search-source";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
@@ -154,15 +156,7 @@ describe("akmGraphUpdate", () => {
     let capturedOptions: GraphExtractionPassOptions | undefined;
 
     const result = await akmGraphUpdate({
-      graphExtractionFn: async (
-        _config: AkmConfig,
-        _sources: SearchSource[],
-        _signal?: AbortSignal,
-        _db?: unknown,
-        _reEnrich?: boolean,
-        _onProgress?: unknown,
-        options: GraphExtractionPassOptions = {},
-      ) => {
+      graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(2);
       },
@@ -186,15 +180,7 @@ describe("akmGraphUpdate", () => {
 
     const result = await akmGraphUpdate({
       refs: ["knowledge:k1"],
-      graphExtractionFn: async (
-        _config: AkmConfig,
-        _sources: SearchSource[],
-        _signal?: AbortSignal,
-        _db?: unknown,
-        _reEnrich?: boolean,
-        _onProgress?: unknown,
-        options: GraphExtractionPassOptions = {},
-      ) => {
+      graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(1);
       },
@@ -215,15 +201,7 @@ describe("akmGraphUpdate", () => {
 
     const result = await akmGraphUpdate({
       refs: ["knowledge:k1", "memory:m1"],
-      graphExtractionFn: async (
-        _config: AkmConfig,
-        _sources: SearchSource[],
-        _signal?: AbortSignal,
-        _db?: unknown,
-        _reEnrich?: boolean,
-        _onProgress?: unknown,
-        options: GraphExtractionPassOptions = {},
-      ) => {
+      graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(2);
       },
@@ -265,15 +243,7 @@ describe("akmGraphUpdate", () => {
 
     const result = await akmGraphUpdate({
       refs: ["knowledge:k1", "knowledge:ghost-ref"],
-      graphExtractionFn: async (
-        _config: AkmConfig,
-        _sources: SearchSource[],
-        _signal?: AbortSignal,
-        _db?: unknown,
-        _reEnrich?: boolean,
-        _onProgress?: unknown,
-        options: GraphExtractionPassOptions = {},
-      ) => {
+      graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(1);
       },

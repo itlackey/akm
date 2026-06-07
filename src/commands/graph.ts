@@ -607,7 +607,15 @@ export async function akmGraphUpdate(options: {
       warn(`[graph] extracting ${event.processed}/${event.total} ${file}`);
     };
 
-    const result = await extractionFn(config, sources, undefined, db, false, onProgress, passOptions);
+    const result = await extractionFn({
+      config,
+      sources,
+      signal: undefined,
+      db,
+      reEnrich: false,
+      onProgress,
+      options: passOptions,
+    });
     const durationMs = Date.now() - startMs;
 
     return {

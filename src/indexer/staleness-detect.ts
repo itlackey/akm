@@ -49,7 +49,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../core/asset-serialize";
 import { concurrentMap } from "../core/concurrent";
-import type { AkmConfig } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { resolveValidationRunner } from "../integrations/agent/runner";
@@ -57,7 +56,7 @@ import { type ChatMessage, chatCompletion } from "../llm/client";
 import { isProcessEnabled } from "../llm/feature-gate";
 import { findEntryIdByRef } from "./db";
 import { withLlmCache } from "./llm-cache";
-import type { SearchSource } from "./search-source";
+import type { PassContext } from "./pass-context";
 import { walkMarkdownFiles } from "./walker";
 
 /** Frontmatter keys this pass touches. Constants so a future rename only needs to touch one site. */
@@ -106,12 +105,8 @@ interface CachedDecision {
  * Top-level entry point. Returns a zero-counters result when the feature is
  * disabled or no validation-tier runner is configured.
  */
-export async function runStalenessDetectionPass(
-  config: AkmConfig,
-  sources: SearchSource[],
-  signal?: AbortSignal,
-  db?: Database,
-): Promise<StalenessDetectionResult> {
+export async function runStalenessDetectionPass(ctx: PassContext): Promise<StalenessDetectionResult> {
+  const { config, sources, signal, db } = ctx;
   const start = Date.now();
   const result: StalenessDetectionResult = {
     considered: 0,
