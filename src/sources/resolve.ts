@@ -12,8 +12,8 @@ import {
 } from "../core/asset-spec";
 import { hasErrnoCode, isWithin } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
-import { runMatchers } from "../indexer/file-context";
-import { walkStashFlat } from "../indexer/walker";
+import { runMatchers } from "../indexer/walk/file-context";
+import { walkStashFlat } from "../indexer/walk/walker";
 
 /**
  * Resolve an asset path from a stash directory, type, and name.

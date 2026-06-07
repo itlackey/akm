@@ -10,7 +10,7 @@ import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
 import { closeDatabase, openExistingDatabase } from "../indexer/db";
-import { resolveSourceEntries } from "../indexer/search-source";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { resolveAssetPath } from "../sources/resolve";
 import type {

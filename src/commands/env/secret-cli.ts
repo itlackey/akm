@@ -28,7 +28,7 @@ import { loadConfig } from "../../core/config";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { resolveSourceEntries } from "../../indexer/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg } from "../../output/context";
 
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);

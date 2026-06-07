@@ -18,14 +18,14 @@ import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isTransientStashPath } from "../../core/paths";
 import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db";
-import { searchLocal } from "../../indexer/db-search";
-import type { StashEntryScope } from "../../indexer/metadata";
-import { resolveSourceEntries } from "../../indexer/search-source";
+import type { StashEntryScope } from "../../indexer/passes/metadata";
+import { searchLocal } from "../../indexer/search/db-search";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
 import "../../sources/providers/index";
-import { insertUsageEvent } from "../../indexer/usage-events";
+import { insertUsageEvent } from "../../indexer/usage/usage-events";
 import type {
   AkmSearchType,
   BeliefFilterMode,

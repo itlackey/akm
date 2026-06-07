@@ -17,15 +17,15 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { buildActionFromContributors, defaultActionContributors } from "../core/action-contributors";
-import { makeAssetRef } from "../core/asset-ref";
-import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-registry";
-import type { AkmAssetType } from "../core/common";
-import type { AkmConfig, ImproveConfig } from "../core/config";
-import { getDbPath } from "../core/paths";
-import { warn } from "../core/warn";
-import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../sources/types";
-import { getCurrentWorkflowScopeKey } from "../workflows/scope-key";
+import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
+import { makeAssetRef } from "../../core/asset-ref";
+import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset-registry";
+import type { AkmAssetType } from "../../core/common";
+import type { AkmConfig, ImproveConfig } from "../../core/config";
+import { getDbPath } from "../../core/paths";
+import { warn } from "../../core/warn";
+import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
+import { getCurrentWorkflowScopeKey } from "../../workflows/scope-key";
 import {
   closeDatabase,
   getAllEntries,
@@ -37,16 +37,16 @@ import {
   sanitizeFtsQuery,
   searchFts,
   searchVec,
-} from "./db";
-import { ensureIndex } from "./ensure-index";
+} from "../db";
+import { ensureIndex } from "../ensure-index";
 import {
   collectGraphRelatedHit,
   computeGraphBoost,
   type GraphBoostContext,
   loadGraphBoostContext,
-} from "./graph-boost";
-import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
-import { resolveProjectContext } from "./project-context";
+} from "../graph/graph-boost";
+import { isProposedQuality, type StashEntry, type StashEntryScope } from "../passes/metadata";
+import { resolveProjectContext } from "../walk/project-context";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -528,7 +528,7 @@ async function tryVecScores(
   if (hasEmbeddings !== "1") return null;
 
   try {
-    const { embed } = await import("../llm/embedder.js");
+    const { embed } = await import("../../llm/embedder.js");
     const queryEmbedding = await embed(query, config.embedding);
     const vecResults = searchVec(db, queryEmbedding, k);
 

@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { closeDatabase, openDatabase } from "../src/indexer/db";
-import { replaceStoredGraph } from "../src/indexer/graph-db";
-import type { GraphFile } from "../src/indexer/graph-extraction";
+import { replaceStoredGraph } from "../src/indexer/db/graph-db";
+import type { GraphFile } from "../src/indexer/graph/graph-extraction";
 
 function usage(): never {
   throw new Error(

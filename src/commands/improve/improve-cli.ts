@@ -10,7 +10,7 @@ import { loadConfig } from "../../core/config";
 import { UsageError } from "../../core/errors";
 import { getCacheDir } from "../../core/paths";
 import { clearLogFile, setLogFile } from "../../core/warn";
-import { resolveSourceEntries } from "../../indexer/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, getHyphenatedBoolean, parseFlagValue } from "../../output/context";
 import { akmImprove } from "./improve";
 import {

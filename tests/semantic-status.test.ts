@@ -13,7 +13,7 @@ import {
   readSemanticStatus,
   type SemanticSearchStatus,
   writeSemanticStatus,
-} from "../src/indexer/semantic-status";
+} from "../src/indexer/search/semantic-status";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 

@@ -44,7 +44,7 @@ import {
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
-} from "../indexer/semantic-status";
+} from "../indexer/search/semantic-status";
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";

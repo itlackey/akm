@@ -15,9 +15,9 @@ import type {
 } from "../commands/improve/memory/memory-improve";
 import type { AkmReflectResult } from "../commands/improve/reflect";
 import type { DeadUrl } from "../commands/url-checker";
-import type { GraphExtractionResult } from "../indexer/graph-extraction";
-import type { MemoryInferenceResult } from "../indexer/memory-inference";
-import type { StalenessDetectionResult } from "../indexer/staleness-detect";
+import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
+import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
+import type { StalenessDetectionResult } from "../indexer/passes/staleness-detect";
 
 export interface ImproveEligibleRef {
   ref: string;

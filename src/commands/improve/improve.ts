@@ -41,13 +41,13 @@ import {
   openExistingDatabase,
 } from "../../indexer/db";
 import { ensureIndex } from "../../indexer/ensure-index";
-import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph-extraction";
+import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { akmIndex } from "../../indexer/indexer";
-import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/memory-inference";
-import { resolveAssetPath } from "../../indexer/path-resolver";
-import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search-source";
-import { runStalenessDetectionPass, type StalenessDetectionResult } from "../../indexer/staleness-detect";
-import { countUsageEventsByType } from "../../indexer/usage-events";
+import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
+import { runStalenessDetectionPass, type StalenessDetectionResult } from "../../indexer/passes/staleness-detect";
+import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
+import { countUsageEventsByType } from "../../indexer/usage/usage-events";
+import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";

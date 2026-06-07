@@ -28,10 +28,10 @@ import path from "node:path";
 import { resetConfigCache } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase, setMeta, upsertEntry } from "../src/indexer/db";
-import { loadGraphBoostContext, resetGraphBoostCache } from "../src/indexer/graph-boost";
-import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
-import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph-extraction";
-import { buildSearchText } from "../src/indexer/search-fields";
+import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/db/graph-db";
+import { loadGraphBoostContext, resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
+import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph/graph-extraction";
+import { buildSearchText } from "../src/indexer/search/search-fields";
 import { type Cleanup, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────

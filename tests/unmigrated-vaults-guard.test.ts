@@ -16,7 +16,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { _resetUnmigratedVaultsGuardForTests, warnOnUnmigratedVaults } from "../src/indexer/unmigrated-vaults-guard";
+import {
+  _resetUnmigratedVaultsGuardForTests,
+  warnOnUnmigratedVaults,
+} from "../src/indexer/usage/unmigrated-vaults-guard";
 
 let tmp: string;
 

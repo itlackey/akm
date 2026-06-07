@@ -27,7 +27,7 @@ import {
   upsertEmbedding,
   upsertEntry,
 } from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { StashEntry } from "../src/indexer/passes/metadata";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────

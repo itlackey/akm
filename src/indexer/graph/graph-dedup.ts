@@ -10,7 +10,7 @@
  * that stub the LLM layer.
  */
 
-import type { GraphExtraction, GraphRelation } from "../llm/graph-extract";
+import type { GraphExtraction, GraphRelation } from "../../llm/graph-extract";
 
 export type { GraphExtraction, GraphRelation };
 

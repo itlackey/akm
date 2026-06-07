@@ -542,7 +542,7 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
           density: 0,
         },
         warnings: [],
-      } satisfies import("../../src/indexer/graph-extraction").GraphExtractionResult;
+      } satisfies import("../../src/indexer/graph/graph-extraction").GraphExtractionResult;
     };
 
     // Run with consolidation enabled to trigger the D9 reindex path

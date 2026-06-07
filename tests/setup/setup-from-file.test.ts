@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ConfigError } from "../../src/core/errors";
-import { resetGraphBoostCache } from "../../src/indexer/graph-boost";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { loadSetupConfigFromFile } from "../../src/setup/setup";
 import { runCliCapture } from "../_helpers/cli";

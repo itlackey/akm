@@ -15,8 +15,8 @@ import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { getDefaultLlmConfig, loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
-import type { StashEntryScope } from "../indexer/metadata";
-import { SCOPE_KEYS } from "../indexer/metadata";
+import type { StashEntryScope } from "../indexer/passes/metadata";
+import { SCOPE_KEYS } from "../indexer/passes/metadata";
 import { parseFlagValue } from "../output/context";
 
 /**

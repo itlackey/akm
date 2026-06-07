@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import type { AkmConfig } from "../core/config";
-import type { SearchSource } from "./search-source";
+import type { AkmConfig } from "../../core/config";
+import type { SearchSource } from "../search/search-source";
 
 /**
  * Parameter object shared by the three indexer pass functions

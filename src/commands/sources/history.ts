@@ -25,7 +25,7 @@ import { type EventsContext, readEvents } from "../../core/events";
 import { listProposals } from "../../core/proposals";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db";
-import { getUsageEvents, type UsageEventRow } from "../../indexer/usage-events";
+import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

@@ -10,9 +10,9 @@ import { saveConfig } from "../../src/core/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
 import { setQuiet } from "../../src/core/warn";
-import type { GraphExtractionResult } from "../../src/indexer/graph-extraction";
+import type { GraphExtractionResult } from "../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { MemoryInferenceResult } from "../../src/indexer/memory-inference";
+import type { MemoryInferenceResult } from "../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
 
 const tempDirs: string[] = [];

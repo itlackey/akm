@@ -11,9 +11,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { toPosix } from "../core/common";
-import { parseFrontmatter } from "../core/frontmatter";
-import type { ShowResponse, SourceSearchHit } from "../sources/types";
+import { toPosix } from "../../core/common";
+import { parseFrontmatter } from "../../core/frontmatter";
+import type { ShowResponse, SourceSearchHit } from "../../sources/types";
 
 // ── FileContext ──────────────────────────────────────────────────────────────
 
@@ -191,7 +191,7 @@ async function ensureBuiltinsRegistered(): Promise<void> {
   if (!builtinsPromise) {
     builtinsPromise = (async () => {
       const { registerBuiltinMatchers } = await import("./matchers.js");
-      const { registerBuiltinRenderers } = await import("../output/renderers.js");
+      const { registerBuiltinRenderers } = await import("../../output/renderers.js");
       registerBuiltinMatchers();
       registerBuiltinRenderers();
     })();

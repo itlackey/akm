@@ -9,9 +9,9 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import type { StashEntry } from "../src/indexer/metadata";
-import type { RankedEntryInput } from "../src/indexer/ranking";
-import { applyScoreContributors } from "../src/indexer/ranking-contributors";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { RankedEntryInput } from "../src/indexer/search/ranking";
+import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
 
 function makeLesson(name: string, lessonStrength?: number): RankedEntryInput {
   const entry: StashEntry = { name, type: "lesson" };

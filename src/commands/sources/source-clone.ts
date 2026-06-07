@@ -12,7 +12,7 @@ import {
   getPrimarySource,
   resolveSourceEntries,
   type SearchSource,
-} from "../../indexer/search-source";
+} from "../../indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { resolveAssetPath } from "../../sources/resolve";

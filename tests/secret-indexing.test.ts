@@ -16,7 +16,7 @@ import path from "node:path";
 import { setSecret } from "../src/commands/env/secret";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";

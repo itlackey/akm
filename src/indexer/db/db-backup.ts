@@ -29,7 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { warn } from "../core/warn";
+import { warn } from "../../core/warn";
 
 export interface BackupOptions {
   /** Absolute path to the live data directory to back up. */

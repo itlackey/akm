@@ -22,7 +22,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { resetGraphBoostCache } from "../../src/indexer/graph-boost";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { runCliCapture } from "../_helpers/cli";
 import { withEnv } from "../_helpers/sandbox";

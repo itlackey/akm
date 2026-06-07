@@ -12,7 +12,7 @@
  * so it can be safely imported by both db.ts and indexer.ts.
  */
 
-import type { StashEntry } from "./metadata";
+import type { StashEntry } from "../passes/metadata";
 
 /**
  * Return per-field search text for multi-column FTS5 indexing.

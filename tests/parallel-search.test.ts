@@ -15,7 +15,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { StashEntry } from "../src/indexer/passes/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import type { SourceSearchHit } from "../src/sources/types";
 import {

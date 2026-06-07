@@ -24,7 +24,7 @@ import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { loadConfig, saveConfig } from "../../src/core/config";
 import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
-import { loadStashFile } from "../../src/indexer/metadata";
+import { loadStashFile } from "../../src/indexer/passes/metadata";
 import type { SearchHit, SourceSearchHit } from "../../src/sources/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

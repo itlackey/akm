@@ -13,10 +13,10 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { AkmConfig } from "../core/config";
-import type { GraphExtractionResult } from "./graph-extraction";
-import type { SearchSource } from "./search-source";
-import type { SemanticSearchReason } from "./semantic-status";
+import type { AkmConfig } from "../../core/config";
+import type { GraphExtractionResult } from "../graph/graph-extraction";
+import type { SearchSource } from "../search/search-source";
+import type { SemanticSearchReason } from "../search/semantic-status";
 
 /** Timing accumulator written by each phase. All values are in milliseconds. */
 export interface IndexTiming {
@@ -83,7 +83,7 @@ export interface IndexRunContext {
     dirPath: string;
     files: string[];
     currentStashDir: string;
-    stash: import("./metadata").StashFile;
+    stash: import("../passes/metadata").StashFile;
   }>;
   /** Result from the embedding phase. */
   embeddingResult: {

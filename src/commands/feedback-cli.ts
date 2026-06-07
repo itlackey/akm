@@ -21,8 +21,8 @@ import {
   openExistingDatabase,
 } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage-events";
+import { resolveSourceEntries } from "../indexer/search/search-source";
+import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 

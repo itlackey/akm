@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import { type DbSearchResult, getUtilityScoresByIds } from "./db";
-import type { GraphBoostContext } from "./graph-boost";
-import type { StashEntry } from "./metadata";
-import type { ProjectContext } from "./project-context";
+import { type DbSearchResult, getUtilityScoresByIds } from "../db";
+import type { GraphBoostContext } from "../graph/graph-boost";
+import type { StashEntry } from "../passes/metadata";
+import type { ProjectContext } from "../walk/project-context";
 import { applyScoreContributors, applyUtilityContributors } from "./ranking-contributors";
 
 export interface RankedEntryInput {

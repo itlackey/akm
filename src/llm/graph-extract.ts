@@ -905,4 +905,4 @@ export async function extractGraphFromBody(
 }
 
 // deduplicateGraph moved to src/indexer/graph-dedup.ts (pure utility, no LLM calls).
-export { deduplicateGraph } from "../indexer/graph-dedup";
+export { deduplicateGraph } from "../indexer/graph/graph-dedup";

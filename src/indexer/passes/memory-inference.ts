@@ -38,20 +38,20 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
-import { assembleAsset } from "../core/asset-serialize";
-import { concurrentMap } from "../core/concurrent";
-import type { SourceConfigEntry } from "../core/config";
-import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
-import { warn } from "../core/warn";
-import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
-import { isProcessEnabled } from "../llm/feature-gate";
-import { resolveIndexPassLLM } from "../llm/index-passes";
-import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../llm/memory-infer";
-import * as memoryInfer from "../llm/memory-infer";
-import { withLlmCache } from "./llm-cache";
+import { parseAssetRef } from "../../core/asset-ref";
+import { assembleAsset } from "../../core/asset-serialize";
+import { concurrentMap } from "../../core/concurrent";
+import type { SourceConfigEntry } from "../../core/config";
+import { parseFrontmatter, parseFrontmatterBlock } from "../../core/frontmatter";
+import { warn } from "../../core/warn";
+import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
+import { isProcessEnabled } from "../../llm/feature-gate";
+import { resolveIndexPassLLM } from "../../llm/index-passes";
+import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../../llm/memory-infer";
+import * as memoryInfer from "../../llm/memory-infer";
+import { withLlmCache } from "../db/llm-cache";
+import { walkMarkdownFiles } from "../walk/walker";
 import type { EnrichmentPassContext } from "./pass-context";
-import { walkMarkdownFiles } from "./walker";
 
 /**
  * Frontmatter keys this pass cares about. Constants so a future rename only

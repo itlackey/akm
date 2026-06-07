@@ -5,7 +5,7 @@ import path from "node:path";
 import { narrowToIncrementalCandidates } from "../../../src/commands/improve/consolidate";
 import { getDbPath } from "../../../src/core/paths";
 import { closeDatabase, openDatabase, upsertEmbedding, upsertEntry } from "../../../src/indexer/db";
-import type { StashEntry } from "../../../src/indexer/metadata";
+import type { StashEntry } from "../../../src/indexer/passes/metadata";
 import { type Cleanup, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // NOTE: the first `describe` block exercises the two pre-DB branches of

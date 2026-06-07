@@ -23,11 +23,11 @@ import {
   formatToc,
   parseMarkdownToc,
 } from "../core/markdown";
-import type { AssetRenderer, RenderContext } from "../indexer/file-context";
-import { registerRenderer } from "../indexer/file-context";
-import type { StashEntry } from "../indexer/metadata";
-import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/metadata";
-import { registerMetadataContributor } from "../indexer/metadata-contributors";
+import type { StashEntry } from "../indexer/passes/metadata";
+import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/passes/metadata";
+import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
+import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
+import { registerRenderer } from "../indexer/walk/file-context";
 import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 

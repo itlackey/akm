@@ -15,7 +15,7 @@
  */
 
 import { getDataDir } from "../core/paths";
-import { listBackups } from "../indexer/db-backup";
+import { listBackups } from "../indexer/db/db-backup";
 
 export interface AkmDbBackupsResult {
   /** Absolute path to the data directory inspected. */

@@ -11,7 +11,7 @@ import {
   isEditable,
   resolveAllStashDirs,
   resolveSourceEntries,
-} from "../src/indexer/search-source";
+} from "../src/indexer/search/search-source";
 import * as gitProvider from "../src/sources/providers/git";
 import * as websiteIngest from "../src/sources/website-ingest";
 

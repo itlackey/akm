@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { RenderContext } from "./file-context";
+import type { RenderContext } from "../walk/file-context";
 import type { StashEntry } from "./metadata";
 
 export interface MetadataContext {
@@ -22,8 +22,8 @@ let builtinsPromise: Promise<void> | undefined;
 async function ensureBuiltinMetadataContributorsRegistered(): Promise<void> {
   if (!builtinsPromise) {
     builtinsPromise = (async () => {
-      await import("../output/renderers.js");
-      await import("../workflows/renderer.js");
+      await import("../../output/renderers.js");
+      await import("../../workflows/renderer.js");
     })();
   }
   return builtinsPromise;

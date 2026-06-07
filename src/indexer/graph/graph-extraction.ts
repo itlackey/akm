@@ -40,15 +40,15 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../core/asset-spec";
-import { concurrentMap } from "../core/concurrent";
-import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../core/config";
-import { parseFrontmatter } from "../core/frontmatter";
-import { warn, warnVerbose } from "../core/warn";
-import { isProcessEnabled } from "../llm/feature-gate";
-import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../llm/graph-extract";
-import * as graphExtract from "../llm/graph-extract";
-import { resolveIndexPassLLM } from "../llm/index-passes";
+import { TYPE_DIRS } from "../../core/asset-spec";
+import { concurrentMap } from "../../core/concurrent";
+import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../../core/config";
+import { parseFrontmatter } from "../../core/frontmatter";
+import { warn, warnVerbose } from "../../core/warn";
+import { isProcessEnabled } from "../../llm/feature-gate";
+import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../../llm/graph-extract";
+import * as graphExtract from "../../llm/graph-extract";
+import { resolveIndexPassLLM } from "../../llm/index-passes";
 import {
   computeBodyHash,
   GRAPH_SCHEMA_VERSION,
@@ -56,11 +56,11 @@ import {
   getLlmCacheEntry,
   type LlmCacheEntry,
   upsertLlmCacheEntry,
-} from "./db";
-import { loadStoredGraphSnapshot, replaceStoredGraph } from "./graph-db";
+} from "../db";
+import { loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
+import type { EnrichmentPassContext } from "../passes/pass-context";
+import { walkMarkdownFiles } from "../walk/walker";
 import { deduplicateGraph } from "./graph-dedup";
-import type { EnrichmentPassContext } from "./pass-context";
-import { walkMarkdownFiles } from "./walker";
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
 export const GRAPH_FILE_SCHEMA_VERSION = GRAPH_SCHEMA_VERSION;

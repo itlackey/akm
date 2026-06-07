@@ -13,7 +13,7 @@ import {
   upsertEmbedding,
   upsertEntry,
 } from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { StashEntry } from "../src/indexer/passes/metadata";
 import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,

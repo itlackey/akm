@@ -31,7 +31,7 @@ import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../../co
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isQuiet } from "../../core/warn";
-import { resolveSourceEntries } from "../../indexer/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, parseFlagValue } from "../../output/context";
 
 const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "set", "unset", "remove"]);

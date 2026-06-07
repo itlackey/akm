@@ -19,7 +19,7 @@ import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config";
 import { parseFrontmatter } from "../src/core/frontmatter";
-import type { SearchSource } from "../src/indexer/search-source";
+import type { SearchSource } from "../src/indexer/search/search-source";
 
 // ── Module-level LLM stub ───────────────────────────────────────────────────
 //
@@ -43,7 +43,7 @@ mock.module("../src/llm/memory-infer", () => ({
 
 // Import AFTER mock.module so the pass picks up the stub.
 const { runMemoryInferencePass, isPendingMemory, collectPendingMemories } = await import(
-  "../src/indexer/memory-inference"
+  "../src/indexer/passes/memory-inference"
 );
 
 // ── Test fixtures ───────────────────────────────────────────────────────────

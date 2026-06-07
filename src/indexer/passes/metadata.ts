@@ -8,12 +8,12 @@ import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
-} from "../core/asset-spec";
-import { asNonEmptyString, isAssetType, writeFileAtomic } from "../core/common";
-import { parseFrontmatter } from "../core/frontmatter";
-import type { TocHeading } from "../core/markdown";
-import { isVerbose, warn } from "../core/warn";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
+} from "../../core/asset-spec";
+import { asNonEmptyString, isAssetType, writeFileAtomic } from "../../core/common";
+import { parseFrontmatter } from "../../core/frontmatter";
+import type { TocHeading } from "../../core/markdown";
+import { isVerbose, warn } from "../../core/warn";
+import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
 import { applyMetadataContributors } from "./metadata-contributors";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -996,7 +996,7 @@ async function buildEntryFromFile(
   pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
   stashRoot: string,
   ctx: ReturnType<typeof buildFileContext>,
-  match: import("./file-context").MatchResult | null,
+  match: import("../walk/file-context").MatchResult | null,
 ): Promise<StashEntry | { skip: true; warning: string }> {
   const ext = path.extname(file).toLowerCase();
   const baseName = path.basename(file, ext);

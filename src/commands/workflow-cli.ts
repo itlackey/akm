@@ -20,7 +20,7 @@ import { parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
-import { resolveSourceEntries } from "../indexer/search-source";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { hasBooleanFlag } from "../output/context";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { resolveAssetPath } from "../sources/resolve";

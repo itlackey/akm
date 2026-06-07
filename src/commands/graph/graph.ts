@@ -17,18 +17,18 @@ import {
   openDatabase,
   openExistingDatabase,
 } from "../../indexer/db";
-import { listRelatedPathsForFile } from "../../indexer/graph-boost";
-import { loadStoredGraphSnapshot } from "../../indexer/graph-db";
+import { loadStoredGraphSnapshot } from "../../indexer/db/graph-db";
+import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import type {
   GraphExtractionPassOptions,
   GraphExtractionTelemetry,
   GraphFile,
   GraphFileNode,
-} from "../../indexer/graph-extraction";
-import { runGraphExtractionPass } from "../../indexer/graph-extraction";
+} from "../../indexer/graph/graph-extraction";
+import { runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { lookup } from "../../indexer/indexer";
-import { resolveAssetPath } from "../../indexer/path-resolver";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search-source";
+import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 
 export interface GraphSummaryResult {
   schemaVersion: 1;

@@ -7,7 +7,7 @@ import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
-import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage-events";
+import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage/usage-events";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
 

@@ -23,7 +23,7 @@ import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { resolveSourceEntries } from "../../indexer/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedBoolean, parseFlagValue } from "../../output/context";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import type { SourceKind } from "../../sources/types";

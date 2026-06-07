@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { writeFileAtomic } from "../core/common";
-import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config";
-import { getCacheDir, getSemanticStatusPath } from "../core/paths";
-import { DEFAULT_LOCAL_MODEL } from "../llm/embedders/local";
+import { writeFileAtomic } from "../../core/common";
+import type { AkmConfig, EmbeddingConnectionConfig } from "../../core/config";
+import { getCacheDir, getSemanticStatusPath } from "../../core/paths";
+import { DEFAULT_LOCAL_MODEL } from "../../llm/embedders/local";
 
 export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "ready-vec" | "blocked";
 export type SemanticSearchEffectiveStatus = "disabled" | SemanticSearchRuntimeStatus;

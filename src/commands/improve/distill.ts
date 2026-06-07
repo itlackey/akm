@@ -72,7 +72,7 @@ import {
   type ProposalsContext,
 } from "../../core/proposals";
 import { warnVerbose } from "../../core/warn";
-import { resolveAssetPath } from "../../indexer/path-resolver";
+import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import { akmSearch } from "../read/search";

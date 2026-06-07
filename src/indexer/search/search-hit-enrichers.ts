@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import { makeAssetRef } from "../core/asset-ref";
-import type { RendererRegistry } from "../core/asset-registry";
-import type { SourceSearchHit } from "../sources/types";
-import { getDerivedForParent } from "./db";
-import { getRenderer } from "./file-context";
+import { makeAssetRef } from "../../core/asset-ref";
+import type { RendererRegistry } from "../../core/asset-registry";
+import type { SourceSearchHit } from "../../sources/types";
+import { getDerivedForParent } from "../db";
+import { getRenderer } from "../walk/file-context";
 
 export interface SearchHitContext {
   type: string;

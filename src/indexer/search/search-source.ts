@@ -4,16 +4,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolveStashDir } from "../core/common";
-import type { AkmConfig, SourceConfigEntry } from "../core/config";
-import { getSources, loadConfig } from "../core/config";
-import { resolveSourceProviderFactory } from "../sources/provider-factory";
+import { resolveStashDir } from "../../core/common";
+import type { AkmConfig, SourceConfigEntry } from "../../core/config";
+import { getSources, loadConfig } from "../../core/config";
+import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
-import "../sources/providers/index";
-import { warn } from "../core/warn";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../sources/providers/git";
-import { ensureWebsiteMirror } from "../sources/website-ingest";
+import "../../sources/providers/index";
+import { warn } from "../../core/warn";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../sources/providers/git";
+import { ensureWebsiteMirror } from "../../sources/website-ingest";
 
 // Legacy "context-hub" / "github" type aliases are normalized to "git" at
 // config-load time (see src/config.ts), so this set only contains the canonical
@@ -129,7 +129,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * so the caller can skip it.
  *
  * Single source of truth: each provider owns its own path. We instantiate the
- * registered {@link import("../sources/provider").SourceProvider} for the entry
+ * registered {@link import("../../sources/provider").SourceProvider} for the entry
  * and call `provider.path()`. This replaces the old per-kind switch ladder
  * (filesystem path / git cache / website cache) that lived here in 0.6.0 —
  * see spec §10 step 4 and §7 "Removed from 0.6.0".
@@ -143,7 +143,7 @@ function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return undefined;
 
-  let provider: import("../sources/provider").SourceProvider;
+  let provider: import("../../sources/provider").SourceProvider;
   try {
     provider = factory(entry);
   } catch (err) {

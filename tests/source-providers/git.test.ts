@@ -261,13 +261,13 @@ describe("GitSourceProvider", () => {
     });
     resetConfigCache();
 
-    const { ensureSourceCaches } = await import("../../src/indexer/search-source");
+    const { ensureSourceCaches } = await import("../../src/indexer/search/search-source");
     const { loadConfig } = await import("../../src/core/config");
     const config = loadConfig();
     await ensureSourceCaches(config);
 
     // Verify git stash content dir appears in stash sources.
-    const { resolveSourceEntries } = await import("../../src/indexer/search-source");
+    const { resolveSourceEntries } = await import("../../src/indexer/search/search-source");
     const sources = resolveSourceEntries(undefined, config);
     const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
     expect(gitSource).toBeDefined();

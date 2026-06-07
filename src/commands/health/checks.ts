@@ -4,7 +4,7 @@
 
 import { spawnSync } from "node:child_process";
 import { loadConfig } from "../../core/config";
-import type { SemanticSearchStatus } from "../../indexer/semantic-status";
+import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
 import type { AgentProfile } from "../../integrations/agent";
 import { detectAgentCliProfiles, requireAgentProfile } from "../../integrations/agent";
 import type { HealthCheckResult, ImproveHealthMetrics, SessionLogAdvisory } from "../health";

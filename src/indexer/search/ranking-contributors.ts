@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import type { ScopedUtilityRow, UtilityScoreRow } from "./db";
-import { computeGraphBoost, type GraphBoostContext } from "./graph-boost";
-import type { ProjectContext } from "./project-context";
+import type { ScopedUtilityRow, UtilityScoreRow } from "../db";
+import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
+import type { ProjectContext } from "../walk/project-context";
 import type { RankedEntryInput } from "./ranking";
 
 const TYPE_BOOST: Record<string, number> = {

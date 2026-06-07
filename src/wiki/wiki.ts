@@ -52,7 +52,7 @@ import { isWithin, todayIso } from "../core/common";
 import { getSources, loadUserConfig, saveConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
-import { resolveSourceEntries, type SearchSource } from "../indexer/search-source";
+import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import type { SearchResponse, SourceSearchHit } from "../sources/types";
 import { buildIndexMd, buildLogMd, buildSchemaMd } from "./wiki-templates";
 

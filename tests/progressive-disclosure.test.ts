@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../src/commands/read/show";
 import { saveConfig } from "../src/core/config";
-import { buildDbHit } from "../src/indexer/db-search";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { buildDbHit } from "../src/indexer/search/db-search";
 
 // Trigger source-provider self-registration
 import "../src/sources/providers/index";

@@ -10,9 +10,9 @@
  * `MatchResult` shape expected by the rest of the indexer.
  */
 
-import { defaultRendererRegistry } from "../core/asset-registry";
-import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
-import { looksLikeWorkflow } from "../workflows/parser";
+import { defaultRendererRegistry } from "../../core/asset-registry";
+import { SCRIPT_EXTENSIONS } from "../../core/asset-spec";
+import { looksLikeWorkflow } from "../../workflows/parser";
 import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
 import { registerMatcher } from "./file-context";
 

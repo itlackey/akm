@@ -4,12 +4,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseAssetRef } from "../core/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../core/asset-spec";
-import { isWithin } from "../core/common";
-import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { lookup } from "./indexer";
-import { resolveSourceEntries } from "./search-source";
+import { type AssetRef, parseAssetRef } from "../../core/asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset-spec";
+import { isWithin } from "../../core/common";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { lookup } from "../indexer";
+import { resolveSourceEntries } from "../search/search-source";
 
 export interface ResolveAssetPathOptions {
   stashDir?: string;

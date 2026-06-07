@@ -70,8 +70,7 @@ import {
   upsertWorkflowDocument,
   warnIfVecMissing,
 } from "./db";
-import { deleteStoredGraph } from "./graph-db";
-import type { IndexRunContext } from "./index-context";
+import { deleteStoredGraph } from "./db/graph-db";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
@@ -82,18 +81,19 @@ import {
   type StashEntry,
   type StashFile,
   shouldIndexStashFile,
-} from "./metadata";
-import { buildSearchText } from "./search-fields";
-import type { SearchSource } from "./search-source";
+} from "./passes/metadata";
+import { buildSearchText } from "./search/search-fields";
+import type { SearchSource } from "./search/search-source";
 import {
   classifySemanticFailure,
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
   type SemanticSearchRuntimeStatus,
   writeSemanticStatus,
-} from "./semantic-status";
-import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage-events";
-import { walkStashFlat } from "./walker";
+} from "./search/semantic-status";
+import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage/usage-events";
+import type { IndexRunContext } from "./walk/index-context";
+import { walkStashFlat } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -449,12 +449,12 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   // un-migrated `vaults/` directory. In 0.9.0 the indexer skips `vaults/`
   // entirely, so an unmigrated vault's `.env` data would silently never be
   // indexed. Non-destructive — only stats, never reads/writes/deletes.
-  const { warnOnUnmigratedVaults } = await import("./unmigrated-vaults-guard.js");
+  const { warnOnUnmigratedVaults } = await import("./usage/unmigrated-vaults-guard.js");
   warnOnUnmigratedVaults(stashDir);
 
   // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
-  const { ensureSourceCaches, resolveSourceEntries } = await import("./search-source.js");
+  const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
   await ensureSourceCaches(config, { force: full });
   const allSourceEntries = resolveSourceEntries(stashDir, config);
   const allSourceDirs = allSourceEntries.map((s) => s.path);
@@ -1399,7 +1399,7 @@ async function generateEmbeddingsForDb(
 
 interface EmbeddingGenerationResult {
   success: boolean;
-  reason?: import("./semantic-status").SemanticSearchReason;
+  reason?: import("./search/semantic-status").SemanticSearchReason;
   message?: string;
 }
 
@@ -1752,7 +1752,7 @@ export interface IndexEntry {
  */
 export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
   const { loadConfig } = await import("../core/config.js");
-  const { resolveSourceEntries } = await import("./search-source.js");
+  const { resolveSourceEntries } = await import("./search/search-source.js");
   const config = loadConfig();
   const sources = resolveSourceEntries(undefined, config);
   if (sources.length === 0) return null;

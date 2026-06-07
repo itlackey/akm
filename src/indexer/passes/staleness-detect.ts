@@ -47,17 +47,17 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { assembleAsset } from "../core/asset-serialize";
-import { concurrentMap } from "../core/concurrent";
-import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
-import { warn } from "../core/warn";
-import { resolveValidationRunner } from "../integrations/agent/runner";
-import { type ChatMessage, chatCompletion } from "../llm/client";
-import { isProcessEnabled } from "../llm/feature-gate";
-import { findEntryIdByRef } from "./db";
-import { withLlmCache } from "./llm-cache";
+import { assembleAsset } from "../../core/asset-serialize";
+import { concurrentMap } from "../../core/concurrent";
+import { parseFrontmatter, parseFrontmatterBlock } from "../../core/frontmatter";
+import { warn } from "../../core/warn";
+import { resolveValidationRunner } from "../../integrations/agent/runner";
+import { type ChatMessage, chatCompletion } from "../../llm/client";
+import { isProcessEnabled } from "../../llm/feature-gate";
+import { findEntryIdByRef } from "../db";
+import { withLlmCache } from "../db/llm-cache";
+import { walkMarkdownFiles } from "../walk/walker";
 import type { PassContext } from "./pass-context";
-import { walkMarkdownFiles } from "./walker";
 
 /** Frontmatter keys this pass touches. Constants so a future rename only needs to touch one site. */
 const FM_BELIEF_STATE = "beliefState";
@@ -404,7 +404,7 @@ const SYSTEM_PROMPT =
   "No prose, no preamble, no markdown.";
 
 async function askValidator(
-  connection: import("../core/config").LlmConnectionConfig,
+  connection: import("../../core/config").LlmConnectionConfig,
   candidate: CandidateMemory,
   allMemories: MemorySnapshot[],
   signal: AbortSignal | undefined,

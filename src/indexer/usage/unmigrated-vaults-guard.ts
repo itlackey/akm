@@ -27,7 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { warn } from "../core/warn";
+import { warn } from "../../core/warn";
 
 /**
  * Marker filename the `vaults/` → `env/` migration drops inside `vaults/` after

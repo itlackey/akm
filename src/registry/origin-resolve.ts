@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import type { SearchSource } from "../indexer/search-source";
+import type { SearchSource } from "../indexer/search/search-source";
 import { parseRegistryRef } from "./resolve";
 
 /**

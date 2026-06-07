@@ -4,12 +4,17 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { rethrowIfTestIsolationError } from "../core/errors";
-import { getDbPath } from "../core/paths";
-import { warn } from "../core/warn";
-import type { GraphRelation } from "../llm/graph-extract";
-import { closeDatabase, openExistingDatabase } from "./db";
-import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-extraction";
+import { rethrowIfTestIsolationError } from "../../core/errors";
+import { getDbPath } from "../../core/paths";
+import { warn } from "../../core/warn";
+import type { GraphRelation } from "../../llm/graph-extract";
+import { closeDatabase, openExistingDatabase } from "../db";
+import type {
+  GraphExtractionTelemetry,
+  GraphFile,
+  GraphFileNode,
+  GraphQualityTelemetry,
+} from "../graph/graph-extraction";
 
 export interface StoredGraphSnapshot {
   stashPath: string;
