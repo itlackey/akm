@@ -32,14 +32,7 @@ import { loadGraphBoostContext, resetGraphBoostCache } from "../src/indexer/grap
 import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph-extraction";
 import { buildSearchText } from "../src/indexer/search-fields";
-import {
-  type Cleanup,
-  sandboxStashDir,
-  sandboxXdgCacheHome,
-  sandboxXdgConfigHome,
-  sandboxXdgDataHome,
-  sandboxXdgStateHome,
-} from "./_helpers/sandbox";
+import { type Cleanup, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────
 //
@@ -53,13 +46,9 @@ let stashDir = "";
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
-  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
-  const stateResult = sandboxXdgStateHome(dataResult.cleanup);
-  const stashResult = sandboxStashDir(stateResult.cleanup);
-  stashDir = stashResult.dir;
-  envCleanup = stashResult.cleanup;
+  const storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
+  envCleanup = storage.cleanup;
 
   resetConfigCache();
   // The graph-boost module caches the parsed graph keyed by (stashPath,

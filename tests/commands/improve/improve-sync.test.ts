@@ -26,14 +26,7 @@ import type { AkmConfig } from "../../../src/core/config";
 import { saveConfig } from "../../../src/core/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { SaveGitStashResult } from "../../../src/sources/providers/git";
-import type { Cleanup } from "../../_helpers/sandbox";
-import {
-  sandboxStashDir,
-  sandboxXdgCacheHome,
-  sandboxXdgConfigHome,
-  sandboxXdgDataHome,
-  sandboxXdgStateHome,
-} from "../../_helpers/sandbox";
+import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
 
@@ -82,14 +75,9 @@ function committedResult(pushed: boolean): SaveGitStashResult {
 }
 
 beforeEach(() => {
-  let chain: Cleanup = () => {};
-  chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxXdgConfigHome(chain).cleanup;
-  chain = sandboxXdgDataHome(chain).cleanup;
-  chain = sandboxXdgStateHome(chain).cleanup;
-  const stash = sandboxStashDir(chain);
-  stashDir = stash.dir;
-  cleanup = stash.cleanup;
+  const storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
+  cleanup = storage.cleanup;
   saveConfig({ semanticSearchMode: "off" });
 });
 

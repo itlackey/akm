@@ -34,6 +34,30 @@ export interface SandboxedDir {
   cleanup: Cleanup;
 }
 
+/**
+ * The standard subdirectories an initialized AKM stash has.
+ *
+ * Single source of truth for the "freshly initialized stash" layout used by
+ * the test sandbox. Mirrors the `stashDir` values of the default asset specs
+ * that `akm init` scaffolds (src/core/asset-spec.ts → src/commands/init.ts).
+ * Kept as a literal here (rather than importing TYPE_DIRS) so the helper has
+ * no production-module dependency and so the set is stable regardless of any
+ * runtime asset-type (de)registration a test performs.
+ *
+ * Previously two divergent lists existed in this file: `makeStashDir` created
+ * 5 dirs (scripts, skills, commands, agents, knowledge) and `sandboxStashDir`
+ * created 7 (… + memories, lessons). Both now derive from this one constant.
+ */
+export const STASH_SKELETON_SUBDIRS: readonly string[] = [
+  "skills",
+  "commands",
+  "agents",
+  "knowledge",
+  "scripts",
+  "memories",
+  "lessons",
+];
+
 let sandboxCounter = 0;
 
 /**
@@ -74,7 +98,7 @@ export async function withEnv<T>(overrides: Record<string, string | undefined>, 
  */
 export function makeStashDir(): SandboxedDir {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-sb-stash2-${sandboxCounter++}-`));
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
+  for (const sub of STASH_SKELETON_SUBDIRS) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -134,7 +158,7 @@ export function sandboxEnvDir(prefix: string, envVar: string, chain?: Cleanup): 
  */
 export function sandboxStashDir(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
   const result = sandboxEnvDir("akm-sb-stash-", "AKM_STASH_DIR", chain);
-  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts", "memories", "lessons"]) {
+  for (const sub of STASH_SKELETON_SUBDIRS) {
     fs.mkdirSync(path.join(result.dir, sub), { recursive: true });
   }
   return result;
@@ -176,6 +200,112 @@ export function sandboxXdgCacheHome(chain?: Cleanup): { dir: string; cleanup: Cl
  */
 export function sandboxXdgStateHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
   return sandboxEnvDir("akm-sb-state-", "XDG_STATE_HOME", chain);
+}
+
+// ── Composite isolation fixture ──────────────────────────────────────────────
+
+/**
+ * The resolved isolated-storage context returned by
+ * {@link withIsolatedAkmStorage}. Every path is an absolute directory that
+ * already exists on disk under a single per-call temp root.
+ */
+export interface IsolatedAkmStorage {
+  /** Isolated stash root (`AKM_STASH_DIR`), scaffolded with the standard subdirs. */
+  readonly stashDir: string;
+  /** Isolated data dir (`XDG_DATA_HOME`). */
+  readonly dataDir: string;
+  /** Isolated cache dir (`XDG_CACHE_HOME`). */
+  readonly cacheDir: string;
+  /** Isolated config dir (`XDG_CONFIG_HOME`); its `akm/` subdir is created. */
+  readonly configDir: string;
+  /** Isolated state dir (`XDG_STATE_HOME`). */
+  readonly stateDir: string;
+  /** The single per-call temp root that contains every dir above. */
+  readonly root: string;
+  /** Restore every overridden env var and remove the temp root. Idempotent. */
+  readonly cleanup: Cleanup;
+}
+
+/**
+ * Composite test-isolation fixture: collapse the 5-helper sandbox chain
+ * (`sandboxStashDir` + `sandboxXdgConfigHome` + `sandboxXdgDataHome` +
+ * `sandboxXdgCacheHome` + …) into ONE call that
+ *
+ *   - creates a single temp root under `os.tmpdir()`,
+ *   - creates `stash/`, `data/`, `cache/`, `config/`, `state/` subdirs under it
+ *     (the stash scaffolded with {@link STASH_SKELETON_SUBDIRS}, the config with
+ *     an `akm/` subdir),
+ *   - points `AKM_STASH_DIR`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`,
+ *     `XDG_CONFIG_HOME`, `XDG_STATE_HOME` at them, snapshotting each prior value,
+ *   - returns the resolved {@link IsolatedAkmStorage} context plus a single
+ *     `cleanup()` that restores every env var and removes the temp root.
+ *
+ * Usage (the common beforeEach/afterEach shape):
+ *
+ *   let storage: IsolatedAkmStorage;
+ *   beforeEach(() => { storage = withIsolatedAkmStorage(); });
+ *   afterEach(() => storage.cleanup());
+ *
+ * `overrides` lets a test pin a specific env var to a literal value (or delete
+ * it with `undefined`); those keys are still restored by `cleanup()`. Any
+ * override of one of the four managed XDG/stash vars wins over the temp dir.
+ *
+ * The single `cleanup` restores env in the reverse order it was applied and is
+ * safe to call more than once. The existing `tests/_preload.ts` afterEach
+ * tripwire (which throws on any leaked `AKM_*`/`XDG_*`/`HOME` env var) is the
+ * regression net that proves this helper restores everything it touched.
+ */
+export function withIsolatedAkmStorage(overrides?: Record<string, string | undefined>): IsolatedAkmStorage {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `akm-iso-${sandboxCounter++}-`));
+
+  const stashDir = path.join(root, "stash");
+  const dataDir = path.join(root, "data");
+  const cacheDir = path.join(root, "cache");
+  const configDir = path.join(root, "config");
+  const stateDir = path.join(root, "state");
+
+  for (const sub of STASH_SKELETON_SUBDIRS) {
+    fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
+  }
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.mkdirSync(path.join(configDir, "akm"), { recursive: true });
+  fs.mkdirSync(stateDir, { recursive: true });
+
+  const env: Record<string, string> = {
+    AKM_STASH_DIR: stashDir,
+    XDG_DATA_HOME: dataDir,
+    XDG_CACHE_HOME: cacheDir,
+    XDG_CONFIG_HOME: configDir,
+    XDG_STATE_HOME: stateDir,
+  };
+
+  // Snapshot + apply env (managed defaults first, then caller overrides so they
+  // win). `cleanup` restores every snapshotted key, including override keys.
+  const applied: Record<string, string | undefined> = { ...env, ...(overrides ?? {}) };
+  const prev: Record<string, string | undefined> = {};
+  for (const key of Object.keys(applied)) prev[key] = process.env[key];
+  for (const [key, value] of Object.entries(applied)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
+  let cleaned = false;
+  const cleanup: Cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const [key, value] of Object.entries(prev)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  };
+
+  return { stashDir, dataDir, cacheDir, configDir, stateDir, root, cleanup };
 }
 
 // ── Config writer ────────────────────────────────────────────────────────────
