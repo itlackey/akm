@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { getStateDbPathInDataDir } from "../core/paths";
@@ -20,10 +18,9 @@ import {
 } from "../core/state-db";
 import { parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/semantic-status";
-import type { AgentProfile } from "../integrations/agent";
-import { detectAgentCliProfiles, requireAgentProfile } from "../integrations/agent";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
+import { HEALTH_CHECKS, type HealthCheckContext } from "./health/checks";
 
 export interface HealthCheckResult {
   name: string;
@@ -1289,109 +1286,6 @@ function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: 
   return { ok: true, durationMs };
 }
 
-function runAgentProbe(): HealthCheckResult {
-  const config = loadConfig();
-
-  // v2: check profiles.agent first
-  if (config.profiles?.agent) {
-    const defaultName = config.defaults?.agent;
-    const profileCount = Object.keys(config.profiles.agent).length;
-    if (profileCount === 0) {
-      return {
-        name: "agent-profile",
-        kind: "deterministic",
-        status: "unknown",
-        confidence: "high",
-        message: "No agent profiles configured in profiles.agent.",
-      };
-    }
-    const profileName = defaultName ?? Object.keys(config.profiles.agent)[0];
-    const profile = config.profiles.agent[profileName];
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "pass",
-      confidence: "high",
-      message: `v2 agent profile "${profileName}" configured (platform: ${profile?.platform ?? "unknown"}).`,
-      evidence: { profile: profileName, platform: profile?.platform, profileCount },
-    };
-  }
-
-  if (!config.profiles?.agent && !config.defaults?.agent) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "unknown",
-      confidence: "high",
-      message: "No agent config present.",
-    };
-  }
-
-  let profile: AgentProfile;
-  try {
-    profile = requireAgentProfile(config);
-  } catch (error) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "high",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-  if (profile.sdkMode === true) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: profile.model ? "pass" : "warn",
-      confidence: "high",
-      message: profile.model
-        ? `SDK mode profile "${profile.name}" is configured.`
-        : `SDK mode profile "${profile.name}" has no explicit model.`,
-      evidence: { profile: profile.name, sdkMode: true, model: profile.model ?? null },
-    };
-  }
-
-  const detections = detectAgentCliProfiles(config);
-  const detection = detections.find((entry) => entry.name === profile.name);
-  if (!detection?.available) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "fail",
-      confidence: "high",
-      message: `Default agent profile "${profile.name}" is not available on PATH.`,
-      evidence: { profile: profile.name, bin: profile.bin },
-    };
-  }
-
-  const version = spawnSync(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
-  if ((version.status ?? 1) !== 0) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "medium",
-      message: `Agent binary "${profile.bin}" was found but \`--version\` failed.`,
-      evidence: {
-        profile: profile.name,
-        bin: profile.bin,
-        exitCode: version.status ?? null,
-        stderr: (version.stderr ?? "").trim(),
-      },
-    };
-  }
-
-  return {
-    name: "agent-profile",
-    kind: "deterministic",
-    status: "pass",
-    confidence: "high",
-    message: `Agent profile "${profile.name}" is available.`,
-    evidence: { profile: profile.name, bin: profile.bin, version: (version.stdout ?? "").trim() },
-  };
-}
-
 /**
  * Parse a `--window-compare <duration>` shorthand into two adjacent windows
  * (current, prior). Duration syntax matches {@link parseHealthSince}.
@@ -1610,27 +1504,8 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const tableNames = tables.map((row) => row.name).sort();
     const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
     const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
-    hardChecks.push({
-      name: "state-db-schema",
-      kind: "deterministic",
-      status: missingTables.length === 0 ? "pass" : "fail",
-      confidence: "high",
-      message:
-        missingTables.length === 0
-          ? "state.db opened and required tables are present."
-          : `state.db is missing required tables: ${missingTables.join(", ")}`,
-      evidence: { path: stateDbPath, tables: tableNames },
-    });
 
     const probe = probeStateDbRoundTrip(stateDbPath);
-    hardChecks.push({
-      name: "state-db-round-trip",
-      kind: "deterministic",
-      status: probe.ok ? "pass" : "fail",
-      confidence: "high",
-      message: probe.ok ? "state.db append/read round-trip succeeded." : `state.db round-trip failed: ${probe.error}`,
-      evidence: { path: stateDbPath, durationMs: probe.durationMs },
-    });
 
     const taskRows = queryTaskHistory(db, { since });
     const taskRowsWithLogs = taskRows.filter((row) => row.log_path !== null);
@@ -1649,56 +1524,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
     const agentFailureRate = promptRows.length === 0 ? 0 : promptFailures.length / promptRows.length;
 
-    hardChecks.push({
-      name: "task-history-read",
-      kind: "deterministic",
-      status: "pass",
-      confidence: "high",
-      message: `Read ${taskRows.length} task-history row(s) since ${since}.`,
-      evidence: { rows: taskRows.length, since },
-    });
-    hardChecks.push({
-      name: "task-log-backing",
-      kind: "deterministic",
-      status: logBackingRate === 1 ? "pass" : "fail",
-      confidence: "high",
-      message:
-        logBackingRate === 1
-          ? "Every task_history log_path resolved on disk."
-          : `${taskRowsWithLogs.length - existingLogRows.length} task log(s) referenced in task_history are missing.`,
-      evidence: { totalWithLogs: taskRowsWithLogs.length, existingLogs: existingLogRows.length },
-    });
-    hardChecks.push({
-      name: "active-runs",
-      kind: "deterministic",
-      status: stuckActiveRuns === 0 ? "pass" : "warn",
-      confidence: "high",
-      message:
-        stuckActiveRuns === 0
-          ? "No active task runs exceeded the stale threshold."
-          : `${stuckActiveRuns} active task run(s) are older than ${Math.round(ACTIVE_RUN_WARN_MS / 60000)} minutes.`,
-      evidence: { stuckActiveRuns },
-    });
-
-    hardChecks.push(runAgentProbe());
-
     const semanticStatus = readSemanticStatus();
-    advisories.push({
-      name: "semantic-search-runtime",
-      kind: "deterministic",
-      status:
-        !semanticStatus ||
-        semanticStatus.status === "pending" ||
-        semanticStatus.status === "ready-js" ||
-        semanticStatus.status === "ready-vec"
-          ? "pass"
-          : "warn",
-      confidence: "medium",
-      message: semanticStatus
-        ? `Semantic search status: ${semanticStatus.status}`
-        : "No semantic-search runtime status recorded yet.",
-      evidence: semanticStatus ? { ...semanticStatus } : undefined,
-    });
 
     const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
     const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
@@ -1727,62 +1553,31 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       sessionLogEntries = [];
     }
 
-    // session-log-failures: demoted to informational — the ERROR_PATTERNS regex
-    // scans pre-LLM session text and produces false positives on diagnostic
-    // conversation. It does not gate the real extraction pipeline (akmExtract).
-    // Never triggers warn; kept for backward-compat visibility only.
-    advisories.push({
-      name: "session-log-failures",
-      kind: "heuristic",
-      status: "pass",
-      confidence: "low",
-      message:
-        sessionLogEntries.length === 0
-          ? "No repeated external session-log failure patterns were detected."
-          : `${sessionLogEntries.length} raw session-log keyword match(es) detected (pre-LLM, informational only).`,
-      evidence: { candidates: sessionLogEntries.slice(0, 5) },
-    });
-
-    const sx = improveSummary.sessionExtraction;
-    const sxWarnReasons: string[] = [];
-    if (sx.warnings > 0) sxWarnReasons.push(`${sx.warnings} harness error(s)`);
-    if (sx.ran && sx.sessionsScanned >= 5 && sx.proposalsCreated === 0)
-      sxWarnReasons.push("no proposals generated across scanned sessions");
-    advisories.push({
-      name: "session-extraction",
-      kind: "heuristic",
-      status: sxWarnReasons.length > 0 ? "warn" : "pass",
-      confidence: sx.ran ? "medium" : "low",
-      message: sx.ran
-        ? sxWarnReasons.length > 0
-          ? `Session extraction degraded: ${sxWarnReasons.join("; ")}.`
-          : `Session extraction healthy: ${sx.sessionsScanned} scanned, ${sx.sessionsExtracted} extracted, ${sx.proposalsCreated} proposal(s) created.`
-        : "Session extraction not active (feature disabled or no harness available).",
-      evidence: {
-        ran: sx.ran,
-        sessionsScanned: sx.sessionsScanned,
-        sessionsExtracted: sx.sessionsExtracted,
-        sessionsSkipped: sx.sessionsSkipped,
-        proposalsCreated: sx.proposalsCreated,
-        warnings: sx.warnings,
-        durationMs: sx.durationMs,
-      },
-    });
-
-    const aa = improveSummary.autoAccept;
-    advisories.push({
-      name: "auto-accept-validation",
-      kind: "heuristic",
-      status: aa.validationFailed > 0 ? "warn" : "pass",
-      confidence: aa.promoted + aa.validationFailed > 0 ? "high" : "low",
-      message:
-        aa.validationFailed > 0
-          ? `${aa.validationFailed} proposal(s) passed confidence threshold but failed auto-accept validation (truncated description, invalid frontmatter, etc.) — they remain in the queue for manual review.`
-          : aa.promoted > 0
-            ? `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
-            : "Auto-accept gate did not run (disabled or no proposals above threshold).",
-      evidence: { promoted: aa.promoted, validationFailed: aa.validationFailed },
-    });
+    // Run the ordered health-check registry. Each check projects the shared
+    // context computed above into one HealthCheckResult; `channel` routes it to
+    // hardChecks or advisories. Declaration order in HEALTH_CHECKS is the
+    // emission order — see src/commands/health/checks.ts.
+    const checkContext: HealthCheckContext = {
+      stateDbPath,
+      since,
+      tableNames,
+      missingTables,
+      probe,
+      taskRowCount: taskRows.length,
+      taskRowsWithLogsCount: taskRowsWithLogs.length,
+      existingLogRowsCount: existingLogRows.length,
+      logBackingRate,
+      stuckActiveRuns,
+      semanticStatus,
+      sessionLogEntries,
+      sessionExtraction: improveSummary.sessionExtraction,
+      autoAccept: improveSummary.autoAccept,
+    };
+    for (const check of HEALTH_CHECKS) {
+      const result = check.run(checkContext);
+      if (check.channel === "hard") hardChecks.push(result);
+      else advisories.push(result);
+    }
 
     const metrics: HealthMetrics = {
       taskFailRate: roundRate(taskFailRate),
