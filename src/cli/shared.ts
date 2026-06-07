@@ -9,6 +9,7 @@
  * Exported: output, runWithJsonErrors, parseAllFlagValues, emitJsonError
  */
 
+import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { getOutputMode, type OutputMode } from "../output/context";
@@ -77,6 +78,33 @@ export async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)
   } catch (error: unknown) {
     emitJsonError(error);
   }
+}
+
+/**
+ * A citty command whose `run` body is the plain command logic — any thrown
+ * error is routed through the standard JSON envelope automatically. This is the
+ * inverse of hand-writing `run() { return runWithJsonErrors(() => { ... }); }`
+ * at every site (123 such sites at WS6 baseline).
+ */
+export type JsonCommandDef<T extends ArgsDef = ArgsDef> = Omit<CommandDef<T>, "run"> & {
+  /** Command body. Throw to emit the JSON error envelope + mapped exit code. */
+  run?: (context: CommandContext<T>) => void | Promise<void>;
+};
+
+/**
+ * Define a citty command whose `run` body is automatically wrapped in
+ * `runWithJsonErrors`, so the handler emits a byte-identical JSON error
+ * envelope (stdout/stderr/exit-code) on throw without the boilerplate. A
+ * command without a `run` (a pure subcommand group) is passed through
+ * unchanged.
+ */
+export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCommandDef<T>): CommandDef<T> {
+  const { run, ...rest } = def;
+  if (!run) return defineCommand({ ...rest } as CommandDef<T>);
+  return defineCommand({
+    ...rest,
+    run: (context: CommandContext<T>) => runWithJsonErrors(() => run(context)),
+  } as CommandDef<T>);
 }
 
 /**

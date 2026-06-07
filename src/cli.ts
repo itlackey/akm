@@ -80,16 +80,7 @@ import { akmDbBackups } from "./commands/db-cli";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { extractCommand } from "./commands/extract-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
-import {
-  akmGraphEntities,
-  akmGraphEntity,
-  akmGraphExport,
-  akmGraphOrphans,
-  akmGraphRelated,
-  akmGraphRelations,
-  akmGraphSummary,
-  akmGraphUpdate,
-} from "./commands/graph";
+import { graphCommand } from "./commands/graph-cli";
 import {
   akmHealth,
   parseWindowSpec,
@@ -578,158 +569,6 @@ const healthCommand = defineCommand({
     if (resultStatus === "warn") {
       process.exit(EXIT_HEALTH_WARN);
     }
-  },
-});
-
-const graphCommand = defineCommand({
-  meta: { name: "graph", description: "Inspect the indexed entity graph stored in SQLite" },
-  subCommands: {
-    summary: defineCommand({
-      meta: { name: "summary", description: "Show entity-graph counts and quality telemetry" },
-      args: {
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output("graph-summary", akmGraphSummary({ source: args.source }));
-        });
-      },
-    }),
-    entities: defineCommand({
-      meta: { name: "entities", description: "List entities with per-file occurrence counts" },
-      args: {
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-        limit: { type: "string", description: "Maximum entities to return" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output(
-            "graph-entities",
-            akmGraphEntities({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
-          );
-        });
-      },
-    }),
-    relations: defineCommand({
-      meta: { name: "relations", description: "List relations with occurrence counts" },
-      args: {
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-        limit: { type: "string", description: "Maximum relations to return" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output(
-            "graph-relations",
-            akmGraphRelations({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
-          );
-        });
-      },
-    }),
-    related: defineCommand({
-      meta: { name: "related", description: "Show graph-related neighboring assets for a ref" },
-      args: {
-        ref: { type: "positional", description: "Asset ref", required: true },
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-        limit: { type: "string", description: "Maximum related assets to return" },
-      },
-      async run({ args }) {
-        return runWithJsonErrors(async () => {
-          output(
-            "graph-related",
-            await akmGraphRelated({
-              ref: args.ref ?? "",
-              source: args.source,
-              limit: parsePositiveIntFlag(args.limit ?? undefined),
-            }),
-          );
-        });
-      },
-    }),
-    entity: defineCommand({
-      meta: { name: "entity", description: "List assets that contain the given entity" },
-      args: {
-        name: { type: "positional", description: "Entity name", required: true },
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-        limit: { type: "string", description: "Maximum matches to return" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output(
-            "graph-entity",
-            akmGraphEntity({
-              name: args.name ?? "",
-              source: args.source,
-              limit: parsePositiveIntFlag(args.limit ?? undefined),
-            }),
-          );
-        });
-      },
-    }),
-    orphans: defineCommand({
-      meta: { name: "orphans", description: "List assets with no extracted graph entities" },
-      args: {
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-        limit: { type: "string", description: "Maximum orphans to return" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output(
-            "graph-orphans",
-            akmGraphOrphans({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
-          );
-        });
-      },
-    }),
-    export: defineCommand({
-      meta: { name: "export", description: "Export graph artifact as JSON or JSONL" },
-      args: {
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-        out: { type: "string", description: "Output path" },
-        format: { type: "string", description: "Export format (json|jsonl)", default: "json" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output(
-            "graph-export",
-            akmGraphExport({
-              source: args.source,
-              out: args.out ?? "",
-              format: args.format,
-            }),
-          );
-        });
-      },
-    }),
-    update: defineCommand({
-      meta: { name: "update", description: "Re-run graph extraction, optionally scoped to specific asset refs" },
-      args: {
-        refs: {
-          type: "positional",
-          description: "Zero or more asset refs to scope extraction (omit for a full re-extract)",
-          required: false,
-          default: "",
-        },
-        source: { type: "string", description: "Source name/path (default: primary stash source)" },
-      },
-      async run({ args }) {
-        return runWithJsonErrors(async () => {
-          // `refs` is a single positional; collect remaining argv tokens as well.
-          const rawRefs = [args.refs, ...(Array.isArray(args._) ? (args._ as string[]) : [])].filter(
-            (r): r is string => typeof r === "string" && r.trim().length > 0,
-          );
-          output(
-            "graph-update",
-            await akmGraphUpdate({ refs: rawRefs.length > 0 ? rawRefs : undefined, source: args.source }),
-          );
-        });
-      },
-    }),
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      if (hasSubcommand(args, GRAPH_SUBCOMMAND_SET)) return;
-      output("graph-summary", akmGraphSummary());
-    });
   },
 });
 
@@ -4153,16 +3992,6 @@ const TASKS_SUBCOMMAND_SET = new Set([
   "history",
   "sync",
   "doctor",
-]);
-const GRAPH_SUBCOMMAND_SET = new Set([
-  "summary",
-  "entities",
-  "entity",
-  "relations",
-  "related",
-  "orphans",
-  "export",
-  "update",
 ]);
 
 const tasksAddCommand = defineCommand({
