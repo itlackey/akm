@@ -491,7 +491,18 @@ const proposalDrainCommand = defineJsonCommand({
 // that warn to stderr and delegate to the same command bodies; they are removed
 // in 0.9.0. Bare `akm proposal` behaves as `proposal list` (mirrors `akm env`).
 
-const PROPOSAL_SUBCOMMAND_SET = new Set(["list", "show", "diff", "accept", "reject", "revert", "drain"]);
+// Single source of truth: the routing set is derived from the subCommands keys
+// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
+const proposalSubCommands = {
+  list: proposalListCommand,
+  show: proposalShowCommand,
+  diff: proposalDiffCommand,
+  accept: proposalAcceptCommand,
+  reject: proposalRejectCommand,
+  revert: proposalRevertCommand,
+  drain: proposalDrainCommand,
+};
+const PROPOSAL_SUBCOMMAND_SET = new Set(Object.keys(proposalSubCommands));
 
 export const proposalCommand = defineCommand({
   meta: { name: "proposal", description: "Manage the proposal queue: list, show, diff, accept, reject, revert" },
@@ -503,15 +514,7 @@ export const proposalCommand = defineCommand({
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
     type: { type: "string", description: "Filter by asset type" },
   },
-  subCommands: {
-    list: proposalListCommand,
-    show: proposalShowCommand,
-    diff: proposalDiffCommand,
-    accept: proposalAcceptCommand,
-    reject: proposalRejectCommand,
-    revert: proposalRevertCommand,
-    drain: proposalDrainCommand,
-  },
+  subCommands: proposalSubCommands,
   run({ args }) {
     return runWithJsonErrors(() => {
       // citty runs the group body even after a subcommand; short-circuit so the

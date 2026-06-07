@@ -23,19 +23,6 @@ import { akmAgentDispatch } from "./agent/agent-dispatch";
 import { readKnowledgeInput } from "./read/knowledge";
 import { buildWebsiteOptions } from "./sources/add-cli";
 
-const WIKI_SUBCOMMAND_SET = new Set([
-  "create",
-  "register",
-  "list",
-  "show",
-  "remove",
-  "pages",
-  "search",
-  "stash",
-  "lint",
-  "ingest",
-]);
-
 const wikiCreateCommand = defineJsonCommand({
   meta: { name: "create", description: "Scaffold a new wiki under <stashDir>/wikis/<name>/" },
   args: {
@@ -321,24 +308,29 @@ const wikiIngestCommand = defineJsonCommand({
   },
 });
 
+// Single source of truth: the routing set is derived from the subCommands keys
+// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
+const wikiSubCommands = {
+  create: wikiCreateCommand,
+  register: wikiRegisterCommand,
+  list: wikiListCommand,
+  show: wikiShowCommand,
+  remove: wikiRemoveCommand,
+  pages: wikiPagesCommand,
+  search: wikiSearchCommand,
+  stash: wikiStashCommand,
+  lint: wikiLintCommand,
+  ingest: wikiIngestCommand,
+};
+const WIKI_SUBCOMMAND_SET = new Set(Object.keys(wikiSubCommands));
+
 export const wikiCommand = defineCommand({
   meta: {
     name: "wiki",
     description:
       "Manage multiple markdown wikis (Karpathy-style). akm surfaces (lifecycle, raw/, lint, index); the agent writes pages.",
   },
-  subCommands: {
-    create: wikiCreateCommand,
-    register: wikiRegisterCommand,
-    list: wikiListCommand,
-    show: wikiShowCommand,
-    remove: wikiRemoveCommand,
-    pages: wikiPagesCommand,
-    search: wikiSearchCommand,
-    stash: wikiStashCommand,
-    lint: wikiLintCommand,
-    ingest: wikiIngestCommand,
-  },
+  subCommands: wikiSubCommands,
   run({ args }) {
     return runWithJsonErrors(async () => {
       if (hasSubcommand(args, WIKI_SUBCOMMAND_SET)) return;
