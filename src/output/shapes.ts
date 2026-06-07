@@ -101,6 +101,22 @@ registerOutputShapes(BUILT_IN_OUTPUT_SHAPES);
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
+ * Named alias for the command key threaded through the output shaping and
+ * text-formatting consumers.
+ *
+ * Output-shape handlers are registered DYNAMICALLY (`registerOutputShapes` /
+ * `registerOutputShape` take a runtime `string` command, and the backing
+ * registry is a `Map<string, OutputShapeHandler>`), so there is no literal
+ * keyed object from which a real string-literal union could be safely derived.
+ * This is therefore a pure nominal alias of `string` today — it changes no
+ * runtime behaviour — but it gives the shaping/formatting consumers a single,
+ * named tightening point should the registry later be reshaped into a literal
+ * map. The `output()` producer and call sites are intentionally NOT retyped
+ * here (deferred to design review).
+ */
+export type OutputCommandName = string;
+
+/**
  * Commands whose shape handler implements the `summary` projection. For every
  * other command, `--shape summary` is a usage error (v1 §5 — honest rejection
  * for a soon-frozen contract, not a silent fallback to `human`).
@@ -108,7 +124,7 @@ registerOutputShapes(BUILT_IN_OUTPUT_SHAPES);
 const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
 
 export function shapeForCommand(
-  command: string,
+  command: OutputCommandName,
   result: unknown,
   detail: DetailLevel,
   shape: ShapeMode = "human",

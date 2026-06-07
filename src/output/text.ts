@@ -19,6 +19,7 @@
  */
 
 import type { DetailLevel } from "./context";
+import type { OutputCommandName } from "./shapes";
 import { addFormatters } from "./text/add";
 import { cloneFormatters } from "./text/clone";
 import { configFormatters } from "./text/config";
@@ -167,7 +168,7 @@ export function outputJsonl(command: string, shaped: unknown): void {
  * Return a plain-text string for commands that are better as short messages,
  * or null to fall through to YAML output.
  */
-export function formatPlain(command: string, result: unknown, detail: DetailLevel): string | null {
+export function formatPlain(command: OutputCommandName, result: unknown, detail: DetailLevel): string | null {
   const handler = getTextFormatterHandler(command);
   if (handler) {
     return handler(result as Record<string, unknown>, detail);
