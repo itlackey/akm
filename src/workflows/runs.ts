@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
@@ -22,23 +21,19 @@ import type {
   WorkflowRunSummary,
   WorkflowStepDefinition,
 } from "../sources/types";
+import {
+  type WorkflowRunRow,
+  type WorkflowRunStepRow,
+  type WorkflowRunsRepository,
+  withWorkflowRunsRepo,
+} from "../storage/repositories/workflow-runs-repository";
 import { resolveAgentIdentity } from "./agent-identity";
 import { formatWorkflowErrors } from "./authoring";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
 import { parseWorkflow } from "./parser";
 import type { WorkflowDocument } from "./schema";
 import { getCurrentWorkflowScopeKey } from "./scope-key";
 import { type SummaryJudge, validateStepSummary } from "./validate-summary";
-
-async function withWorkflowDb<T>(fn: (db: Database) => T | Promise<T>): Promise<T> {
-  const db = openWorkflowDatabase();
-  try {
-    return await Promise.resolve(fn(db));
-  } finally {
-    closeWorkflowDatabase(db);
-  }
-}
 
 type WorkflowAsset = {
   ref: string;
@@ -47,37 +42,6 @@ type WorkflowAsset = {
   title: string;
   parameters?: WorkflowParameter[];
   steps: WorkflowStepDefinition[];
-};
-
-type WorkflowRunRow = {
-  id: string;
-  workflow_ref: string;
-  scope_key: string | null;
-  workflow_entry_id: number | null;
-  workflow_title: string;
-  status: WorkflowRunStatus;
-  params_json: string;
-  current_step_id: string | null;
-  created_at: string;
-  updated_at: string;
-  completed_at: string | null;
-  agent_harness: string | null;
-  agent_session_id: string | null;
-  checkin_armed_at: string | null;
-};
-
-type WorkflowRunStepRow = {
-  run_id: string;
-  step_id: string;
-  step_title: string;
-  instructions: string;
-  completion_json: string | null;
-  sequence_index: number;
-  status: WorkflowRunStepStatus;
-  notes: string | null;
-  evidence_json: string | null;
-  completed_at: string | null;
-  summary: string | null;
 };
 
 export interface WorkflowRunDetail {
@@ -141,7 +105,7 @@ export async function startWorkflowRun(
   options?: { force?: boolean; agentHarness?: string | null; agentSessionId?: string | null },
 ): Promise<WorkflowRunDetail> {
   const asset = await loadWorkflowAsset(ref);
-  return withWorkflowDb(async (db) => {
+  return withWorkflowRunsRepo(async (repo) => {
     const now = new Date().toISOString();
     const runId = randomUUID();
     const scopeKey = getCurrentWorkflowScopeKey();
@@ -161,11 +125,7 @@ export async function startWorkflowRun(
     // so two terminals running `akm workflow start <ref>` left two runs
     // racing; `akm workflow next` then non-deterministically picked one.
     if (!options?.force) {
-      const existing = db
-        .prepare(
-          "SELECT id, current_step_id FROM workflow_runs WHERE workflow_ref = ? AND scope_key = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
-        )
-        .get(asset.ref, scopeKey) as { id: string; current_step_id: string | null } | undefined;
+      const existing = repo.findActiveRunForScope(asset.ref, scopeKey);
       if (existing) {
         throw new UsageError(
           `Workflow ${asset.ref} already has an active run in this scope (id=${existing.id}, step=${existing.current_step_id ?? "—"}). ` +
@@ -180,43 +140,33 @@ export async function startWorkflowRun(
     // re-targeted with a `continue` directive. The agent harness + session id
     // are already resolved above (agentHarness/agentSessionId, from #501).
 
-    db.transaction(() => {
-      db.prepare(
-        `INSERT INTO workflow_runs (
-          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at,
-          agent_harness, agent_session_id, checkin_armed_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        runId,
-        asset.ref,
+    repo.transaction(() => {
+      repo.insertRun({
+        id: runId,
+        workflowRef: asset.ref,
         scopeKey,
         workflowEntryId,
-        asset.title,
-        JSON.stringify(params),
+        workflowTitle: asset.title,
+        paramsJson: JSON.stringify(params),
         currentStepId,
-        now,
-        now,
+        createdAt: now,
+        updatedAt: now,
         agentHarness,
         agentSessionId,
-        now,
-      );
+        checkinArmedAt: now,
+      });
 
-      const insertStep = db.prepare(
-        `INSERT INTO workflow_run_steps (
-          run_id, step_id, step_title, instructions, completion_json, sequence_index, status
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-      );
-      for (const step of asset.steps) {
-        insertStep.run(
+      repo.insertSteps(
+        asset.steps.map((step) => ({
           runId,
-          step.id,
-          step.title,
-          step.instructions,
-          step.completionCriteria ? JSON.stringify(step.completionCriteria) : null,
-          step.sequenceIndex ?? 0,
-        );
-      }
-    })();
+          stepId: step.id,
+          stepTitle: step.title,
+          instructions: step.instructions,
+          completionJson: step.completionCriteria ? JSON.stringify(step.completionCriteria) : null,
+          sequenceIndex: step.sequenceIndex ?? 0,
+        })),
+      );
+    });
 
     const result = await getWorkflowStatus(runId);
     appendEvent({
@@ -229,44 +179,35 @@ export async function startWorkflowRun(
 }
 
 export async function getWorkflowStatus(runId: string): Promise<WorkflowRunDetail> {
-  return withWorkflowDb((db) => {
-    const run = readWorkflowRun(db, runId);
-    const steps = readWorkflowRunSteps(db, run.id);
+  return withWorkflowRunsRepo((repo) => {
+    const run = readWorkflowRun(repo, runId);
+    const steps = readWorkflowRunSteps(repo, run.id);
     return buildWorkflowRunDetail(run, steps);
   });
 }
 
 export async function hasWorkflowRun(runId: string): Promise<boolean> {
-  return withWorkflowDb((db) => {
-    const row = db.prepare("SELECT 1 FROM workflow_runs WHERE id = ? LIMIT 1").get(runId) as { 1: number } | undefined;
-    return !!row;
-  });
+  return withWorkflowRunsRepo((repo) => repo.hasRun(runId));
 }
 
 export async function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: boolean }): Promise<{
   runs: WorkflowRunSummary[];
 }> {
-  return withWorkflowDb((db) => {
-    const filters: string[] = [];
-    const params: string[] = [];
+  return withWorkflowRunsRepo((repo) => {
     const scopeKey = getCurrentWorkflowScopeKey();
-    filters.push("scope_key = ?");
-    params.push(scopeKey);
+    let workflowRef: string | undefined;
     if (input?.workflowRef) {
       const parsed = parseAssetRef(input.workflowRef);
       if (parsed.type !== "workflow") {
         throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${input.workflowRef}".`);
       }
-      filters.push("workflow_ref = ?");
-      params.push(`${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`);
+      workflowRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
     }
-    if (input?.activeOnly) {
-      filters.push("status IN ('active', 'blocked')");
-    }
-    const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
-    const rows = db
-      .prepare(`SELECT * FROM workflow_runs ${where} ORDER BY updated_at DESC, created_at DESC`)
-      .all(...params) as WorkflowRunRow[];
+    const rows = repo.listRuns({
+      scopeKey,
+      ...(workflowRef ? { workflowRef } : {}),
+      ...(input?.activeOnly ? { activeOnly: true } : {}),
+    });
     return { runs: rows.map(toWorkflowRunSummary) };
   });
 }
@@ -275,9 +216,9 @@ export async function getNextWorkflowStep(
   specifier: string,
   params?: Record<string, unknown>,
 ): Promise<WorkflowNextResult> {
-  return withWorkflowDb(async (db) => {
-    const { run, autoStarted } = await resolveRunSpecifier(db, specifier, params);
-    const steps = readWorkflowRunSteps(db, run.id);
+  return withWorkflowRunsRepo(async (repo) => {
+    const { run, autoStarted } = await resolveRunSpecifier(repo, specifier, params);
+    const steps = readWorkflowRunSteps(repo, run.id);
     const currentStep = resolveCurrentStep(run, steps);
     const done = run.status === "completed" ? (true as const) : undefined;
     // #506: surface a check-in directive through the normal command output when
@@ -306,30 +247,26 @@ export async function getNextWorkflowStep(
 }
 
 export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
-  return withWorkflowDb((db) => {
-    const run = readWorkflowRun(db, runId);
+  return withWorkflowRunsRepo((repo) => {
+    const run = readWorkflowRun(repo, runId);
     if (run.status === "completed") {
       throw new UsageError(`Workflow run ${run.id} is already completed and cannot be resumed.`);
     }
     if (run.status === "active") {
-      const steps = readWorkflowRunSteps(db, run.id);
+      const steps = readWorkflowRunSteps(repo, run.id);
       return buildWorkflowRunDetail(run, steps);
     }
     // blocked or failed → flip back to active and re-open the current step so
     // it can be reclassified (completed, failed, skipped) after resuming.
     const now = new Date().toISOString();
-    db.transaction(() => {
+    repo.transaction(() => {
       if (run.current_step_id) {
-        db.prepare(
-          `UPDATE workflow_run_steps
-             SET status = 'pending', notes = NULL, evidence_json = NULL, completed_at = NULL
-             WHERE run_id = ? AND step_id = ? AND status IN ('blocked', 'failed')`,
-        ).run(run.id, run.current_step_id);
+        repo.reopenStepsForResume(run.id, run.current_step_id);
       }
-      db.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(now, run.id);
-    })();
+      repo.markRunActive(run.id, now);
+    });
     const updated: WorkflowRunRow = { ...run, status: "active", updated_at: now };
-    const steps = readWorkflowRunSteps(db, run.id);
+    const steps = readWorkflowRunSteps(repo, run.id);
     return buildWorkflowRunDetail(updated, steps);
   });
 }
@@ -339,14 +276,12 @@ export async function completeWorkflowStep(
 ): Promise<WorkflowRunDetail | SummaryValidationFailure> {
   // Read the step (read-only) up front so the LLM validation gate runs OUTSIDE
   // the write transaction — a slow/hung LLM must never hold a db write lock.
-  const preflight = await withWorkflowDb((db) => {
-    const run = readWorkflowRun(db, input.runId);
+  const preflight = await withWorkflowRunsRepo((repo) => {
+    const run = readWorkflowRun(repo, input.runId);
     if (run.status !== "active") {
       throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
     }
-    const existing = db
-      .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
-      .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
+    const existing = repo.getStep(run.id, input.stepId);
     if (!existing) {
       throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
     }
@@ -384,11 +319,8 @@ export async function completeWorkflowStep(
     if (!verdict.complete) {
       // Re-arm the check-in so a subsequent stall is still nudged, but leave the
       // step pending and return corrective feedback instead of completing.
-      await withWorkflowDb((db) => {
-        db.prepare("UPDATE workflow_runs SET checkin_armed_at = ? WHERE id = ?").run(
-          new Date().toISOString(),
-          input.runId,
-        );
+      await withWorkflowRunsRepo((repo) => {
+        repo.rearmCheckin(input.runId, new Date().toISOString());
       });
       return {
         ok: false,
@@ -400,18 +332,16 @@ export async function completeWorkflowStep(
     }
   }
 
-  return withWorkflowDb((db) => {
+  return withWorkflowRunsRepo((repo) => {
     let updatedRun: WorkflowRunRow | undefined;
     let refreshedSteps: WorkflowRunStepRow[] = [];
 
-    db.transaction(() => {
-      const run = readWorkflowRun(db, input.runId);
+    repo.transaction(() => {
+      const run = readWorkflowRun(repo, input.runId);
       if (run.status !== "active") {
         throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
       }
-      const existing = db
-        .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
-        .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
+      const existing = repo.getStep(run.id, input.stepId);
       if (!existing) {
         throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
       }
@@ -425,29 +355,28 @@ export async function completeWorkflowStep(
       }
 
       const completedAt = new Date().toISOString();
-      db.prepare(
-        `UPDATE workflow_run_steps
-           SET status = ?, notes = ?, evidence_json = ?, summary = ?, completed_at = ?
-           WHERE run_id = ? AND step_id = ?`,
-      ).run(
-        input.status,
-        input.notes?.trim() || null,
-        input.evidence ? JSON.stringify(input.evidence) : null,
-        summary || null,
+      repo.updateStepCompletion({
+        status: input.status,
+        notes: input.notes?.trim() || null,
+        evidenceJson: input.evidence ? JSON.stringify(input.evidence) : null,
+        summary: summary || null,
         completedAt,
-        run.id,
-        input.stepId,
-      );
+        runId: run.id,
+        stepId: input.stepId,
+      });
 
-      refreshedSteps = readWorkflowRunSteps(db, run.id);
+      refreshedSteps = readWorkflowRunSteps(repo, run.id);
       const state = deriveRunState(refreshedSteps);
       // Re-arm the check-in on every state change: a healthy, progressing run
       // keeps pushing the stall window forward so the directive never fires.
-      db.prepare(
-        `UPDATE workflow_runs
-           SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?, checkin_armed_at = ?
-           WHERE id = ?`,
-      ).run(state.status, state.currentStepId, completedAt, state.completedAt, completedAt, run.id);
+      repo.updateRunState({
+        status: state.status,
+        currentStepId: state.currentStepId,
+        updatedAt: completedAt,
+        completedAt: state.completedAt,
+        checkinArmedAt: completedAt,
+        runId: run.id,
+      });
 
       updatedRun = {
         ...run,
@@ -457,7 +386,7 @@ export async function completeWorkflowStep(
         completed_at: state.completedAt,
         checkin_armed_at: completedAt,
       };
-    })();
+    });
 
     const detail = buildWorkflowRunDetail(updatedRun as WorkflowRunRow, refreshedSteps);
     appendEvent({
@@ -473,13 +402,11 @@ export async function completeWorkflowStep(
 }
 
 async function resolveRunSpecifier(
-  db: import("bun:sqlite").Database,
+  repo: WorkflowRunsRepository,
   specifier: string,
   params?: Record<string, unknown>,
 ): Promise<{ run: WorkflowRunRow; autoStarted: boolean }> {
-  const explicitRun = db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(specifier) as
-    | WorkflowRunRow
-    | undefined;
+  const explicitRun = repo.getRunById(specifier);
   if (explicitRun) {
     if (params && Object.keys(params).length > 0) {
       throw new UsageError(
@@ -499,11 +426,7 @@ async function resolveRunSpecifier(
   }
   const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
   const scopeKey = getCurrentWorkflowScopeKey();
-  const active = db
-    .prepare(
-      "SELECT * FROM workflow_runs WHERE workflow_ref = ? AND scope_key = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
-    )
-    .get(ref, scopeKey) as WorkflowRunRow | undefined;
+  const active = repo.getActiveRunRowForScope(ref, scopeKey);
   if (active) {
     if (params && Object.keys(params).length > 0) {
       throw new UsageError(`--params can only be set on a new run; ${ref} already has an active run`);
@@ -512,7 +435,7 @@ async function resolveRunSpecifier(
   }
 
   const started = await startWorkflowRun(ref, params ?? {});
-  return { run: readWorkflowRun(db, started.run.id), autoStarted: true };
+  return { run: readWorkflowRun(repo, started.run.id), autoStarted: true };
 }
 
 async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
@@ -634,18 +557,16 @@ function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null 
   }
 }
 
-function readWorkflowRun(db: import("bun:sqlite").Database, runId: string): WorkflowRunRow {
-  const run = db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(runId) as WorkflowRunRow | undefined;
+function readWorkflowRun(repo: WorkflowRunsRepository, runId: string): WorkflowRunRow {
+  const run = repo.getRunById(runId);
   if (!run) {
     throw new NotFoundError(`Workflow run "${runId}" not found.`, "WORKFLOW_NOT_FOUND");
   }
   return run;
 }
 
-function readWorkflowRunSteps(db: import("bun:sqlite").Database, runId: string): WorkflowRunStepRow[] {
-  return db
-    .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? ORDER BY sequence_index ASC")
-    .all(runId) as WorkflowRunStepRow[];
+function readWorkflowRunSteps(repo: WorkflowRunsRepository, runId: string): WorkflowRunStepRow[] {
+  return repo.getStepsForRun(runId);
 }
 
 function buildWorkflowRunDetail(run: WorkflowRunRow, steps: WorkflowRunStepRow[]): WorkflowRunDetail {
@@ -781,12 +702,8 @@ function parseJsonArray(value: string | null): string[] | undefined {
 export async function getActiveWorkflowRun(
   scopeKey = getCurrentWorkflowScopeKey(),
 ): Promise<{ runId: string; stepId: string | null; workflowRef: string } | null> {
-  return withWorkflowDb((db) => {
-    const row = db
-      .query<{ id: string; current_step_id: string | null; workflow_ref: string }, [string]>(
-        "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE scope_key = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
-      )
-      .get(scopeKey);
+  return withWorkflowRunsRepo((repo) => {
+    const row = repo.findActiveOrBlockedRunForScope(scopeKey);
     if (!row) return null;
     return { runId: row.id, stepId: row.current_step_id, workflowRef: row.workflow_ref };
   }).catch(() => null); // fail-open: never crash show output due to DB error
