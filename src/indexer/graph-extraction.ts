@@ -59,7 +59,7 @@ import {
 } from "./db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "./graph-db";
 import { deduplicateGraph } from "./graph-dedup";
-import type { SearchSource } from "./search-source";
+import type { EnrichmentPassContext } from "./pass-context";
 import { walkMarkdownFiles } from "./walker";
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
@@ -165,6 +165,19 @@ export interface GraphExtractionResult {
 export interface GraphExtractionPassOptions {
   candidatePaths?: ReadonlySet<string>;
 }
+
+/** Progress event emitted by {@link runGraphExtractionPass}. */
+export interface GraphExtractionProgress {
+  processed: number;
+  total: number;
+  extracted: number;
+  totalEntities: number;
+  totalRelations: number;
+  currentPath?: string;
+}
+
+/** Parameter object for {@link runGraphExtractionPass}. */
+export type GraphExtractionPassContext = EnrichmentPassContext<GraphExtractionProgress, GraphExtractionPassOptions>;
 
 interface LoadedGraphFile {
   files: GraphFileNode[];
@@ -423,22 +436,8 @@ function reuseGraphNode(
  * `extractGraphFromBodies`. Default batch size is 1 (one call per asset —
  * preserves existing behaviour, fully opt-in).
  */
-export async function runGraphExtractionPass(
-  config: AkmConfig,
-  sources: SearchSource[],
-  signal?: AbortSignal,
-  db?: Database,
-  reEnrich?: boolean,
-  onProgress?: (event: {
-    processed: number;
-    total: number;
-    extracted: number;
-    totalEntities: number;
-    totalRelations: number;
-    currentPath?: string;
-  }) => void,
-  options: GraphExtractionPassOptions = {},
-): Promise<GraphExtractionResult> {
+export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): Promise<GraphExtractionResult> {
+  const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
   // (profiles.improve.default.processes.graphExtraction.enabled). Defaults to
   // enabled when the key is absent.

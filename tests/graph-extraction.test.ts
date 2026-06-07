@@ -308,7 +308,7 @@ describe("runGraphExtractionPass — disabled paths", () => {
       throw new Error("must not be called when no llm is configured");
     };
     const result = await withGraphDb("disabled-no-llm", (db) =>
-      runGraphExtractionPass({ semanticSearchMode: "auto" }, sources(), undefined, db),
+      runGraphExtractionPass({ config: { semanticSearchMode: "auto" }, sources: sources(), db }),
     );
     expect(result.written).toBe(false);
     expect(result.considered).toBe(0);
@@ -321,7 +321,7 @@ describe("runGraphExtractionPass — disabled paths", () => {
     };
     const cfg = configWithLlm({ index: { graph: { llm: false } } });
     const result = await withGraphDb("disabled-pass-gate", (db) =>
-      runGraphExtractionPass(cfg, sources(), undefined, db),
+      runGraphExtractionPass({ config: cfg, sources: sources(), db }),
     );
     expect(result.written).toBe(false);
   });
@@ -341,7 +341,7 @@ describe("runGraphExtractionPass — disabled paths", () => {
       index: { graph: { llm: true } },
     };
     const result = await withGraphDb("feature-gated-off", (db) =>
-      runGraphExtractionPass(cfg, sources(), undefined, db),
+      runGraphExtractionPass({ config: cfg, sources: sources(), db }),
     );
     expect(result.written).toBe(false);
   });
@@ -350,14 +350,18 @@ describe("runGraphExtractionPass — disabled paths", () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
     await withGraphDb("toggle-preserve", async (db) => {
-      await runGraphExtractionPass(configWithLlm(), sources(), undefined, db);
+      await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db });
       const before = loadStoredGraphSnapshot(tmpStash, db);
       expect(before).not.toBeNull();
 
       extractor = () => {
         throw new Error("must not be called when disabled");
       };
-      await runGraphExtractionPass(configWithLlm({ index: { graph: { llm: false } } }), sources(), undefined, db);
+      await runGraphExtractionPass({
+        config: configWithLlm({ index: { graph: { llm: false } } }),
+        sources: sources(),
+        db,
+      });
 
       const after = loadStoredGraphSnapshot(tmpStash, db);
       expect(after).toEqual(before);
@@ -379,7 +383,9 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
       },
       defaults: { llm: "default" },
     };
-    const result = await withGraphDb("both-gates-allow", (db) => runGraphExtractionPass(cfg, sources(), undefined, db));
+    const result = await withGraphDb("both-gates-allow", (db) =>
+      runGraphExtractionPass({ config: cfg, sources: sources(), db }),
+    );
     expect(result.written).toBe(true);
     expect(result.considered).toBe(1);
     expect(result.extracted).toBe(1);
@@ -402,7 +408,7 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
       index: { graph: { llm: true } },
     };
     const result = await withGraphDb("llm-absent-third-precondition", (db) =>
-      runGraphExtractionPass(cfg, sources(), undefined, db),
+      runGraphExtractionPass({ config: cfg, sources: sources(), db }),
     );
     expect(result.written).toBe(false);
     expect(result.considered).toBe(0);
@@ -413,8 +419,8 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["E"], relations: [] });
     const featureOff = await withGraphDb("either-gate-feature-off", (db) =>
-      runGraphExtractionPass(
-        {
+      runGraphExtractionPass({
+        config: {
           semanticSearchMode: "auto",
           profiles: {
             llm: { default: { ...SAMPLE_LLM } },
@@ -422,16 +428,15 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
           },
           defaults: { llm: "default" },
         },
-        sources(),
-        undefined,
+        sources: sources(),
         db,
-      ),
+      }),
     );
     expect(featureOff.written).toBe(false);
 
     const passOff = await withGraphDb("either-gate-pass-off", (db) =>
-      runGraphExtractionPass(
-        {
+      runGraphExtractionPass({
+        config: {
           semanticSearchMode: "auto",
           profiles: {
             llm: { default: { ...SAMPLE_LLM } },
@@ -440,10 +445,9 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
           defaults: { llm: "default" },
           index: { graph: { llm: false } },
         },
-        sources(),
-        undefined,
+        sources: sources(),
         db,
-      ),
+      }),
     );
     expect(passOff.written).toBe(false);
   });
@@ -457,8 +461,14 @@ describe("runGraphExtractionPass — progress", () => {
 
     const events: Array<{ processed: number; total: number; currentPath?: string }> = [];
     const result = await withGraphDb("progress", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false, (event) => {
-        events.push({ processed: event.processed, total: event.total, currentPath: event.currentPath });
+      runGraphExtractionPass({
+        config: configWithLlm(),
+        sources: sources(),
+        db,
+        reEnrich: false,
+        onProgress: (event) => {
+          events.push({ processed: event.processed, total: event.total, currentPath: event.currentPath });
+        },
       }),
     );
 
@@ -493,7 +503,7 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     const result = await withGraphDb("writes-graph", async (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     const parsed = await withGraphDb("writes-graph-read", (db) => loadStoredGraphSnapshot(tmpStash, db));
 
@@ -544,12 +554,11 @@ describe("runGraphExtractionPass — enabled", () => {
     extractor = () => ({ entities: ["X"], relations: [] });
 
     const result = await withGraphDb("include-types-expand", (db) =>
-      runGraphExtractionPass(
-        configWithLlm({ index: { graph: { graphExtractionIncludeTypes: ["memory", "command"] } } }),
-        sources(),
-        undefined,
+      runGraphExtractionPass({
+        config: configWithLlm({ index: { graph: { graphExtractionIncludeTypes: ["memory", "command"] } } }),
+        sources: sources(),
         db,
-      ),
+      }),
     );
 
     expect(result.considered).toBe(2);
@@ -565,7 +574,7 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     const result = await withGraphDb("omit-empty-entities", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     expect(result.considered).toBe(2);
     expect(result.extracted).toBe(1);
@@ -587,7 +596,7 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     await withGraphDb("candidate-preserve-initial", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     fs.writeFileSync(memoryPath, "---\n---\n\nBody about ServiceA updated.\n", "utf8");
 
@@ -597,8 +606,12 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     const result = await withGraphDb("candidate-preserve-refresh", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false, undefined, {
-        candidatePaths: new Set([memoryPath]),
+      runGraphExtractionPass({
+        config: configWithLlm(),
+        sources: sources(),
+        db,
+        reEnrich: false,
+        options: { candidatePaths: new Set([memoryPath]) },
       }),
     );
 
@@ -621,7 +634,7 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     await withGraphDb("candidate-remove-initial", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     fs.writeFileSync(memoryPath, "---\n---\n\nBody about ServiceA updated again.\n", "utf8");
 
@@ -631,8 +644,12 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     const result = await withGraphDb("candidate-remove-refresh", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false, undefined, {
-        candidatePaths: new Set([memoryPath]),
+      runGraphExtractionPass({
+        config: configWithLlm(),
+        sources: sources(),
+        db,
+        reEnrich: false,
+        options: { candidatePaths: new Set([memoryPath]) },
       }),
     );
 
@@ -676,7 +693,7 @@ describe("runGraphExtractionPass — enabled", () => {
     );
 
     const result = await withGraphDb("existing-graph-noop", async (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     const after = await withGraphDb("existing-graph-noop-read", (db) => loadStoredGraphSnapshot(tmpStash, db));
 
@@ -699,7 +716,7 @@ describe("runGraphExtractionPass — enabled", () => {
       extractor = () => ({ entities: ["X"], relations: [] });
 
       const result = await withGraphDb("cache-only-source", (db) =>
-        runGraphExtractionPass(configWithLlm(), [{ path: tmpStash }, { path: cacheDir }], undefined, db),
+        runGraphExtractionPass({ config: configWithLlm(), sources: [{ path: tmpStash }, { path: cacheDir }], db }),
       );
       expect(result.considered).toBe(1);
       await withGraphDb("cache-only-source-read", (db) => {
@@ -716,7 +733,7 @@ describe("runGraphExtractionPass — enabled", () => {
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
 
     const first = await withGraphDb("incremental-reuse-first", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     expect(first.written).toBe(true);
     expect(extractorCallCount).toBe(1);
@@ -726,7 +743,7 @@ describe("runGraphExtractionPass — enabled", () => {
     };
 
     const second = await withGraphDb("incremental-reuse-second", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     expect(second.written).toBe(true);
     expect(second.extracted).toBe(1);
@@ -737,7 +754,7 @@ describe("runGraphExtractionPass — enabled", () => {
     const filePath = writeFile("memories/m1.md", {}, "Original body about ServiceA.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
     await withGraphDb("hash-invalidate-first", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     expect(extractorCallCount).toBe(1);
 
@@ -745,7 +762,7 @@ describe("runGraphExtractionPass — enabled", () => {
     extractor = () => ({ entities: ["ServiceB"], relations: [] });
 
     const second = await withGraphDb("hash-invalidate-second", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     expect(second.written).toBe(true);
     expect(extractorCallCount).toBe(2);
@@ -759,7 +776,9 @@ describe("runGraphExtractionPass — enabled", () => {
   test("invalid prior graph node falls back safely to fresh extraction", async () => {
     writeFile("memories/m1.md", {}, "Body about ServiceA.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
-    await withGraphDb("invalid-prior-first", (db) => runGraphExtractionPass(configWithLlm(), sources(), undefined, db));
+    await withGraphDb("invalid-prior-first", (db) =>
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
+    );
     expect(extractorCallCount).toBe(1);
 
     await withGraphDb("invalid-prior-corrupt", (db) => {
@@ -776,7 +795,7 @@ describe("runGraphExtractionPass — enabled", () => {
 
     extractor = () => ({ entities: ["ServiceC"], relations: [] });
     const second = await withGraphDb("invalid-prior-second", (db) =>
-      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+      runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db }),
     );
     expect(second.written).toBe(true);
     expect(extractorCallCount).toBe(2);

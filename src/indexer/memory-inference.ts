@@ -36,13 +36,12 @@
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
-import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { assembleAsset } from "../core/asset-serialize";
 import { concurrentMap } from "../core/concurrent";
-import type { AkmConfig, SourceConfigEntry } from "../core/config";
+import type { SourceConfigEntry } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
@@ -51,7 +50,7 @@ import { resolveIndexPassLLM } from "../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../llm/memory-infer";
 import * as memoryInfer from "../llm/memory-infer";
 import { withLlmCache } from "./llm-cache";
-import type { SearchSource } from "./search-source";
+import type { EnrichmentPassContext } from "./pass-context";
 import { walkMarkdownFiles } from "./walker";
 
 /**
@@ -120,6 +119,18 @@ export interface MemoryInferencePassOptions {
   candidateRefs?: ReadonlySet<string>;
 }
 
+/** Progress event emitted by {@link runMemoryInferencePass}. */
+export interface MemoryInferenceProgress {
+  processed: number;
+  total: number;
+  writtenFacts: number;
+  skippedNoFacts: number;
+  currentRef?: string;
+}
+
+/** Parameter object for {@link runMemoryInferencePass}. */
+export type MemoryInferencePassContext = EnrichmentPassContext<MemoryInferenceProgress, MemoryInferencePassOptions>;
+
 interface MemoryRecord {
   /** Absolute path on disk. */
   filePath: string;
@@ -149,21 +160,8 @@ interface MemoryRecord {
  * Both must allow the call for the pass to run. Either set to `false`
  * short-circuits to a no-op result.
  */
-export async function runMemoryInferencePass(
-  config: AkmConfig,
-  sources: SearchSource[],
-  signal?: AbortSignal,
-  db?: Database,
-  reEnrich?: boolean,
-  onProgress?: (event: {
-    processed: number;
-    total: number;
-    writtenFacts: number;
-    skippedNoFacts: number;
-    currentRef?: string;
-  }) => void,
-  options: MemoryInferencePassOptions = {},
-): Promise<MemoryInferenceResult> {
+export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): Promise<MemoryInferenceResult> {
+  const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
   const result: MemoryInferenceResult = {
     considered: 0,
     cacheHits: 0,

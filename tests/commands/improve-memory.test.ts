@@ -1131,7 +1131,7 @@ describe("akm improve memory cleanup", () => {
           proposalKind: "lesson",
         } satisfies AkmDistillResult;
       },
-      memoryInferenceFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
+      memoryInferenceFn: async ({ options }) => {
         inferredRefs.push([...(options?.candidateRefs ?? new Set<string>())].sort());
         return {
           considered: 1,
@@ -1236,7 +1236,7 @@ describe("akm improve memory cleanup", () => {
           retryAttempts: 0,
         } satisfies MemoryInferenceResult;
       },
-      graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
+      graphExtractionFn: async ({ options }) => {
         callOrder.push("graphExtraction");
         // Phase 1 perf fix: improve now passes candidatePaths filtered to refs
         // actually touched this run (here: memory:vpn). The set must include
@@ -1301,7 +1301,7 @@ describe("akm improve memory cleanup", () => {
           proposalRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
           proposalKind: "lesson",
         }),
-        graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, onProgress) => {
+        graphExtractionFn: async ({ onProgress }) => {
           onProgress?.({
             processed: 1,
             total: 3,

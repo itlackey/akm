@@ -147,7 +147,7 @@ describe("runStalenessDetectionPass — feature gate", () => {
   test("returns no-op when feature is disabled (default)", async () => {
     const filePath = writeMemory("old-fact", { description: "old" }, "Old body.");
     setOldMtime(filePath, 365);
-    const result = await runStalenessDetectionPass(disabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: disabledConfig(), sources: sources() });
     expect(result).toMatchObject({
       considered: 0,
       deprecated: 0,
@@ -174,7 +174,10 @@ describe("runStalenessDetectionPass — threshold", () => {
     setOldMtime(filePath, 200);
     validator = () => "YES\nSUPERSEDED_BY: memory:other";
 
-    const result = await runStalenessDetectionPass(enabledConfig({ thresholdDays: 90 }), sources());
+    const result = await runStalenessDetectionPass({
+      config: enabledConfig({ thresholdDays: 90 }),
+      sources: sources(),
+    });
     expect(result.considered).toBe(0);
     expect(validatorCalls).toBe(0);
   });
@@ -185,7 +188,7 @@ describe("runStalenessDetectionPass — threshold", () => {
     const f3 = writeMemory("arc", { description: "arc", beliefState: "archived" }, "Body");
     for (const p of [f1, f2, f3]) setOldMtime(p, 365);
 
-    const result = await runStalenessDetectionPass(enabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: enabledConfig(), sources: sources() });
     expect(result.considered).toBe(0);
     expect(validatorCalls).toBe(0);
   });
@@ -204,7 +207,7 @@ describe("runStalenessDetectionPass — deprecation", () => {
 
     validator = () => "YES\nSUPERSEDED_BY: memory:new-fact";
 
-    const result = await runStalenessDetectionPass(enabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: enabledConfig(), sources: sources() });
     expect(result.considered).toBe(1);
     expect(result.deprecated).toBe(1);
     expect(result.confirmed).toBe(0);
@@ -230,7 +233,7 @@ describe("runStalenessDetectionPass — confirmation", () => {
 
     validator = () => "NO";
 
-    const result = await runStalenessDetectionPass(enabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: enabledConfig(), sources: sources() });
     expect(result.considered).toBe(1);
     expect(result.deprecated).toBe(0);
     expect(result.confirmed).toBe(1);
@@ -256,7 +259,7 @@ describe("runStalenessDetectionPass — supersededBy validation", () => {
 
     validator = () => "YES\nSUPERSEDED_BY: memory:does-not-exist";
 
-    const result = await runStalenessDetectionPass(enabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: enabledConfig(), sources: sources() });
     expect(result.deprecated).toBe(0);
     expect(result.confirmed).toBe(1);
     expect(result.warnings.some((w) => w.includes("memory:does-not-exist"))).toBe(true);
@@ -280,7 +283,7 @@ describe("runStalenessDetectionPass — malformed responses", () => {
 
     validator = () => "I am not sure.";
 
-    const result = await runStalenessDetectionPass(enabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: enabledConfig(), sources: sources() });
     expect(result.considered).toBe(1);
     expect(result.deprecated).toBe(0);
     expect(result.confirmed).toBe(0);
@@ -303,7 +306,7 @@ describe("runStalenessDetectionPass — empty corpus", () => {
       throw new Error("must not be called when there is nothing to compare against");
     };
 
-    const result = await runStalenessDetectionPass(enabledConfig(), sources());
+    const result = await runStalenessDetectionPass({ config: enabledConfig(), sources: sources() });
     expect(result.considered).toBe(1);
     expect(result.confirmed).toBe(1);
     expect(validatorCalls).toBe(0);

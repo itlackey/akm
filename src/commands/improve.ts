@@ -49,11 +49,7 @@ import {
 import { ensureIndex } from "../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../indexer/graph-extraction";
 import { akmIndex } from "../indexer/indexer";
-import {
-  type MemoryInferencePassOptions,
-  type MemoryInferenceResult,
-  runMemoryInferencePass,
-} from "../indexer/memory-inference";
+import { type MemoryInferenceResult, runMemoryInferencePass } from "../indexer/memory-inference";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../indexer/staleness-detect";
@@ -112,35 +108,14 @@ export interface AkmImproveOptions {
   memoryVolumeConsolidationThreshold?: number;
   reflectFn?: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
-  memoryInferenceFn?: (
-    config: AkmConfig,
-    sources: ReturnType<typeof resolveSourceEntries>,
-    signal?: AbortSignal,
-    db?: Database,
-    reEnrich?: boolean,
-    onProgress?: Parameters<typeof runMemoryInferencePass>[5],
-    options?: MemoryInferencePassOptions,
-  ) => Promise<MemoryInferenceResult>;
+  memoryInferenceFn?: typeof runMemoryInferencePass;
   /**
    * Phase 4A: injectable staleness-detection pass for tests. When omitted, the
    * real `runStalenessDetectionPass` runs (which is itself a no-op unless
    * `features.index.staleness_detection` is enabled).
    */
-  stalenessDetectionFn?: (
-    config: AkmConfig,
-    sources: ReturnType<typeof resolveSourceEntries>,
-    signal?: AbortSignal,
-    db?: Database,
-  ) => Promise<StalenessDetectionResult>;
-  graphExtractionFn?: (
-    config: AkmConfig,
-    sources: ReturnType<typeof resolveSourceEntries>,
-    signal?: AbortSignal,
-    db?: Database,
-    reEnrich?: boolean,
-    onProgress?: Parameters<typeof runGraphExtractionPass>[5],
-    options?: Parameters<typeof runGraphExtractionPass>[6],
-  ) => Promise<GraphExtractionResult>;
+  stalenessDetectionFn?: typeof runStalenessDetectionPass;
+  graphExtractionFn?: typeof runGraphExtractionPass;
   ensureIndexFn?: (stashDir: string) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
@@ -3058,11 +3033,18 @@ async function runImproveMaintenancePasses(args: {
       const inferenceStart = Date.now();
       try {
         // O-1 (#364): pass budget signal so a hung inference call is cancelled.
-        memoryInference = await memoryInferenceFn(config, sources, budgetSignal, db, false, (event) => {
-          const current = event.currentRef ? ` ${event.currentRef}` : "";
-          info(
-            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
-          );
+        memoryInference = await memoryInferenceFn({
+          config,
+          sources,
+          signal: budgetSignal,
+          db,
+          reEnrich: false,
+          onProgress: (event) => {
+            const current = event.currentRef ? ` ${event.currentRef}` : "";
+            info(
+              `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+            );
+          },
         });
         memoryInferenceDurationMs = Date.now() - inferenceStart;
         actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
@@ -3155,8 +3137,14 @@ async function runImproveMaintenancePasses(args: {
           );
         };
         // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
-        graphExtraction = await graphExtractionFn(config, sources, budgetSignal, db, false, progressHandler, {
-          candidatePaths,
+        graphExtraction = await graphExtractionFn({
+          config,
+          sources,
+          signal: budgetSignal,
+          db,
+          reEnrich: false,
+          onProgress: progressHandler,
+          options: { candidatePaths },
         });
         graphExtractionDurationMs = Date.now() - extractionStart;
         actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
@@ -3302,7 +3290,7 @@ async function runImproveMaintenancePasses(args: {
     // and before the URL check (which lives in the outer caller).
     if (sources.length > 0) {
       try {
-        stalenessDetection = await stalenessDetectionFn(config, sources, budgetSignal, db);
+        stalenessDetection = await stalenessDetectionFn({ config, sources, signal: budgetSignal, db });
         if (stalenessDetection.considered > 0) {
           info(
             `[improve] staleness detection complete (considered ${stalenessDetection.considered}, ` +

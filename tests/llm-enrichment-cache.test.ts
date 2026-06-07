@@ -288,14 +288,14 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceA", "ServiceB"], relations: [] });
 
     // First run: LLM is called and result is cached.
-    const first = await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    const first = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(first.written).toBe(true);
     expect(graphExtractCallCount).toBe(1);
 
     const callsAfterFirst = graphExtractCallCount;
 
     // Second run with same db and same file body: should be a cache hit.
-    const second = await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    const second = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(second.written).toBe(true);
     // LLM must NOT have been called again — it should serve from cache.
     expect(graphExtractCallCount).toBe(callsAfterFirst);
@@ -310,7 +310,7 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
 
     // First run.
-    await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(graphExtractCallCount).toBe(1);
 
     // Mutate the file body.
@@ -318,7 +318,7 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceB"], relations: [] });
 
     // Second run: body changed → cache miss → new LLM call.
-    const second = await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    const second = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(graphExtractCallCount).toBe(2);
     expect(second.written).toBe(true);
     // The graph should now contain the new entity.
@@ -331,11 +331,11 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
 
     // First run fills the cache.
-    await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(graphExtractCallCount).toBe(1);
 
     // Second run with reEnrich=true must call LLM again.
-    await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, true);
+    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: true });
     expect(graphExtractCallCount).toBe(2);
   });
 
@@ -343,11 +343,11 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     writeFile("memories/m1.md", {}, "Body about ServiceA.");
     graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
 
-    await runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false);
+    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(graphExtractCallCount).toBe(1);
 
-    await runGraphExtractionPass(
-      configWithLlm({
+    await runGraphExtractionPass({
+      config: configWithLlm({
         profiles: {
           llm: {
             default: {
@@ -359,11 +359,10 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
         },
         defaults: { llm: "default" },
       }),
-      sources(),
-      undefined,
+      sources: sources(),
       db,
-      false,
-    );
+      reEnrich: false,
+    });
     expect(graphExtractCallCount).toBe(2);
   });
 });
@@ -390,7 +389,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     upsertLlmCacheEntry(db, freshPath, computeBodyHash(exactBody), JSON.stringify(sampleDraft("Cached Result")));
 
     // Run the pass — cache hit → LLM must NOT be called.
-    const result = await runMemoryInferencePass(configWithLlm(), sources(), undefined, db, false);
+    const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(memoryCompressCallCount).toBe(0);
     // Derived memory IS written (from the cached draft).
     expect(result.writtenFacts).toBe(1);
@@ -410,7 +409,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     );
 
     // Run — body hash mismatch → cache miss → LLM called.
-    const result = await runMemoryInferencePass(configWithLlm(), sources(), undefined, db, false);
+    const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
     expect(memoryCompressCallCount).toBe(1);
     expect(result.writtenFacts).toBe(1);
   });
@@ -426,7 +425,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     upsertLlmCacheEntry(db, filePath, computeBodyHash(exactBody), JSON.stringify(sampleDraft("Cached")));
 
     // Run with reEnrich=true — must call LLM despite cache hit.
-    await runMemoryInferencePass(configWithLlm(), sources(), undefined, db, true);
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources(), db, reEnrich: true });
     expect(memoryCompressCallCount).toBe(1);
   });
 });

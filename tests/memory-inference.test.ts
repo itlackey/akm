@@ -182,7 +182,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
   test("returns no-op when no akm.llm is configured", async () => {
     writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
-    const result = await runMemoryInferencePass({ semanticSearchMode: "auto" }, sources());
+    const result = await runMemoryInferencePass({ config: { semanticSearchMode: "auto" }, sources: sources() });
     expect(result).toEqual({
       considered: 0,
       cacheHits: 0,
@@ -200,7 +200,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
   test("returns no-op when index.memory.llm = false", async () => {
     const filePath = writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
-    const result = await runMemoryInferencePass(configOptedOut(), sources());
+    const result = await runMemoryInferencePass({ config: configOptedOut(), sources: sources() });
     expect(result.writtenFacts).toBe(0);
     // Existing inferred children are NOT deleted — but here we just confirm
     // the parent file is unchanged, since the toggle should not mutate state.
@@ -212,7 +212,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
     // First run: enabled. Writes one derived memory.
     writeMemory("parent", {}, "Body.");
     compressor = () => sampleDraft();
-    await runMemoryInferencePass(configWithLlm(), sources());
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
     const derivedPath = path.join(tmpStash, "memories", "parent.derived.md");
     expect(fs.existsSync(derivedPath)).toBe(true);
@@ -221,7 +221,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
     compressor = () => {
       throw new Error("must not be called when disabled");
     };
-    await runMemoryInferencePass(configOptedOut(), sources());
+    await runMemoryInferencePass({ config: configOptedOut(), sources: sources() });
     expect(fs.existsSync(derivedPath)).toBe(true);
   });
 });
@@ -241,7 +241,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
       defaults: { llm: "default" },
       // index.memory.llm omitted → defaults to enabled.
     };
-    const result = await runMemoryInferencePass(cfg, sources());
+    const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result.writtenFacts).toBe(1);
     expect(result.splitParents).toBe(1);
   });
@@ -262,7 +262,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
       defaults: { llm: "default" },
       index: { memory: { llm: true } },
     };
-    const result = await runMemoryInferencePass(cfg, sources());
+    const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result).toEqual({
       considered: 0,
       cacheHits: 0,
@@ -297,7 +297,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
       defaults: { llm: "default" },
       index: { memory: { llm: false } },
     };
-    const result = await runMemoryInferencePass(cfg, sources());
+    const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result.writtenFacts).toBe(0);
     expect(invocations).toBe(0);
     const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
@@ -312,8 +312,13 @@ describe("runMemoryInferencePass — progress", () => {
     compressor = () => sampleDraft();
 
     const events: Array<{ processed: number; total: number; currentRef?: string }> = [];
-    const result = await runMemoryInferencePass(configWithLlm(), sources(), undefined, undefined, false, (event) => {
-      events.push({ processed: event.processed, total: event.total, currentRef: event.currentRef });
+    const result = await runMemoryInferencePass({
+      config: configWithLlm(),
+      sources: sources(),
+      reEnrich: false,
+      onProgress: (event) => {
+        events.push({ processed: event.processed, total: event.total, currentRef: event.currentRef });
+      },
     });
 
     expect(result.writtenFacts).toBe(2);
@@ -337,7 +342,7 @@ describe("runMemoryInferencePass — enabled", () => {
       content: "## Root Cause\n\nThe parent had too much noise.\n\n## Reusable Insight\n\nKeep the compressed version.",
     });
 
-    const result = await runMemoryInferencePass(configWithLlm(), sources());
+    const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
     expect(result).toEqual({
       considered: 1,
@@ -372,7 +377,7 @@ describe("runMemoryInferencePass — enabled", () => {
     const filePath = writeMemory("parent", { description: "preserve me", tags: "[a, b]" }, "Body.");
     compressor = () => sampleDraft();
 
-    await runMemoryInferencePass(configWithLlm(), sources());
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
     const parentFm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
     expect(parentFm.data.inferenceProcessed).toBe(true);
@@ -387,8 +392,8 @@ describe("runMemoryInferencePass — enabled", () => {
       return sampleDraft();
     };
 
-    await runMemoryInferencePass(configWithLlm(), sources());
-    await runMemoryInferencePass(configWithLlm(), sources());
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
     // Second invocation must not call the splitter — the parent is already
     // marked `inferenceProcessed: true`.
@@ -400,7 +405,7 @@ describe("runMemoryInferencePass — enabled", () => {
   test("derived children are themselves filtered out — they don't get re-processed", async () => {
     writeMemory("parent", {}, "Body.");
     compressor = () => sampleDraft();
-    await runMemoryInferencePass(configWithLlm(), sources());
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
     // Now reset the compressor to verify a second run finds no pending memories.
     let secondRunInvocations = 0;
@@ -408,7 +413,7 @@ describe("runMemoryInferencePass — enabled", () => {
       secondRunInvocations += 1;
       return sampleDraft();
     };
-    const second = await runMemoryInferencePass(configWithLlm(), sources());
+    const second = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
     expect(secondRunInvocations).toBe(0);
     expect(second.considered).toBe(0);
     expect(second.writtenFacts).toBe(0);
@@ -418,7 +423,7 @@ describe("runMemoryInferencePass — enabled", () => {
     const filePath = writeMemory("parent", {}, "Body.");
     compressor = () => undefined;
 
-    const result = await runMemoryInferencePass(configWithLlm(), sources());
+    const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
     expect(result.skippedNoFacts).toBe(1);
     expect(result.splitParents).toBe(0);
     expect(result.writtenFacts).toBe(0);
@@ -441,7 +446,10 @@ describe("runMemoryInferencePass — enabled", () => {
       writeMemory("primary", {}, "Primary body.");
       compressor = () => sampleDraft();
 
-      const result = await runMemoryInferencePass(configWithLlm(), [{ path: tmpStash }, { path: cacheDir }]);
+      const result = await runMemoryInferencePass({
+        config: configWithLlm(),
+        sources: [{ path: tmpStash }, { path: cacheDir }],
+      });
 
       // Only the primary parent was considered.
       expect(result.considered).toBe(1);
@@ -469,7 +477,7 @@ describe("runMemoryInferencePass — enabled", () => {
     );
     compressor = () => sampleDraft();
 
-    const result = await runMemoryInferencePass(configWithLlm(), sources());
+    const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
     expect(result.considered).toBe(1);
     expect(result.skippedChildExists).toBe(1);
@@ -486,7 +494,11 @@ describe("runMemoryInferencePass — enabled", () => {
     controller.abort();
     compressor = () => sampleDraft();
 
-    const result = await runMemoryInferencePass(configWithLlm(), sources(), controller.signal);
+    const result = await runMemoryInferencePass({
+      config: configWithLlm(),
+      sources: sources(),
+      signal: controller.signal,
+    });
 
     expect(result.considered).toBe(2);
     expect(result.skippedAborted).toBe(2);
