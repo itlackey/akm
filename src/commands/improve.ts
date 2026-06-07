@@ -56,13 +56,14 @@ import { runStalenessDetectionPass, type StalenessDetectionResult } from "../ind
 import { countUsageEventsByType } from "../indexer/usage-events";
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../integrations/agent/runner";
 import { getAvailableHarnesses } from "../integrations/session-logs";
+import type { SessionLogHarness } from "../integrations/session-logs/types";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../llm/feature-gate";
 import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../sources/providers/git";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
-import { type AkmExtractResult, akmExtract } from "./extract";
+import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./extract";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ImproveProfileConfig } from "./improve-profiles";
 import {
@@ -117,6 +118,19 @@ export interface AkmImproveOptions {
    */
   stalenessDetectionFn?: typeof runStalenessDetectionPass;
   graphExtractionFn?: typeof runGraphExtractionPass;
+  /**
+   * #554 minNewSessions gate: injectable counter for the number of NEW (unseen,
+   * in-window) extract candidate sessions. Defaults to the real
+   * {@link countNewExtractCandidates}. Tests inject a deterministic count to
+   * exercise the below-threshold skip without touching real session logs.
+   */
+  extractCandidateCountFn?: typeof countNewExtractCandidates;
+  /**
+   * Override the session-log harness registry used by the extract phase (test
+   * seam). When set, it is forwarded to both the #554 candidate counter and the
+   * `akmExtract` calls so the same harness set drives the gate and the pass.
+   */
+  extractHarnesses?: SessionLogHarness[];
   ensureIndexFn?: (stashDir: string) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
@@ -1942,9 +1956,49 @@ async function runImprovePreparationStage(args: {
     config: extractConfig,
     eventsCtx,
   });
+  // #554 minNewSessions gate: skip the entire extract pass (ensureIndex was
+  // already done upstream; here we elide every akmExtract/processSession call)
+  // when the NEW (unseen, in-window) candidate-session pool is below a minimum.
+  // 22% of improve runs produce zero memory-inference writes because extract
+  // finds no new sessions, yet still burns the full extract pipeline. Default 0
+  // (disabled) preserves existing always-run behaviour; only opted-in profiles
+  // (e.g. `frequent`) set it. Evaluated BEFORE any LLM call so a skip costs zero
+  // LLM work AND writes nothing — which also means no extract auto-accept bumps
+  // memory mtimes, so a skipped extract never flags work for the NEXT run's
+  // consolidation mtime-gate (the downstream trigger #554 asks us to suppress).
+  const EXTRACT_DEFAULT_MIN_NEW_SESSIONS = 0;
+  const configuredMinNewSessions = extractConfig.profiles?.improve?.default?.processes?.extract?.minNewSessions;
+  const minNewSessions =
+    typeof configuredMinNewSessions === "number" ? configuredMinNewSessions : EXTRACT_DEFAULT_MIN_NEW_SESSIONS;
   if (isLlmFeatureEnabled(extractConfig, "session_extraction")) {
-    const availableHarnesses = getAvailableHarnesses();
-    if (availableHarnesses.length > 0) {
+    const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
+    // The guard engages only when minNewSessions > 0; 0 disables it entirely.
+    let belowMinNewSessions = false;
+    if (minNewSessions > 0 && availableHarnesses.length > 0) {
+      const countFn = options.extractCandidateCountFn ?? countNewExtractCandidates;
+      const newCandidateCount = countFn(extractConfig, {
+        ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+      });
+      if (newCandidateCount < minNewSessions) {
+        belowMinNewSessions = true;
+        // Reuse the #551/#553 `improve_skipped` emission path so health's dynamic
+        // skipReasons aggregation surfaces this under `below_min_new_sessions`.
+        appendEvent(
+          {
+            eventType: "improve_skipped",
+            ref: "memory:_extract",
+            metadata: {
+              reason: "below_min_new_sessions",
+              newSessions: newCandidateCount,
+              minNewSessions,
+            },
+          },
+          eventsCtx,
+        );
+        info(`[improve] extract skipped (new sessions ${newCandidateCount} < minNewSessions ${minNewSessions})`);
+      }
+    }
+    if (!belowMinNewSessions && availableHarnesses.length > 0) {
       extractResults = [];
       for (const h of availableHarnesses) {
         try {
@@ -1953,6 +2007,7 @@ async function runImprovePreparationStage(args: {
             ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
             config: extractConfig,
             dryRun: options.dryRun ?? false,
+            ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
           });
           extractResults.push(result);
 

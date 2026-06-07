@@ -162,6 +162,15 @@ export interface ImproveProcessConfig {
    */
   minPoolSize?: number;
   /**
+   * Minimum number of new (unseen, in-window) candidate sessions for the
+   * `extract` process. When the candidate-session pool is below this threshold
+   * the extract pass skips entirely (emitting an `improve_skipped` event with
+   * `reason: "below_min_new_sessions"`) and makes ZERO LLM calls. `0` disables
+   * the guard. Absent = default 0 (disabled), preserving existing always-run
+   * behaviour. Only meaningful on the `extract` process.
+   */
+  minNewSessions?: number;
+  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.

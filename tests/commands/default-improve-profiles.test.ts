@@ -87,10 +87,13 @@ describe("default improve profiles (#552)", () => {
     expect(JSON.stringify(profileCatchup)).toContain("minPoolSize");
   });
 
-  test("minNewSessions (#554) is not yet present in any of the new profiles", () => {
-    // minNewSessions is added by #554 — it must NOT be in these JSONs so this
-    // branch type-checks and validates standalone until that issue lands.
-    for (const raw of [profileFrequent, profileConsolidate, profileCatchup]) {
+  test("minNewSessions (#554) lives only on the frequent profile's extract process", () => {
+    // #554 added `minNewSessions: 3` to frequent.json's extract process — the
+    // only profile that opts into the extract candidate-pool gate. The in-code
+    // default is 0 (disabled), so consolidate/catchup (which don't run extract)
+    // must NOT carry the key; existing behaviour is preserved everywhere else.
+    expect(profileFrequent.processes?.extract?.minNewSessions).toBe(3);
+    for (const raw of [profileConsolidate, profileCatchup]) {
       expect(JSON.stringify(raw)).not.toContain("minNewSessions");
     }
   });
