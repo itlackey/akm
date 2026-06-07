@@ -41,12 +41,26 @@ const TYPE_ALIASES: Record<string, AkmAssetType> = {
  *   makeAssetRef("script", "db/migrate/run.sh", "owner/repo")
  *     → "owner/repo//script:db/migrate/run.sh"
  */
-export function makeAssetRef(type: string, name: string, origin?: string): string {
+export function makeAssetRef(type: AkmAssetType, name: string, origin?: string): string {
   validateName(name);
   const normalized = normalizeName(name);
   const asset = `${type}:${normalized}`;
   if (!origin) return asset;
   return `${origin}//${asset}`;
+}
+
+/**
+ * Serialize a parsed {@link AssetRef} value-object back to its canonical
+ * `[origin//]type:name` string form. The single formatter for refs — call
+ * this instead of hand-building `${type}:${name}` template strings so the
+ * serialization rules (origin prefix, name normalization) live in one place
+ * and stay in lockstep with {@link parseAssetRef}.
+ *
+ * `refToString(parseAssetRef(s))` round-trips for any `s` that
+ * `parseAssetRef` accepts.
+ */
+export function refToString(ref: AssetRef): string {
+  return makeAssetRef(ref.type, ref.name, ref.origin);
 }
 
 // ── Parsing ─────────────────────────────────────────────────────────────────

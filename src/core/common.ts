@@ -5,13 +5,28 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "./asset-spec";
+import { getAssetTypes, TYPE_DIRS } from "./asset-spec";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export const ASSET_TYPES = [
+/**
+ * The canonical catalog of built-in asset types.
+ *
+ * SINGLE SOURCE OF TRUTH: derived from the {@link ASSET_SPECS} registry in
+ * `asset-spec.ts` rather than hand-maintained here. Before #490/WS7 this was a
+ * hand-written literal array that had DRIFTED from the registry (it omitted
+ * `task`, which the registry has always carried). Deriving from the registry
+ * kills that drift — see `tests/asset-type-union-source.test.ts` for the
+ * intentional-`task`-delta guard.
+ *
+ * Note: `AkmAssetType` stays a static literal union of the BUILT-IN types
+ * (those present at module-eval time). Dynamically `registerAssetType`-d types
+ * are accepted at runtime via {@link isAssetType} but are not part of the
+ * static union — identical to the pre-WS7 contract.
+ */
+export const ASSET_TYPES = Object.freeze([...getAssetTypes()] as [
   "skill",
   "command",
   "agent",
@@ -23,7 +38,8 @@ export const ASSET_TYPES = [
   "secret",
   "wiki",
   "lesson",
-] as const;
+  "task",
+]);
 export type AkmAssetType = (typeof ASSET_TYPES)[number];
 export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);
 
