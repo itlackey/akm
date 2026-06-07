@@ -205,7 +205,6 @@ const ALLOWED_FILES = new Set<string>([
   "tests/index-clean.test.ts",
   "tests/lessons-coverage.test.ts",
   "tests/llm-enrichment-cache.test.ts",
-  "tests/proposals.test.ts",
   "tests/commands/reflect/reflect-completed-on-failure.test.ts",
   "tests/commands/reflect/reflect-pipeline-fixes.test.ts",
   "tests/registry-cli.test.ts",
@@ -214,8 +213,6 @@ const ALLOWED_FILES = new Set<string>([
   "tests/setup-tmp-stash-guard.test.ts",
   "tests/source-qa-fixes.test.ts",
   "tests/source-source.test.ts",
-  "tests/state-db-events-purge.test.ts",
-  "tests/state-db/improve-runs.test.ts",
   "tests/tasks-legacy-md-warning.test.ts",
   "tests/test-isolation-no-swallow.test.ts",
 
@@ -241,7 +238,7 @@ const ALLOWED_FILES = new Set<string>([
  *
  * KPI (WS4): drive this from ~73 toward ~5.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 68;
+export const ALLOWLIST_RATCHET_BASELINE = 65;
 
 /** Live size of the combined grandfather allowlist (both rule sets). */
 export function combinedAllowlistSize(): number {
