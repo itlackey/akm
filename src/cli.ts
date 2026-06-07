@@ -73,7 +73,7 @@ import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonError
 import { addCommand } from "./commands/add-cli";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
-import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
+import { configCommand } from "./commands/config-cli";
 import { akmDbBackups } from "./commands/db-cli";
 import { envCommand } from "./commands/env-cli";
 import { akmEventsList, akmEventsTail } from "./commands/events";
@@ -108,11 +108,11 @@ import { tasksCommand } from "./commands/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./core/asset-create";
-import { isHttpUrl, resolveStashDir } from "./core/common";
-import { DEFAULT_CONFIG, loadConfig, loadUserConfig, saveConfig } from "./core/config";
+import { isHttpUrl } from "./core/common";
+import { loadConfig } from "./core/config";
 import { UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
-import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
+import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from "./indexer/db";
@@ -131,10 +131,6 @@ import { formatEventLine } from "./output/text";
 import { resolveWritableOverride, saveGitStash } from "./sources/providers/git";
 import type { SourceKind } from "./sources/types";
 import { pkgVersion } from "./version";
-
-const SKILLS_SH_NAME = "skills.sh";
-const SKILLS_SH_URL = "https://skills.sh";
-const SKILLS_SH_PROVIDER = "skills-sh";
 
 function applyEarlyStderrFlags(argv: string[]): void {
   if (argv.includes("--quiet") || argv.includes("-q")) {
@@ -661,210 +657,6 @@ const upgradeCommand = defineCommand({
   },
 });
 
-const configCommand = defineCommand({
-  meta: { name: "config", description: "Show and manage configuration" },
-  args: {
-    list: { type: "boolean", description: "List current configuration", default: false },
-  },
-  subCommands: {
-    path: defineCommand({
-      meta: { name: "path", description: "Show paths to config, stash, cache, and index" },
-      args: {
-        all: { type: "boolean", description: "Show all paths (config, stash, cache, index)", default: false },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          const configPath = getConfigPath();
-          if (args.all) {
-            let stashDir: string;
-            try {
-              stashDir = resolveStashDir({ readOnly: true });
-            } catch {
-              stashDir = `${getDefaultStashDir()} (not initialized)`;
-            }
-            const cacheDir = getCacheDir();
-            const result = {
-              config: configPath,
-              stash: stashDir,
-              cache: cacheDir,
-              index: getDbPath(),
-            };
-            output("config", result);
-          } else {
-            console.log(configPath);
-          }
-        });
-      },
-    }),
-    list: defineCommand({
-      meta: { name: "list", description: "List current configuration" },
-      run() {
-        return runWithJsonErrors(() => {
-          output("config", listConfig(loadConfig()));
-        });
-      },
-    }),
-    show: defineCommand({
-      meta: { name: "show", description: "Alias for `akm config list` — list current configuration" },
-      run() {
-        return runWithJsonErrors(() => {
-          output("config", listConfig(loadConfig()));
-        });
-      },
-    }),
-    get: defineCommand({
-      meta: { name: "get", description: "Get a configuration value by key" },
-      args: {
-        key: { type: "positional", required: true, description: "Config key (for example: embedding, stashDir)" },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          output("config", getConfigValue(loadConfig(), args.key));
-        });
-      },
-    }),
-    set: defineCommand({
-      meta: { name: "set", description: "Set a configuration value by key" },
-      args: {
-        key: { type: "positional", required: true, description: "Config key (for example: embedding, llm)" },
-        value: { type: "positional", required: true, description: "Config value" },
-        // #463: stable machine-friendly entry point for plugins / hooks.
-        // `--silent` suppresses the config dump on stdout so hook-driven
-        // writes don't pollute their host's output stream.
-        silent: {
-          type: "boolean",
-          description:
-            "Suppress the post-write config dump on stdout. Use from hooks and CI scripts; the write still happens and errors still print.",
-          default: false,
-        },
-        // #463: explicit layer flag for forward-compat. User layer is the only
-        // settable layer today; the flag exists so plugin authors can encode
-        // intent and the surface stays stable if project-layer writes return.
-        layer: {
-          type: "string",
-          description: "Config layer to write to. Currently only `user` is supported.",
-          default: "user",
-        },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          if (args.layer && args.layer !== "user") {
-            throw new UsageError(
-              `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
-              "INVALID_FLAG_VALUE",
-            );
-          }
-          // Use loadConfig (not loadUserConfig) so the project-config
-          // deprecation warning fires consistently with `akm config get`
-          // (#457). Effective merged shape is identical post-0.8.0.
-          const updated = setConfigValue(loadConfig(), args.key, args.value);
-          saveConfig(updated);
-          if (!args.silent) {
-            output("config", listConfig(updated));
-          }
-        });
-      },
-    }),
-    unset: defineCommand({
-      meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/llm section" },
-      args: {
-        key: { type: "positional", required: true, description: "Config key to unset" },
-        silent: {
-          type: "boolean",
-          description: "Suppress the post-write config dump on stdout.",
-          default: false,
-        },
-        layer: {
-          type: "string",
-          description: "Config layer to write to. Currently only `user` is supported.",
-          default: "user",
-        },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          if (args.layer && args.layer !== "user") {
-            throw new UsageError(
-              `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
-              "INVALID_FLAG_VALUE",
-            );
-          }
-          const updated = unsetConfigValue(loadConfig(), args.key);
-          saveConfig(updated);
-          if (!args.silent) {
-            output("config", listConfig(updated));
-          }
-        });
-      },
-    }),
-    validate: defineCommand({
-      meta: {
-        name: "validate",
-        description: "Validate the on-disk config file against the schema. Exits non-zero on errors.",
-      },
-      async run() {
-        return runWithJsonErrors(async () => {
-          const { runConfigValidate } = await import("./cli/config-validate.js");
-          await runConfigValidate();
-        });
-      },
-    }),
-    migrate: defineCommand({
-      meta: {
-        name: "migrate",
-        description: "Migrate the config file to the current schema version. Use --dry-run to preview without writing.",
-      },
-      args: {
-        "dry-run": { type: "boolean", description: "Preview the migration result without writing.", default: false },
-        "print-diff": {
-          type: "boolean",
-          description: "Print a unified diff of old vs new config alongside the migration output.",
-          default: false,
-        },
-      },
-      async run({ args }) {
-        return runWithJsonErrors(async () => {
-          const { runConfigMigrate } = await import("./cli/config-migrate.js");
-          await runConfigMigrate({ dryRun: Boolean(args["dry-run"]), printDiff: Boolean(args["print-diff"]) });
-        });
-      },
-    }),
-    enable: defineCommand({
-      meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
-      args: {
-        target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          const result = toggleComponent(args.target, true);
-          output("enable", result);
-        });
-      },
-    }),
-    disable: defineCommand({
-      meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
-      args: {
-        target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          const result = toggleComponent(args.target, false);
-          output("disable", result);
-        });
-      },
-    }),
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      if (hasSubcommand(args, CONFIG_SUBCOMMAND_SET)) return;
-      if (args.list) {
-        output("config", listConfig(loadConfig()));
-        return;
-      }
-      output("config", listConfig(loadConfig()));
-    });
-  },
-});
-
 // `sync` body. Kept as a standalone function so the git-commit/push logic and
 // the `--format`-as-name workaround stay in one place.
 async function runSyncBody(args: { name?: string; message?: string; push?: boolean }, verb: "sync"): Promise<void> {
@@ -1209,50 +1001,6 @@ const completionsCommand = defineCommand({
     }
   },
 });
-
-function normalizeToggleTarget(target: string): "skills.sh" {
-  const normalized = target.trim().toLowerCase();
-  if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
-  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh`);
-}
-
-function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
-  const config = loadUserConfig();
-  const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
-  const idx = registries.findIndex(
-    (registry) =>
-      registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
-  );
-
-  if (idx >= 0) {
-    const existing = registries[idx];
-    const wasEnabled = existing.enabled !== false;
-    existing.enabled = enabled;
-    saveConfig({ ...config, registries });
-    return { changed: wasEnabled !== enabled, component: SKILLS_SH_NAME, enabled };
-  }
-
-  if (!enabled) {
-    // Materialize the skills.sh registry explicitly if absent.
-    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: false });
-    saveConfig({ ...config, registries });
-    return { changed: true, component: SKILLS_SH_NAME, enabled: false };
-  }
-
-  registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: true });
-  saveConfig({ ...config, registries });
-  return { changed: true, component: SKILLS_SH_NAME, enabled: true };
-}
-
-function toggleComponent(
-  targetRaw: string,
-  enabled: boolean,
-): { changed: boolean; component: string; enabled: boolean } {
-  const target = normalizeToggleTarget(targetRaw);
-  if (target === "skills.sh") return toggleSkillsShRegistry(enabled);
-  // normalizeToggleTarget throws for any unsupported target; this is unreachable.
-  throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
-}
 
 // ── `akm log` ────────────────────────────────────────────────────────────────
 // Append-only events stream surface (#204). `list` reads state.db events
@@ -1709,7 +1457,6 @@ export const main = defineCommand({
   },
 });
 
-const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);
 // ── Exit codes ──────────────────────────────────────────────────────────────
 // Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
 // the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
