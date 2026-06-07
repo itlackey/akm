@@ -290,16 +290,28 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
       if (!derived) {
         return { skipped: true, fromCache, retryAttempts } as const;
       }
-      const written = await writeDerivedMemory(record, derived);
-      if (written > 0) {
+      const writeOutcome = await writeDerivedMemory(record, derived);
+      if (writeOutcome.written > 0) {
         markParentProcessed(record);
-        return { skipped: false, splitParent: true, written, fromCache, retryAttempts } as const;
+        return { skipped: false, splitParent: true, written: writeOutcome.written, fromCache, retryAttempts } as const;
       }
       // LLM produced a valid derived draft but no file was written — either
       // because `<parent>.derived.md` already exists on disk or
       // `writeAssetToSource` threw. Categorise as `childExists` so the
       // attempt is accounted for in health metrics rather than vanishing
       // into the freshAttempts denominator.
+      //
+      // When the child already exists on disk the inference is, by definition,
+      // already complete — so mark the parent processed here too (#550).
+      // Without this, `isPendingMemory()` re-queues the same parent every run
+      // (the `written > 0` path was previously the only site that marks it),
+      // causing permanent re-queueing and wasted LLM calls. A genuine write
+      // *failure* (`writeAssetToSource` threw) must NOT mark the parent — it
+      // should be retried next run — so we key off the explicit `childExists`
+      // outcome rather than the conflated `written === 0`.
+      if (writeOutcome.childExists) {
+        markParentProcessed(record);
+      }
       return { skipped: false, splitParent: false, written: 0, fromCache, retryAttempts, childExists: true } as const;
     },
     // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
@@ -441,7 +453,21 @@ function toMemoryName(memoriesDir: string, filePath: string): string | undefined
 
 // ── Writing derived memories + marking parent ───────────────────────────────
 
-async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): Promise<number> {
+/**
+ * Result of attempting to write a derived child for a parent memory.
+ *
+ * The two `written === 0` shapes are deliberately distinct so callers can mark
+ * the parent processed only when the child already exists (inference complete)
+ * and NOT when the write failed (transient — retry next run). See #550.
+ */
+interface WriteDerivedOutcome {
+  /** 1 when a new derived file was written, 0 otherwise. */
+  written: number;
+  /** True when `<parent>.derived.md` already existed on disk (write skipped). */
+  childExists: boolean;
+}
+
+async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): Promise<WriteDerivedOutcome> {
   const writeTarget: WriteTargetSource = {
     kind: "filesystem",
     name: "stash",
@@ -458,19 +484,25 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
   const childRefStr = `memory:${childName}`;
   const childPath = path.join(parent.stashRoot, "memories", `${childName}.md`);
   if (fs.existsSync(childPath)) {
-    return 0;
+    // The derived child is already on disk — inference for this parent is
+    // complete. Report `childExists` so the caller marks the parent processed
+    // (#550) instead of re-queueing it forever.
+    return { written: 0, childExists: true };
   }
 
   try {
     const content = renderDerivedMemory(parent, derived);
     const childRef = parseAssetRef(childRefStr);
     await writeAssetToSource(writeTarget, writeConfig, childRef, content);
-    return 1;
+    return { written: 1, childExists: false };
   } catch (err) {
     warn(
       `memory inference: failed to write derived memory ${childName}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return 0;
+    // A genuine write failure — the parent must remain pending so it is
+    // retried on the next run. `childExists: false` keeps it from being
+    // marked processed.
+    return { written: 0, childExists: false };
   }
 }
 

@@ -487,6 +487,51 @@ describe("runMemoryInferencePass — enabled", () => {
     expect(result.unaccounted).toBe(0);
   });
 
+  // Regression for #550: when a hot parent already has its `<parent>.derived.md`
+  // child on disk, the inference is complete, so the parent MUST be marked
+  // `inferenceProcessed: true`. Pre-fix the parent was left unmarked (the mark
+  // only happened on the `written > 0` path), so `isPendingMemory()` re-queued
+  // the same parent on every run — wasted LLM calls forever. `skippedChildExists`
+  // must still count the skip (we ADD the parent-mark, not remove the skip).
+  test("#550: marks parent processed and stops re-queue when derived child already exists", async () => {
+    const filePath = writeMemory("parent", { description: "keep me" }, "Body.");
+    // Seed the derived child on disk so writeDerivedMemory short-circuits via
+    // the childExists path (written === 0).
+    fs.writeFileSync(
+      path.join(tmpStash, "memories", "parent.derived.md"),
+      "---\ninferred: true\n---\n\nPre-existing child.\n",
+      "utf8",
+    );
+
+    let calls = 0;
+    compressor = () => {
+      calls += 1;
+      return sampleDraft();
+    };
+
+    // First pass: child exists → counted as skippedChildExists, and the parent
+    // is now marked processed.
+    const first = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+    expect(first.considered).toBe(1);
+    expect(first.skippedChildExists).toBe(1);
+    expect(first.writtenFacts).toBe(0);
+    expect(first.splitParents).toBe(0);
+    expect(first.unaccounted).toBe(0);
+
+    // Parent is now marked processed, and prior frontmatter is preserved.
+    const parentFm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(parentFm.data.inferenceProcessed).toBe(true);
+    expect(parentFm.data.description).toBe("keep me");
+
+    // Second pass: the parent must NOT be re-queued — no longer pending.
+    const second = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+    expect(second.considered).toBe(0);
+    expect(second.skippedChildExists).toBe(0);
+    // The compressor was invoked exactly once (first pass only); the permanent
+    // re-queue bug is gone.
+    expect(calls).toBe(1);
+  });
+
   test("counts skippedAborted when the signal aborts before the LLM call", async () => {
     writeMemory("parent-a", {}, "Body A.");
     writeMemory("parent-b", {}, "Body B.");
