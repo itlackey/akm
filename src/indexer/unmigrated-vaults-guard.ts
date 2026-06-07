@@ -29,6 +29,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { warn } from "../core/warn";
 
+/**
+ * Marker filename the `vaults/` → `env/` migration drops inside `vaults/` after
+ * a successful copy. Single source of truth shared with
+ * `scripts/migrate-storage.ts` (which writes it) and this guard (which reads
+ * it). Its presence means the data already lives under `env/` (or was a no-op
+ * fresh install).
+ */
+export const MIGRATED_MARKER = ".migrated";
+
 /** Stashes already warned about in this process — keyed by absolute stash dir. */
 const warnedStashDirs = new Set<string>();
 
@@ -68,7 +77,7 @@ export function warnOnUnmigratedVaults(stashDir: string): boolean {
 
   // The migration writes this marker after a successful copy. Its presence
   // means the data already lives under env/ (or was a no-op fresh install).
-  if (fs.existsSync(path.join(vaultsDir, ".migrated"))) return false;
+  if (fs.existsSync(path.join(vaultsDir, MIGRATED_MARKER))) return false;
 
   if (!hasEnvFilesRecursive(vaultsDir)) return false;
 
