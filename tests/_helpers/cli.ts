@@ -64,7 +64,32 @@ import { emitJsonError } from "../../src/cli/shared";
 import { normalizeShowArgv } from "../../src/commands/read/show";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
+import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { resetLocalEmbedder } from "../../src/llm/embedder";
+import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
+
+/**
+ * Reset every module-level process singleton the CLI caches, so an in-process
+ * run re-reads its state from the (sandboxed) environment — matching
+ * fresh-subprocess semantics. This is a SUPERSET of the historical
+ * config+output-mode reset: it additionally clears the graph-boost cache, the
+ * local embedder, the embedding cache, and the warn-module quiet/verbose/log-file
+ * state. Every call is to a verified-exported, no-argument, idempotent reset, so
+ * invoking them here (and possibly again in `tests/_preload.ts`) is safe and makes
+ * isolation order-independent.
+ */
+export function resetAllProcessState(): void {
+  resetConfigCache();
+  resetOutputMode();
+  resetGraphBoostCache();
+  resetLocalEmbedder();
+  clearEmbeddingCache();
+  resetQuiet();
+  resetVerbose();
+  clearLogFile();
+}
 
 export interface CliResult {
   code: number;
@@ -103,8 +128,7 @@ const joinParts = (parts: unknown[]): string => parts.map((p) => (typeof p === "
 export async function runCliCapture(args: string[]): Promise<CliResult> {
   // Reset module-level singletons so this run re-reads the (sandboxed) env,
   // matching fresh-subprocess semantics even for back-to-back calls in one test.
-  resetConfigCache();
-  resetOutputMode();
+  resetAllProcessState();
 
   // Resolve everything that requires an `await` BEFORE patching the output
   // sinks, so the patched console.log isn't relied on across an await boundary
