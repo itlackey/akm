@@ -9,7 +9,15 @@ import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { getStateDbPathInDataDir } from "../core/paths";
-import { openStateDatabase, queryTaskHistory, type TaskHistoryRow } from "../core/state-db";
+import {
+  type ImproveRunSummaryRow,
+  listExistingTableNames,
+  openStateDatabase,
+  queryCompletedTaskIntervals,
+  queryImproveRuns,
+  queryTaskHistory,
+  type TaskHistoryRow,
+} from "../core/state-db";
 import { parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/semantic-status";
 import type { AgentProfile } from "../integrations/agent";
@@ -1020,22 +1028,9 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.sessionExtraction.durationMs += src.sessionExtraction.durationMs;
 }
 
-interface ImproveRunRow {
-  id: string;
-  started_at: string;
-  completed_at: string;
-  ok: number;
-  scope_mode: string;
-  scope_value: string | null;
-  result_json: string;
-}
-
-function loadImproveRunRows(db: Database, since: string, until?: string): ImproveRunRow[] {
-  const sql = until
-    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
-    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
-  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunRow[];
-}
+// The improve_runs read lives in the owner module (core/state-db.ts) so this
+// command file holds no raw SQL. `ImproveRunRow` aliases the owner's row shape.
+type ImproveRunRow = ImproveRunSummaryRow;
 
 function summarizeImproveRuns(
   db: Database,
@@ -1043,7 +1038,7 @@ function summarizeImproveRuns(
   until?: string,
 ): { metrics: ImproveHealthMetrics; runCount: number } {
   const accum = createUnknownImproveMetrics();
-  const rows = loadImproveRunRows(db, since, until);
+  const rows = queryImproveRuns(db, since, until);
 
   // Per-phase wall-time samples. Each entry is one envelope's durationMs for
   // that phase. Phases that did not run on a given envelope are simply
@@ -1177,15 +1172,7 @@ function loadTaskIntervals(db: Database, since: string, until?: string): TaskRun
   const widenedSince = new Date(sinceMs - 5 * 60 * 1000).toISOString();
   const widenedUntil = Number.isFinite(untilMs) ? new Date(untilMs + 5 * 60 * 1000).toISOString() : undefined;
 
-  const sql = widenedUntil
-    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
-    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
-  const rows = (
-    widenedUntil ? db.prepare(sql).all(widenedSince, widenedUntil) : db.prepare(sql).all(widenedSince)
-  ) as Array<{
-    started_at: string;
-    completed_at: string;
-  }>;
+  const rows = queryCompletedTaskIntervals(db, widenedSince, widenedUntil);
 
   const intervals: TaskRunInterval[] = [];
   for (const row of rows) {
@@ -1220,7 +1207,7 @@ function findContainingTaskInterval(timestampMs: number, intervals: TaskRunInter
 }
 
 function buildPerRunSummaries(db: Database, since: string, until?: string): ImproveRunSummary[] {
-  const rows = loadImproveRunRows(db, since, until);
+  const rows = queryImproveRuns(db, since, until);
   const taskIntervals = loadTaskIntervals(db, since, until);
   const summaries: ImproveRunSummary[] = [];
   for (const row of rows) {
@@ -1619,11 +1606,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   }
 
   try {
-    const tables = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('events', 'task_history', 'proposals', 'schema_migrations') ORDER BY name",
-      )
-      .all() as Array<{ name: string }>;
+    const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
     const tableNames = tables.map((row) => row.name).sort();
     const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
     const missingTables = requiredTables.filter((name) => !tableNames.includes(name));

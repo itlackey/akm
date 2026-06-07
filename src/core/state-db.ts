@@ -61,6 +61,10 @@ import { getDataDir } from "./paths";
 import type { Proposal } from "./proposals";
 import { error } from "./warn";
 
+// Re-export the bun:sqlite Database type so command modules can type their repo
+// parameters against the owner module rather than reaching into bun:sqlite.
+export type { Database };
+
 // ── Path helper ──────────────────────────────────────────────────────────────
 
 /**
@@ -916,6 +920,57 @@ export function queryTaskHistory(
     .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as TaskHistoryRow[];
 }
 
+/**
+ * Slim projection of a `task_history` row used by health interval analysis.
+ */
+export interface TaskIntervalRow {
+  started_at: string;
+  completed_at: string;
+}
+
+/**
+ * Read COMPLETED `akm-improve` task_history runs whose `started_at` falls in
+ * `[since, until)` (or `started_at >= since` when `until` is omitted), ordered
+ * oldest-first by `started_at`. Only rows with a non-null `completed_at` are
+ * returned (in-flight runs are excluded). The `task_id = 'akm-improve'`
+ * predicate is fixed because the only caller (commands/health.ts
+ * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
+ *
+ * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
+ * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
+ * widened window; this helper does not widen.
+ *
+ * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * returning.
+ */
+export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {
+  const sql = until
+    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
+    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
+  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as TaskIntervalRow[];
+}
+
+// ── schema introspection ─────────────────────────────────────────────────────
+
+/**
+ * Return the subset of `names` that exist as TABLEs in this database, ordered
+ * by name. Used by health's state-db-schema check to detect missing required
+ * tables without leaking a `sqlite_master` query into command code.
+ *
+ * The `IN (...)` predicate is built from parameter placeholders so table names
+ * are bound, never interpolated.
+ *
+ * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * returning.
+ */
+export function listExistingTableNames(db: Database, names: readonly string[]): Array<{ name: string }> {
+  if (names.length === 0) return [];
+  const placeholders = names.map(() => "?").join(", ");
+  return db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders}) ORDER BY name`)
+    .all(...(names as import("bun:sqlite").SQLQueryBindings[])) as Array<{ name: string }>;
+}
+
 // ── events.jsonl import ──────────────────────────────────────────────────────
 
 /**
@@ -1160,6 +1215,42 @@ export function recordImproveRun(
     JSON.stringify(metricsObj),
     JSON.stringify(input.metadata ?? {}),
   );
+}
+
+/**
+ * Slim projection of an `improve_runs` row used by health/audit readers that
+ * only need the windowed summary columns (NOT the full {@link ImproveRunRow}).
+ * Matches the column list of {@link queryImproveRuns} verbatim.
+ */
+export interface ImproveRunSummaryRow {
+  id: string;
+  started_at: string;
+  completed_at: string;
+  ok: number;
+  scope_mode: string;
+  scope_value: string | null;
+  result_json: string;
+}
+
+/**
+ * Read real (non-dry-run) improve_runs rows whose `started_at` falls in the
+ * window `[since, until)`. When `until` is omitted the window is open-ended
+ * (`started_at >= since`). Rows are returned newest-first (`ORDER BY
+ * started_at DESC`).
+ *
+ * Owns the SQL formerly inlined in commands/health.ts (`loadImproveRunRows`).
+ * The `dry_run = 0` filter is first-class so dry-run probes never pollute
+ * productivity audits.
+ *
+ * Connection-lifetime rule (WS5): `.all()` fully materializes the result set
+ * into a plain array before returning — no live cursor escapes the caller's
+ * `openStateDatabase` scope.
+ */
+export function queryImproveRuns(db: Database, since: string, until?: string): ImproveRunSummaryRow[] {
+  const sql = until
+    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
+    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
+  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunSummaryRow[];
 }
 
 /**
