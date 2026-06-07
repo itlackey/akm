@@ -26,9 +26,9 @@
  * round-trip byte-exact, unlike env values which forbid literal newlines.
  */
 
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "../core/common";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
@@ -80,37 +80,6 @@ export function withSecretLock<T>(secretPath: string, fn: () => T): T {
 
 // ── Atomic byte write ──────────────────────────────────────────────────────────
 
-/**
- * Atomically write `data` to `target` at mode 0600. Unlike `writeFileAtomic`
- * in core/common (string content), this accepts a Buffer so secret bytes
- * round-trip exactly — binary certs and CRLF/LF line endings are preserved.
- */
-function writeSecretAtomic(target: string, data: Buffer): void {
-  const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
-  const fd = fs.openSync(tmp, "w", 0o600);
-  try {
-    fs.writeSync(fd, data);
-    try {
-      fs.fdatasyncSync(fd);
-    } catch {
-      // Best-effort durability; some pseudo-filesystems lack fdatasync.
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmp, target);
-  try {
-    const dirFd = fs.openSync(path.dirname(target), "r");
-    try {
-      fs.fsyncSync(dirFd);
-    } finally {
-      fs.closeSync(dirFd);
-    }
-  } catch {
-    // Directory fsync is unsupported on FAT / some FUSE mounts / Windows.
-  }
-}
-
 function ensureParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -160,7 +129,8 @@ export function readValue(secretPath: string): Buffer {
 export function setSecret(secretPath: string, value: Buffer): void {
   ensureParentDir(secretPath);
   withSecretLock(secretPath, () => {
-    writeSecretAtomic(secretPath, value);
+    // Mode 0600: secrets must never be world-readable, even transiently.
+    writeFileAtomic(secretPath, value, 0o600);
   });
 }
 

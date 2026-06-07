@@ -95,6 +95,11 @@ export function isAssetType(type: string): type is AkmAssetType {
  * The temp file is opened with the target `mode` (default 0o600) from the
  * start, so it is never world-readable even briefly.
  *
+ * `content` may be a string or a `Buffer`. Buffer callers (e.g. secrets, where
+ * binary certs and CRLF/LF endings must round-trip byte-exact) get the same
+ * fsync'd temp-file-plus-rename guarantees as string callers — there is a
+ * single atomic-write implementation.
+ *
  * Durability: fsync'd against the May 2026 config-clobber incident (#472).
  * On ext4 (data=ordered) and NVMe-with-TRIM, a power-loss inside the kernel
  * writeback window could leave the renamed file truncated to zero — defeating
@@ -106,11 +111,17 @@ export function isAssetType(type: string): type is AkmAssetType {
  *      support directory fsync; we ignore EINVAL/ENOTSUP so atomic writes
  *      don't fail on exotic mounts.
  */
-export function writeFileAtomic(target: string, content: string, mode?: number): void {
+export function writeFileAtomic(target: string, content: string | Buffer, mode?: number): void {
   const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
   const fd = fs.openSync(tmp, "w", mode ?? 0o600);
   try {
-    fs.writeSync(fd, content);
+    // fs.writeSync has two non-overlapping overloads (Buffer vs string); branch
+    // so each call resolves to a single overload. Both write byte-exact.
+    if (typeof content === "string") {
+      fs.writeSync(fd, content);
+    } else {
+      fs.writeSync(fd, content);
+    }
     try {
       fs.fdatasyncSync(fd);
     } catch {
