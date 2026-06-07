@@ -31,9 +31,9 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { loadConfig } from "../../core/config";
 import { UsageError } from "../../core/errors";
 import { getHyphenatedArg } from "../../output/context";
-import { akmAgentDispatch } from "../agent-dispatch";
 import { akmLint } from "../lint";
 import { akmPropose } from "../proposal/propose";
+import { akmAgentDispatch } from "./agent-dispatch";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
 

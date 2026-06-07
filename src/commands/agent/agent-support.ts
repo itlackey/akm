@@ -10,14 +10,14 @@
  * profile can import from here rather than copy-pasting.
  */
 
-import { loadConfig } from "../core/config";
+import { loadConfig } from "../../core/config";
 import {
   type AgentConfig,
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
   requireAgentProfile,
-} from "../integrations/agent";
+} from "../../integrations/agent";
 
 // ── Config helpers ───────────────────────────────────────────────────────────
 

@@ -19,7 +19,7 @@ import { isHttpUrl, resolveStashDir } from "../core/common";
 import { loadConfig, resolveConfiguredSources } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
-import { akmAgentDispatch } from "./agent-dispatch";
+import { akmAgentDispatch } from "./agent/agent-dispatch";
 import { readKnowledgeInput } from "./read/knowledge";
 import { buildWebsiteOptions } from "./sources/add-cli";
 

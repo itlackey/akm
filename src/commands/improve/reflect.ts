@@ -70,7 +70,7 @@ import {
   isEnoentFailure,
   loadAgentConfigFromDisk,
   resolveAgentProfile,
-} from "../agent-support";
+} from "../agent/agent-support";
 import { checkReflectSize } from "../proposal/validators/proposal-quality-validators";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 

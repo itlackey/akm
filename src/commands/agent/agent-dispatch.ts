@@ -16,15 +16,15 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef } from "../core/asset-ref";
-import type { LlmConnectionConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
-import type { AgentDispatchRequest } from "../integrations/agent/builders";
-import type { AgentConfig } from "../integrations/agent/config";
-import { requireAgentProfile } from "../integrations/agent/config";
-import { runAgentSdk } from "../integrations/agent/sdk-runner";
-import type { AgentRunResult } from "../integrations/agent/spawn";
-import { runAgent } from "../integrations/agent/spawn";
+import { parseAssetRef } from "../../core/asset-ref";
+import type { LlmConnectionConfig } from "../../core/config";
+import { NotFoundError, UsageError } from "../../core/errors";
+import type { AgentDispatchRequest } from "../../integrations/agent/builders";
+import type { AgentConfig } from "../../integrations/agent/config";
+import { requireAgentProfile } from "../../integrations/agent/config";
+import { runAgentSdk } from "../../integrations/agent/sdk-runner";
+import type { AgentRunResult } from "../../integrations/agent/spawn";
+import { runAgent } from "../../integrations/agent/spawn";
 
 export interface AkmAgentDispatchOptions {
   profileName: string;
@@ -87,7 +87,7 @@ async function resolveAssetBody(ref: string): Promise<string> {
   }
 
   // Lazy import to avoid pulling the full indexer at startup.
-  const { lookup } = await import("../indexer/indexer.js");
+  const { lookup } = await import("../../indexer/indexer.js");
   const entry = await lookup(parsed);
   if (!entry) {
     throw new NotFoundError(`Asset "${ref}" not found in the index. Run \`akm index\` to rebuild the index.`);
