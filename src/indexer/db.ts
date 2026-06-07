@@ -1538,6 +1538,57 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
   return parseEntryRows(rows, "getEntriesByDir");
 }
 
+/**
+ * Resolve a single `entries.id` by exact `file_path` (the canonical on-disk
+ * path), or `undefined` if no row matches.
+ *
+ * Lifted verbatim (WS5) from the inline `SELECT id FROM entries WHERE
+ * file_path = ? LIMIT 1` in commands/search.ts so all `entries` SQL lives in
+ * this module. The result is a plain number materialised before return —
+ * nothing lazy crosses a connection boundary.
+ */
+export function getEntryIdByFilePath(db: Database, filePath: string): number | undefined {
+  const row = db.prepare("SELECT id FROM entries WHERE file_path = ? LIMIT 1").get(filePath) as
+    | { id: number }
+    | undefined;
+  return row?.id;
+}
+
+/**
+ * Resolve a single `entries.file_path` by primary key, or `undefined` if no
+ * row matches.
+ *
+ * Lifted verbatim (WS5) from the inline `SELECT file_path FROM entries WHERE
+ * id = ?` in commands/feedback-cli.ts. Unlike {@link getEntryById}, this does
+ * NOT parse `entry_json`, so a row with corrupt JSON still yields its path —
+ * preserving feedback-cli's pre-extraction behaviour byte-for-byte.
+ */
+export function getEntryFilePathById(db: Database, id: number): string | undefined {
+  const row = db.prepare("SELECT file_path FROM entries WHERE id = ?").get(id) as { file_path: string } | undefined;
+  return row?.file_path;
+}
+
+/** A raw `(file_path, entry_json)` pair from the `entries` table. */
+export interface EntryRefRow {
+  file_path: string;
+  entry_json: string;
+}
+
+/**
+ * Fetch every `(file_path, entry_json)` row whose entry belongs to a given
+ * stash root — matched either by exact `stash_dir` OR by `file_path` prefix.
+ *
+ * Lifted verbatim (WS5) from the inline query in commands/graph.ts'
+ * `buildRefByPath`. The full result set is materialised with `.all()` before
+ * return so callers can iterate it after the connection closes (WS5
+ * connection-lifetime rule). JSON parsing stays with the caller, unchanged.
+ */
+export function getEntryRefRowsForStashRoot(db: Database, stashRoot: string): EntryRefRow[] {
+  return db
+    .prepare("SELECT file_path, entry_json FROM entries WHERE stash_dir = ? OR file_path LIKE ?")
+    .all(stashRoot, `${stashRoot}%`) as EntryRefRow[];
+}
+
 // ── Utility score operations ────────────────────────────────────────────────
 
 export interface UtilityScoreData {

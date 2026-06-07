@@ -13,7 +13,13 @@ import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
+import {
+  applyFeedbackToUtilityScore,
+  closeDatabase,
+  findEntryIdByRef,
+  getEntryFilePathById,
+  openExistingDatabase,
+} from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { resolveSourceEntries } from "../indexer/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage-events";
@@ -75,14 +81,12 @@ function appendLessonStrength(type: string, name: string, feedbackRef: string): 
       warn(`[feedback] --applied-to: lesson ${ref} is not in the index.`);
       return null;
     }
-    const row = db.prepare("SELECT file_path FROM entries WHERE id = ?").get(entryId) as
-      | { file_path: string }
-      | undefined;
-    if (!row?.file_path) {
+    const resolvedPath = getEntryFilePathById(db, entryId);
+    if (!resolvedPath) {
       warn(`[feedback] --applied-to: cannot resolve file path for ${ref}.`);
       return null;
     }
-    filePath = row.file_path;
+    filePath = resolvedPath;
   } finally {
     closeDatabase(db);
   }

@@ -13,6 +13,9 @@ import {
   getEntriesByDir,
   getEntryById,
   getEntryCount,
+  getEntryFilePathById,
+  getEntryIdByFilePath,
+  getEntryRefRowsForStashRoot,
   getMeta,
   isVecAvailable,
   openDatabase,
@@ -865,5 +868,97 @@ describe("collectTagSetFromEntries", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+});
+
+// ── entries-by-path reads (WS5: command-code `entries` SQL moved into db.ts) ──
+//
+// Characterization tests pinning the exact query results of the three raw
+// `entries` reads lifted verbatim out of command code (commands/search.ts,
+// commands/feedback-cli.ts, commands/graph.ts) into indexer/db.ts so all SQL
+// touching the `entries` table lives in one module. These assertions capture
+// the pre-move behaviour exactly.
+describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / getEntryRefRowsForStashRoot)", () => {
+  function seedAt(db: Database, key: string, filePath: string, stashDir: string, type: StashEntry["type"]): number {
+    const entry = { description: `Description for ${key}`, type, name: key } as unknown as StashEntry;
+    return upsertEntry(db, key, path.dirname(filePath), filePath, stashDir, entry, key);
+  }
+
+  test("getEntryIdByFilePath resolves the row id by exact file_path, undefined when no match", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const id = seedAt(db, "skill-a", "/s/skill-a.md", "/s", "skill");
+      expect(getEntryIdByFilePath(db, "/s/skill-a.md")).toBe(id);
+      // Exact match only — a prefix or suffix must NOT resolve.
+      expect(getEntryIdByFilePath(db, "/s/skill-a")).toBeUndefined();
+      expect(getEntryIdByFilePath(db, "/s/skill-a.md.bak")).toBeUndefined();
+      expect(getEntryIdByFilePath(db, "/nope.md")).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEntryFilePathById returns the file_path by id, undefined when no match", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const id = seedAt(db, "lesson-x", "/s/lesson-x.md", "/s", "lesson");
+      expect(getEntryFilePathById(db, id)).toBe("/s/lesson-x.md");
+      expect(getEntryFilePathById(db, id + 9999)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEntryFilePathById still returns the path when entry_json is corrupt (no JSON parse)", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const id = seedAt(db, "broken", "/s/broken.md", "/s", "skill");
+      db.prepare("UPDATE entries SET entry_json = ? WHERE id = ?").run("{not json", id);
+      expect(getEntryFilePathById(db, id)).toBe("/s/broken.md");
+      // getEntryById, by contrast, drops the corrupt row — proving the new
+      // helper deliberately avoids JSON parsing to preserve feedback-cli's
+      // pre-extraction behaviour.
+      expect(getEntryById(db, id)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEntryRefRowsForStashRoot matches by stash_dir OR file_path prefix; dedupe stays with caller", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      // Matches by exact stash_dir.
+      seedAt(db, "in-stash", "/elsewhere/in-stash.md", "/root", "skill");
+      // Matches by file_path prefix even though stash_dir differs.
+      seedAt(db, "by-prefix", "/root/sub/by-prefix.md", "/other", "memory");
+      // Should NOT match: different stash_dir and a non-prefix path.
+      seedAt(db, "outside", "/somewhere/outside.md", "/other", "lesson");
+
+      const rows = getEntryRefRowsForStashRoot(db, "/root");
+      const paths = rows.map((r) => r.file_path).sort();
+      expect(paths).toEqual(["/elsewhere/in-stash.md", "/root/sub/by-prefix.md"]);
+      // entry_json is returned raw (unparsed) for the caller to decode.
+      for (const r of rows) {
+        expect(typeof r.entry_json).toBe("string");
+        expect(() => JSON.parse(r.entry_json)).not.toThrow();
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("ref rows survive db.close() — result set fully materialised (WS5 lifetime rule)", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    seedAt(db, "a", "/root/a.md", "/root", "skill");
+    seedAt(db, "b", "/root/b.md", "/root", "memory");
+    const rows = getEntryRefRowsForStashRoot(db, "/root");
+    closeDatabase(db);
+    // Iterating after close must not throw / truncate — proves no live cursor.
+    expect(rows.map((r) => r.file_path).sort()).toEqual(["/root/a.md", "/root/b.md"]);
   });
 });

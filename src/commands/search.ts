@@ -17,7 +17,7 @@ import { loadConfig } from "../core/config";
 import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { isTransientStashPath } from "../core/paths";
-import { bumpUtilityScoresBatch, closeDatabase, openExistingDatabase } from "../indexer/db";
+import { bumpUtilityScoresBatch, closeDatabase, getEntryIdByFilePath, openExistingDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
 import type { StashEntryScope } from "../indexer/metadata";
 import { resolveSourceEntries } from "../indexer/search-source";
@@ -253,11 +253,10 @@ function resolveEntryIds(
   hits: SourceSearchHit[],
 ): Array<{ entryId: number; ref: string }> {
   const results: Array<{ entryId: number; ref: string }> = [];
-  const stmt = db.prepare("SELECT id FROM entries WHERE file_path = ? LIMIT 1");
   for (const hit of hits) {
     try {
-      const row = stmt.get(hit.path) as { id: number } | undefined;
-      if (row) results.push({ entryId: row.id, ref: hit.ref });
+      const entryId = getEntryIdByFilePath(db, hit.path);
+      if (entryId !== undefined) results.push({ entryId, ref: hit.ref });
     } catch {
       /* skip unresolvable */
     }
