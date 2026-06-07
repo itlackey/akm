@@ -155,6 +155,12 @@ export const ImproveProcessConfigSchema = z
     defaultSince: z.string().min(1).optional(),
     maxTotalChars: positiveInt.optional(),
     maxChunkSize: z.number().int().min(1).max(50).optional(),
+    // Extract process: minimum number of new (unseen, in-window) candidate
+    // sessions below which the extract pass skips entirely (emits an
+    // `improve_skipped` event with `reason: "below_min_new_sessions"`). 0
+    // disables the guard. Only meaningful on the `extract` process. Default 0
+    // (disabled) so existing behaviour is preserved; only opted-in profiles set it.
+    minNewSessions: z.number().int().min(0).optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

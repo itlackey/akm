@@ -674,3 +674,77 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     durationMs: Date.now() - startMs,
   };
 }
+
+/** Options for {@link countNewExtractCandidates}. */
+export interface CountNewExtractCandidatesOptions {
+  /** Discovery cutoff (ISO timestamp or duration like `24h`). Defaults to harness/process default. */
+  since?: string;
+  /** Override the harness registry (test seam). */
+  harnesses?: SessionLogHarness[];
+  /** Override state.db handle (test seam). */
+  stateDb?: Database;
+}
+
+/**
+ * Count NEW (unseen, in-window) extract candidate sessions across all available
+ * harnesses WITHOUT making any LLM calls. Mirrors the discovery + seen-filter
+ * logic in {@link akmExtract} so the `#554 minNewSessions` gate in `improve`
+ * can decide whether the extract pass is worth running before any work begins.
+ *
+ * A session is a "new candidate" when it is in the `since` window AND it would
+ * not be skipped by {@link shouldSkipAlreadyExtractedSession} (i.e. it has never
+ * been extracted, or new events have arrived since it was last extracted).
+ */
+export function countNewExtractCandidates(config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
+  const extractProcess = config.profiles?.improve?.default?.processes?.extract;
+  const effectiveSince = options.since ?? extractProcess?.defaultSince;
+  const sinceMs = parseSinceArg(effectiveSince);
+
+  const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
+
+  let stateDb: Database | undefined = options.stateDb;
+  let openedStateDb = false;
+  let total = 0;
+  try {
+    for (const harness of harnesses) {
+      const candidates = harness.listSessions({ sinceMs });
+      if (candidates.length === 0) continue;
+
+      let seenMap = new Map<string, ExtractedSessionRow>();
+      try {
+        if (!stateDb) {
+          stateDb = openStateDatabase();
+          openedStateDb = true;
+        }
+        seenMap = getExtractedSessionsMap(
+          stateDb,
+          harness.name,
+          candidates.map((c) => c.sessionId),
+        );
+      } catch (err) {
+        // state.db unavailable — treat every in-window session as a new
+        // candidate (fail-open: never let a transient sqlite error wrongly
+        // trip the gate and skip a pass that should have run).
+        const msg = err instanceof Error ? err.message : String(err);
+        warn(`[extract] state.db unavailable while counting candidates, treating all as new: ${msg}`);
+        total += candidates.length;
+        continue;
+      }
+
+      for (const summary of candidates) {
+        const prior = seenMap.get(summary.sessionId);
+        if (shouldSkipAlreadyExtractedSession(prior, summary.endedAt)) continue;
+        total += 1;
+      }
+    }
+  } finally {
+    if (stateDb && openedStateDb) {
+      try {
+        stateDb.close();
+      } catch {
+        // best-effort close
+      }
+    }
+  }
+  return total;
+}
