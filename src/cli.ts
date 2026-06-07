@@ -76,7 +76,6 @@ import { generateBashCompletions, installBashCompletions } from "./commands/comp
 import { configCommand } from "./commands/config-cli";
 import { akmDbBackups } from "./commands/db-cli";
 import { envCommand } from "./commands/env-cli";
-import { akmEventsList, akmEventsTail } from "./commands/events";
 import { extractCommand } from "./commands/extract-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { graphCommand } from "./commands/graph-cli";
@@ -93,6 +92,7 @@ import { akmInit } from "./commands/init";
 import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
+import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal-cli";
 import { akmPropose } from "./commands/propose";
 import { registryCommand } from "./commands/registry-cli";
@@ -120,18 +120,14 @@ import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { clearLogFile, info, isQuiet, isVerbose, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
-import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
-import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import {
   getHyphenatedArg,
   getHyphenatedBoolean,
   getOutputMode,
   initOutputMode,
-  parseDetailLevel,
   parseFlagValue,
 } from "./output/context";
-import { formatEventLine } from "./output/text";
 import { pkgVersion } from "./version";
 
 function applyEarlyStderrFlags(argv: string[]): void {
@@ -601,30 +597,6 @@ const importKnowledgeCommand = defineCommand({
   },
 });
 
-const hintsCommand = defineCommand({
-  meta: {
-    name: "hints",
-    description: "Print agent instructions on how to use akm, use --detail full for a complete guide",
-  },
-  args: {
-    detail: {
-      type: "string",
-      description:
-        "Hints detail level (brief|normal|full). `brief` prints the short guide; `normal`/`full` print the complete guide.",
-      default: "normal",
-    },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      // Let the global parser validate the value so an invalid `--detail`
-      // returns the standard JSON error envelope (exit 2) rather than a raw
-      // stack trace + exit 1. `brief` → short doc; `normal`/`full` → full doc.
-      const detail = parseDetailLevel(args.detail as string | undefined) ?? "normal";
-      process.stdout.write(loadHints(detail === "brief" ? "brief" : "full"));
-    });
-  },
-});
-
 const helpCommand = defineCommand({
   meta: {
     name: "help",
@@ -693,186 +665,6 @@ const completionsCommand = defineCommand({
     } else {
       process.stdout.write(script);
     }
-  },
-});
-
-// ── `akm log` ────────────────────────────────────────────────────────────────
-// Append-only events stream surface (#204). `list` reads state.db events
-// with optional --since/--type/--ref filters; `tail` follows the table via
-// a polling loop and prints each event as a single JSONL line.
-
-const eventsListCommand = defineCommand({
-  meta: { name: "list", description: "List events from the append-only state.db events stream" },
-  args: {
-    since: {
-      type: "string",
-      description: "ISO timestamp / epoch ms, OR `@offset:<id>` for a durable row-id cursor (resume across processes)",
-    },
-    type: { type: "string", description: "Filter by event type (add, remove, remember, feedback, ...)" },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
-    "exclude-tags": {
-      type: "string",
-      description: "Exclude events matching these tags (repeatable)",
-    },
-    "include-tags": {
-      type: "string",
-      description: "Only include events with ALL these tags (repeatable)",
-    },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      const excludeTags = parseAllFlagValues("--exclude-tags");
-      const includeTags = parseAllFlagValues("--include-tags");
-      const result = akmEventsList({
-        since: args.since,
-        type: args.type,
-        ref: args.ref,
-        ...(excludeTags.length > 0 ? { excludeTags } : {}),
-        ...(includeTags.length > 0 ? { includeTags } : {}),
-      });
-      output("events-list", result);
-    });
-  },
-});
-
-const eventsTailCommand = defineCommand({
-  meta: { name: "tail", description: "Follow the append-only state.db events stream (polling)" },
-  args: {
-    since: {
-      type: "string",
-      description: "ISO timestamp / epoch ms, OR `@offset:<id>` for a durable row-id cursor (resume across processes)",
-    },
-    type: { type: "string", description: "Filter by event type" },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
-    "interval-ms": { type: "string", description: "Polling interval in ms (default: 75)" },
-    "max-duration-ms": { type: "string", description: "Stop after this many ms (default: never)" },
-    "max-events": { type: "string", description: "Stop after observing this many events" },
-    "exclude-tags": {
-      type: "string",
-      description: "Exclude events matching these tags (repeatable)",
-    },
-    "include-tags": {
-      type: "string",
-      description: "Only include events with ALL these tags (repeatable)",
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const intervalMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
-      const maxDurationMs = parsePositiveIntFlag(
-        getHyphenatedArg<string>(args, "max-duration-ms"),
-        "--max-duration-ms",
-      );
-      const maxEvents = parsePositiveIntFlag(getHyphenatedArg<string>(args, "max-events"), "--max-events");
-      const mode = getOutputMode();
-      // In streaming text mode we want each event to print as soon as it
-      // arrives. The polling loop emits via `onEvent`; the final result is
-      // also rendered through the standard output() pipeline so JSON
-      // consumers always get the canonical envelope.
-      const stream = mode.format === "text" || mode.format === "jsonl";
-      const excludeTags = parseAllFlagValues("--exclude-tags");
-      const includeTags = parseAllFlagValues("--include-tags");
-      const result = await akmEventsTail({
-        since: args.since,
-        type: args.type,
-        ref: args.ref,
-        intervalMs,
-        maxDurationMs,
-        maxEvents,
-        ...(excludeTags.length > 0 ? { excludeTags } : {}),
-        ...(includeTags.length > 0 ? { includeTags } : {}),
-        onEvent: stream
-          ? (event) => {
-              if (mode.format === "jsonl") {
-                console.log(JSON.stringify(event));
-              } else {
-                console.log(formatEventLine(event as unknown as Record<string, unknown>));
-              }
-            }
-          : undefined,
-      });
-      // Emit the canonical envelope last (JSON/YAML modes rely on this;
-      // streaming modes already printed each event but we still emit a
-      // trailer so callers can persist the resumable cursor).
-      if (!stream) {
-        output("events-tail", result);
-      } else if (mode.format === "jsonl") {
-        // Final discriminated trailer row so jsonl consumers can resume.
-        const trailer = {
-          _kind: "trailer",
-          schemaVersion: 1,
-          nextOffset: result.nextOffset,
-          totalCount: result.totalCount,
-          reason: result.reason,
-        };
-        console.log(JSON.stringify(trailer));
-      } else {
-        // text mode: keep stdout pristine for line-oriented parsers and
-        // emit the trailer on stderr.
-        process.stderr.write(
-          `[events-tail] reason=${result.reason} nextOffset=${result.nextOffset} total=${result.totalCount}\n`,
-        );
-      }
-    });
-  },
-});
-
-const logCommand = defineCommand({
-  meta: {
-    name: "log",
-    description: "Read or follow the append-only state.db events stream (mutations, feedback, indexing)",
-  },
-  subCommands: {
-    list: eventsListCommand,
-    tail: eventsTailCommand,
-  },
-});
-
-// ── lessons subcommands (Phase 7A / Advantage D4c) ──────────────────────────
-
-const lessonsCoverageCommand = defineCommand({
-  meta: {
-    name: "coverage",
-    description:
-      "Report tags that exist on indexed assets but are NOT yet covered by any lesson.\n\n" +
-      "Useful for spotting topics where the stash has skills/commands/scripts but no\n" +
-      "crystallized lesson — a signal that the team has tacit knowledge worth distilling.\n\n" +
-      "Default output is JSON: { uncoveredTags: string[], lessonTagCount: number, totalTagCount: number }.\n" +
-      "Pass --format text for a plain-text bulleted list.",
-  },
-  args: {},
-  run() {
-    return runWithJsonErrors(() => {
-      const db = openExistingDatabase();
-      try {
-        const allTagSet = collectTagSetFromEntries(db, undefined);
-        const lessonTagSet = collectTagSetFromEntries(db, "lesson");
-        const uncovered: string[] = [];
-        for (const tag of allTagSet) {
-          if (!lessonTagSet.has(tag)) uncovered.push(tag);
-        }
-        uncovered.sort((a, b) => a.localeCompare(b));
-        output("lessons-coverage", {
-          ok: true,
-          uncoveredTags: uncovered,
-          lessonTagCount: lessonTagSet.size,
-          totalTagCount: allTagSet.size,
-        });
-      } finally {
-        closeDatabase(db);
-      }
-    });
-  },
-});
-
-const lessonsCommand = defineCommand({
-  meta: {
-    name: "lessons",
-    alias: "lesson",
-    description: "Lesson-asset tooling: tag-coverage gaps, strength queries.",
-  },
-  subCommands: {
-    coverage: lessonsCoverageCommand,
   },
 });
 
@@ -1232,25 +1024,4 @@ if (import.meta.main) {
   })();
 
   runMain(main);
-}
-
-// ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────
-
-function loadHints(detail: "brief" | "normal" | "full" = "normal"): string {
-  // `brief` → the short AGENTS.md guide; `normal`/`full` → the complete guide.
-  const wantFull = detail !== "brief";
-  const filename = wantFull ? "AGENTS.full.md" : "AGENTS.md";
-  const fallback = wantFull ? EMBEDDED_HINTS_FULL : EMBEDDED_HINTS;
-
-  // Try reading from the docs/ directory (works in dev and when installed via npm)
-  try {
-    const docsPath = path.resolve(import.meta.dir ?? __dirname, `../docs/agents/${filename}`);
-    if (fs.existsSync(docsPath)) {
-      return fs.readFileSync(docsPath, "utf8");
-    }
-  } catch {
-    // fall through
-  }
-  // Fallback for compiled binary — inline content
-  return fallback;
 }
