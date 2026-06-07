@@ -786,6 +786,61 @@ describe("akmHealth", () => {
     expect(result.hardChecks.some((check) => check.name === "task-log-backing" && check.status === "fail")).toBe(true);
   });
 
+  test("now clock seam pins active-run staleness deterministically", () => {
+    // An active row whose started_at is anchored to real now so it falls inside
+    // the (un-seamed) `since` query window, while the pinned read clock drives
+    // the ACTIVE_RUN_WARN_MS (15min) staleness comparison deterministically.
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "active-task",
+        status: "active",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: "prompt",
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 0, profile: "opencode" }),
+      });
+    } finally {
+      db.close();
+    }
+
+    // Pin the read clock 5 minutes after start (< 15min warn threshold). With
+    // the real wall-clock this row would already read as stuck; the pinned
+    // clock proves the seam — not Date.now() — drives the staleness comparison.
+    const result = akmHealth({ since: "30d", now: () => startedAtMs + 5 * 60 * 1000 });
+    expect(result.metrics.stuckActiveRuns).toBe(0);
+  });
+
+  test("omitting now defaults to real wall-clock (additive seam)", () => {
+    // A row started ~20min before real now must read as stuck without passing
+    // `now`, proving the default path is identical to calling Date.now().
+    const startedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "active-task-default",
+        status: "active",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: "prompt",
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 0, profile: "opencode" }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "30d" });
+    expect(result.metrics.stuckActiveRuns).toBe(1);
+  });
+
   test("passes requested since window through to session log candidates", () => {
     const seen: number[] = [];
     const getExecutionLogCandidatesFn = (sinceDays = 7): SessionLogEntry[] => {

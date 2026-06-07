@@ -467,6 +467,12 @@ export interface AkmHealthOptions {
   windowCompare?: string;
   windows?: WindowSpec[];
   getExecutionLogCandidatesFn?: (sinceDays?: number) => SessionLogEntry[];
+  /**
+   * Clock seam for the health read path. Defaults to `Date.now`. Tests may pin
+   * this to a fixed epoch so staleness/window math is deterministic. Purely
+   * additive — when omitted, behaviour is identical to calling `Date.now()`.
+   */
+  now?: () => number;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -1290,7 +1296,7 @@ function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: 
  * Parse a `--window-compare <duration>` shorthand into two adjacent windows
  * (current, prior). Duration syntax matches {@link parseHealthSince}.
  */
-function resolveWindowCompare(duration: string): WindowSpec[] {
+function resolveWindowCompare(duration: string, now: () => number = () => Date.now()): WindowSpec[] {
   const trimmed = duration.trim();
   const durationMatch = trimmed.match(/^(\d+)([dhm])$/i);
   if (!durationMatch) {
@@ -1303,10 +1309,10 @@ function resolveWindowCompare(duration: string): WindowSpec[] {
   }
   const multiplier = unit === "h" ? 60 * 60 * 1000 : unit === "m" ? 60 * 1000 : 24 * 60 * 60 * 1000;
   const ms = amount * multiplier;
-  const now = Date.now();
-  const currentSince = new Date(now - ms).toISOString();
-  const currentUntil = new Date(now).toISOString();
-  const priorSince = new Date(now - 2 * ms).toISOString();
+  const nowMs = now();
+  const currentSince = new Date(nowMs - ms).toISOString();
+  const currentUntil = new Date(nowMs).toISOString();
+  const priorSince = new Date(nowMs - 2 * ms).toISOString();
   const priorUntil = currentSince;
   return [
     { name: "current", since: currentSince, until: currentUntil },
@@ -1403,7 +1409,13 @@ interface WindowMetricsBundle {
   runs: number;
 }
 
-function buildWindowMetrics(db: Database, stateDbPath: string, since: string, until: string): WindowMetricsBundle {
+function buildWindowMetrics(
+  db: Database,
+  stateDbPath: string,
+  since: string,
+  until: string,
+  now: () => number = () => Date.now(),
+): WindowMetricsBundle {
   const taskRows = queryTaskHistory(db, { since }).filter((row) => {
     const startMs = new Date(row.started_at).getTime();
     const untilMs = new Date(until).getTime();
@@ -1414,7 +1426,7 @@ function buildWindowMetrics(db: Database, stateDbPath: string, since: string, un
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = taskRows.filter((row) => row.status === "active");
   const stuckActiveRuns = activeRows.filter(
-    (row) => Date.now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
+    (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
   ).length;
   const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
   const promptFailures = promptRows.filter((row) => {
@@ -1483,6 +1495,7 @@ function validateAkmHealthOptions(options: AkmHealthOptions): void {
 
 export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   validateAkmHealthOptions(options);
+  const now = options.now ?? (() => Date.now());
   const since = parseHealthSince(options.since);
   const stateDbPath = getStateDbPathInDataDir();
   const hardChecks: HealthCheckResult[] = [];
@@ -1513,7 +1526,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const failedTaskRows = taskRows.filter((row) => row.status === "failed");
     const activeRows = taskRows.filter((row) => row.status === "active");
     const stuckActiveRuns = activeRows.filter(
-      (row) => Date.now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
+      (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
     ).length;
     const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
     const promptFailures = promptRows.filter((row) => {
@@ -1542,7 +1555,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
-      const sinceDays = Math.max(0, Math.ceil((Date.now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
+      const sinceDays = Math.max(0, Math.ceil((now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
       sessionLogEntries = getExecutionLogCandidatesFn(sinceDays).map((entry) => ({
         topic: entry.topic,
         frequency: entry.frequency,
@@ -1596,7 +1609,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     // ── Window-compare mode (Phase 3) ─────────────────────────────────────
     let windowSpecs: WindowSpec[] | undefined;
     if (options.windowCompare) {
-      windowSpecs = resolveWindowCompare(options.windowCompare);
+      windowSpecs = resolveWindowCompare(options.windowCompare, now);
     } else if (options.windows && options.windows.length > 0) {
       windowSpecs = options.windows;
     }
@@ -1610,8 +1623,8 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     if (windowSpecs && db) {
       windowResults = windowSpecs.map((spec) => {
         const winSince = parseHealthSince(spec.since);
-        const winUntil = spec.until ? parseHealthSince(spec.until) : new Date().toISOString();
-        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil);
+        const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
+        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil, now);
         return {
           name: spec.name,
           since: winSince,
