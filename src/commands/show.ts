@@ -27,7 +27,7 @@ import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../core/
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../core/stash-meta";
-import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
+import { findEntryIdByRef } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { listRelatedPathsForFile } from "../indexer/graph-boost";
@@ -37,6 +37,7 @@ import { resolveAssetPath } from "../indexer/path-resolver";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
+import { withIndexDb } from "../storage/repositories/index-db";
 // Eagerly import source providers to trigger self-registration.
 import "../sources/providers/index";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/types";
@@ -189,7 +190,7 @@ export async function akmShowUnified(input: {
   }
   // Count prior shows of this ref before logging the current one.
   const priorShowCount = recentShowCount(ref);
-  logShowEvent(ref, undefined, input.eventSource);
+  logShowEvent(ref, input.eventSource);
   if (priorShowCount >= 2) {
     // Agent has shown this same asset 3+ times — inject a loop-break hint.
     (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
@@ -294,11 +295,7 @@ function recentShowCount(ref: string): number {
   }
 }
 
-function logShowEvent(
-  ref: string,
-  existingDb?: import("bun:sqlite").Database,
-  eventSource: "user" | "improve" = "user",
-): void {
+function logShowEvent(ref: string, eventSource: "user" | "improve" = "user"): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
   const parsed = parseAssetRef(ref);
@@ -333,17 +330,14 @@ function logShowEvent(
   }
 
   try {
-    const db = existingDb ?? openExistingDatabase();
-    try {
+    withIndexDb((db) => {
       insertUsageEvent(db, {
         event_type: "show",
         entry_ref: ref,
         entry_id: findEntryIdByRef(db, ref),
         source: eventSource,
       });
-    } finally {
-      if (!existingDb) closeDatabase(db);
-    }
+    });
   } catch (err) {
     rethrowIfTestIsolationError(err);
     /* fire-and-forget */
@@ -439,16 +433,14 @@ export async function showLocal(input: {
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
     related: (() => {
-      let db: import("bun:sqlite").Database | undefined;
       try {
-        db = openExistingDatabase();
-        const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
-        return { total: related.length, hits: related };
+        return withIndexDb((db) => {
+          const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
+          return { total: related.length, hits: related };
+        });
       } catch (err) {
         rethrowIfTestIsolationError(err);
         return { total: 0, hits: [] };
-      } finally {
-        if (db) closeDatabase(db);
       }
     })(),
   };

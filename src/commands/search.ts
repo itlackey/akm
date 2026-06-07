@@ -17,7 +17,7 @@ import { loadConfig } from "../core/config";
 import { rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { isTransientStashPath } from "../core/paths";
-import { bumpUtilityScoresBatch, closeDatabase, getEntryIdByFilePath, openExistingDatabase } from "../indexer/db";
+import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
 import type { StashEntryScope } from "../indexer/metadata";
 import { resolveSourceEntries } from "../indexer/search-source";
@@ -35,6 +35,7 @@ import type {
   SearchSource,
   SourceSearchHit,
 } from "../sources/types";
+import { withIndexDb } from "../storage/repositories/index-db";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
@@ -136,7 +137,7 @@ export async function akmSearch(input: {
       warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging) logSearchEvent(query, response, undefined, undefined, input.eventSource);
+    if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
     return response;
   }
   // Primary stash directory — used for DB path lookups and as the default
@@ -184,8 +185,7 @@ export async function akmSearch(input: {
       warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
-    if (!input.skipLogging)
-      logSearchEvent(query, response, undefined, localResult?.mode ?? "keyword", input.eventSource);
+    if (!input.skipLogging) logSearchEvent(query, response, localResult?.mode ?? "keyword", input.eventSource);
     return response;
   }
 
@@ -222,7 +222,7 @@ export async function akmSearch(input: {
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging) logSearchEvent(query, response, undefined, undefined, input.eventSource);
+    if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
     return response;
   }
 
@@ -241,7 +241,7 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
-  if (!input.skipLogging) logSearchEvent(query, response, undefined, undefined, input.eventSource);
+  if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
   return response;
 }
 
@@ -282,7 +282,6 @@ function resolveEntryIds(
 function logSearchEvent(
   query: string,
   response: SearchResponse,
-  existingDb?: import("bun:sqlite").Database,
   mode: "semantic" | "keyword" = "keyword",
   eventSource: "user" | "improve" = "user",
 ): void {
@@ -298,8 +297,7 @@ function logSearchEvent(
   });
 
   try {
-    const db = existingDb ?? openExistingDatabase();
-    try {
+    withIndexDb((db) => {
       const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
       for (const { entryId, ref } of resolved) {
         insertUsageEvent(db, {
@@ -341,9 +339,7 @@ function logSearchEvent(
         }),
         source: eventSource,
       });
-    } finally {
-      if (!existingDb) closeDatabase(db);
-    }
+    });
   } catch (err) {
     rethrowIfTestIsolationError(err);
     /* fire-and-forget */
