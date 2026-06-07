@@ -25,15 +25,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, parsePositiveIntFlag } from "../cli/parse-args";
-import { EXIT_CODES, output, runWithJsonErrors } from "../cli/shared";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset-create";
-import { loadConfig } from "../core/config";
-import { UsageError } from "../core/errors";
-import { getHyphenatedArg } from "../output/context";
-import { akmAgentDispatch } from "./agent-dispatch";
-import { akmLint } from "./lint";
-import { akmPropose } from "./proposal/propose";
+import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset-create";
+import { loadConfig } from "../../core/config";
+import { UsageError } from "../../core/errors";
+import { getHyphenatedArg } from "../../output/context";
+import { akmAgentDispatch } from "../agent-dispatch";
+import { akmLint } from "../lint";
+import { akmPropose } from "../proposal/propose";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
 
@@ -78,7 +78,7 @@ export const agentCommand = defineCommand({
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
 
       const config = loadConfig();
-      const { getDefaultLlmConfig } = await import("../core/config.js");
+      const { getDefaultLlmConfig } = await import("../../core/config.js");
       // After 0.8.0 the agent block IS the loaded AkmConfig.
       const agentConfig = config;
 
@@ -87,10 +87,10 @@ export const agentCommand = defineCommand({
 
       let systemPrompt: string | undefined;
       let assetModel: string | undefined;
-      let assetTools: import("../sources/types.js").ShowResponse["toolPolicy"] | undefined;
+      let assetTools: import("../../sources/types.js").ShowResponse["toolPolicy"] | undefined;
 
       if (agentRef) {
-        const { akmShowUnified } = await import("./show.js");
+        const { akmShowUnified } = await import("../show.js");
         const asset = await akmShowUnified({ ref: agentRef, detail: "full" });
         systemPrompt = typeof asset.content === "string" ? asset.content : undefined;
         assetModel = typeof asset.modelHint === "string" ? asset.modelHint : undefined;

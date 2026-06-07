@@ -22,7 +22,7 @@ import {
   akmTasksRun,
   akmTasksSetEnabled,
   akmTasksShow,
-} from "../src/commands/tasks";
+} from "../src/commands/tasks/tasks";
 import { runCliCapture } from "./_helpers/cli";
 
 let stashDir: string;

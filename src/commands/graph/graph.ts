@@ -4,11 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
-import { type AkmConfig, loadConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
-import { getDbPath } from "../core/paths";
-import { warn } from "../core/warn";
+import { parseAssetRef } from "../../core/asset-ref";
+import { type AkmConfig, loadConfig } from "../../core/config";
+import { NotFoundError, UsageError } from "../../core/errors";
+import { getDbPath } from "../../core/paths";
+import { warn } from "../../core/warn";
 import {
   closeDatabase,
   findEntryIdByRef,
@@ -16,19 +16,19 @@ import {
   getEntryRefRowsForStashRoot,
   openDatabase,
   openExistingDatabase,
-} from "../indexer/db";
-import { listRelatedPathsForFile } from "../indexer/graph-boost";
-import { loadStoredGraphSnapshot } from "../indexer/graph-db";
+} from "../../indexer/db";
+import { listRelatedPathsForFile } from "../../indexer/graph-boost";
+import { loadStoredGraphSnapshot } from "../../indexer/graph-db";
 import type {
   GraphExtractionPassOptions,
   GraphExtractionTelemetry,
   GraphFile,
   GraphFileNode,
-} from "../indexer/graph-extraction";
-import { runGraphExtractionPass } from "../indexer/graph-extraction";
-import { lookup } from "../indexer/indexer";
-import { resolveAssetPath } from "../indexer/path-resolver";
-import { findSourceForPath, resolveSourceEntries } from "../indexer/search-source";
+} from "../../indexer/graph-extraction";
+import { runGraphExtractionPass } from "../../indexer/graph-extraction";
+import { lookup } from "../../indexer/indexer";
+import { resolveAssetPath } from "../../indexer/path-resolver";
+import { findSourceForPath, resolveSourceEntries } from "../../indexer/search-source";
 
 export interface GraphSummaryResult {
   schemaVersion: 1;

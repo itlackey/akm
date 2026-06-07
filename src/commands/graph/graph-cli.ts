@@ -12,8 +12,8 @@
  */
 
 import { defineCommand } from "citty";
-import { hasSubcommand, parsePositiveIntFlag } from "../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
+import { hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import {
   akmGraphEntities,
   akmGraphEntity,

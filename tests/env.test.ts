@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, createEnv, injectIntoEnv, listKeys, loadEnv } from "../src/commands/env";
+import { buildShellExportScript, createEnv, injectIntoEnv, listKeys, loadEnv } from "../src/commands/env/env";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
 import { resetGraphBoostCache } from "../src/indexer/graph-boost";

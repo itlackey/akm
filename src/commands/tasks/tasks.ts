@@ -13,21 +13,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
-import { resolveAssetPathFromName } from "../core/asset-spec";
-import { isWithin, resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
-import { ConfigError, NotFoundError, UsageError } from "../core/errors";
-import { getTaskHistoryDir, getTaskLogDir } from "../core/paths";
-import { listAgentProfileNames } from "../integrations/agent";
-import { resolveAssetPath } from "../sources/resolve";
-import { backendNameForPlatform, selectBackend } from "../tasks/backends";
-import { parseTaskDocument } from "../tasks/parser";
-import { resolveAkmInvocation } from "../tasks/resolveAkmBin";
-import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from "../tasks/runner";
-import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../tasks/schedule";
-import type { TaskDocument } from "../tasks/schema";
-import { validateTaskDocument } from "../tasks/validator";
-import { resolveImproveProfile } from "./improve/improve-profiles";
+import { resolveAssetPathFromName } from "../../core/asset-spec";
+import { isWithin, resolveStashDir } from "../../core/common";
+import { loadConfig } from "../../core/config";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
+import { listAgentProfileNames } from "../../integrations/agent";
+import { resolveAssetPath } from "../../sources/resolve";
+import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
+import { parseTaskDocument } from "../../tasks/parser";
+import { resolveAkmInvocation } from "../../tasks/resolveAkmBin";
+import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from "../../tasks/runner";
+import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../../tasks/schedule";
+import type { TaskDocument } from "../../tasks/schema";
+import { validateTaskDocument } from "../../tasks/validator";
+import { resolveImproveProfile } from "../improve/improve-profiles";
 
 export interface TasksAddInput {
   id: string;

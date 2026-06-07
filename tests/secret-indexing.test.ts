@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../src/commands/secret";
+import { setSecret } from "../src/commands/env/secret";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
 import { resetGraphBoostCache } from "../src/indexer/graph-boost";

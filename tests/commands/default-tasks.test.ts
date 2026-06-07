@@ -18,8 +18,8 @@ import {
   isCiEnvironment,
   type RegisterDefaultTasksDeps,
   registerDefaultTasks,
-} from "../../src/commands/default-tasks";
-import type { TasksAddInput, TasksAddResult, TasksListResult } from "../../src/commands/tasks";
+} from "../../src/commands/tasks/default-tasks";
+import type { TasksAddInput, TasksAddResult, TasksListResult } from "../../src/commands/tasks/tasks";
 
 /**
  * An in-memory fake of the task store: `add` records the call and appends to

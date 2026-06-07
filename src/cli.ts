@@ -69,12 +69,13 @@ import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { addCommand } from "./commands/add-cli";
+import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
-import { agentCommand, lintCommand, proposeCommand } from "./commands/contribute-cli";
-import { envCommand } from "./commands/env-cli";
+import { envCommand } from "./commands/env/env-cli";
+import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
-import { graphCommand } from "./commands/graph-cli";
+import { graphCommand } from "./commands/graph/graph-cli";
 import {
   akmHealth,
   parseWindowSpec,
@@ -90,7 +91,6 @@ import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { registryCommand } from "./commands/registry-cli";
 import { rememberCommand } from "./commands/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/search-cli";
-import { secretCommand } from "./commands/secret-cli";
 import { normalizeShowArgv } from "./commands/show";
 import {
   cloneCommand,
@@ -102,7 +102,7 @@ import {
   upgradeCommand,
 } from "./commands/sources-cli";
 import { dbCommand, importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/stash-cli";
-import { tasksCommand } from "./commands/tasks-cli";
+import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { loadConfig } from "./core/config";

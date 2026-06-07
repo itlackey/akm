@@ -21,15 +21,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, hasSubcommand } from "../cli/parse-args";
-import { output, runWithJsonErrors } from "../cli/shared";
-import { deriveCanonicalAssetName } from "../core/asset-spec";
-import { loadConfig } from "../core/config";
-import { makeSecretRef, resolveSecretPath } from "../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { getHyphenatedArg } from "../output/context";
+import { getStringArg, hasSubcommand } from "../../cli/parse-args";
+import { output, runWithJsonErrors } from "../../cli/shared";
+import { deriveCanonicalAssetName } from "../../core/asset-spec";
+import { loadConfig } from "../../core/config";
+import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { resolveSourceEntries } from "../../indexer/search-source";
+import { getHyphenatedArg } from "../../output/context";
 
 const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);
 
@@ -183,7 +183,7 @@ const secretRunCommand = defineCommand({
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
         throw new UsageError(`"${varName}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
       }
-      const { isDangerousEnvKey } = await import("./lint/env-key-rules.js");
+      const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
       if (isDangerousEnvKey(varName)) {
         throw new UsageError(
           `Refusing to inject a secret into "${varName}": it is a known process-hijacking variable (e.g. LD_PRELOAD, PATH).`,
@@ -249,7 +249,7 @@ const secretRemoveCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { name, absPath, source } = resolveSecretPath(args.ref);
-      const { confirmDestructive } = await import("../cli/confirm.js");
+      const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
         yes: args.yes === true,
       });

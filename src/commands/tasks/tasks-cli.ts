@@ -15,9 +15,9 @@
  */
 
 import { defineCommand } from "citty";
-import { hasSubcommand, parsePositiveIntFlag } from "../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
-import { getHyphenatedArg } from "../output/context";
+import { hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { getHyphenatedArg } from "../../output/context";
 import { detectServerDefault, registerDefaultTasks } from "./default-tasks";
 import {
   akmTasksAdd,

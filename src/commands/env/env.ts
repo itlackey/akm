@@ -52,8 +52,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { writeFileAtomic } from "../core/common";
-import { UsageError } from "../core/errors";
+import { writeFileAtomic } from "../../core/common";
+import { UsageError } from "../../core/errors";
 
 /** Matches a KEY=value assignment line, capturing only the key. */
 const ASSIGN_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;

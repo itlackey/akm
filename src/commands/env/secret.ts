@@ -28,8 +28,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "../core/common";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
+import { writeFileAtomic } from "../../core/common";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
 

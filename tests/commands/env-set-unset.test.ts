@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { loadEnv, setEnvKey, unsetEnvKeys } from "../../src/commands/env";
+import { loadEnv, setEnvKey, unsetEnvKeys } from "../../src/commands/env/env";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, sandboxStashDir, writeSandboxConfig } from "../_helpers/sandbox";
 

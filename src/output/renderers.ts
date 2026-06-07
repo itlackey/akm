@@ -13,7 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { listKeys as listVaultKeys } from "../commands/env";
+import { listKeys as listVaultKeys } from "../commands/env/env";
 import { asNonEmptyString, hasErrnoCode } from "../core/common";
 import { parseFrontmatter } from "../core/frontmatter";
 import {

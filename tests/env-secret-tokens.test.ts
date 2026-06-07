@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveSecretTokens } from "../src/commands/env";
+import { resolveSecretTokens } from "../src/commands/env/env";
 
 // ── resolveSecretTokens: env value `${secret:NAME}` substitution ─────────────
 //

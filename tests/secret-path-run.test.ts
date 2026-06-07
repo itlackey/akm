@@ -15,7 +15,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../src/commands/secret";
+import { setSecret } from "../src/commands/env/secret";
 import { resetGraphBoostCache } from "../src/indexer/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";

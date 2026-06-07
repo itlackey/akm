@@ -10,7 +10,7 @@ import {
   akmGraphRelated,
   akmGraphRelations,
   akmGraphSummary,
-} from "../../src/commands/graph";
+} from "../../src/commands/graph/graph";
 import { saveConfig } from "../../src/core/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";

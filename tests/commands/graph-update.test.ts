@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmGraphUpdate } from "../../src/commands/graph";
+import { akmGraphUpdate } from "../../src/commands/graph/graph";
 import { saveConfig } from "../../src/core/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";

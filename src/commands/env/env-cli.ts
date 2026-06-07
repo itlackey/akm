@@ -21,18 +21,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, hasSubcommand } from "../cli/parse-args";
-import { output, runWithJsonErrors } from "../cli/shared";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset-create";
-import { deriveCanonicalAssetName, resolveAssetPathFromName } from "../core/asset-spec";
-import { isWithin, writeFileAtomic } from "../core/common";
-import { loadConfig } from "../core/config";
-import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
-import { isQuiet } from "../core/warn";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { getHyphenatedArg, parseFlagValue } from "../output/context";
+import { getStringArg, hasSubcommand } from "../../cli/parse-args";
+import { output, runWithJsonErrors } from "../../cli/shared";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset-create";
+import { deriveCanonicalAssetName, resolveAssetPathFromName } from "../../core/asset-spec";
+import { isWithin, writeFileAtomic } from "../../core/common";
+import { loadConfig } from "../../core/config";
+import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { isQuiet } from "../../core/warn";
+import { resolveSourceEntries } from "../../indexer/search-source";
+import { getHyphenatedArg, parseFlagValue } from "../../output/context";
 
 const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "set", "unset", "remove"]);
 
@@ -325,7 +325,7 @@ async function runEnvInjected(target: string, opts: { only?: string[]; except?: 
   // Scan injected keys for known process-hijacking variables (LD_PRELOAD,
   // PATH, ...). Block for third-party-sourced stashes (origin has a registryId);
   // warn for the operator's own first-party stash, where they own the file.
-  const { isDangerousEnvKey } = await import("./lint/env-key-rules.js");
+  const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
   const dangerous = keys.filter(isDangerousEnvKey);
   if (dangerous.length > 0) {
     const detail = `Env "${makeEnvRef(name, source)}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
@@ -429,7 +429,7 @@ const envRemoveCommand = defineCommand({
       if (!isWithin(absPath, envRoot)) {
         throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
       }
-      const { confirmDestructive } = await import("../cli/confirm.js");
+      const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
         yes: args.yes === true,
       });
@@ -507,7 +507,7 @@ const envSetCommand = defineCommand({
       }
       setEnvKey(absPath, key, value);
       // Warn (never block) on process-hijacking key names, matching the env-run audit.
-      const { isDangerousEnvKey } = await import("./lint/env-key-rules.js");
+      const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
       if (isDangerousEnvKey(key) && !isQuiet()) {
         process.stderr.write(
           `warning: "${key}" can influence process execution when this env is loaded via 'akm env run'.\n`,
