@@ -13,7 +13,7 @@
  */
 
 import { fetchWithTimeout } from "../core/common";
-import { type LlmConnectionConfig, resolveSecret } from "../core/config";
+import { type LlmConnectionConfig, resolveSecret } from "../core/config/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import { warnVerbose } from "../core/warn";
 

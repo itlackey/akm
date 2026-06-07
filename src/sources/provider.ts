@@ -23,7 +23,7 @@
  *                separate from configured-source plumbing)
  */
 
-import type { SourceConfigEntry } from "../core/config";
+import type { SourceConfigEntry } from "../core/config/config";
 
 // ── ProviderContext ──────────────────────────────────────────────────────────
 

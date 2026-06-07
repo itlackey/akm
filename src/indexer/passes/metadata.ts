@@ -4,14 +4,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { TocHeading } from "../../core/asset/markdown";
 import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
-} from "../../core/asset-spec";
+} from "../../core/asset/asset-spec";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
+import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString, isAssetType, writeFileAtomic } from "../../core/common";
-import { parseFrontmatter } from "../../core/frontmatter";
 import { isVerbose, warn } from "../../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
 import { applyMetadataContributors } from "./metadata-contributors";

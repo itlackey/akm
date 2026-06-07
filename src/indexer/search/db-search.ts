@@ -18,10 +18,10 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
+import { makeAssetRef } from "../../core/asset/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
-import { makeAssetRef } from "../../core/asset-ref";
 import type { AkmAssetType } from "../../core/common";
-import type { AkmConfig, ImproveConfig } from "../../core/config";
+import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
@@ -37,7 +37,7 @@ import {
   sanitizeFtsQuery,
   searchFts,
   searchVec,
-} from "../db";
+} from "../db/db";
 import { ensureIndex } from "../ensure-index";
 import {
   collectGraphRelatedHit,

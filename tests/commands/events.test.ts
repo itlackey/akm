@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmEventsList, akmEventsTail } from "../../src/commands/events";
-import { saveConfig } from "../../src/core/config";
+import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents, tailEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";

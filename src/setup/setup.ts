@@ -26,19 +26,19 @@ import type {
   OutputConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
-} from "../core/config";
+} from "../core/config/config";
 import {
   DEFAULT_CONFIG,
   getDefaultLlmConfig,
   getEffectiveRegistries,
   loadUserConfig,
   saveConfig,
-} from "../core/config";
+} from "../core/config/config";
 import { backupExistingConfig } from "../core/config/config-io";
 import { ConfigError, UsageError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
+import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db/db";
 import { akmIndex } from "../indexer/indexer";
 import {
   clearSemanticStatus,

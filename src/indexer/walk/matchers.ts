@@ -11,7 +11,7 @@
  */
 
 import { defaultRendererRegistry } from "../../core/asset/asset-registry";
-import { SCRIPT_EXTENSIONS } from "../../core/asset-spec";
+import { SCRIPT_EXTENSIONS } from "../../core/asset/asset-spec";
 import { looksLikeWorkflow } from "../../workflows/parser";
 import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
 import { registerMatcher } from "./file-context";

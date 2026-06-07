@@ -14,7 +14,7 @@
 import { describe, expect, it } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset/asset-serialize";
-import { parseFrontmatter } from "../../src/core/frontmatter";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 
 describe("serializeFrontmatter — canonical YAML for the frontmatter block", () => {
   it("returns yaml.stringify output with the trailing newline trimmed", () => {

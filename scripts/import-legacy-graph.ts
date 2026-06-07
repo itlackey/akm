@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { closeDatabase, openDatabase } from "../src/indexer/db/db";
 import { replaceStoredGraph } from "../src/indexer/db/graph-db";
 import type { GraphFile } from "../src/indexer/graph/graph-extraction";
 

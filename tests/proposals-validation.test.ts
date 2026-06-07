@@ -13,7 +13,7 @@ import {
   isProposalSkipped,
   listProposals,
   purgeOrphanProposals,
-} from "../src/core/proposals";
+} from "../src/commands/proposal/validators/proposals";
 
 const tempDirs: string[] = [];
 const savedEnv: Record<string, string | undefined> = {

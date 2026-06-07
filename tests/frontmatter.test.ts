@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar } from "../src/core/asset/frontmatter";
 import { asNonEmptyString } from "../src/core/common";
-import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar } from "../src/core/frontmatter";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
 

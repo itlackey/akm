@@ -15,7 +15,7 @@ import { defineCommand } from "citty";
 import { hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import { resolveImproveProfile } from "../improve/improve-profiles";
@@ -116,7 +116,7 @@ const proposalAcceptCommand = defineJsonCommand({
         process.stderr.write("Aborted.\n");
         return;
       }
-      const { listProposals } = await import("../../core/proposals");
+      const { listProposals } = await import("./validators/proposals");
       const stashDir = resolveStashDir();
       const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
       if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
@@ -220,7 +220,7 @@ const proposalRejectCommand = defineJsonCommand({
         process.stderr.write("Aborted.\n");
         return;
       }
-      const { listProposals } = await import("../../core/proposals");
+      const { listProposals } = await import("./validators/proposals");
       const stashDir = resolveStashDir();
       const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
       if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
@@ -437,7 +437,7 @@ const proposalDrainCommand = defineJsonCommand({
     // second read (engine API owned by another agent — not changed here).
     let excludeIds: Set<string> | undefined;
     if (olderThanMs !== undefined) {
-      const { listProposals } = await import("../../core/proposals");
+      const { listProposals } = await import("./validators/proposals");
       const now = Date.now();
       excludeIds = new Set(
         listProposals(stashDir, { status: "pending" })

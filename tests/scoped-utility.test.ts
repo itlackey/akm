@@ -21,7 +21,7 @@ import {
   openDatabase,
   type ScopedUtilityRow,
   type UtilityScoreRow,
-} from "../src/indexer/db";
+} from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyUtilityContributors, type UtilityRankingContext } from "../src/indexer/search/ranking-contributors";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type AssetRef, makeAssetRef, parseAssetRef, refToString } from "../src/core/asset-ref";
+import { type AssetRef, makeAssetRef, parseAssetRef, refToString } from "../src/core/asset/asset-ref";
 import { type AkmAssetType, ASSET_TYPES } from "../src/core/common";
 
 // ── makeAssetRef ────────────────────────────────────────────────────────────

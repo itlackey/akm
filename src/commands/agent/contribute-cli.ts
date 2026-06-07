@@ -28,7 +28,7 @@ import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getHyphenatedArg } from "../../output/context";
 import { akmLint } from "../lint";
@@ -78,7 +78,7 @@ export const agentCommand = defineCommand({
       const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
 
       const config = loadConfig();
-      const { getDefaultLlmConfig } = await import("../../core/config.js");
+      const { getDefaultLlmConfig } = await import("../../core/config/config.js");
       // After 0.8.0 the agent block IS the loaded AkmConfig.
       const agentConfig = config;
 

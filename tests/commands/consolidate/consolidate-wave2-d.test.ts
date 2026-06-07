@@ -11,7 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { parseConfigValue } from "../../../src/commands/config-cli";
-import { parseAssetRef } from "../../../src/core/asset-ref";
+import { parseAssetRef } from "../../../src/core/asset/asset-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 
 // ── #15: parseAssetRef — MISSING_REQUIRED_ARGUMENT code ────────────────────

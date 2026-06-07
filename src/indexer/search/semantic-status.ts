@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import { writeFileAtomic } from "../../core/common";
-import type { AkmConfig, EmbeddingConnectionConfig } from "../../core/config";
+import type { AkmConfig, EmbeddingConnectionConfig } from "../../core/config/config";
 import { getCacheDir, getSemanticStatusPath } from "../../core/paths";
 import { DEFAULT_LOCAL_MODEL } from "../../llm/embedders/local";
 

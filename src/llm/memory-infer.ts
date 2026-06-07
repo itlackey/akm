@@ -21,7 +21,7 @@
  */
 
 import { toErrorMessage } from "../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { warn } from "../core/warn";
 import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";

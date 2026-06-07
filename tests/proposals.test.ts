@@ -10,8 +10,6 @@ import {
   akmProposalRevert,
   akmProposalShow,
 } from "../src/commands/proposal/proposal";
-import type { AkmConfig } from "../src/core/config";
-import { readEvents } from "../src/core/events";
 import {
   AUTOMATED_PROPOSAL_SOURCES,
   archiveProposal,
@@ -25,7 +23,9 @@ import {
   listProposals,
   PROPOSAL_SOURCES,
   validateProposal,
-} from "../src/core/proposals";
+} from "../src/commands/proposal/validators/proposals";
+import type { AkmConfig } from "../src/core/config/config";
+import { readEvents } from "../src/core/events";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
@@ -508,7 +508,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
       payload: { content: VALID_LESSON },
     });
     expect(isProposalSkipped(result)).toBe(false);
-    const proposal = result as import("../src/core/proposals").Proposal;
+    const proposal = result as import("../src/commands/proposal/validators/proposals").Proposal;
     expect(proposal.source).toBe("reflect");
     expect(proposal.sourceRun).toBe("run-abc-123");
   });

@@ -11,8 +11,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { toPosix } from "../../core/common";
-import { parseFrontmatter } from "../../core/frontmatter";
 import type { ShowResponse, SourceSearchHit } from "../../sources/types";
 
 // ── FileContext ──────────────────────────────────────────────────────────────

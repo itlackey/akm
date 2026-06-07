@@ -16,8 +16,8 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset-ref";
-import type { LlmConnectionConfig } from "../../core/config";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import type { LlmConnectionConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import type { AgentDispatchRequest } from "../../integrations/agent/builders";
 import type { AgentConfig } from "../../integrations/agent/config";

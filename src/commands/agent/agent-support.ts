@@ -10,7 +10,7 @@
  * profile can import from here rather than copy-pasting.
  */
 
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import {
   type AgentConfig,
   type AgentFailureReason,

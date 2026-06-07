@@ -16,15 +16,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { parseAssetRef } from "../../core/asset-ref";
-import type { LlmConnectionConfig } from "../../core/config";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
+import type { LlmConnectionConfig } from "../../core/config/config";
 import { appendEvent, readEvents } from "../../core/events";
-import { parseFrontmatter } from "../../core/frontmatter";
-import { createProposal, isProposalSkipped } from "../../core/proposals";
 import { info, warn } from "../../core/warn";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
+import { createProposal, isProposalSkipped } from "../proposal/validators/proposals";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

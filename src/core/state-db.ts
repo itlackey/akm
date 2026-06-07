@@ -54,11 +54,11 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import type { Proposal } from "../commands/proposal/validators/proposals";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
 import { getDataDir } from "./paths";
-import type { Proposal } from "./proposals";
 import { error } from "./warn";
 
 // Re-export the bun:sqlite Database type so command modules can type their repo
@@ -543,7 +543,7 @@ export function eventRowToEnvelope(row: EventRow): EventEnvelope {
 /**
  * Raw SQLite row shape for the `proposals` table.
  *
- * Maps to the public {@link Proposal} interface from src/core/proposals.ts.
+ * Maps to the public {@link Proposal} interface from src/commands/proposal/validators/proposals.ts.
  * The `sourceRun` and `review` fields are stored in `metadata_json`; callers
  * that need them should `JSON.parse(row.metadata_json)`.
  */
@@ -1411,7 +1411,7 @@ export function shouldSkipAlreadyExtractedSession(
 
 /**
  * DDL for the `registry_index_cache` table that lives in the EXISTING index.db
- * (managed by src/indexer/db.ts).
+ * (managed by src/indexer/db/db.ts).
  *
  * Design: uses the same migration-safe ADD COLUMN approach. The table is
  * created with CREATE TABLE IF NOT EXISTS so it is safe to call inside
@@ -1435,7 +1435,7 @@ export function shouldSkipAlreadyExtractedSession(
  *   ALTER TABLE registry_index_cache ADD COLUMN error_message TEXT DEFAULT NULL;
  *
  * To add this table to index.db, call ensureRegistryIndexCacheSchema(db) from
- * within ensureSchema() in src/indexer/db.ts, or add it as a new CREATE TABLE
+ * within ensureSchema() in src/indexer/db/db.ts, or add it as a new CREATE TABLE
  * IF NOT EXISTS block inside the existing ensureSchema() call.
  */
 export const REGISTRY_INDEX_CACHE_DDL = `

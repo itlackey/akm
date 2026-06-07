@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig, SourceConfigEntry } from "../../core/config";
-import { getSources, loadConfig } from "../../core/config";
+import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
+import { getSources, loadConfig } from "../../core/config/config";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.

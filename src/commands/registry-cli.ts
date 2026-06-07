@@ -5,8 +5,8 @@
 import { defineCommand } from "citty";
 import { parsePositiveIntFlag } from "../cli/parse-args";
 import { output, runWithJsonErrors } from "../cli/shared";
-import type { RegistryConfigEntry } from "../core/config";
-import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config";
+import type { RegistryConfigEntry } from "../core/config/config";
+import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";

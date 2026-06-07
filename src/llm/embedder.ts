@@ -22,7 +22,7 @@
  * directly from their submodules to avoid module-level state pollution.
  */
 
-import type { EmbeddingConnectionConfig } from "../core/config";
+import type { EmbeddingConnectionConfig } from "../core/config/config";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "./embedders/cache";
 import { isTransformersAvailable, LocalEmbedder } from "./embedders/local";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";

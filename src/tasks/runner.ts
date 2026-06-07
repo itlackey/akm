@@ -26,9 +26,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
+import { parseAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError } from "../core/errors";
 import { getTaskLogDir } from "../core/paths";
 import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";

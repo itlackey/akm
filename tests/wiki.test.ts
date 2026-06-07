@@ -13,7 +13,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/core/config";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
 import { buildFileContext } from "../src/indexer/walk/file-context";
 import { wikiMatcher } from "../src/indexer/walk/matchers";

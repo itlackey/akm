@@ -5,13 +5,13 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
+import { parseAssetRef } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
-import { parseAssetRef } from "../core/asset-ref";
+import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { writeFileAtomic } from "../core/common";
-import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config";
+import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import {
   applyFeedbackToUtilityScore,
@@ -19,7 +19,7 @@ import {
   findEntryIdByRef,
   getEntryFilePathById,
   openExistingDatabase,
-} from "../indexer/db";
+} from "../indexer/db/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";

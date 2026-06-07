@@ -8,19 +8,7 @@
     "outDir": "dist",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["bun-types"],
-    "baseUrl": ".",
-    "paths": {
-      "@core/*": ["src/core/*"],
-      "@storage/*": ["src/storage/*"],
-      "@indexer/*": ["src/indexer/*"],
-      "@output/*": ["src/output/*"],
-      "@llm/*": ["src/llm/*"],
-      "@improve/*": ["src/commands/*"],
-      "@proposal/*": ["src/commands/*"],
-      "@sources/*": ["src/commands/*"],
-      "@env/*": ["src/commands/*"]
-    }
+    "types": ["bun-types"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

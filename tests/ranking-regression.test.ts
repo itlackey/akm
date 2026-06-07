@@ -13,7 +13,7 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { akmSearch } from "../src/commands/read/search";
-import { saveConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";

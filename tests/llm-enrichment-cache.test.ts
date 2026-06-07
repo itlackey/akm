@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AkmConfig } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
 import type { SearchSource } from "../src/indexer/search/search-source";
 
 // ── Local LLM server (graph extraction) ──────────────────────────────────────
@@ -77,7 +77,7 @@ const {
   openDatabase,
   closeDatabase,
   upsertEntry,
-} = await import("../src/indexer/db");
+} = await import("../src/indexer/db/db");
 const { loadStoredGraphSnapshot } = await import("../src/indexer/db/graph-db");
 const { buildSearchText } = await import("../src/indexer/search/search-fields");
 
@@ -381,7 +381,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     // hashes is `parseFrontmatter(raw).content` which equals
     // "\n\nA brand new memory body.\n" for our writeFile helper.
     // We read the actual file and parse it to get the exact string the pass sees.
-    const { parseFrontmatter } = await import("../src/core/frontmatter");
+    const { parseFrontmatter } = await import("../src/core/asset/frontmatter");
     const raw = fs.readFileSync(freshPath, "utf8");
     const parsed = parseFrontmatter(raw);
     const exactBody = parsed.content; // exactly what the pass hashes
@@ -419,7 +419,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     memoryCompressor = () => sampleDraft("Fresh");
 
     // Pre-populate a valid cache entry with the exact parsed body hash.
-    const { parseFrontmatter } = await import("../src/core/frontmatter");
+    const { parseFrontmatter } = await import("../src/core/asset/frontmatter");
     const raw = fs.readFileSync(filePath, "utf8");
     const exactBody = parseFrontmatter(raw).content;
     upsertLlmCacheEntry(db, filePath, computeBodyHash(exactBody), JSON.stringify(sampleDraft("Cached")));

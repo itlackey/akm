@@ -23,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { migrateConfigFile, runConfigMigrate } from "../src/cli/config-migrate";
 import { runConfigValidate } from "../src/cli/config-validate";
-import { loadUserConfig, resetConfigCache, saveConfig } from "../src/core/config";
+import { loadUserConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 
 // ── Test isolation ────────────────────────────────────────────────────────────

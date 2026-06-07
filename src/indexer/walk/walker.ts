@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isRelevantAssetFile } from "../../core/asset-spec";
+import { isRelevantAssetFile } from "../../core/asset/asset-spec";
 import { buildFileContext, type FileContext } from "./file-context";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "bin", ".cache"]);

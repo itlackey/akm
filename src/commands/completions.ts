@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getAssetTypes } from "../core/asset-spec";
+import { getAssetTypes } from "../core/asset/asset-spec";
 
 // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
 type AnyCmd = Record<string, any>;

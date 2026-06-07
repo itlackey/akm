@@ -28,7 +28,7 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
-} from "../src/indexer/db";
+} from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { cosineSimilarity } from "../src/llm/embedder";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";

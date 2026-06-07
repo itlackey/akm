@@ -29,7 +29,7 @@ import {
   stripOuterCodeFence,
   validateProposalFrontmatter,
 } from "../../../src/commands/improve/consolidate";
-import type { AkmConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { detectTruncatedDescription } from "../../../src/core/text-truncation";
 import { resolveImproveProcessRunnerFromProfile } from "../../../src/integrations/agent/runner";
 

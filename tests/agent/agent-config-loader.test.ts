@@ -24,7 +24,7 @@ afterEach(() => {
 
 describe("AkmConfig loader — agent block migration", () => {
   test("legacy agent.default + agent.profiles migrates into profiles.agent + defaults.agent", async () => {
-    const { loadUserConfig, resetConfigCache } = await import("../../src/core/config");
+    const { loadUserConfig, resetConfigCache } = await import("../../src/core/config/config");
     const { getConfigPath } = await import("../../src/core/paths");
     const cfgPath = getConfigPath();
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
@@ -54,7 +54,7 @@ describe("AkmConfig loader — agent block migration", () => {
   });
 
   test("agent block absent → no default agent → requireAgentProfile throws", async () => {
-    const { loadUserConfig, resetConfigCache } = await import("../../src/core/config");
+    const { loadUserConfig, resetConfigCache } = await import("../../src/core/config/config");
     const { requireAgentProfile } = await import("../../src/integrations/agent/config");
     const { ConfigError } = await import("../../src/core/errors");
     resetConfigCache();

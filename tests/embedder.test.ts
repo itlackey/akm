@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { EmbeddingConnectionConfig } from "../src/core/config";
+import type { EmbeddingConnectionConfig } from "../src/core/config/config";
 import { setQuiet } from "../src/core/warn";
 import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/llm/embedder";
 

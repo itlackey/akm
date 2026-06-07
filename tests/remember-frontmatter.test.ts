@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseFrontmatter } from "../src/core/frontmatter";
+import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { applyMetadataContributors } from "../src/indexer/passes/metadata-contributors";
 import { buildFileContext, buildRenderContext } from "../src/indexer/walk/file-context";

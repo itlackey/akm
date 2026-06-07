@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import workflowTemplate from "../../assets/workflows/workflow-template.md" with { type: "text" };
-import { resolveAssetPathFromName } from "../../core/asset-spec";
+import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import type { AkmConfig } from "../../core/config";
+import type { AkmConfig } from "../../core/config/config";
 import type { SearchSource } from "../search/search-source";
 
 /**

@@ -17,9 +17,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../../src/commands/improve/improve";
-import { saveConfig } from "../../src/core/config";
+import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, getEntryCount, openExistingDatabase } from "../../src/indexer/db";
+import { closeDatabase, getEntryCount, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 
 const tempDirs: string[] = [];

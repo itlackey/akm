@@ -45,7 +45,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resetConfigCache } from "../src/core/config";
+import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";

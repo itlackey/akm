@@ -14,8 +14,8 @@
  */
 
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig } from "../../core/config";
-import { loadConfig } from "../../core/config";
+import type { AkmConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import {

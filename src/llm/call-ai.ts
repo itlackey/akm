@@ -11,8 +11,8 @@
  * the indexer was designed around.
  */
 
-import type { AkmConfig } from "../core/config";
-import { getDefaultLlmConfig } from "../core/config";
+import type { AkmConfig } from "../core/config/config";
+import { getDefaultLlmConfig } from "../core/config/config";
 import { warn } from "../core/warn";
 import { resolveAgentProfile, runAgent } from "../integrations/agent";
 import { chatCompletion } from "./client";

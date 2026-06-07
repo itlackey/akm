@@ -26,24 +26,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
-import { type AssetRef, parseAssetRef } from "../../core/asset-ref";
 import { resolveStashDir } from "../../core/common";
-import type { LlmConnectionConfig } from "../../core/config";
-import { loadConfig } from "../../core/config";
+import type { LlmConnectionConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
-import { parseFrontmatter } from "../../core/frontmatter";
 import { lintLessonContent } from "../../core/lesson-lint";
-import {
-  type CreateProposalInput,
-  createProposal,
-  isProposalSkipped,
-  listProposals,
-  type Proposal,
-  type ProposalsContext,
-} from "../../core/proposals";
 import { lookup } from "../../indexer/indexer";
 import {
   type AgentConfig,
@@ -72,6 +64,14 @@ import {
   resolveAgentProfile,
 } from "../agent/agent-support";
 import { checkReflectSize } from "../proposal/validators/proposal-quality-validators";
+import {
+  type CreateProposalInput,
+  createProposal,
+  isProposalSkipped,
+  listProposals,
+  type Proposal,
+  type ProposalsContext,
+} from "../proposal/validators/proposals";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 
 export interface AkmReflectOptions {
@@ -104,7 +104,7 @@ export interface AkmReflectOptions {
    * Defaults to {@link chatCompletion}. Injected in tests to avoid real LLM calls.
    */
   chat?: (
-    config: import("../../core/config").LlmConnectionConfig,
+    config: import("../../core/config/config").LlmConnectionConfig,
     messages: import("../../llm/client").ChatMessage[],
   ) => Promise<string>;
   /**
@@ -113,7 +113,7 @@ export interface AkmReflectOptions {
    * `profiles.improve.default.processes.reflect.qualityGate.enabled`) without
    * a real config file in tests.
    */
-  config?: import("../../core/config").AkmConfig;
+  config?: import("../../core/config/config").AkmConfig;
   /**
    * Named process to use for per-process agent config lookup. Defaults to
    * `"reflect"`. When an explicit `--profile` flag is given, the process

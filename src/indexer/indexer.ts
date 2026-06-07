@@ -34,10 +34,10 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
+import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
@@ -69,7 +69,7 @@ import {
   upsertUtilityScore,
   upsertWorkflowDocument,
   warnIfVecMissing,
-} from "./db";
+} from "./db/db";
 import { deleteStoredGraph } from "./db/graph-db";
 import {
   applyCuratedFrontmatter,
@@ -442,7 +442,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const dryRun = options?.dryRun === true;
 
   // Load config and resolve all stash sources
-  const { loadConfig } = await import("../core/config.js");
+  const { loadConfig } = await import("../core/config/config.js");
   const config = loadConfig();
 
   // One-time, read-only guard: warn if the writable stash still holds an
@@ -1090,7 +1090,7 @@ function inferZeroRowReason(
 
 async function enhanceDirsWithLlm(
   db: Database,
-  config: import("../core/config").AkmConfig,
+  config: import("../core/config/config").AkmConfig,
   dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
@@ -1430,7 +1430,9 @@ function buildIndexSummaryMessage(options: {
   return `Starting ${options.mode} index (${options.sourcesCount} ${stashSourceLabel}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
 }
 
-function getEmbeddingProvider(embedding?: import("../core/config").EmbeddingConnectionConfig): "local" | "remote" {
+function getEmbeddingProvider(
+  embedding?: import("../core/config/config").EmbeddingConnectionConfig,
+): "local" | "remote" {
   return isHttpUrl(embedding?.endpoint) ? "remote" : "local";
 }
 
@@ -1560,7 +1562,7 @@ async function enhanceStashWithLlm(
   onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" }) => void,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
-  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db.js");
+  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db/db.js");
 
   const results = await concurrentMap(
     stash.entries,
@@ -1717,7 +1719,7 @@ function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): Stash
 
 // ── lookup ─────────────────────────────────────────────────────────────────
 
-import type { AssetRef } from "../core/asset-ref";
+import type { AssetRef } from "../core/asset/asset-ref";
 
 export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */
@@ -1751,7 +1753,7 @@ export interface IndexEntry {
  * `NotFoundError` with their own messaging.
  */
 export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
-  const { loadConfig } = await import("../core/config.js");
+  const { loadConfig } = await import("../core/config/config.js");
   const { resolveSourceEntries } = await import("./search/search-source.js");
   const config = loadConfig();
   const sources = resolveSourceEntries(undefined, config);

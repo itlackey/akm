@@ -16,8 +16,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AkmConfig, LlmConnectionConfig } from "../src/core/config";
-import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
+import type { AkmConfig, LlmConnectionConfig } from "../src/core/config/config";
+import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
 import { loadStoredGraphSnapshot } from "../src/indexer/db/graph-db";
 import type { GraphExtractionResult } from "../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../src/indexer/search/search-fields";

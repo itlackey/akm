@@ -27,7 +27,7 @@
  * iterated cleanly post-Phase 6 without reaching into provider-specific shapes.
  */
 
-import type { RegistryConfigEntry } from "../../core/config";
+import type { RegistryConfigEntry } from "../../core/config/config";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 
 // ── Search call shape (v0.6 surface, kept for the orchestrator) ─────────────

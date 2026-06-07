@@ -13,7 +13,7 @@ import {
   setConfigValue,
   unsetConfigValue,
 } from "../../../src/commands/config-cli";
-import type { AkmConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 
 // ── Cluster B: #21 defaultWriteTarget ────────────────────────────────────────
 

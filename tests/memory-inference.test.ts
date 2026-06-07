@@ -16,9 +16,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import type { AkmConfig } from "../src/core/config";
-import { parseFrontmatter } from "../src/core/frontmatter";
+import { parseFrontmatter } from "../src/core/asset/frontmatter";
+import type { AkmConfig } from "../src/core/config/config";
 import type { SearchSource } from "../src/indexer/search/search-source";
 
 // ── Module-level LLM stub ───────────────────────────────────────────────────

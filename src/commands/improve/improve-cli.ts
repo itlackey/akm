@@ -6,7 +6,7 @@ import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, parseAutoAcceptFlag, parseNonNegativeIntFlag, parsePositiveIntFlag } from "../../cli/parse-args";
 import { output, runWithJsonErrors } from "../../cli/shared";
-import { loadConfig } from "../../core/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getCacheDir } from "../../core/paths";
 import { clearLogFile, setLogFile } from "../../core/warn";

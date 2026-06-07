@@ -10,9 +10,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 
 let testConfigDir = "";

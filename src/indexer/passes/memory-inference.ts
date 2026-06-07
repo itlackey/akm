@@ -38,11 +38,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { parseAssetRef } from "../../core/asset-ref";
+import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
-import type { SourceConfigEntry } from "../../core/config";
-import { parseFrontmatter, parseFrontmatterBlock } from "../../core/frontmatter";
+import type { SourceConfigEntry } from "../../core/config/config";
 import { warn } from "../../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
 import { isProcessEnabled } from "../../llm/feature-gate";

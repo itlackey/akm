@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db";
+import { closeDatabase, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 

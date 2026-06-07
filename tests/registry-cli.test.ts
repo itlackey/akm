@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../src/commands/read/registry-search";
 import { resolveRegistries, searchRegistry } from "../src/commands/read/registry-search";
-import type { RegistryConfigEntry } from "../src/core/config";
-import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config";
+import type { RegistryConfigEntry } from "../src/core/config/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
 import { runCliCapture } from "./_helpers/cli";
 

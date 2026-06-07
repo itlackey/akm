@@ -2,7 +2,7 @@
 //
 // Before WS7, ASSET_TYPES was a hand-maintained literal array in
 // src/core/common.ts that had DRIFTED from the ASSET_SPECS registry in
-// src/core/asset-spec.ts: the registry carries a `task` spec that the union
+// src/core/asset/asset-spec.ts: the registry carries a `task` spec that the union
 // omitted. WS7 derives ASSET_TYPES from the registry to kill that drift —
 // which ADDS `task` to the union. That single addition is NOT
 // behaviour-preserving, so it is gated here:
@@ -16,7 +16,7 @@
 // `task` addition, the delta test fails and forces a fresh review.
 
 import { describe, expect, test } from "bun:test";
-import { getAssetTypes } from "../src/core/asset-spec";
+import { getAssetTypes } from "../src/core/asset/asset-spec";
 import { ASSET_TYPE_SET, ASSET_TYPES } from "../src/core/common";
 
 /** The exact ASSET_TYPES literal union as it shipped immediately before WS7. */

@@ -13,7 +13,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { AkmConfig } from "../../core/config";
+import type { AkmConfig } from "../../core/config/config";
 import type { GraphExtractionResult } from "../graph/graph-extraction";
 import type { SearchSource } from "../search/search-source";
 import type { SemanticSearchReason } from "../search/semantic-status";

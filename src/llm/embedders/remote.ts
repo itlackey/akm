@@ -10,7 +10,7 @@
  */
 
 import { fetchWithTimeout, isHttpUrl } from "../../core/common";
-import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config";
+import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config/config";
 import type { Embedder, EmbeddingVector } from "./types";
 
 const DEFAULT_REMOTE_BATCH_SIZE = 100;

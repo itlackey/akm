@@ -54,27 +54,27 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString } from "../../core/asset/asset-serialize";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
-import { parseAssetRef } from "../../core/asset-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
-import { parseFrontmatter } from "../../core/frontmatter";
 import { lintLessonContent } from "../../core/lesson-lint";
+import { warnVerbose } from "../../core/warn";
+import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import {
   createProposal,
   isProposalSkipped,
   listProposals,
   type Proposal,
   type ProposalsContext,
-} from "../../core/proposals";
-import { warnVerbose } from "../../core/warn";
-import { resolveAssetPath } from "../../indexer/walk/path-resolver";
-import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+} from "../proposal/validators/proposals";
 import { akmSearch } from "../read/search";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
 

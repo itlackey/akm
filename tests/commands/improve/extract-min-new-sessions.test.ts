@@ -22,8 +22,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmHealth } from "../../../src/commands/health";
 import { akmImprove } from "../../../src/commands/improve/improve";
-import type { AkmConfig } from "../../../src/core/config";
-import { saveConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
+import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import type { SessionLogHarness, SessionSummary } from "../../../src/integrations/session-logs/types";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";

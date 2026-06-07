@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
-import { saveConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config/config";
 import {
   closeDatabase,
   openDatabase,
@@ -13,7 +13,7 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
-} from "../src/indexer/db";
+} from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";

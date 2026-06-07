@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EmbeddingConnectionConfig } from "../../src/core/config";
-import { saveConfig } from "../../src/core/config";
+import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
+import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { setQuiet } from "../../src/core/warn";
 import {
@@ -14,7 +14,7 @@ import {
   getIndexDirState,
   getMeta,
   openDatabase,
-} from "../../src/indexer/db";
+} from "../../src/indexer/db/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import * as embedderModule from "../../src/llm/embedder";
@@ -344,7 +344,7 @@ test("akmIndex includes wiki raw files but excludes infrastructure files for wik
 
   const origStash = process.env.AKM_STASH_DIR;
   try {
-    const { saveConfig } = await import("../../src/core/config");
+    const { saveConfig } = await import("../../src/core/config/config");
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
@@ -642,7 +642,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     const stashDir = tmpStash();
     writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-    const { saveConfig } = await import("../../src/core/config");
+    const { saveConfig } = await import("../../src/core/config/config");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "auto",
@@ -1205,7 +1205,7 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-  const { saveConfig } = await import("../../src/core/config");
+  const { saveConfig } = await import("../../src/core/config/config");
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "auto",
@@ -1329,7 +1329,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   const secondStash = primaryStash;
 
   // Write a config that includes the same directory twice via stashes
-  const { saveConfig } = await import("../../src/core/config");
+  const { saveConfig } = await import("../../src/core/config/config");
   process.env.AKM_STASH_DIR = primaryStash;
   saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: secondStash }] });
 
@@ -1357,7 +1357,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
   const stash1 = sharedDir;
   const stash2 = sharedDir;
 
-  const { saveConfig } = await import("../../src/core/config");
+  const { saveConfig } = await import("../../src/core/config/config");
   process.env.AKM_STASH_DIR = stash1;
   saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: stash2 }] });
 

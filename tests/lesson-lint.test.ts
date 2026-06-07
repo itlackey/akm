@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ASSET_SPECS, TYPE_DIRS } from "../src/core/asset-spec";
+import { ASSET_SPECS, TYPE_DIRS } from "../src/core/asset/asset-spec";
 import { UsageError } from "../src/core/errors";
 import { assertLessonValid, lintLessonContent, lintLessonFile } from "../src/core/lesson-lint";
 

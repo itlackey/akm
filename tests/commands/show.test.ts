@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
-import { saveConfig } from "../../src/core/config";
+import { saveConfig } from "../../src/core/config/config";
 
 // Trigger source-provider self-registration
 import "../../src/sources/providers/index";

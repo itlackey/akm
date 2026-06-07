@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stripJsonComments } from "../core/config";
+import { stripJsonComments } from "../core/config/config";
 import { unifiedDiff, withConfigLock, writeConfigAtomic } from "../core/config/config-io";
 import { migrateConfigShape } from "../core/config/config-migration";
 import { getCacheDir, getConfigPath } from "../core/paths";

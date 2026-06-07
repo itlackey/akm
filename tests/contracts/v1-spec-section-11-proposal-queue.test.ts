@@ -5,7 +5,7 @@ import path from "node:path";
 import { akmDistill } from "../../src/commands/improve/distill";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
-import type { AkmConfig } from "../../src/core/config";
+import type { AkmConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";

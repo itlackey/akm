@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ASSET_SPECS, TYPE_DIRS } from "../../src/core/asset-spec";
+import { ASSET_SPECS, TYPE_DIRS } from "../../src/core/asset/asset-spec";
 import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §13 — Lesson asset type (Planned for v1).

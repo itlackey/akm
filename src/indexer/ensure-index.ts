@@ -15,10 +15,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset-spec";
+import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db";
+import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
 
 function getIndexableFiles(root: string, spec: AssetSpec): string[] {
   if (!fs.existsSync(root)) return [];

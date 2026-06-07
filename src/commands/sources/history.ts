@@ -19,13 +19,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { parseAssetRef } from "../../core/asset-ref";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
-import { listProposals } from "../../core/proposals";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
+import { listProposals } from "../proposal/validators/proposals";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

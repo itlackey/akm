@@ -21,8 +21,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { DrainResult } from "../../../src/commands/proposal/drain";
-import type { AkmConfig } from "../../../src/core/config";
-import { saveConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
+import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

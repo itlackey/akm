@@ -21,9 +21,9 @@ import {
   isValidWhenToUse,
 } from "../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/improve/distill-promotion-policy";
-import type { AkmConfig } from "../src/core/config";
+import { listProposals } from "../src/commands/proposal/validators/proposals";
+import type { AkmConfig } from "../src/core/config/config";
 import { readEvents } from "../src/core/events";
-import { listProposals } from "../src/core/proposals";
 import { LlmFeatureTimeoutError } from "../src/llm/feature-gate";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -1201,7 +1201,7 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
         defaultWriteTarget: "stash",
         profiles: { llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } } },
         defaults: { llm: "default" },
-      } as unknown as import("../src/core/config").AkmConfig,
+      } as unknown as import("../src/core/config/config").AkmConfig,
       lookupFn: async (ref: string) => {
         if (ref === "memory:auth-guide") return memPath1;
         if (ref.includes("auth-guide")) return existingKnowledgePath;
@@ -1255,7 +1255,7 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
         defaultWriteTarget: "stash",
         profiles: { llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } } },
         defaults: { llm: "default" },
-      } as unknown as import("../src/core/config").AkmConfig,
+      } as unknown as import("../src/core/config/config").AkmConfig,
       lookupFn: async (ref: string) => {
         if (ref === "memory:auth-guide2") return memPath2;
         if (ref.includes("auth-guide2")) return existingKnowledgePath;
@@ -1268,7 +1268,7 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
     // D-1: UPDATE → proposal queued with merged content
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("queued");
-    const { listProposals } = await import("../src/core/proposals");
+    const { listProposals } = await import("../src/commands/proposal/validators/proposals");
     const proposals = listProposals(stash, { ref: result.lessonRef });
     expect(proposals.length).toBeGreaterThan(0);
     const proposal = proposals[0];

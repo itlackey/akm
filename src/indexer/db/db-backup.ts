@@ -5,7 +5,7 @@
 /**
  * MVP data-directory backup for AKM.
  *
- * The DB upgrade path in `src/indexer/db.ts` `handleVersionUpgrade()` is
+ * The DB upgrade path in `src/indexer/db/db.ts` `handleVersionUpgrade()` is
  * intentionally destructive: when `DB_VERSION` bumps and a stored DB is at an
  * older version, ~17 tables are dropped and recreated. Until 0.9.0 ships a
  * full migration framework, this MVP captures a recursive copy of the entire

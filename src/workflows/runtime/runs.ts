@@ -4,12 +4,12 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset-ref";
-import { loadConfig } from "../../core/config";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { getDbPath } from "../../core/paths";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -654,10 +654,10 @@ function deriveRunState(steps: WorkflowRunStepRow[]): {
  * imports the client/config so the workflow engine has no hard LLM dependency.
  */
 function buildDefaultSummaryJudge(): SummaryJudge | null {
-  let llm: import("../../core/config").LlmConnectionConfig | undefined;
+  let llm: import("../../core/config/config").LlmConnectionConfig | undefined;
   try {
     const config = loadConfig();
-    const { getDefaultLlmConfig } = require("../../core/config") as typeof import("../../core/config");
+    const { getDefaultLlmConfig } = require("../../core/config/config") as typeof import("../../core/config/config");
     llm = getDefaultLlmConfig(config);
   } catch {
     return null;

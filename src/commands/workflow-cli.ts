@@ -16,8 +16,8 @@
 import { defineCommand } from "citty";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { parseAssetRef } from "../core/asset-ref";
-import { loadConfig } from "../core/config";
+import { parseAssetRef } from "../core/asset/asset-ref";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search/search-source";

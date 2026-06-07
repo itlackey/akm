@@ -7,16 +7,15 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { parse as yamlParse } from "yaml";
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
-import { parseAssetRef } from "../../core/asset-ref";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig } from "../../core/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config";
+import type { AkmConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { parseFrontmatter } from "../../core/frontmatter";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { createProposal, isProposalSkipped, listProposals } from "../../core/proposals";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import {
   hasHotCaptureMode,
@@ -25,6 +24,7 @@ import {
   MERGE_SHRINK_RATIO_MIN,
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
+import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
@@ -37,7 +37,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import type { DbIndexedEntry } from "../../indexer/db";
+import type { DbIndexedEntry } from "../../indexer/db/db";
 import {
   closeDatabase,
   findEntryIdByRef,
@@ -45,7 +45,7 @@ import {
   getEntryById,
   getNeighborsByEntryId,
   openExistingDatabase,
-} from "../../indexer/db";
+} from "../../indexer/db/db";
 import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch } from "../../llm/embedder";

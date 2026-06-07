@@ -20,7 +20,7 @@ import type { ConsolidateResult } from "../../../src/commands/improve/consolidat
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
-import { saveConfig } from "../../../src/core/config";
+import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 
 const TIMEOUT_MS = 20_000;

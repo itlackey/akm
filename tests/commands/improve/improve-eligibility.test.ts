@@ -19,7 +19,7 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
-import { saveConfig } from "../../../src/core/config";
+import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
 
@@ -69,11 +69,11 @@ async function buildIndex(stashDir: string): Promise<void> {
 // the consolidation pass before the mtime-delta gate runs. Disable the pool-size
 // guard (minPoolSize: 0) so these tests exercise the gate they pin, not the new
 // guard. (A dedicated suite covers the minPoolSize guard itself.)
-function configWithoutPoolGuard(): import("../../../src/core/config").AkmConfig {
+function configWithoutPoolGuard(): import("../../../src/core/config/config").AkmConfig {
   return {
     semanticSearchMode: "off",
     profiles: { improve: { default: { processes: { consolidate: { minPoolSize: 0 } } } } },
-  } as import("../../../src/core/config").AkmConfig;
+  } as import("../../../src/core/config/config").AkmConfig;
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({

@@ -11,7 +11,7 @@
  * and into search hints for the indexer.
  */
 
-import { makeAssetRef } from "../core/asset-ref";
+import { makeAssetRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
 import type { StashEntry } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";

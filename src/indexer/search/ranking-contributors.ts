@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Database } from "bun:sqlite";
-import type { ScopedUtilityRow, UtilityScoreRow } from "../db";
+import type { ScopedUtilityRow, UtilityScoreRow } from "../db/db";
 import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
 import type { ProjectContext } from "../walk/project-context";
 import type { RankedEntryInput } from "./ranking";

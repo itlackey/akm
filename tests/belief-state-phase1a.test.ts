@@ -25,7 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../src/commands/improve/improve";
 import { akmSearch } from "../src/commands/read/search";
-import { saveConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";

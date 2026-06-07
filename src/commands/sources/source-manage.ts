@@ -4,8 +4,8 @@
 
 import path from "node:path";
 import { isRemoteUrl } from "../../core/common";
-import type { SourceConfigEntry } from "../../core/config";
-import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config";
+import type { SourceConfigEntry } from "../../core/config/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 

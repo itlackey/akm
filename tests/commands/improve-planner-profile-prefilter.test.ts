@@ -29,7 +29,7 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/improve/reflect";
-import { saveConfig } from "../../src/core/config";
+import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
 

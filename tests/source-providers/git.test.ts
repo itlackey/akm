@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resetConfigCache, saveConfig } from "../../src/core/config";
+import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl, saveGitStash } from "../../src/sources/providers/git";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
@@ -262,7 +262,7 @@ describe("GitSourceProvider", () => {
     resetConfigCache();
 
     const { ensureSourceCaches } = await import("../../src/indexer/search/search-source");
-    const { loadConfig } = await import("../../src/core/config");
+    const { loadConfig } = await import("../../src/core/config/config");
     const config = loadConfig();
     await ensureSourceCaches(config);
 

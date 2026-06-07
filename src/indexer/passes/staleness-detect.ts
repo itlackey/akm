@@ -48,13 +48,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
+import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
-import { parseFrontmatter, parseFrontmatterBlock } from "../../core/frontmatter";
 import { warn } from "../../core/warn";
 import { resolveValidationRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isProcessEnabled } from "../../llm/feature-gate";
-import { findEntryIdByRef } from "../db";
+import { findEntryIdByRef } from "../db/db";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
 import type { PassContext } from "./pass-context";
@@ -404,7 +404,7 @@ const SYSTEM_PROMPT =
   "No prose, no preamble, no markdown.";
 
 async function askValidator(
-  connection: import("../../core/config").LlmConnectionConfig,
+  connection: import("../../core/config/config").LlmConnectionConfig,
   candidate: CandidateMemory,
   allMemories: MemorySnapshot[],
   signal: AbortSignal | undefined,

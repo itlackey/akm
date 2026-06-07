@@ -10,7 +10,7 @@
  * invokes its `sync()` method.
  */
 
-import type { SourceSpec } from "../../core/config";
+import type { SourceSpec } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { parseRegistryRef } from "../../registry/resolve";
 import type { ParsedLocalRef } from "../../registry/types";
