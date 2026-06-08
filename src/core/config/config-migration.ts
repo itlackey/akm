@@ -14,7 +14,7 @@
  * new shape. There are no backward-compat shims after this migration.
  */
 
-import { getHarness, normalizeHarnessId } from "../../integrations/harnesses";
+import { v1ProfilePlatform } from "../../integrations/harnesses";
 import { warn } from "../warn";
 
 /**
@@ -603,16 +603,15 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
  * platform).
  */
 function guessAgentPlatform(name: string): "opencode" | "claude" | "opencode-sdk" | undefined {
-  const lower = name.toLowerCase();
-  // Exact id / alias match goes through the unified normalization bridge (#562):
-  // 'claude' AND 'claude-code' both normalize to the canonical 'claude'. This
-  // keeps the legacy 'claude-code' v1 profile name round-tripping after the
-  // registries were unified.
-  if (getHarness(lower)) return normalizeHarnessId(lower) as "opencode" | "claude" | "opencode-sdk";
-  // Fall back to prefix matching for decorated v1 names (e.g. "opencode-sdk-x").
-  if (lower.startsWith("opencode-sdk")) return "opencode-sdk";
-  if (lower.startsWith("opencode")) return "opencode";
-  return undefined;
+  // #566: consult the harness registry instead of re-deriving the heuristic.
+  // `v1ProfilePlatform` iterates HARNESS_REGISTRY and asks each harness's own
+  // `matchesV1ProfileName()`, so:
+  //   - 'claude' AND the 'claude-code' alias both resolve to canonical 'claude'
+  //     (the normalization bridge keeps legacy v1 names round-tripping);
+  //   - decorated names like 'opencode-sdk-x' resolve most-specific-first;
+  //   - an unknown harness name returns undefined (caller drops it) instead of
+  //     being silently misclassified. Adding a harness needs no edit here.
+  return v1ProfilePlatform(name) as "opencode" | "claude" | "opencode-sdk" | undefined;
 }
 
 /**

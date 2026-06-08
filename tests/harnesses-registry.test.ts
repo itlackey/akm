@@ -19,6 +19,7 @@ import {
   AGENT_DISPATCH_HARNESSES,
   CONFIG_IMPORTER_HARNESSES,
   DETECTION_HARNESSES,
+  defaultProfileName,
   denormalizeRuntimeIdentity,
   getHarness,
   HARNESS_BY_ID,
@@ -26,6 +27,7 @@ import {
   normalizeHarnessId,
   SESSION_LOG_HARNESSES,
   VALID_HARNESS_IDS,
+  v1ProfilePlatform,
 } from "../src/integrations/harnesses";
 
 describe("HARNESS_REGISTRY membership", () => {
@@ -105,6 +107,77 @@ describe("id normalization bridge ('claude' ↔ 'claude-code')", () => {
     expect(getHarness("nope")).toBeUndefined();
     expect(normalizeHarnessId("nope")).toBe("nope");
     expect(denormalizeRuntimeIdentity("nope")).toBe("nope");
+  });
+});
+
+describe("v1ProfilePlatform — registry-backed v1→v2 platform inference (#566)", () => {
+  // Replaces the old standalone guessAgentPlatform heuristic in config-migration
+  // AND the `name.includes("claude") ? "claude" : "opencode"` heuristic in setup.
+  it("resolves exact canonical ids", () => {
+    expect(v1ProfilePlatform("claude")).toBe("claude");
+    expect(v1ProfilePlatform("opencode")).toBe("opencode");
+    expect(v1ProfilePlatform("opencode-sdk")).toBe("opencode-sdk");
+  });
+
+  it("resolves the legacy 'claude-code' alias to canonical 'claude' (round-trip preserved)", () => {
+    expect(v1ProfilePlatform("claude-code")).toBe("claude");
+  });
+
+  it("is case-insensitive", () => {
+    expect(v1ProfilePlatform("Claude")).toBe("claude");
+    expect(v1ProfilePlatform("OpenCode")).toBe("opencode");
+  });
+
+  it("resolves decorated names most-specific-first ('opencode-sdk-fast' → opencode-sdk, not opencode)", () => {
+    // Regression guard: registry order is [opencode, claude, opencode-sdk]; the
+    // resolver sorts by descending id length so the longer 'opencode-sdk' id
+    // wins over OpenCode's 'opencode' prefix.
+    expect(v1ProfilePlatform("opencode-sdk-fast")).toBe("opencode-sdk");
+    expect(v1ProfilePlatform("opencode-fast")).toBe("opencode");
+  });
+
+  it("BUG FIX (#566): an unknown harness id does NOT silently map to 'opencode'", () => {
+    // The pre-#566 setup heuristic mapped Cursor/Copilot/Codeium and any new
+    // harness to 'opencode'; the migration heuristic dropped them. Both now go
+    // through this resolver, which returns undefined so callers handle the
+    // unknown explicitly instead of misclassifying.
+    expect(v1ProfilePlatform("cursor")).toBeUndefined();
+    expect(v1ProfilePlatform("copilot")).toBeUndefined();
+    expect(v1ProfilePlatform("codeium")).toBeUndefined();
+    expect(v1ProfilePlatform("some-future-harness")).toBeUndefined();
+    expect(v1ProfilePlatform("")).toBeUndefined();
+  });
+});
+
+describe("matchesV1ProfileName — per-harness ownership (#566)", () => {
+  it("each harness claims its own canonical id and aliases", () => {
+    const claude = getHarness("claude")!;
+    expect(claude.matchesV1ProfileName("claude")).toBe(true);
+    expect(claude.matchesV1ProfileName("claude-code")).toBe(true);
+    expect(claude.matchesV1ProfileName("opencode")).toBe(false);
+  });
+
+  it("a harness never claims an unrelated unknown name", () => {
+    for (const h of HARNESS_REGISTRY) {
+      expect(h.matchesV1ProfileName("cursor")).toBe(false);
+    }
+  });
+});
+
+describe("defaultProfileName — registry-derived headless default (#566)", () => {
+  it("returns the canonical id for each dispatch-capable detected harness", () => {
+    expect(defaultProfileName("opencode")).toBe("opencode");
+    expect(defaultProfileName("claude")).toBe("claude");
+    expect(defaultProfileName("opencode-sdk")).toBe("opencode-sdk");
+  });
+
+  it("resolves the 'claude-code' runtime alias to the canonical 'claude' default", () => {
+    expect(defaultProfileName("claude-code")).toBe("claude");
+  });
+
+  it("returns undefined for 'none' and unknown ids (no spurious default)", () => {
+    expect(defaultProfileName("none")).toBeUndefined();
+    expect(defaultProfileName("cursor")).toBeUndefined();
   });
 });
 

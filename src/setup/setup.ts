@@ -46,6 +46,7 @@ import {
   writeSemanticStatus,
 } from "../indexer/search/semantic-status";
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
+import { defaultProfileName, v1ProfilePlatform } from "../integrations/harnesses";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { saveGitStash } from "../sources/providers/git";
@@ -200,11 +201,28 @@ function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape | unde
   }
   const v2Profiles: NonNullable<AkmConfig["profiles"]>["agent"] = { ...(config.profiles?.agent ?? {}) };
   for (const [name, profile] of Object.entries(agent.profiles ?? {})) {
-    const platform: "opencode" | "claude" | "opencode-sdk" = profile.sdkMode
-      ? "opencode-sdk"
-      : name.toLowerCase().includes("claude")
-        ? "claude"
-        : "opencode";
+    // #566: resolve the platform via the harness registry instead of the old
+    // `name.includes("claude") ? "claude" : "opencode"` heuristic, which
+    // silently mapped Cursor/Copilot/any new harness to "opencode". An explicit
+    // sdkMode flag still wins; otherwise we ask the registry. A name the
+    // registry does not recognize is surfaced (warn) rather than silently
+    // misclassified, then kept as a best-effort "opencode" profile so the user
+    // does not lose a profile they explicitly configured.
+    let platform: "opencode" | "claude" | "opencode-sdk";
+    if (profile.sdkMode) {
+      platform = "opencode-sdk";
+    } else {
+      const resolved = v1ProfilePlatform(name) as "opencode" | "claude" | "opencode-sdk" | undefined;
+      if (resolved) {
+        platform = resolved;
+      } else {
+        warn(
+          `[akm setup] Agent profile "${name}" did not match any known harness; ` +
+            `defaulting its platform to "opencode". Set its platform explicitly in config if this is wrong.`,
+        );
+        platform = "opencode";
+      }
+    }
     v2Profiles[name] = {
       platform,
       ...(profile.bin ? { bin: profile.bin } : {}),
@@ -2553,10 +2571,12 @@ export function deriveRecommendedConfig(env: DetectedEnvironment): {
 } {
   const result: ReturnType<typeof deriveRecommendedConfig> = {};
 
-  // Best harness → agent default.
-  if (env.harness === "opencode-sdk") result.agentDefault = "opencode-sdk";
-  else if (env.harness === "opencode") result.agentDefault = "opencode";
-  else if (env.harness === "claude") result.agentDefault = "claude";
+  // Best harness → agent default. #566: derive the default profile name from
+  // the harness registry instead of a hardcoded if-chain, so a newly added
+  // dispatch-capable harness gets a usable headless default (its canonical id)
+  // automatically. "none" / unknown ids resolve to undefined (no default).
+  const agentDefault = defaultProfileName(env.harness);
+  if (agentDefault) result.agentDefault = agentDefault;
 
   // LLM: prefer a live local server, else a detected cloud provider key.
   const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);

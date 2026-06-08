@@ -80,4 +80,60 @@ export interface AkmHarness {
   readonly runtimeId?: string;
   /** Capability membership — which subsystems include this harness. */
   readonly capabilities: HarnessCapabilities;
+
+  /**
+   * Does a legacy v1 agent-profile name belong to this harness? (#566)
+   *
+   * v1 agent profiles never carried an explicit `platform`; the platform was
+   * inferred from the profile name. This method is the per-harness owner of
+   * that inference, consulted by `v1ProfilePlatform()` in `./index.ts` during
+   * v1→v2 config migration AND by `akm setup`'s legacy-agent apply.
+   *
+   * The default implementation in {@link BaseHarness} matches the canonical id
+   * and every alias case-insensitively, plus any `v1ProfilePrefixes` for
+   * decorated names (e.g. `"opencode-sdk-fast"`). A harness only participates
+   * when `capabilities.v1Migration` is true.
+   */
+  matchesV1ProfileName(name: string): boolean;
+}
+
+/**
+ * Shared base for harness descriptors (#566).
+ *
+ * Provides the default v1-profile-name matcher so the inference logic lives in
+ * ONE place instead of being duplicated across the old `guessAgentPlatform()`
+ * (config-migration) and the `name.includes("claude")` heuristic (setup). A
+ * concrete harness sets `id`/`aliases`/`capabilities` and, when its v1 profile
+ * names could be decorated (e.g. `"opencode-sdk-fast"`), `v1ProfilePrefixes`.
+ */
+export abstract class BaseHarness implements AkmHarness {
+  abstract readonly id: string;
+  abstract readonly displayName: string;
+  abstract readonly aliases: readonly string[];
+  abstract readonly capabilities: HarnessCapabilities;
+  readonly runtimeId?: string;
+
+  /**
+   * Lowercase prefixes that a decorated v1 profile name may start with and
+   * still belong to this harness (e.g. `["opencode-sdk"]`). The canonical id
+   * and aliases are always matched in addition to these; an empty list means
+   * only exact id/alias matches.
+   */
+  protected readonly v1ProfilePrefixes: readonly string[] = [];
+
+  matchesV1ProfileName(name: string): boolean {
+    // Only harnesses with a v1→v2 mapping participate; others never claim a
+    // legacy profile name (so unknown names are dropped, not misclassified).
+    if (!this.capabilities.v1Migration) return false;
+    const lower = name.trim().toLowerCase();
+    if (!lower) return false;
+    if (lower === this.id.toLowerCase()) return true;
+    for (const alias of this.aliases) {
+      if (lower === alias.toLowerCase()) return true;
+    }
+    for (const prefix of this.v1ProfilePrefixes) {
+      if (lower.startsWith(prefix.toLowerCase())) return true;
+    }
+    return false;
+  }
 }

@@ -19,7 +19,7 @@
  * Claude Code's 'claude' vs 'claude-code'), so no alias bridge is needed.
  */
 
-import type { AkmHarness, HarnessCapabilities } from "../types";
+import { BaseHarness, type HarnessCapabilities } from "../types";
 
 export { opencodeBuilder } from "./agent-builder";
 export { openCodeImporter } from "./config-import";
@@ -42,10 +42,14 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
  *
  * Canonical id is `'opencode'`; it has no distinct runtime identity or alias.
  */
-export class OpencodeHarness implements AkmHarness {
+export class OpencodeHarness extends BaseHarness {
   readonly id = "opencode" as const;
   readonly displayName = "OpenCode";
   readonly aliases = [] as const;
+  // Decorated v1 profile names like "opencode-fast" still belong to OpenCode.
+  // `v1ProfilePlatform()` resolves most-specific-id-first, so "opencode-sdk-*"
+  // is claimed by OpencodeSdkHarness before this prefix can over-match it.
+  protected readonly v1ProfilePrefixes = ["opencode"] as const;
   readonly capabilities = caps({
     sessionLogs: true,
     agentDispatch: true,

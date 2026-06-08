@@ -26,7 +26,7 @@
  * that say `'claude-code'` keep working unchanged.
  */
 
-import type { AkmHarness, HarnessCapabilities } from "../types";
+import { BaseHarness, type HarnessCapabilities } from "../types";
 
 export { claudeBuilder } from "./agent-builder";
 export { claudeCodeImporter } from "./config-import";
@@ -50,7 +50,7 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
  * Canonical id is `'claude'`; `'claude-code'` is the runtime/session-log
  * identity and is registered as an alias so both directions round-trip.
  */
-export class ClaudeHarness implements AkmHarness {
+export class ClaudeHarness extends BaseHarness {
   readonly id = "claude" as const;
   readonly displayName = "Claude Code";
   readonly aliases = ["claude-code"] as const;

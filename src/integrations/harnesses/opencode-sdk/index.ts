@@ -18,7 +18,7 @@
  * names. Canonical id is `'opencode-sdk'` with no alias.
  */
 
-import type { AkmHarness, HarnessCapabilities } from "../types";
+import { BaseHarness, type HarnessCapabilities } from "../types";
 
 export { closeServer, runAgentSdk, runOpencodeSdk } from "./sdk-runner";
 
@@ -40,10 +40,12 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
  * Dispatch-only: no native session logs, but detected at setup and migrated
  * from v1 profile names.
  */
-export class OpencodeSdkHarness implements AkmHarness {
+export class OpencodeSdkHarness extends BaseHarness {
   readonly id = "opencode-sdk" as const;
   readonly displayName = "OpenCode SDK";
   readonly aliases = [] as const;
+  // Decorated v1 profile names like "opencode-sdk-fast" belong to the SDK path.
+  protected readonly v1ProfilePrefixes = ["opencode-sdk"] as const;
   readonly capabilities = caps({
     agentDispatch: true,
     detection: true,
