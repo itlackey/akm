@@ -33,6 +33,12 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # GitHub-hosted runners have ~4 cores; the test scripts default to
+    # --parallel=12 (tuned for dev machines). Over-subscribing the runner caused
+    # an intermittent Bun-runtime `epoll_ctl EEXIST` race under load, so cap the
+    # worker count to the runner's core count on CI (TEST_PARALLEL).
+    env:
+      TEST_PARALLEL: "4"
     steps:
       - uses: actions/checkout@v5
 
@@ -54,6 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
+    env:
+      TEST_PARALLEL: "4"
     steps:
       - uses: actions/checkout@v5
 
