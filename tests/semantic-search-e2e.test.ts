@@ -254,9 +254,13 @@ echo "Database migration finished successfully."
     }),
   );
 
-  // 6. Vault entry (#502) — vault rows are indexed for keyword search but are
-  //    intentionally excluded from embeddings (getAllEntriesForEmbedding filters
-  //    entry_type != 'vault'). Semantic verification must not count these.
+  // 6. Legacy vaults/ directory — the `vault` asset type was removed in 0.9.0
+  //    and the indexer unconditionally SKIPS `vaults/` (see
+  //    src/indexer/passes/metadata.ts shouldIndexFile). We seed it here to pin
+  //    that behaviour: nothing under vaults/ is indexed, so it does NOT
+  //    contribute any entries, and the embeddable count therefore equals the
+  //    full entry count (#502's getEmbeddableEntryCount is now an alias for
+  //    getEntryCount because no entry type is excluded any more).
   const vaultsDir = path.join(stashDir, "vaults");
   fs.mkdirSync(vaultsDir, { recursive: true });
   fs.writeFileSync(path.join(vaultsDir, "prod.env"), "API_TOKEN=placeholder-not-a-real-secret\nDB_PASSWORD=example\n");
@@ -316,14 +320,14 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     expect(result.totalEntries).toBeGreaterThan(0);
     expect(result.verification.semanticSearchEnabled).toBeTruthy();
 
-    // #502: a healthy index containing vault entries (which are excluded from
-    // embeddings) must still verify ok and land in a ready status — not blocked
-    // / verification-failed — because verification now tracks the embeddable
-    // entry count rather than the full entry count.
+    // #502: verification tracks the embeddable entry count (getEmbeddableEntryCount).
+    // The `vault` asset type was removed in 0.9.0, so no entry type is excluded
+    // from embeddings any more — embeddable count == full entry count — and the
+    // index verifies ok and lands in a ready status.
     expect(result.verification.ok).toBe(true);
     expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
-    // The user-facing entryCount reflects embeddable entries, so it equals the
-    // embedding count even though vault entries inflate the total entry count.
+    // Every indexed entry is embeddable, so the verification entry count equals
+    // the embedding count.
     expect(result.verification.entryCount).toBe(result.verification.embeddingCount);
   }, 120_000); // 2 minute timeout for model download on first run
 
@@ -350,14 +354,16 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       // Verify hasEmbeddings flag is set
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
 
-      // Verify embedding count matches the embeddable entry count. Vault rows
-      // (#502) are indexed for keyword search but excluded from embeddings, so
-      // the full entry count is strictly greater than the embeddable count.
+      // Verify embedding count matches the embeddable entry count. The `vault`
+      // asset type was removed in 0.9.0 and the indexer SKIPS `vaults/` entirely
+      // (the fixture's vaults/prod.env contributes nothing). No entry type is
+      // excluded from embeddings any more, so getEmbeddableEntryCount (#502) is
+      // now an alias for getEntryCount: all 5 indexed assets are embeddable.
       const entryCount = getEntryCount(db);
       const embeddableCount = getEmbeddableEntryCount(db);
       const embeddingCount = getEmbeddingCount(db);
-      expect(entryCount).toBeGreaterThanOrEqual(6); // 5 assets + >=1 vault entry
-      expect(embeddableCount).toBeLessThan(entryCount); // vault entry is excluded
+      expect(entryCount).toBe(5); // 5 assets; vaults/ is not indexed
+      expect(embeddableCount).toBe(entryCount); // no entry type is excluded
       expect(embeddingCount).toBe(embeddableCount); // every embeddable entry embedded
 
       // Verify each embedding has the correct dimension (384 for bge-small-en-v1.5)
