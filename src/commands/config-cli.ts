@@ -353,6 +353,16 @@ export const configCommand = defineJsonCommand({
         }
       },
     }),
+    edit: defineJsonCommand({
+      meta: {
+        name: "edit",
+        description: "Interactively edit configuration via a schema-driven menu (TTY only).",
+      },
+      async run() {
+        const { runConfigEdit } = await import("./config-edit.js");
+        await runConfigEdit();
+      },
+    }),
     validate: defineJsonCommand({
       meta: {
         name: "validate",
