@@ -21,6 +21,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { claudeCodeImporter } from "../integrations/harnesses/claude/config-import";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,57 +70,9 @@ function homeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "";
 }
 
-// ── Claude Code Importer ─────────────────────────────────────────────────────
-
-/**
- * Imports LLM config from a Claude Code installation.
- *
- * Claude Code stores settings in `~/.claude/settings.json` or `~/.claude.json`.
- * The model field may appear at the root or under `env.ANTHROPIC_MODEL`.
- * The API key is always `ANTHROPIC_API_KEY`.
- */
-const claudeCodeImporter: HarnessConfigImporter = {
-  harnessName: "Claude Code",
-  detect() {
-    const home = homeDir();
-    // Claude Code is installed if the ~/.claude/ directory exists
-    return fs.existsSync(path.join(home, ".claude"));
-  },
-  importConfig() {
-    const home = homeDir();
-    // Try ~/.claude/settings.json, then ~/.claude.json
-    const candidates = [path.join(home, ".claude", "settings.json"), path.join(home, ".claude.json")];
-    for (const filePath of candidates) {
-      try {
-        if (!fs.existsSync(filePath)) continue;
-        const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
-        // Claude Code settings: model may be at root or nested under env
-        const envBlock = raw.env as Record<string, unknown> | undefined;
-        const model =
-          typeof raw.model === "string"
-            ? raw.model
-            : typeof envBlock?.ANTHROPIC_MODEL === "string"
-              ? String(envBlock.ANTHROPIC_MODEL)
-              : undefined;
-        return {
-          harnessName: "Claude Code",
-          provider: "anthropic",
-          model: model ?? "claude-sonnet-4-5",
-          apiKeyEnvVar: "ANTHROPIC_API_KEY",
-        };
-      } catch {
-        // try next candidate
-      }
-    }
-    // ~/.claude exists but no readable settings — still return basic Anthropic config
-    return {
-      harnessName: "Claude Code",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      apiKeyEnvVar: "ANTHROPIC_API_KEY",
-    };
-  },
-};
+// The Claude Code importer was migrated to its harness directory in #563:
+// `src/integrations/harnesses/claude/config-import.ts`. It is imported back
+// into HARNESS_CONFIG_IMPORTERS below so detection order is unchanged.
 
 // ── OpenCode Importer ────────────────────────────────────────────────────────
 

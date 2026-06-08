@@ -14,6 +14,7 @@
  * new shape. There are no backward-compat shims after this migration.
  */
 
+import { getHarness, normalizeHarnessId } from "../../integrations/harnesses";
 import { warn } from "../warn";
 
 /**
@@ -603,7 +604,12 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
  */
 function guessAgentPlatform(name: string): "opencode" | "claude" | "opencode-sdk" | undefined {
   const lower = name.toLowerCase();
-  if (lower === "claude" || lower === "claude-code") return "claude";
+  // Exact id / alias match goes through the unified normalization bridge (#562):
+  // 'claude' AND 'claude-code' both normalize to the canonical 'claude'. This
+  // keeps the legacy 'claude-code' v1 profile name round-tripping after the
+  // registries were unified.
+  if (getHarness(lower)) return normalizeHarnessId(lower) as "opencode" | "claude" | "opencode-sdk";
+  // Fall back to prefix matching for decorated v1 names (e.g. "opencode-sdk-x").
   if (lower.startsWith("opencode-sdk")) return "opencode-sdk";
   if (lower.startsWith("opencode")) return "opencode";
   return undefined;

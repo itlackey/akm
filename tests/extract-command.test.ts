@@ -207,6 +207,31 @@ describe("akmExtract — harness resolution", () => {
     expect(result.ok).toBe(false);
     expect(result.warnings.join(" ")).toMatch(/not-available/);
   });
+
+  // Behaviour fix (#563): resolveHarness now normalizes the requested --type
+  // AND each provider's runtime name through the id-normalization bridge, so
+  // the CANONICAL id "claude" resolves to the provider whose runtime name is
+  // "claude-code". Before the fix only the exact runtime string matched, so
+  // `--type claude` (the id used by agent profiles / config schema) silently
+  // resolved to nothing. The legacy `--type claude-code` (asserted elsewhere)
+  // must keep working too.
+  test("--type claude (canonical id) resolves to the claude-code provider via the bridge", async () => {
+    const stash = makeStashDir();
+    const result = await akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config: configEnabled(stash),
+      // provider.name is the runtime id "claude-code"; canonical "claude" must
+      // still resolve to it. `available:false` lets us confirm resolution
+      // happened (we hit the not-available path, not the no-harness path).
+      harnesses: [makeFakeHarness([], /* available */ false)],
+      chat: async () => "{}",
+    });
+    expect(result.ok).toBe(false);
+    // Resolved to the provider (not-available), NOT a "no available harness" miss.
+    expect(result.warnings.join(" ")).toMatch(/not-available/);
+    expect(result.warnings.join(" ")).not.toMatch(/no available harness/);
+  });
 });
 
 describe("akmExtract — discovery mode", () => {

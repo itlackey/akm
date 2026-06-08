@@ -12,9 +12,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
 import { extractInlineRefMentions } from "../src/integrations/session-logs/inline-refs";
-import { ClaudeCodeProvider } from "../src/integrations/session-logs/providers/claude-code";
 import { OpenCodeProvider } from "../src/integrations/session-logs/providers/opencode";
 
 const tempDirs: string[] = [];
