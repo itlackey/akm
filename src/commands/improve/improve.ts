@@ -679,6 +679,64 @@ function isSignalDeltaEligible(
   return fb > lp;
 }
 
+/**
+ * H7 (#566): cooperative budget watchdog with a captured, RAII-cleared hard-kill.
+ *
+ * When the wall-clock budget expires, `onExhausted` (normally an
+ * `AbortController.abort`) signals cooperative cancellation so the run can drain
+ * its in-flight log/`state.db` flush and unwind naturally. A second hard-kill
+ * timer is then armed as a watchdog: it only `exit(0)`s if the drain itself
+ * overruns `hardKillGraceMs`, preventing the process from outliving the task
+ * timeout window (lock-cascade fix).
+ *
+ * Both timers are captured; the returned dispose() clears whichever is still
+ * pending. Callers invoke it from a `finally`, so a *clean* drain reaches the
+ * `finally` and cancels the pending hard-kill before it can fire — the previous
+ * detached `setTimeout(() => process.exit(0), 5000)` always fired, truncating a
+ * clean flush. The hard-kill timer is `unref()`-ed so it never keeps the event
+ * loop alive on its own: once the run drains it exits with its own code, not the
+ * forced 0.
+ *
+ * Dependencies are injectable purely so the concurrency-sensitive timing
+ * contract can be exercised deterministically in unit tests.
+ */
+export function armBudgetWatchdog(
+  budgetMs: number,
+  controller: AbortController,
+  deps?: {
+    setTimeoutFn?: typeof setTimeout;
+    clearTimeoutFn?: typeof clearTimeout;
+    exitFn?: (code: number) => void;
+    hardKillGraceMs?: number;
+  },
+): () => void {
+  const setTimeoutFn = deps?.setTimeoutFn ?? setTimeout;
+  const clearTimeoutFn = deps?.clearTimeoutFn ?? clearTimeout;
+  const exitFn = deps?.exitFn ?? ((code: number) => process.exit(code));
+  const hardKillGraceMs = deps?.hardKillGraceMs ?? 5_000;
+
+  let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const budgetTimer = setTimeoutFn(() => {
+    // Cooperative cancellation first: let the run drain.
+    controller.abort("improve budget exhausted");
+    // Watchdog: only force-exit if the drain itself overruns the grace period.
+    // Exit 0: budget exhaustion is a normal scheduled-task condition, not an error.
+    hardKillTimer = setTimeoutFn(() => exitFn(0), hardKillGraceMs);
+    // Never keep the event loop alive solely for the watchdog.
+    hardKillTimer.unref?.();
+  }, budgetMs);
+
+  // RAII dispose: clears whichever timer is still pending. Idempotent.
+  return () => {
+    clearTimeoutFn(budgetTimer);
+    if (hardKillTimer !== undefined) {
+      clearTimeoutFn(hardKillTimer);
+      hardKillTimer = undefined;
+    }
+  };
+}
+
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
   const scope: ImproveScope = resolveImproveScope(options.scope);
   const reflectFn = options.reflectFn ?? akmReflect;
@@ -973,15 +1031,14 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let eventsCtx: EventsContext = {};
 
   try {
-    const budgetTimer = setTimeout(() => {
-      budgetAbortController.abort("improve budget exhausted");
-      // Grace period: let finally run to release improve.lock, then hard-exit
-      // to prevent the process outliving the task timeout window (lock-cascade fix).
-      // Exit 0: budget exhaustion is a normal scheduled-task condition, not an error.
-      setTimeout(() => process.exit(0), 5_000);
-    }, budgetMs);
-    // Clear the timer when the run ends to avoid keeping the event loop alive.
-    clearBudgetTimer = () => clearTimeout(budgetTimer);
+    // H7 (#566): arm the budget watchdog. `armBudgetWatchdog` captures both the
+    // budget timer and the hard-kill timer it schedules on exhaustion, returning
+    // a single dispose() that clears whichever are still pending. The `finally`
+    // calls dispose() via `clearBudgetTimer` (RAII), so a clean cooperative
+    // drain cancels the pending hard-kill before it can fire — the process then
+    // exits naturally instead of being force-`exit(0)`-ed mid-flush, which could
+    // truncate an in-flight log or `state.db` transaction.
+    clearBudgetTimer = armBudgetWatchdog(budgetMs, budgetAbortController);
 
     try {
       eventsDb = openStateDatabase();
