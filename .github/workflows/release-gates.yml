@@ -1,26 +1,17 @@
 name: Release Gates
 
-# Heavy validation that is too slow for every commit. These run as RELEASE
-# gates, not commit gates:
-#   - on PRs INTO `main` (i.e. a release/* -> main release PR), so the full
-#     battery validates the release content before it merges; and
-#   - on manual `workflow_dispatch` (e.g. before dispatching the Release
-#     workflow from a release/* branch).
-# Per-commit fast feedback (lint + types + unit) lives in ci.yml.
+# Heavy validation that is too slow for every commit. This is a RELEASE gate,
+# NOT a commit gate — it runs ONLY on manual `workflow_dispatch`, invoked once
+# before cutting a release (and on demand). It deliberately does NOT trigger on
+# push or pull_request, so day-to-day commits (even on an open release PR) get
+# only the fast `ci.yml` (lint + types + unit). `release.yml`'s pre-publish
+# `bun run check` (incl. integration) remains the hard gate on the actual
+# release dispatch.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "README.md"
-      - "**/CHANGELOG.md"
-      - "schemas/**"
-      - "CLAUDE.md"
-      - "LICENSE"
   workflow_dispatch:
 
 jobs:
