@@ -82,7 +82,29 @@ export interface SessionLogHarness {
   readonly name: string;
   /** Return true if this harness's log files exist on this machine */
   isAvailable(): boolean;
-  /** Read raw session events since the given timestamp */
+  /**
+   * Whether this harness exposes the rich `listSessions()` + `readSession()`
+   * pipeline (structured tool calls, assistant content blocks, timing) for the
+   * health-advisory candidate scan (#568). When `true` (or absent — see below),
+   * `getExecutionLogCandidates` drives the harness through `listSessions()` +
+   * `readSession()` so structured content reaches health advisories. When
+   * `false`, it falls back to the legacy flat {@link readEvents} scan.
+   *
+   * Absent is treated as `true`: every harness in this codebase implements a
+   * real `readSession`, and a legacy-only harness must OPT OUT explicitly by
+   * setting this to `false`. This keeps behaviour-preserving for any future
+   * harness that only implements `readEvents`.
+   */
+  readonly supportsReadSession?: boolean;
+  /**
+   * Read raw session events since the given timestamp.
+   *
+   * @deprecated (#568) Prefer the richer {@link listSessions} + {@link readSession}
+   * pipeline, which preserves structured message content (tool calls, assistant
+   * content blocks, timing) instead of the flat text scan. `readEvents` remains
+   * only as the fallback path for legacy harnesses that set
+   * {@link supportsReadSession} to `false`.
+   */
   readEvents(input: { sinceMs: number }): Iterable<SessionEvent>;
   /**
    * Enumerate available sessions for this harness, optionally filtered by
