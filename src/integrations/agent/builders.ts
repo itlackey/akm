@@ -15,6 +15,7 @@
  */
 
 import { claudeBuilder } from "../harnesses/claude/agent-builder";
+import { opencodeBuilder } from "../harnesses/opencode/agent-builder";
 // Types + shared validation helpers live in the leaf module `builder-shared.ts`
 // so per-harness builders (harnesses/claude/agent-builder.ts) can depend on them
 // without importing this file back — avoiding an init-order cycle through
@@ -28,35 +29,10 @@ export { assertNotFlag, normalizeTools } from "./builder-shared";
 
 // ── Platform builders ─────────────────────────────────────────────────────────
 
-/**
- * OpenCode builder.
- * Command shape: opencode run [--system-prompt "..."] [--model <m>] "<prompt>"
- *
- * Tool policy is omitted — opencode manages tool access through its own agent
- * config files, not via CLI flags.
- */
-const opencodeBuilder: AgentCommandBuilder = {
-  platform: "opencode",
-  build(profile, req) {
-    assertNotFlag(req.systemPrompt, "systemPrompt");
-    assertNotFlag(req.model, "model");
-    const args: string[] = [...profile.args]; // starts with ["run"]
-    if (req.systemPrompt) {
-      args.push("--system-prompt", req.systemPrompt);
-    }
-    if (req.model) {
-      const resolved = resolveModel(req.model, "opencode", profile.modelAliases);
-      args.push("--model", resolved);
-    }
-    args.push("--");
-    args.push(req.prompt);
-    return { argv: [profile.bin, ...args] };
-  },
-};
-
-// The Claude Code builder was migrated to its harness directory in #563:
-// `src/integrations/harnesses/claude/agent-builder.ts`. It is imported back
-// into BUILTIN_BUILDERS below so platform routing is unchanged.
+// The OpenCode builder was migrated to its harness directory in #564
+// (`harnesses/opencode/agent-builder.ts`) and the Claude Code builder in #563
+// (`harnesses/claude/agent-builder.ts`). Both are imported back into
+// BUILTIN_BUILDERS below so platform routing is unchanged.
 
 /**
  * Default builder — used for custom profiles and any platform without a

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractInlineRefMentions } from "../inline-refs";
+import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type {
   InlineRefMention,
   SessionData,
@@ -13,7 +13,7 @@ import type {
   SessionLogHarness,
   SessionRef,
   SessionSummary,
-} from "../types";
+} from "../../session-logs/types";
 
 function getOpenCodeBaseDir(): string {
   if (process.platform === "darwin") {

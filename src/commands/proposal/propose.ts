@@ -30,7 +30,7 @@ import {
 } from "../../integrations/agent";
 import { resolveProcessAgentProfile } from "../../integrations/agent/config";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
-import { runAgentSdk } from "../../integrations/agent/sdk-runner";
+import { runAgentSdk } from "../../integrations/harnesses/opencode-sdk";
 import {
   baseFailureFields,
   enoentHintMessage,

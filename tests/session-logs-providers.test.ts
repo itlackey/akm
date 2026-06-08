@@ -13,8 +13,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
+import { OpenCodeProvider } from "../src/integrations/harnesses/opencode/session-log";
 import { extractInlineRefMentions } from "../src/integrations/session-logs/inline-refs";
-import { OpenCodeProvider } from "../src/integrations/session-logs/providers/opencode";
 
 const tempDirs: string[] = [];
 function makeTempDir(prefix: string): string {

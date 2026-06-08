@@ -59,7 +59,7 @@ import {
   runnerIsLlm,
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
-import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isLlmFeatureEnabled } from "../../llm/feature-gate";
 import {

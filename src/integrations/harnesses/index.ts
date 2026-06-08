@@ -19,52 +19,16 @@
  * wires the existing call sites to consult it (behaviour-preserving).
  */
 import { ClaudeHarness } from "./claude";
-import type { AkmHarness, HarnessCapabilities } from "./types";
+import { OpencodeHarness } from "./opencode";
+import { OpencodeSdkHarness } from "./opencode-sdk";
+import type { AkmHarness } from "./types";
 
 export type { AkmHarness, HarnessCapabilities } from "./types";
 
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    v1Migration: false,
-    ...c,
-  };
-}
-
-// Claude Code's harness descriptor (ClaudeHarness) lives in ./claude alongside
-// its session-log reader, agent builder, and config importer (#563). It is
-// imported above and registered in HARNESS_REGISTRY below.
-
-class OpencodeHarness implements AkmHarness {
-  readonly id = "opencode" as const;
-  readonly displayName = "OpenCode";
-  readonly aliases = [] as const;
-  readonly capabilities = caps({
-    sessionLogs: true,
-    agentDispatch: true,
-    detection: true,
-    configImport: true,
-    runtimeIdentity: true,
-    v1Migration: true,
-  });
-}
-
-class OpencodeSdkHarness implements AkmHarness {
-  readonly id = "opencode-sdk" as const;
-  readonly displayName = "OpenCode SDK";
-  readonly aliases = [] as const;
-  readonly capabilities = caps({
-    // SDK path is dispatch-only: no native session logs of its own, but it is
-    // detected at setup and migrated from v1 profile names.
-    agentDispatch: true,
-    detection: true,
-    v1Migration: true,
-  });
-}
+// Each harness descriptor (ClaudeHarness, OpencodeHarness, OpencodeSdkHarness)
+// lives in its own per-harness directory alongside that harness's session-log
+// reader, agent builder, config importer, and/or SDK runner (#563/#564). They
+// are imported above and registered in HARNESS_REGISTRY below.
 
 /**
  * The single registration point. Add a harness here (and nothing else) to make

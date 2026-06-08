@@ -4,7 +4,7 @@
 
 import { getHarness, SESSION_LOG_HARNESSES } from "../harnesses";
 import { ClaudeCodeProvider } from "../harnesses/claude/session-log";
-import { OpenCodeProvider } from "./providers/opencode";
+import { OpenCodeProvider } from "../harnesses/opencode/session-log";
 import type {
   InlineRefMention,
   SessionData,

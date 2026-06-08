@@ -22,9 +22,9 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import type { AgentDispatchRequest } from "../../integrations/agent/builders";
 import type { AgentConfig } from "../../integrations/agent/config";
 import { requireAgentProfile } from "../../integrations/agent/config";
-import { runAgentSdk } from "../../integrations/agent/sdk-runner";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
 import { runAgent } from "../../integrations/agent/spawn";
+import { runAgentSdk } from "../../integrations/harnesses/opencode-sdk";
 
 export interface AkmAgentDispatchOptions {
   profileName: string;

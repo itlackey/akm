@@ -19,9 +19,8 @@
  * purposes and should not be deduplicated.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { claudeCodeImporter } from "../integrations/harnesses/claude/config-import";
+import { openCodeImporter } from "../integrations/harnesses/opencode/config-import";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,80 +63,10 @@ export interface HarnessConfigImporter {
   importConfig: () => HarnessLLMConfig | null;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function homeDir(): string {
-  return process.env.HOME ?? process.env.USERPROFILE ?? "";
-}
-
-// The Claude Code importer was migrated to its harness directory in #563:
-// `src/integrations/harnesses/claude/config-import.ts`. It is imported back
-// into HARNESS_CONFIG_IMPORTERS below so detection order is unchanged.
-
-// ── OpenCode Importer ────────────────────────────────────────────────────────
-
-/**
- * Imports LLM config from an OpenCode installation.
- *
- * OpenCode stores config in `~/.config/opencode/config.json` or
- * `~/.opencode/config.json`. Its schema has a `providers` array and a
- * `model` field. API keys in providers appear as `$ENV_VAR_NAME` references.
- */
-const openCodeImporter: HarnessConfigImporter = {
-  harnessName: "OpenCode",
-  detect() {
-    const home = homeDir();
-    return fs.existsSync(path.join(home, ".config", "opencode")) || fs.existsSync(path.join(home, ".opencode"));
-  },
-  importConfig() {
-    const home = homeDir();
-    const candidates = [
-      path.join(home, ".config", "opencode", "config.json"),
-      path.join(home, ".opencode", "config.json"),
-      path.join(process.cwd(), ".opencode", "config.json"),
-    ];
-    for (const filePath of candidates) {
-      try {
-        if (!fs.existsSync(filePath)) continue;
-        const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
-        // OpenCode config shape: { model?: string, providers?: Array<{id, apiKey, baseUrl, ...}> }
-        const model = typeof raw.model === "string" ? raw.model : undefined;
-
-        // Extract provider info from the first entry in the providers array
-        let provider: string | undefined;
-        let baseUrl: string | undefined;
-        let apiKeyEnvVar: string | undefined;
-        const providers = Array.isArray(raw.providers) ? (raw.providers as Record<string, unknown>[]) : [];
-        if (providers.length > 0) {
-          const first = providers[0];
-          provider = typeof first?.id === "string" ? first.id : undefined;
-          baseUrl =
-            typeof first?.baseUrl === "string"
-              ? first.baseUrl
-              : typeof first?.base_url === "string"
-                ? first.base_url
-                : undefined;
-          // apiKey is an env var reference like "$OPENAI_API_KEY" — extract the var name
-          const apiKeyVal = typeof first?.apiKey === "string" ? first.apiKey : "";
-          if (apiKeyVal.startsWith("$")) {
-            apiKeyEnvVar = apiKeyVal.slice(1);
-          }
-        }
-
-        return {
-          harnessName: "OpenCode",
-          provider,
-          model,
-          baseUrl,
-          apiKeyEnvVar,
-        };
-      } catch {
-        // try next candidate
-      }
-    }
-    return null;
-  },
-};
+// The Claude Code importer was migrated to its harness directory in #563
+// (`harnesses/claude/config-import.ts`) and the OpenCode importer in #564
+// (`harnesses/opencode/config-import.ts`). Both are imported back into
+// HARNESS_CONFIG_IMPORTERS below so detection order is unchanged.
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
