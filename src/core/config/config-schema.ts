@@ -164,6 +164,12 @@ export const ImproveProcessConfigSchema = z
     // disables the guard. Only meaningful on the `extract` process. Default 0
     // (disabled) so existing behaviour is preserved; only opted-in profiles set it.
     minNewSessions: z.number().int().min(0).optional(),
+    // #561 — index agent sessions as a searchable `session` asset (extract
+    // process). Absent = on-when-an-LLM-is-available (fail-open when offline).
+    indexSessions: z.boolean().optional(),
+    // #561 — minimum session duration in minutes for session indexing. 0
+    // disables the gate. Absent = default 5. Only meaningful on `extract`.
+    minSessionDuration: z.number().min(0).optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

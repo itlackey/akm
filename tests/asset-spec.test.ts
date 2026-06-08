@@ -44,8 +44,9 @@ describe("getAssetTypes", () => {
     expect(types).toContain("wiki");
     expect(types).toContain("lesson");
     expect(types).toContain("task");
+    expect(types).toContain("session"); // #561
     expect(types).not.toContain("vault");
-    expect(types).toHaveLength(12);
+    expect(types).toHaveLength(13);
   });
 });
 

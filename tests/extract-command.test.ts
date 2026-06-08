@@ -62,7 +62,11 @@ function configEnabled(stashDir: string): AkmConfig {
           supportsJsonSchema: true,
         },
       },
-      improve: { default: { processes: { extract: { enabled: true } } } },
+      // #561 — these tests assert the distillation chat-call count / schema.
+      // Session indexing (default-on) would add a second chat call per session,
+      // so disable it here; the session-indexing behaviour has dedicated
+      // coverage in tests/session-indexing.test.ts.
+      improve: { default: { processes: { extract: { enabled: true, indexSessions: false } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;
@@ -518,7 +522,10 @@ describe("akmExtract — profile + config resolution", () => {
           },
         },
         improve: {
-          default: { processes: { extract: { enabled: true, ...processOverride } } },
+          // #561 — default-off session indexing here so these resolution tests
+          // keep asserting the single distillation chat call. Overridable via
+          // processOverride for any test that wants to exercise it.
+          default: { processes: { extract: { enabled: true, indexSessions: false, ...processOverride } } },
         },
       },
       defaults: { llm: "default" },

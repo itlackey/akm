@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`session` asset type — agent sessions are now searchable** (#561). The
+  `extract` pass, after distilling memory proposals from a session, additionally
+  writes the session itself as a first-class `session` asset
+  (`sessions/<harness>/<id>.md`) with an LLM-generated `## Summary` /
+  `## Key topics` body plus `harness` / `session_id` / `started_at` / `ended_at`
+  / `project` / `log_path` / `access` frontmatter. Sessions become discoverable
+  via `akm search --type session` and `akm curate`, and the `access` + `log_path`
+  fields tell any agent how to open the raw session log. The behaviour is
+  ADDITIVE, FAIL-OPEN, and config-gated via
+  `profiles.improve.default.processes.extract.indexSessions` (default on when an
+  LLM is configured; set `false` for byte-identical legacy extract behaviour) and
+  `…extract.minSessionDuration` (default 5 minutes). Session assets are not
+  graph-extracted. No new LLM call is made when no provider is configured.
+
 - **`akm env set` / `akm env unset` — single-key `.env` management.** `akm env
   set <ref> <KEY>` sets/updates one key (value from stdin by default, or
   `--from-env <VAR>` / `--from-file <path>` — never argv, never echoed); `akm env

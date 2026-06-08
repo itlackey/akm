@@ -34,8 +34,13 @@ const PRE_WS7_UNION = [
   "lesson",
 ] as const;
 
-/** The single intentional addition WS7 makes by deriving from the registry. */
-const INTENTIONAL_ADDITIONS = ["task"] as const;
+/**
+ * Intentional additions to the union since the pre-WS7 baseline:
+ *   - `task`  — WS7 registry/union drift fix (#490).
+ *   - `session` — #561 indexes agent sessions as a first-class asset type.
+ * Both are deliberate, separately-reviewed registry additions.
+ */
+const INTENTIONAL_ADDITIONS = ["session", "task"] as const;
 
 describe("ASSET_TYPES is the single source of truth (derived from ASSET_SPECS)", () => {
   test("ASSET_TYPES equals the registry key set (no drift)", () => {

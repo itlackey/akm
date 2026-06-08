@@ -211,6 +211,13 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -338,6 +345,13 @@
                       },
                       "minNewSessions": {
                         "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
                         "minimum": 0
                       },
                       "applyMode": {
@@ -469,6 +483,13 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -596,6 +617,13 @@
                       },
                       "minNewSessions": {
                         "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
                         "minimum": 0
                       },
                       "applyMode": {
@@ -727,6 +755,13 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -856,6 +891,13 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -983,6 +1025,13 @@
                       },
                       "minNewSessions": {
                         "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
                         "minimum": 0
                       },
                       "applyMode": {
@@ -1731,6 +1780,13 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -1858,6 +1914,13 @@
                           },
                           "minNewSessions": {
                             "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
                             "minimum": 0
                           },
                           "applyMode": {
@@ -1989,6 +2052,13 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -2116,6 +2186,13 @@
                           },
                           "minNewSessions": {
                             "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
                             "minimum": 0
                           },
                           "applyMode": {
@@ -2247,6 +2324,13 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -2376,6 +2460,13 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -2503,6 +2594,13 @@
                           },
                           "minNewSessions": {
                             "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
                             "minimum": 0
                           },
                           "applyMode": {
@@ -3233,6 +3331,13 @@
           "type": "integer",
           "minimum": 0
         },
+        "indexSessions": {
+          "type": "boolean"
+        },
+        "minSessionDuration": {
+          "type": "number",
+          "minimum": 0
+        },
         "applyMode": {
           "type": "string",
           "enum": [
@@ -3372,6 +3477,13 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -3499,6 +3611,13 @@
                 },
                 "minNewSessions": {
                   "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
                   "minimum": 0
                 },
                 "applyMode": {
@@ -3630,6 +3749,13 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -3757,6 +3883,13 @@
                 },
                 "minNewSessions": {
                   "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
                   "minimum": 0
                 },
                 "applyMode": {
@@ -3888,6 +4021,13 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -4017,6 +4157,13 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -4144,6 +4291,13 @@
                 },
                 "minNewSessions": {
                   "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
                   "minimum": 0
                 },
                 "applyMode": {
