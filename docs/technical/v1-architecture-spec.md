@@ -339,7 +339,8 @@ union. The v1 contract is:
 - **Well-known types**, each with a renderer, a directory under the working
   stash, and frontmatter expectations:
   `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `workflow`,
-  `env`, `vault`, `secret`, `wiki`, `task`, and (Planned for v1) `lesson`. See
+  `env`, `vault`, `secret`, `wiki`, `task`, `session`, and (Planned for v1)
+  `lesson`. See
   §13. The `task` type stores cron-style scheduled invocations of workflows or
   prompts; `akm tasks` registers them with the OS-native scheduler (cron /
   launchd / schtasks). The `env` type stores a group of related configuration
@@ -349,7 +350,11 @@ union. The v1 contract is:
   predecessor of `env` (removed in 0.9.0). The `secret` type stores a single
   sensitive value used on its own for authentication (one per file); like `env`,
   the values never appear in structured output and are used only via
-  `akm secret run` / `akm secret path`.
+  `akm secret run` / `akm secret path`. The `session` type (#561) is a
+  generated, searchable record of a prior agent session, written by the
+  `extract` pass to `sessions/<harness>/<id>.md`; it carries `log_path` +
+  `access` frontmatter so an agent can navigate into the raw session log, and an
+  LLM `## Summary` / `## Key topics` body that is the searchable surface.
 - **Plugin-registered types** are allowed via `registerAssetType()` (see
   `src/core/asset-spec.ts`) and behave like well-known types as long as they
   register a renderer. Unknown types parse, index, and search; they render as

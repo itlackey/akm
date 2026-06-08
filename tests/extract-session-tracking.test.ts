@@ -52,7 +52,9 @@ function configEnabled(stashDir: string): AkmConfig {
       llm: {
         default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test", supportsJsonSchema: true },
       },
-      improve: { default: { processes: { extract: { enabled: true } } } },
+      // #561 — disable session indexing so chat-call assertions count only the
+      // distillation call (session indexing has dedicated coverage elsewhere).
+      improve: { default: { processes: { extract: { enabled: true, indexSessions: false } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;

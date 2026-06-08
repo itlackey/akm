@@ -90,6 +90,15 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     type: "task",
     test: (ext) => ext === ".md",
   },
+  {
+    // #561 — agent session assets live under `sessions/<harness>/<id>.md`.
+    // classifyByDirectory walks every ancestor dir, so a nested file still
+    // matches the `sessions` rule. Without this entry the file falls through
+    // to classifyBySmartMd and is mistyped as `knowledge`.
+    dir: "sessions",
+    type: "session",
+    test: (ext) => ext === ".md",
+  },
 ];
 
 const COMMAND_PLACEHOLDER_RE = /\$ARGUMENTS|\$[123]\b/;

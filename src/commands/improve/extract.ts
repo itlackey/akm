@@ -50,6 +50,17 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
+import {
+  buildSessionSummaryPrompt,
+  parseSessionSummary,
+  SESSION_SUMMARY_JSON_SCHEMA,
+  type SessionSummaryGenerator,
+  sessionMeetsDurationGate,
+  writeSessionAsset,
+} from "./session-asset";
+
+/** Default minimum session duration (minutes) for session indexing (#561). */
+const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
 
 // ── Options + Result envelopes ──────────────────────────────────────────────
 
@@ -105,6 +116,13 @@ export interface AkmExtractOptions {
    * code opens the real state.db via {@link openStateDatabase}.
    */
   stateDb?: Database;
+  /**
+   * #561 — override the session-summary generator (test seam). When absent the
+   * production code builds one that routes through the in-tree LLM via
+   * {@link tryLlmFeature} (fail-open). Tests inject a fake to avoid any real
+   * LLM/network call. When session indexing is disabled this is never invoked.
+   */
+  generateSessionSummary?: SessionSummaryGenerator;
 }
 
 export interface ExtractedSessionResult {
@@ -119,6 +137,10 @@ export interface ExtractedSessionResult {
   warnings: string[];
   skipped?: boolean;
   skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted";
+  /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
+  sessionAssetRef?: string;
+  /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
+  sessionLogPath?: string;
 }
 
 export interface AkmExtractResult {
@@ -230,6 +252,11 @@ async function processSession(
   dryRun: boolean,
   timeoutMs: number,
   maxTotalChars: number | undefined,
+  sessionIndexing: {
+    enabled: boolean;
+    minDurationMinutes: number;
+    generate: SessionSummaryGenerator;
+  },
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -252,6 +279,28 @@ async function processSession(
     ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
   });
   const prompt = buildExtractPrompt({ data, events: filtered.events, inlineRefs: data.inlineRefs });
+
+  // #561 — ADDITIVE session indexing. Generate + write the session asset
+  // (`sessions/<harness>/<id>.md`). FAIL-OPEN: any failure only records a
+  // warning; it NEVER changes the proposal/skip outcome of extract. Returns the
+  // frontmatter fields to merge into the per-session result for state-db
+  // correlation. When disabled this closure makes NO LLM call and writes NOTHING.
+  const maybeWriteSessionAsset = async (): Promise<{ sessionAssetRef?: string; sessionLogPath?: string }> => {
+    if (!sessionIndexing.enabled || dryRun) return {};
+    if (!sessionMeetsDurationGate(data, sessionIndexing.minDurationMinutes)) return {};
+    try {
+      const result = await writeSessionAsset(data, stashDir, sessionIndexing.generate);
+      if (result.written) {
+        return {
+          ...(result.ref ? { sessionAssetRef: result.ref } : {}),
+          ...(result.logPath ? { sessionLogPath: result.logPath } : {}),
+        };
+      }
+    } catch (err) {
+      warnings.push(`session asset write failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return {};
+  };
 
   let llmRaw = "";
   const llmResult = await tryLlmFeature(
@@ -306,6 +355,7 @@ async function processSession(
       },
       ctx,
     );
+    const sessionAsset = await maybeWriteSessionAsset();
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
@@ -318,6 +368,7 @@ async function processSession(
         truncatedCount: filtered.stats.truncatedCount,
       },
       warnings,
+      ...sessionAsset,
     };
   }
 
@@ -377,6 +428,7 @@ async function processSession(
     ctx,
   );
 
+  const sessionAsset = await maybeWriteSessionAsset();
   return {
     sessionId: sessionRef.sessionId,
     harness: harness.name,
@@ -388,6 +440,7 @@ async function processSession(
       truncatedCount: filtered.stats.truncatedCount,
     },
     warnings,
+    ...sessionAsset,
   };
 }
 
@@ -466,6 +519,43 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
   // Default discovery window — process config can override the built-in 24h.
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
+
+  // #561 — resolve session-indexing config. Default ON: we only reach this code
+  // when `session_extraction` is enabled AND an LLM is configured (both checked
+  // above), so defaulting on costs nothing offline (the summary call fails open)
+  // while making sessions searchable in the common LLM-configured case. Set
+  // `processes.extract.indexSessions: false` for byte-identical legacy behaviour.
+  const sessionIndexingEnabled = extractProcess?.indexSessions ?? true;
+  const minSessionDuration =
+    typeof extractProcess?.minSessionDuration === "number"
+      ? extractProcess.minSessionDuration
+      : DEFAULT_MIN_SESSION_DURATION_MINUTES;
+  // Production summary generator: a bounded in-tree LLM call wrapped in the same
+  // fail-open `tryLlmFeature` seam as the rest of extract. Returns `undefined`
+  // on disablement / timeout / error so no asset is written. Tests inject a fake.
+  const chatForSummary = options.chat ?? chatCompletion;
+  const defaultSessionSummaryGenerator: SessionSummaryGenerator = async (data) => {
+    let raw = "";
+    await tryLlmFeature(
+      "session_extraction",
+      config,
+      async () => {
+        raw = await chatForSummary(llmConfig, [{ role: "user", content: buildSessionSummaryPrompt(data) }], {
+          timeoutMs,
+          responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
+        });
+        return raw;
+      },
+      "",
+      { timeoutMs },
+    );
+    return parseSessionSummary(raw);
+  };
+  const sessionIndexing = {
+    enabled: sessionIndexingEnabled,
+    minDurationMinutes: minSessionDuration,
+    generate: options.generateSessionSummary ?? defaultSessionSummaryGenerator,
+  };
 
   const harness = resolveHarness(options.type, options.harnesses);
   if (!harness) {
@@ -599,6 +689,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         dryRun,
         timeoutMs,
         maxTotalChars,
+        sessionIndexing,
       );
       sessions.push(result);
       if (result.skipped) skippedCount += 1;
@@ -632,6 +723,11 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
               preFilterOutputCount: result.preFilter.outputCount,
               preFilterTruncatedCount: result.preFilter.truncatedCount,
               ...(result.skipReason ? { skipReason: result.skipReason } : {}),
+              // #561 — record the session's log_path for correlation across
+              // index rebuilds (the session asset frontmatter is the primary
+              // durable key; this is the state-db mirror of it).
+              ...(result.sessionLogPath ? { logPath: result.sessionLogPath } : {}),
+              ...(result.sessionAssetRef ? { sessionAssetRef: result.sessionAssetRef } : {}),
             },
           });
         } catch (err) {

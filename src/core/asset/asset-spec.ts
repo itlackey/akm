@@ -169,6 +169,18 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     rendererName: "task-yaml",
     actionBuilder: buildTaskAction,
   },
+  // #561 — agent sessions indexed as a first-class searchable asset type.
+  // Generated (derived) markdown written by the `extract` pass to
+  // `sessions/<harness>/<session-id>.md`; carries `log_path` + `access`
+  // frontmatter so any agent can navigate into the raw session log. A plain
+  // markdown spec — the summary body is the searchable surface.
+  session: {
+    stashDir: "sessions",
+    ...markdownSpec,
+    rendererName: "session-md",
+    actionBuilder: (ref) =>
+      `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
+  },
 };
 
 export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;

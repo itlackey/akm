@@ -31,6 +31,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   secret: "secret-file",
   wiki: "wiki-md",
   task: "task-yaml",
+  session: "session-md",
 };
 
 /** Map asset types to action builder functions for search results. */
@@ -50,6 +51,8 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   wiki: (ref) => `akm show ${ref} -> read the wiki page`,
   task: (ref) =>
     `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`,
+  session: (ref) =>
+    `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
 };
 
 /**

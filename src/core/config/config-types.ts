@@ -188,6 +188,30 @@ export interface ImproveProcessConfig {
    */
   minNewSessions?: number;
   /**
+   * #561 — index agent sessions as a searchable `session` asset. When the
+   * `extract` pass distills memory proposals from a session it ADDITIONALLY
+   * writes `sessions/<harness>/<id>.md` (LLM `## Summary` + `## Key topics`) so
+   * the session becomes discoverable via `akm search` / `akm curate`.
+   *
+   * ADDITIVE + FAIL-OPEN. The summary is generated through the same in-tree LLM
+   * seam as the rest of extract; if no LLM is configured (or the call fails) no
+   * asset is written and extract behaves EXACTLY as before. Absent = default
+   * ON-WHEN-AVAILABLE: because the extract pass only runs at all when an LLM is
+   * configured, defaulting on costs nothing when offline (the summary call
+   * simply fails open) while making sessions searchable for the common
+   * LLM-configured case. Set `false` to opt out entirely (byte-identical
+   * legacy behaviour). Only meaningful on the `extract` process.
+   */
+  indexSessions?: boolean;
+  /**
+   * #561 — minimum session duration (ended_at − started_at) in MINUTES for a
+   * session to be indexed as a `session` asset. Trivially short sessions carry
+   * little reusable signal and are not worth an LLM summary call. Absent =
+   * default 5. `0` disables the gate (index every session). Only meaningful on
+   * the `extract` process when `indexSessions` is enabled.
+   */
+  minSessionDuration?: number;
+  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.
