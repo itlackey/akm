@@ -4,7 +4,7 @@
  * The toolkit never imports akm internals; instead it shells out to the
  * documented CLI surface. Contracts depended on:
  *
- *   - `akm search <query> --format jsonl --limit N --detail agent`
+ *   - `akm search <query> --format jsonl --limit N --shape agent`
  *     → one JSON hit per line; each hit has `name`, `ref`, `type`,
  *       `description`, `action`, `score`, `estimatedTokens`.
  *   - `akm proposals --format json` → list envelope with `proposals[]`.
@@ -110,7 +110,7 @@ export class AkmCli {
   }
 
   search(query: string, opts: { limit?: number; type?: string } = {}): SearchHit[] {
-    const args = ["search", query, "--format", "jsonl", "--detail", "agent"];
+    const args = ["search", query, "--format", "jsonl", "--shape", "agent"];
     if (opts.limit !== undefined) args.push("--limit", String(opts.limit));
     if (opts.type) args.push("--type", opts.type);
     const res = this.run(args);

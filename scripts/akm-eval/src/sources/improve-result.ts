@@ -12,7 +12,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { resolveStateDbPath } from "./paths";
+import { pathExists, resolveStateDbPath } from "./paths";
 import { type ReplayPlayer, type ReplayRecorder } from "./replay-log";
 
 export interface ImproveResultEnvelope {
@@ -59,7 +59,14 @@ interface ImproveRunRow {
  * returns every non-dry-run row.
  */
 export function listRecentImproveRunIds(n: number): string[] {
-  const db = new Database(resolveStateDbPath(), { readonly: true });
+  // A fresh checkout (or any stash that has never run `improve`) has no
+  // state.db. Treat "no database" as "no runs" so read-only history audits
+  // skip cleanly instead of throwing on a readonly open of a missing file.
+  // This also keeps record/replay deterministic: both passes see [] rather
+  // than diverging on whether a later case happened to create state.db.
+  const dbPath = resolveStateDbPath();
+  if (!pathExists(dbPath)) return [];
+  const db = new Database(dbPath, { readonly: true });
   try {
     const rows = (
       n > 0
@@ -80,7 +87,13 @@ export function listRecentImproveRunIds(n: number): string[] {
  * dry-run artifact-trap recorded in feedback_akm_dryrun_artifact_trap).
  */
 export function resolveImproveRunId(_stashRoot: string, ref: string): string {
-  const db = new Database(resolveStateDbPath(), { readonly: true });
+  // No state.db ⇒ no runs; surface the same "no rows" error the empty-table
+  // path gives rather than a raw sqlite "unable to open database file".
+  const dbPath = resolveStateDbPath();
+  if (!pathExists(dbPath)) {
+    throw new Error(`improve_runs row not found: ${ref} (no state.db at ${dbPath})`);
+  }
+  const db = new Database(dbPath, { readonly: true });
   try {
     if (ref === "latest" || ref === "last") {
       const row = db
