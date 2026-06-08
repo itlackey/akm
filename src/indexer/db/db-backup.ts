@@ -29,6 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { bestEffort } from "../../core/best-effort";
 import { warn } from "../../core/warn";
 
 export interface BackupOptions {
@@ -151,11 +152,9 @@ export function measureDataDirSize(dirPath: string): number {
       if (entry.isDirectory()) {
         stack.push(full);
       } else if (entry.isFile()) {
-        try {
+        bestEffort(() => {
           total += fs.statSync(full).size;
-        } catch {
-          // File vanished between readdir and stat — ignore.
-        }
+        }, "file vanished between readdir and stat");
       }
     }
   }
@@ -234,7 +233,7 @@ export function listBackups(dataDir: string): ListedBackup[] {
     let reason: string = DEFAULT_BACKUP_REASON;
 
     if (fs.existsSync(metaPath)) {
-      try {
+      bestEffort(() => {
         const raw = fs.readFileSync(metaPath, "utf8");
         const parsed = JSON.parse(raw) as Partial<BackupMetadata>;
         if (typeof parsed.createdAt === "string") createdAt = parsed.createdAt;
@@ -242,9 +241,7 @@ export function listBackups(dataDir: string): ListedBackup[] {
         else if (parsed.sourceVersion === null) sourceVersion = null;
         if (typeof parsed.sizeBytes === "number") sizeBytes = parsed.sizeBytes;
         if (typeof parsed.reason === "string" && parsed.reason.length > 0) reason = parsed.reason;
-      } catch {
-        // Malformed metadata — fall back to filesystem-derived values.
-      }
+      }, "malformed backup metadata — fall back to filesystem-derived values");
     }
 
     if (!createdAt) {
@@ -379,11 +376,7 @@ export function backupDataDir(opts: BackupOptions): BackupResult | null {
       err instanceof Error ? err.message : String(err),
     );
     // Best-effort cleanup of the partial copy so we don't litter the data dir.
-    try {
-      fs.rmSync(finalDest, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    bestEffort(() => fs.rmSync(finalDest, { recursive: true, force: true }), "cleanup partial backup copy");
     return null;
   }
 
@@ -465,11 +458,7 @@ function copyDataDirExcludingBackups(srcRoot: string, destRoot: string): void {
         // dir occasionally carries symlinked source roots; following them
         // could explode the backup size unexpectedly.
         const target = fs.readlinkSync(srcPath);
-        try {
-          fs.symlinkSync(target, destPath);
-        } catch {
-          /* ignore — symlink creation can fail on Windows without admin */
-        }
+        bestEffort(() => fs.symlinkSync(target, destPath), "symlink creation can fail on Windows without admin");
       }
       // Other entry types (block/character/fifo/socket) are silently skipped.
     }

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { bestEffort } from "../../core/best-effort";
 import { getDbPath } from "../../core/paths";
 import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -159,7 +160,7 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
   if (isVecAvailable(db)) return;
   if (once && vecInitWarnedDbs.has(db)) return;
 
-  try {
+  bestEffort(() => {
     const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number } | undefined;
     const count = row?.cnt ?? 0;
     if (count >= VEC_FALLBACK_THRESHOLD) {
@@ -170,9 +171,7 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
       );
       if (once) vecInitWarnedDbs.add(db);
     }
-  } catch {
-    /* embeddings table may not exist yet during init */
-  }
+  }, "embeddings table may not exist yet during init");
 }
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -487,18 +486,10 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
         // uses earlier in this function, just gated on embedding-dim mismatch
         // and tagged so operators can tell the two backup kinds apart.
         backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-        try {
-          db.exec("DROP TABLE IF EXISTS entries_vec");
-        } catch {
-          /* ignore */
-        }
+        bestEffort(() => db.exec("DROP TABLE IF EXISTS entries_vec"), "drop entries_vec on dim change");
         // Delete stale BLOB embeddings so they don't produce silently wrong
         // similarity scores against the new-dimension vec table.
-        try {
-          db.exec("DELETE FROM embeddings");
-        } catch {
-          /* ignore */
-        }
+        bestEffort(() => db.exec("DELETE FROM embeddings"), "delete stale embeddings on dim change");
         setMeta(db, "hasEmbeddings", "0");
       }
     }
@@ -527,11 +518,7 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
       const storedDim = getMeta(db, "embeddingDim");
       if (storedDim && storedDim !== String(embeddingDim)) {
         backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-        try {
-          db.exec("DELETE FROM embeddings");
-        } catch {
-          /* ignore */
-        }
+        bestEffort(() => db.exec("DELETE FROM embeddings"), "delete embeddings on explicit dim change");
         setMeta(db, "hasEmbeddings", "0");
       }
       setMeta(db, "embeddingDim", String(embeddingDim));
@@ -570,11 +557,9 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   if (storedVersion === undefined || storedVersion === "" || storedVersion === String(DB_VERSION)) return [];
 
   let usageBackup: UsageEventRow[] = [];
-  try {
+  bestEffort(() => {
     usageBackup = db.prepare("SELECT * FROM usage_events").all() as UsageEventRow[];
-  } catch {
-    /* table may not exist in older versions */
-  }
+  }, "usage_events table may not exist in older versions");
 
   db.exec("DROP TABLE IF EXISTS utility_scores");
   db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
@@ -878,7 +863,7 @@ function getUpsertStmts(db: Database): UpsertStmts {
  * data loss. Idempotent: a `PRAGMA table_info` lookup gates the ALTER.
  */
 function ensureDerivedFromColumn(db: Database): void {
-  try {
+  bestEffort(() => {
     const cols = db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>;
     const hasColumn = cols.some((c) => c.name === "derived_from");
     if (!hasColumn) {
@@ -886,9 +871,7 @@ function ensureDerivedFromColumn(db: Database): void {
     }
     // Index creation is idempotent on its own; safe to call unconditionally.
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_derived_from ON entries(derived_from)");
-  } catch {
-    /* table may not exist on a brand-new DB before CREATE — caller is responsible */
-  }
+  }, "entries table may not exist on a brand-new DB before CREATE — caller is responsible");
 }
 
 /**
@@ -964,7 +947,7 @@ export function getPositiveFeedbackCountsByIds(db: Database, ids: number[]): Map
   for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    try {
+    bestEffort(() => {
       const rows = db
         .prepare(
           `SELECT entry_id, COUNT(*) AS cnt
@@ -980,9 +963,7 @@ export function getPositiveFeedbackCountsByIds(db: Database, ids: number[]): Map
           result.set(row.entry_id, row.cnt);
         }
       }
-    } catch {
-      /* usage_events table may be missing on legacy DBs — treat as zero counts */
-    }
+    }, "usage_events table may be missing on legacy DBs — treat as zero counts");
   }
   return result;
 }
@@ -1014,51 +995,44 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    try {
-      db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* fts table may not exist on a brand-new db */
-    }
-    try {
-      db.prepare(`DELETE FROM entries_fts_dirty WHERE entry_id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* dirty table is created lazily by upsertEntry */
-    }
+    bestEffort(
+      () => db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk),
+      "fts table may not exist on a brand-new db",
+    );
+    bestEffort(
+      () => db.prepare(`DELETE FROM entries_fts_dirty WHERE entry_id IN (${placeholders})`).run(...chunk),
+      "fts dirty table is created lazily by upsertEntry",
+    );
   }
 
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    try {
-      db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* ignore */
-    }
+    bestEffort(
+      () => db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...chunk),
+      "delete embeddings for entries",
+    );
     if (vecAvail) {
-      try {
-        db.prepare(`DELETE FROM entries_vec WHERE id IN (${placeholders})`).run(...chunk);
-      } catch {
-        /* ignore */
-      }
+      bestEffort(
+        () => db.prepare(`DELETE FROM entries_vec WHERE id IN (${placeholders})`).run(...chunk),
+        "delete entries_vec for entries",
+      );
     }
     // Clean up utility scores before deleting entries
-    try {
-      db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* ignore */
-    }
-    try {
-      db.prepare(`DELETE FROM utility_scores_scoped WHERE entry_id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* ignore */
-    }
+    bestEffort(
+      () => db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk),
+      "delete utility_scores for entries",
+    );
+    bestEffort(
+      () => db.prepare(`DELETE FROM utility_scores_scoped WHERE entry_id IN (${placeholders})`).run(...chunk),
+      "delete utility_scores_scoped for entries",
+    );
     // Clean up usage events before deleting entries
-    try {
-      db.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk);
-    } catch {
-      /* ignore */
-    }
+    bestEffort(
+      () => db.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk),
+      "delete usage_events for entries",
+    );
   }
 }
 
@@ -1181,14 +1155,12 @@ export function upsertEmbedding(db: Database, entryId: number, embedding: Embedd
   // Wrapped in a transaction so a crash between DELETE and INSERT does not
   // leave the entry missing from the vec table.
   if (isVecAvailable(db)) {
-    try {
+    bestEffort(() => {
       db.transaction(() => {
         db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId);
         db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf);
       })();
-    } catch {
-      /* ignore — vec table unavailable or constraint failure */
-    }
+    }, "vec table unavailable or constraint failure");
   }
   return true;
 }
@@ -1859,15 +1831,13 @@ export function upsertLlmCacheEntry(
  * matches a live file_path.
  */
 export function clearStaleCacheEntries(db: Database): void {
-  try {
+  bestEffort(() => {
     db.exec(`
       DELETE FROM llm_enrichment_cache
       WHERE asset_ref NOT IN (SELECT file_path FROM entries)
         AND asset_ref NOT IN (SELECT entry_key FROM entries)
     `);
-  } catch {
-    /* ignore — table may not exist in very old DBs opened without ensureSchema */
-  }
+  }, "llm_enrichment_cache may not exist in very old DBs opened without ensureSchema");
 }
 
 /**
@@ -2201,7 +2171,7 @@ export function applyFeedbackToUtilityScore(
  * history survives a full reindex.
  */
 export function relinkUsageEvents(db: Database): void {
-  try {
+  bestEffort(() => {
     // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
     // Leaving them in place would let `recomputeUtilityScores` aggregate
     // by an entry_id that no longer exists in `entries`, then trip the FK
@@ -2227,9 +2197,7 @@ export function relinkUsageEvents(db: Database): void {
       )
       WHERE entry_id IS NULL AND entry_ref IS NOT NULL
     `);
-  } catch {
-    /* ignore if table doesn't exist yet */
-  }
+  }, "usage_events table may not exist yet during entry_id re-resolution");
 }
 
 // ── registry_index_cache helpers ─────────────────────────────────────────────

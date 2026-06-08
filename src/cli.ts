@@ -111,6 +111,7 @@ import {
 import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
+import { bestEffort } from "./core/best-effort";
 import { loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
@@ -585,7 +586,7 @@ if (import.meta.main) {
   // 0.8.0 moved the index to $XDG_DATA_HOME/akm/index.db (getDataDir()).
   // If the old file exists at $XDG_CACHE_HOME/akm/index.db, remove it so the
   // user isn't confused by a phantom DB. Best-effort; never fatal.
-  try {
+  bestEffort(() => {
     const oldIndexPath = path.join(getCacheDir(), "index.db");
     if (fs.existsSync(oldIndexPath)) {
       fs.rmSync(oldIndexPath, { force: true });
@@ -593,9 +594,7 @@ if (import.meta.main) {
       fs.rmSync(`${oldIndexPath}-wal`, { force: true });
       warn(`Cleaned up stale 0.7.x index from ${oldIndexPath}. Canonical path is now ${getDbPath()}.`);
     }
-  } catch {
-    // Non-fatal; one-time warning only.
-  }
+  }, "stale 0.7.x index cleanup is non-fatal");
 
   // First-time-user breadcrumb: when run with no subcommand AND no config
   // exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`
