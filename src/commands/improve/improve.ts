@@ -20,7 +20,7 @@ import type {
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
 import { classifyImproveAction } from "../../core/improve-types";
-import { getDbPath } from "../../core/paths";
+import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
 import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import {
@@ -763,6 +763,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     primaryStashDir = undefined;
   }
 
+  // C2 (#553/#554/#499): resolve the state.db path ONCE, synchronously, at the
+  // command boundary — before the first `await` below. Every state.db open in
+  // this run (`openStateDatabase`, every default-path `appendEvent`) is pinned
+  // to this snapshot via `eventsCtx.dbPath`, so a parallel test file mutating
+  // `process.env.XDG_DATA_HOME` across an await boundary can never redirect this
+  // run's DB opens to a wrong/just-deleted tmpdir mid-flight (the parallel-load
+  // timeout root cause). Because beforeEach runs synchronously, env is still the
+  // calling test's own at this point; we capture it before yielding the loop.
+  const resolvedStateDbPath = getStateDbPathInDataDir();
+
   // Phase 4 lock hoist (§7): the `improve.lock` setup is hoisted ABOVE
   // ensureIndex/collectEligibleRefs so the triage pre-pass (and improve's own
   // queue writes) run fully serialized under the lock. The dry-run early-return
@@ -1028,7 +1038,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let eventsDb: import("../../storage/database").Database | undefined;
   // `eventsCtx` is read by the main catch (improve_failed) and finally, so it
   // lives in the outer scope. It is always assigned at the top of the try.
-  let eventsCtx: EventsContext = {};
+  // Pinned to the boundary snapshot so the fallback per-call `appendEvent`
+  // opens (when the long-lived handle below fails to open) never re-read env.
+  let eventsCtx: EventsContext = { dbPath: resolvedStateDbPath };
 
   try {
     // H7 (#566): arm the budget watchdog. `armBudgetWatchdog` captures both the
@@ -1041,12 +1053,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     clearBudgetTimer = armBudgetWatchdog(budgetMs, budgetAbortController);
 
     try {
-      eventsDb = openStateDatabase();
+      eventsDb = openStateDatabase(resolvedStateDbPath);
       eventsCtx = { db: eventsDb };
     } catch (err) {
       rethrowIfTestIsolationError(err);
-      // If we cannot open state.db up-front, fall back to per-call opens.
-      eventsCtx = {};
+      // If we cannot open state.db up-front, fall back to per-call opens — but
+      // still pinned to the boundary-resolved path, never a live env re-read.
+      eventsCtx = { dbPath: resolvedStateDbPath };
     }
 
     // 2026-05-27: emit `improve_skipped` audit events for refs the planner
@@ -1889,6 +1902,8 @@ async function runImprovePreparationStage(args: {
       const countFn = options.extractCandidateCountFn ?? countNewExtractCandidates;
       const newCandidateCount = countFn(extractConfig, {
         ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+        // C2: pin the candidate-count state.db open to the boundary-resolved path.
+        ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
       });
       if (newCandidateCount < minNewSessions) {
         belowMinNewSessions = true;
@@ -1919,6 +1934,8 @@ async function runImprovePreparationStage(args: {
             config: extractConfig,
             dryRun: options.dryRun ?? false,
             ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+            // C2: pin extract's skip-tracking state.db open to the boundary path.
+            ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
           });
           extractResults.push(result);
 
@@ -3361,7 +3378,11 @@ async function runImproveMaintenancePasses(args: {
       if (retentionDays > 0) {
         let stateDb: ReturnType<typeof openStateDatabase> | undefined;
         try {
-          stateDb = openStateDatabase();
+          // C2: reuse the boundary-pinned state.db path carried on eventsCtx so
+          // this purge open never re-reads `process.env` live mid-run. The path
+          // is always set by akmImprove; openStateDatabase() falls back to the
+          // env-derived default only if a caller omitted it entirely.
+          stateDb = openStateDatabase(eventsCtx?.dbPath);
           const purgedCount = purgeOldEvents(stateDb, retentionDays);
           if (purgedCount > 0) {
             info(`[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`);

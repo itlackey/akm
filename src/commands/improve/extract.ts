@@ -117,6 +117,13 @@ export interface AkmExtractOptions {
    */
   stateDb?: Database;
   /**
+   * C2 (#554): explicit state.db path. When set (and `stateDb` is absent), the
+   * skip-tracking open uses this path instead of the live `XDG_DATA_HOME`-derived
+   * default. `akmImprove` threads its boundary-resolved path here so a parallel
+   * test file mutating `XDG_DATA_HOME` mid-run cannot redirect this open.
+   */
+  stateDbPath?: string;
+  /**
    * #561 — override the session-summary generator (test seam). When absent the
    * production code builds one that routes through the in-tree LLM via
    * {@link tryLlmFeature} (fail-open). Tests inject a fake to avoid any real
@@ -638,7 +645,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   let seenMap = new Map<string, ExtractedSessionRow>();
   if (trackingEnabled && candidates.length > 0) {
     try {
-      stateDb = options.stateDb ?? openStateDatabase();
+      stateDb = options.stateDb ?? openStateDatabase(options.stateDbPath);
       seenMap = getExtractedSessionsMap(
         stateDb,
         harness.name,
@@ -788,6 +795,12 @@ export interface CountNewExtractCandidatesOptions {
   harnesses?: SessionLogHarness[];
   /** Override state.db handle (test seam). */
   stateDb?: Database;
+  /**
+   * C2 (#554): explicit state.db path (used only when `stateDb` is absent).
+   * `akmImprove` threads its boundary-resolved path so the candidate-count
+   * gate never re-reads `XDG_DATA_HOME` live mid-run.
+   */
+  stateDbPath?: string;
 }
 
 /**
@@ -818,7 +831,7 @@ export function countNewExtractCandidates(config: AkmConfig, options: CountNewEx
       let seenMap = new Map<string, ExtractedSessionRow>();
       try {
         if (!stateDb) {
-          stateDb = openStateDatabase();
+          stateDb = openStateDatabase(options.stateDbPath);
           openedStateDb = true;
         }
         seenMap = getExtractedSessionsMap(
