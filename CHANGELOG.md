@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.1] - 2026-06-08
+
 ### Fixed
 
 - **`improve.lock` leaked on signal death (cron timeout)** — forward-ported from
@@ -18,6 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   disable the default-ON session-`extract` process, so a `quick` run processed
   the entire session backlog (~40 min). `quick` now sets
   `processes.extract.enabled: false`.
+- **`akm-eval` smoke suite adapted to the 0.9.0 CLI** (CI/tooling only). The
+  eval harness called `akm search --detail agent`, but 0.9.0 moved the
+  agent/summary projections to `--shape`; it now uses `--shape agent`.
+  Additionally, the improve-run history readers (`listRecentImproveRunIds` /
+  `resolveImproveRunId`) treated a missing `state.db` as an error rather than
+  "no runs", which broke the read-only smoke + replay-determinism gates on a
+  fresh checkout; a missing `state.db` is now handled as an empty history.
 
 ## [0.9.0-beta.0] - 2026-06-08
 
