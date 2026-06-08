@@ -50,7 +50,7 @@
     "akm-migrate-storage": "dist/scripts/migrate-storage.js"
   },
   "scripts": {
-    "preinstall": "node -e \"var ua=process.env.npm_config_user_agent||'';if(process.versions.bun||ua.startsWith('bun/')||process.env.BUN_INSTALL){process.exit(0)}console.error('\\n  ERROR: akm-cli 0.8 requires the Bun runtime (https://bun.sh) or the prebuilt binary.\\n  Running under Node.js is not supported in this release.\\n  Install options:\\n    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\\n    2. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\\n  Cross-runtime support is planned for 0.9.0.\\n');process.exit(1)\"",
+    "preinstall": "node -e \"var ua=process.env.npm_config_user_agent||'';var major=parseInt((process.versions.node||'0').split('.')[0],10);if(process.versions.bun||ua.startsWith('bun/')||process.env.BUN_INSTALL||major>=18){process.exit(0)}console.error('\\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh), Node.js >= 18, or the prebuilt binary.\\n  Install options:\\n    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\\n    2. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\\n');process.exit(1)\"",
     "build": "rm -rf dist && bun run tsc --project ./tsconfig.build.json && bun scripts/copy-assets.ts",
     "check": "bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration",
     "check:changed": "bun test tests/output-baseline.test.ts tests/integration/e2e.test.ts tests/stash-search.test.ts && bun run lint && bunx tsc --noEmit",
@@ -78,6 +78,7 @@
     "@biomejs/biome": "^2.4.14",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.19.17",
+    "@types/semver": "^7.5.8",
     "bun-types": "^1.3.13",
     "typescript": "^5.9.3"
   },
@@ -87,13 +88,15 @@
     "sqlite-vec": "^0.1.9"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "bun": ">=1.0.0",
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "@clack/prompts": "^1.3.0",
     "@opencode-ai/sdk": "1.2.20",
     "citty": "^0.2.2",
     "dotenv": "^17.4.2",
+    "semver": "^7.6.0",
     "yaml": "^2.8.4",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.23.0"

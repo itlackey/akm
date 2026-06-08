@@ -32,6 +32,7 @@ import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from ".
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "../output/cli-hints";
 import { getHyphenatedArg, getOutputMode, parseDetailLevel } from "../output/context";
 import { formatEventLine } from "../output/text";
+import { getDirname } from "../runtime";
 import { akmEventsList, akmEventsTail } from "./events";
 
 // ── `akm log` ────────────────────────────────────────────────────────────────
@@ -246,7 +247,7 @@ function loadHints(detail: "brief" | "normal" | "full" = "normal"): string {
 
   // Try reading from the docs/ directory (works in dev and when installed via npm)
   try {
-    const docsPath = path.resolve(import.meta.dir ?? __dirname, `../../docs/agents/${filename}`);
+    const docsPath = path.resolve(getDirname(import.meta.url), `../../docs/agents/${filename}`);
     if (fs.existsSync(docsPath)) {
       return fs.readFileSync(docsPath, "utf8");
     }

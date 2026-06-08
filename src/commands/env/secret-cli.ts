@@ -30,6 +30,7 @@ import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg } from "../../output/context";
+import { readStdin } from "../../runtime";
 
 /** Walk `secrets/` across all stashes, returning one entry per secret file. */
 function listSecretsRecursive(): Array<{ ref: string; path: string }> {
@@ -121,19 +122,11 @@ const secretSetCommand = defineCommand({
         if (process.stdin.isTTY) {
           process.stderr.write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
         }
-        let totalBytes = 0;
-        const chunks: Uint8Array[] = [];
-        for await (const chunk of Bun.stdin.stream()) {
-          totalBytes += chunk.byteLength;
-          if (totalBytes > MAX_SECRET_BYTES) {
-            throw new UsageError("Secret exceeds the 5 MB limit.");
-          }
-          chunks.push(chunk);
-        }
+        const stdinBuf = await readStdin(MAX_SECRET_BYTES, () => new UsageError("Secret exceeds the 5 MB limit."));
         // Strip a single trailing newline so `echo "$TOKEN" | akm secret set`
         // stores the token without the shell-added newline. Use --from-file for
         // byte-exact storage of multi-line material (PEM keys, certs).
-        value = Buffer.from(Buffer.concat(chunks).toString("utf8").replace(/\n$/, ""), "utf8");
+        value = Buffer.from(stdinBuf.toString("utf8").replace(/\n$/, ""), "utf8");
       }
 
       setSecret(absPath, value);

@@ -37,6 +37,7 @@ import { error } from "../core/warn";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { resolveRunner } from "../integrations/agent/runner";
+import { spawn } from "../runtime";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunStatus } from "../sources/types";
 import type { WorkflowRunDetail } from "../workflows/runtime/runs";
@@ -167,7 +168,7 @@ async function runCommandTask(input: {
   let exitCode: number | null = null;
 
   try {
-    const proc = Bun.spawn(cmd, {
+    const proc = spawn(cmd, {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

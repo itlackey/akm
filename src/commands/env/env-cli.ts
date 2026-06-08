@@ -33,6 +33,7 @@ import { appendEvent } from "../../core/events";
 import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, parseFlagValue } from "../../output/context";
+import { readStdin } from "../../runtime";
 
 /**
  * Walk each stash's env files and return one entry per `.env` file, using the
@@ -142,16 +143,11 @@ const envCreateCommand = defineCommand({
           content = fs.readFileSync(fromFile, "utf8");
         } else {
           const MAX_ENV_BYTES = 1024 * 1024; // 1 MB
-          let total = 0;
-          const chunks: Uint8Array[] = [];
-          for await (const chunk of Bun.stdin.stream()) {
-            total += chunk.byteLength;
-            if (total > MAX_ENV_BYTES) {
-              throw new UsageError("Env file exceeds 1 MB limit.", "INVALID_FLAG_VALUE");
-            }
-            chunks.push(chunk);
-          }
-          content = Buffer.concat(chunks).toString("utf8");
+          const buf = await readStdin(
+            MAX_ENV_BYTES,
+            () => new UsageError("Env file exceeds 1 MB limit.", "INVALID_FLAG_VALUE"),
+          );
+          content = buf.toString("utf8");
         }
         writeEnv(absPath, content);
       } else {
@@ -493,15 +489,9 @@ const envSetCommand = defineCommand({
         }
         value = v;
       } else {
-        let total = 0;
-        const chunks: Uint8Array[] = [];
-        for await (const chunk of Bun.stdin.stream()) {
-          total += chunk.byteLength;
-          if (total > MAX_ENV_VALUE_BYTES) throw new UsageError("Value exceeds the 1 MB limit.");
-          chunks.push(chunk);
-        }
+        const buf = await readStdin(MAX_ENV_VALUE_BYTES, () => new UsageError("Value exceeds the 1 MB limit."));
         // Strip a single trailing newline so `echo "$VAL" | akm env set` is exact.
-        value = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
+        value = buf.toString("utf8").replace(/\n$/, "");
       }
       setEnvKey(absPath, key, value);
       // Warn (never block) on process-hijacking key names, matching the env-run audit.

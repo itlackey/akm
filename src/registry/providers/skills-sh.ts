@@ -6,6 +6,7 @@ import { fetchWithRetry } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
+import { md5Hex } from "../../runtime";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type {
@@ -283,13 +284,7 @@ class SkillsShProvider implements RegistryProvider {
   // ── DB cache key ────────────────────────────────────────────────────────
 
   private queryDbCacheKey(query: string, limit: number): string {
-    const hasher = new Bun.CryptoHasher("md5");
-    hasher.update(this.config.url);
-    hasher.update("\0");
-    hasher.update(query.trim().toLowerCase());
-    hasher.update("\0");
-    hasher.update(String(limit));
-    const hash = hasher.digest("hex");
+    const hash = md5Hex(`${this.config.url}\0${query.trim().toLowerCase()}\0${String(limit)}`);
     return `skills-sh:${hash}`;
   }
 }

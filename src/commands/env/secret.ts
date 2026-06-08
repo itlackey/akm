@@ -30,6 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../../core/common";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { sleepSync } from "../../runtime";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
 
@@ -58,17 +59,7 @@ export function withSecretLock<T>(secretPath: string, fn: () => T): T {
         `Could not acquire secret lock for ${secretPath} after 5s.${holderHint} Retry once any other akm secret operation finishes, or remove the stale lock file.`,
       );
     }
-    if (
-      typeof (globalThis as Record<string, unknown> & { Bun?: { sleepSync?: (ms: number) => void } }).Bun?.sleepSync ===
-      "function"
-    ) {
-      (globalThis as Record<string, unknown> & { Bun: { sleepSync: (ms: number) => void } }).Bun.sleepSync(10);
-    } else {
-      let spin = 0;
-      while (spin++ < 100_000) {
-        /* yield */
-      }
-    }
+    sleepSync(10);
   }
 
   try {

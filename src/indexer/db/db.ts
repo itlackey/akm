@@ -11,6 +11,7 @@ import { getDbPath } from "../../core/paths";
 import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
+import { sha256Hex } from "../../runtime";
 import { type Database, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
@@ -1843,16 +1844,12 @@ export function clearStaleCacheEntries(db: Database): void {
 }
 
 /**
- * Compute a stable SHA-256 hex digest of a UTF-8 string using Bun's native
- * hashing. Used as the body_hash key in `llm_enrichment_cache`.
- *
- * Bun.CryptoHasher is synchronous and allocation-free compared to Web Crypto,
- * making it suitable for use inside tight per-asset loops.
+ * Compute a stable SHA-256 hex digest of a UTF-8 string. Used as the body_hash
+ * key in `llm_enrichment_cache`. Routed through the runtime boundary so the
+ * SQLite layer stays free of direct runtime-specific references.
  */
 export function computeBodyHash(body: string): string {
-  const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(body);
-  return hasher.digest("hex");
+  return sha256Hex(body);
 }
 
 /**

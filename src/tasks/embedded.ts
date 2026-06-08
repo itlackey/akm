@@ -20,9 +20,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
+import { getDirname } from "../runtime";
 
 /** Directory holding the bundled core task templates. */
-const CORE_TASKS_DIR = path.join(import.meta.dir, "../assets/tasks/core");
+const CORE_TASKS_DIR = path.join(getDirname(import.meta.url), "../assets/tasks/core");
 
 export interface EmbeddedTask {
   /**
