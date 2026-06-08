@@ -115,6 +115,45 @@ describe("runTask — workflow target", () => {
     expect(rows[0].id).toBe("wf");
     expect(rows[0].status).toBe("completed");
   });
+
+  // M4: mapWorkflowStatus is now an exhaustive switch over WorkflowRunStatus
+  // with an assertNever default (no silent `default: "completed"`). Lock in the
+  // exact output for every runtime status so the explicit mapping provably
+  // reproduces the previous behaviour for all known statuses.
+  const STATUS_CASES = [
+    { wf: "completed", expected: "completed" },
+    { wf: "blocked", expected: "blocked" },
+    { wf: "failed", expected: "failed" },
+    { wf: "active", expected: "active" },
+  ] as const;
+  for (const { wf, expected } of STATUS_CASES) {
+    test(`maps workflow run status "${wf}" → task status "${expected}"`, async () => {
+      writeTask("map", ['schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
+      const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => ({
+        run: {
+          id: "run-map",
+          workflowRef: ref,
+          workflowTitle: "Noop",
+          status: wf,
+          params,
+          createdAt: "2025-01-01T00:00:00Z",
+          updatedAt: "2025-01-01T00:00:00Z",
+          completedAt: null,
+          currentStepId: null,
+        },
+        workflow: { ref, title: "Noop", steps: [] },
+      });
+
+      const result = await runTask("map", {
+        stashDir,
+        logDir,
+        startWorkflowRunImpl: fakeWf as never,
+        now: () => new Date("2025-01-01T00:00:00Z"),
+      });
+
+      expect(result.status).toBe(expected);
+    });
+  }
 });
 
 describe("runTask — prompt target", () => {

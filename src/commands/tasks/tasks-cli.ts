@@ -32,20 +32,6 @@ import {
   parseTaskRef,
 } from "./tasks";
 
-const TASKS_SUBCOMMAND_SET = new Set([
-  "add",
-  "init",
-  "list",
-  "show",
-  "remove",
-  "enable",
-  "disable",
-  "run",
-  "history",
-  "sync",
-  "doctor",
-]);
-
 const tasksAddCommand = defineJsonCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
   args: {
@@ -215,25 +201,30 @@ const tasksDoctorCommand = defineJsonCommand({
   },
 });
 
+// Single source of truth: the routing set is derived from the subCommands keys
+// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
+const tasksSubCommands = {
+  add: tasksAddCommand,
+  init: tasksInitCommand,
+  list: tasksListCommand,
+  show: tasksShowCommand,
+  remove: tasksRemoveCommand,
+  enable: tasksEnableCommand,
+  disable: tasksDisableCommand,
+  run: tasksRunCommand,
+  history: tasksHistoryCommand,
+  sync: tasksSyncCommand,
+  doctor: tasksDoctorCommand,
+};
+const TASKS_SUBCOMMAND_SET = new Set(Object.keys(tasksSubCommands));
+
 export const tasksCommand = defineCommand({
   meta: {
     name: "tasks",
     alias: "task",
     description: "Schedule workflows or prompts via the OS-native scheduler (cron / launchd / schtasks)",
   },
-  subCommands: {
-    add: tasksAddCommand,
-    init: tasksInitCommand,
-    list: tasksListCommand,
-    show: tasksShowCommand,
-    remove: tasksRemoveCommand,
-    enable: tasksEnableCommand,
-    disable: tasksDisableCommand,
-    run: tasksRunCommand,
-    history: tasksHistoryCommand,
-    sync: tasksSyncCommand,
-    doctor: tasksDoctorCommand,
-  },
+  subCommands: tasksSubCommands,
   run({ args }) {
     return runWithJsonErrors(async () => {
       if (hasSubcommand(args, TASKS_SUBCOMMAND_SET)) return;

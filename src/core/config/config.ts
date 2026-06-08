@@ -33,6 +33,7 @@ export type {
   BaseConnectionConfig,
   ConfiguredSource,
   EmbeddingConnectionConfig,
+  HarnessId,
   ImproveConfig,
   ImproveProcessConfig,
   ImproveProfileConfig,
@@ -48,6 +49,8 @@ export type {
   SourceConfigEntryOptions,
   SourceSpec,
 } from "./config-types";
+// Canonical harness-id source of truth (#565) — runtime value re-export.
+export { VALID_HARNESS_IDS } from "./config-types";
 
 // ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
 

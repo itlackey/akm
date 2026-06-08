@@ -34,8 +34,6 @@ import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, parseFlagValue } from "../../output/context";
 
-const ENV_SUBCOMMAND_SET = new Set(["list", "path", "export", "run", "create", "set", "unset", "remove"]);
-
 /**
  * Walk each stash's env files and return one entry per `.env` file, using the
  * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
@@ -568,22 +566,27 @@ const envUnsetCommand = defineCommand({
   },
 });
 
+// Single source of truth: the routing set is derived from the subCommands keys
+// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
+const envSubCommands = {
+  list: envListCommand,
+  path: envPathCommand,
+  export: envExportCommand,
+  run: envRunCommand,
+  create: envCreateCommand,
+  set: envSetCommand,
+  unset: envUnsetCommand,
+  remove: envRemoveCommand,
+};
+const ENV_SUBCOMMAND_SET = new Set(Object.keys(envSubCommands));
+
 export const envCommand = defineCommand({
   meta: {
     name: "env",
     description:
       "Manage `.env` files — a group of related CONFIGURATION values for an app or service (URLs, flags, plus any credentials it needs), loaded together. Values may or may not be sensitive; akm protects them all the same (key names visible, values never in structured output). For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.",
   },
-  subCommands: {
-    list: envListCommand,
-    path: envPathCommand,
-    export: envExportCommand,
-    run: envRunCommand,
-    create: envCreateCommand,
-    set: envSetCommand,
-    unset: envUnsetCommand,
-    remove: envRemoveCommand,
-  },
+  subCommands: envSubCommands,
   run({ args }) {
     return runWithJsonErrors(async () => {
       if (hasSubcommand(args, ENV_SUBCOMMAND_SET)) return;

@@ -26,6 +26,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertNever } from "../core/assert";
 import { parseAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
@@ -37,6 +38,7 @@ import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgen
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { resolveRunner } from "../integrations/agent/runner";
 import { resolveAssetPath } from "../sources/resolve";
+import type { WorkflowRunStatus } from "../sources/types";
 import type { WorkflowRunDetail } from "../workflows/runtime/runs";
 import { startWorkflowRun } from "../workflows/runtime/runs";
 import { parseTaskDocument } from "./parser";
@@ -291,8 +293,18 @@ async function runWorkflowTask(input: {
  * returns (multi-step workflows pause for user input); recording them as
  * "completed" would be misleading. We preserve "active" as a first-class
  * task status with exit code 0 — the OS scheduler treats it as success.
+ *
+ * The parameter is typed as the runtime's `WorkflowRunStatus` union (plus the
+ * `undefined` that `detail?.run.status` can produce when no detail is present).
+ * Every union member is handled explicitly and the `default` arm calls
+ * `assertNever`, so adding a new `WorkflowRunStatus` variant without mapping it
+ * here is a *compile* error rather than silently collapsing to "completed".
+ * The previous silent `default: "completed"` is preserved only for the
+ * `undefined` (no-detail) case, which is handled up front.
  */
-function mapWorkflowStatus(status: string | undefined): TaskRunStatus {
+function mapWorkflowStatus(status: WorkflowRunStatus | undefined): TaskRunStatus {
+  // No run detail → treat as completed (unchanged from the prior silent default).
+  if (status === undefined) return "completed";
   switch (status) {
     case "completed":
     case "blocked":
@@ -300,7 +312,7 @@ function mapWorkflowStatus(status: string | undefined): TaskRunStatus {
     case "active":
       return status;
     default:
-      return "completed";
+      return assertNever(status, "mapWorkflowStatus");
   }
 }
 

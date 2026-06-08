@@ -151,7 +151,21 @@ export const infoCommand = defineJsonCommand({
 
 // MVP DB administration. Currently only `akm db backups`; restore is manual —
 // stop akm and run `scripts/migrations/restore-data-dir.sh <backup>`.
-const DB_SUBCOMMAND_SET = new Set(["backups"]);
+// Single source of truth: the routing set is derived from the subCommands keys
+// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
+const dbSubCommands = {
+  backups: defineJsonCommand({
+    meta: {
+      name: "backups",
+      description:
+        "List pre-upgrade snapshots of the data directory (newest first). Backups are created automatically before destructive DB version upgrades unless AKM_DB_BACKUP=0.",
+    },
+    run() {
+      output("db-backups", akmDbBackups());
+    },
+  }),
+};
+const DB_SUBCOMMAND_SET = new Set(Object.keys(dbSubCommands));
 
 export const dbCommand = defineJsonCommand({
   meta: {
@@ -159,18 +173,7 @@ export const dbCommand = defineJsonCommand({
     description:
       "Inspect the AKM SQLite data directory. Currently exposes `backups`; to restore from a snapshot, stop akm and run scripts/migrations/restore-data-dir.sh against the chosen backup.",
   },
-  subCommands: {
-    backups: defineJsonCommand({
-      meta: {
-        name: "backups",
-        description:
-          "List pre-upgrade snapshots of the data directory (newest first). Backups are created automatically before destructive DB version upgrades unless AKM_DB_BACKUP=0.",
-      },
-      run() {
-        output("db-backups", akmDbBackups());
-      },
-    }),
-  },
+  subCommands: dbSubCommands,
   run({ args }) {
     if (hasSubcommand(args, DB_SUBCOMMAND_SET)) return;
     // Default action: list backups.

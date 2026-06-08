@@ -13,6 +13,18 @@
 import type { InstalledStashEntry } from "../../registry/types";
 
 /**
+ * Canonical list of valid agent harness / platform ids — the single source of
+ * truth (#565). The Zod `AgentPlatformSchema` enum, the `AgentProfileConfigV2`
+ * platform union, `parseAgentProfilesMapV2`'s membership check, and setup's
+ * `DetectedHarness` union all derive from this array so they cannot drift.
+ * Add a harness here and every validation gate updates with it.
+ */
+export const VALID_HARNESS_IDS = ["opencode", "claude", "opencode-sdk"] as const;
+
+/** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
+export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
+
+/**
  * Fields shared by every OpenAI-compatible connection config (embedding +
  * LLM). Specialized configs extend this base. Pure type DRY — the on-disk
  * JSON schema is unchanged.
@@ -103,7 +115,7 @@ export interface LlmProfileConfig extends LlmConnectionConfig {
 }
 
 export interface AgentProfileConfigV2 {
-  platform: "opencode" | "claude" | "opencode-sdk";
+  platform: HarnessId;
   bin?: string;
   args?: string[];
   workspace?: string;

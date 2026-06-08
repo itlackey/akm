@@ -5,6 +5,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { assertNever } from "../../core/assert";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AkmAssetType, daysToMs, isAssetType } from "../../core/common";
@@ -19,6 +20,7 @@ import type {
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
+import { classifyImproveAction } from "../../core/improve-types";
 import { getDbPath } from "../../core/paths";
 import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
@@ -677,6 +679,64 @@ function isSignalDeltaEligible(
   return fb > lp;
 }
 
+/**
+ * H7 (#566): cooperative budget watchdog with a captured, RAII-cleared hard-kill.
+ *
+ * When the wall-clock budget expires, `onExhausted` (normally an
+ * `AbortController.abort`) signals cooperative cancellation so the run can drain
+ * its in-flight log/`state.db` flush and unwind naturally. A second hard-kill
+ * timer is then armed as a watchdog: it only `exit(0)`s if the drain itself
+ * overruns `hardKillGraceMs`, preventing the process from outliving the task
+ * timeout window (lock-cascade fix).
+ *
+ * Both timers are captured; the returned dispose() clears whichever is still
+ * pending. Callers invoke it from a `finally`, so a *clean* drain reaches the
+ * `finally` and cancels the pending hard-kill before it can fire — the previous
+ * detached `setTimeout(() => process.exit(0), 5000)` always fired, truncating a
+ * clean flush. The hard-kill timer is `unref()`-ed so it never keeps the event
+ * loop alive on its own: once the run drains it exits with its own code, not the
+ * forced 0.
+ *
+ * Dependencies are injectable purely so the concurrency-sensitive timing
+ * contract can be exercised deterministically in unit tests.
+ */
+export function armBudgetWatchdog(
+  budgetMs: number,
+  controller: AbortController,
+  deps?: {
+    setTimeoutFn?: typeof setTimeout;
+    clearTimeoutFn?: typeof clearTimeout;
+    exitFn?: (code: number) => void;
+    hardKillGraceMs?: number;
+  },
+): () => void {
+  const setTimeoutFn = deps?.setTimeoutFn ?? setTimeout;
+  const clearTimeoutFn = deps?.clearTimeoutFn ?? clearTimeout;
+  const exitFn = deps?.exitFn ?? ((code: number) => process.exit(code));
+  const hardKillGraceMs = deps?.hardKillGraceMs ?? 5_000;
+
+  let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const budgetTimer = setTimeoutFn(() => {
+    // Cooperative cancellation first: let the run drain.
+    controller.abort("improve budget exhausted");
+    // Watchdog: only force-exit if the drain itself overruns the grace period.
+    // Exit 0: budget exhaustion is a normal scheduled-task condition, not an error.
+    hardKillTimer = setTimeoutFn(() => exitFn(0), hardKillGraceMs);
+    // Never keep the event loop alive solely for the watchdog.
+    hardKillTimer.unref?.();
+  }, budgetMs);
+
+  // RAII dispose: clears whichever timer is still pending. Idempotent.
+  return () => {
+    clearTimeoutFn(budgetTimer);
+    if (hardKillTimer !== undefined) {
+      clearTimeoutFn(hardKillTimer);
+      hardKillTimer = undefined;
+    }
+  };
+}
+
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
   const scope: ImproveScope = resolveImproveScope(options.scope);
   const reflectFn = options.reflectFn ?? akmReflect;
@@ -971,15 +1031,14 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let eventsCtx: EventsContext = {};
 
   try {
-    const budgetTimer = setTimeout(() => {
-      budgetAbortController.abort("improve budget exhausted");
-      // Grace period: let finally run to release improve.lock, then hard-exit
-      // to prevent the process outliving the task timeout window (lock-cascade fix).
-      // Exit 0: budget exhaustion is a normal scheduled-task condition, not an error.
-      setTimeout(() => process.exit(0), 5_000);
-    }, budgetMs);
-    // Clear the timer when the run ends to avoid keeping the event loop alive.
-    clearBudgetTimer = () => clearTimeout(budgetTimer);
+    // H7 (#566): arm the budget watchdog. `armBudgetWatchdog` captures both the
+    // budget timer and the hard-kill timer it schedules on exhaustion, returning
+    // a single dispose() that clears whichever are still pending. The `finally`
+    // calls dispose() via `clearBudgetTimer` (RAII), so a clean cooperative
+    // drain cancels the pending hard-kill before it can fire — the process then
+    // exits naturally instead of being force-`exit(0)`-ed mid-flush, which could
+    // truncate an in-flight log or `state.db` transaction.
+    clearBudgetTimer = armBudgetWatchdog(budgetMs, budgetAbortController);
 
     try {
       eventsDb = openStateDatabase();
@@ -1299,6 +1358,7 @@ function emitImproveCompletedEvent(
     reflectFailed: 0,
     reflectCooldown: 0,
     reflectSkipped: 0,
+    reflectGuardRejected: 0,
     distill: 0,
     distillSkipped: 0,
     memoryPrune: 0,
@@ -1306,7 +1366,16 @@ function emitImproveCompletedEvent(
     graphExtraction: 0,
     error: 0,
   };
+  // Coarse audit buckets, derived from the SAME classifyImproveAction the
+  // persisted metrics_json uses (state-db.ts#computeImproveRunMetrics) so the
+  // emitted event and the stored row can never disagree.
+  const classCounts = { accepted: 0, rejected: 0, error: 0, noop: 0 };
   for (const action of result.actions ?? []) {
+    classCounts[classifyImproveAction(action.mode)] += 1;
+    // Per-variant counters for the event metadata. The default arm makes any
+    // new ImproveActionMode variant a compile error so a future variant cannot
+    // be silently dropped from the improve_completed event (the `reflect-guard-
+    // rejected` case below was previously missing here entirely).
     switch (action.mode) {
       case "reflect":
         actionCounts.reflect += 1;
@@ -1319,6 +1388,9 @@ function emitImproveCompletedEvent(
         break;
       case "reflect-skipped":
         actionCounts.reflectSkipped += 1;
+        break;
+      case "reflect-guard-rejected":
+        actionCounts.reflectGuardRejected += 1;
         break;
       case "distill":
         actionCounts.distill += 1;
@@ -1338,6 +1410,8 @@ function emitImproveCompletedEvent(
       case "error":
         actionCounts.error += 1;
         break;
+      default:
+        assertNever(action.mode);
     }
   }
 
@@ -1360,6 +1434,12 @@ function emitImproveCompletedEvent(
         reflectFailedActions: actionCounts.reflectFailed,
         reflectCooldownActions: actionCounts.reflectCooldown,
         reflectSkippedActions: actionCounts.reflectSkipped,
+        // Previously dropped from the event entirely; now emitted so the guard
+        // rejections are visible in improve_completed telemetry.
+        reflectGuardRejectedActions: actionCounts.reflectGuardRejected,
+        acceptedActions: classCounts.accepted,
+        rejectedActions: classCounts.rejected,
+        noopActions: classCounts.noop,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,
         evalCasesWritten: result.evalCasesWritten ?? 0,

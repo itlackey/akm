@@ -58,6 +58,7 @@ import type { Proposal } from "../commands/proposal/validators/proposals";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
+import { classifyImproveAction } from "./improve-types";
 import { getDataDir } from "./paths";
 import { error } from "./warn";
 
@@ -1131,25 +1132,23 @@ export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMe
   let errorCount = 0;
 
   for (const action of actions) {
-    switch (action.mode) {
-      case "reflect":
-      case "distill":
-      case "memory-inference":
-      case "graph-extraction":
+    // Bucketing delegated to the shared classifyImproveAction so this aggregate
+    // and the improve_completed event in improve.ts can never disagree, and so a
+    // new union variant is a compile error rather than a silent drop. Note:
+    // `reflect-guard-rejected` now counts as "rejected" (previously this switch
+    // omitted it entirely — a data-integrity miscount). "noop" (memory-prune) is
+    // intentionally counted in none of the three numeric buckets.
+    switch (classifyImproveAction(action.mode)) {
+      case "accepted":
         acceptedCount++;
         break;
-      case "reflect-cooldown":
-      case "reflect-skipped":
-      case "distill-skipped":
+      case "rejected":
         rejectedCount++;
         break;
-      case "reflect-failed":
       case "error":
         errorCount++;
         break;
-      case "memory-prune":
-        // Prune is bookkeeping, not "accepted" content authoring; count
-        // separately as a no-op for the audit aggregate.
+      case "noop":
         break;
     }
     // Legacy: pre-gate action results may carry autoAccepted: true (reflect path).

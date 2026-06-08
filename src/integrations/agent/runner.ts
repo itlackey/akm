@@ -14,6 +14,28 @@ export type RunnerSpec =
   | { kind: "agent"; profile: AgentProfile; timeoutMs?: number }
   | { kind: "sdk"; profile: AgentProfile; timeoutMs?: number };
 
+// ── RunnerSpec capability predicates (H1) ───────────────────────────────────
+// The `RunnerSpec` union is dispatched ad-hoc across the improve slice. These
+// predicates co-locate the capability questions with the union definition so
+// callers stop hand-inlining `kind !== "llm"` (which couples the call site to
+// the exact shape of the union). They are typed as TypeScript type guards so
+// narrowing flows through to the `connection` / `profile` accessors.
+
+/** The in-tree LLM HTTP runner (`chatCompletion`); has no filesystem access. */
+export function runnerIsLlm(runner: RunnerSpec): runner is Extract<RunnerSpec, { kind: "llm" }> {
+  return runner.kind === "llm";
+}
+
+/**
+ * Whether this runner can honour the file-write contract. Agent CLI + OpenCode
+ * SDK runners both have filesystem access; the direct LLM HTTP runner does NOT
+ * (see `src/llm/call-ai.ts`). Equivalent to `!runnerIsLlm(runner)` but names
+ * the capability the callers actually care about.
+ */
+export function runnerSupportsFileWrite(runner: RunnerSpec): runner is Extract<RunnerSpec, { kind: "agent" | "sdk" }> {
+  return runner.kind !== "llm";
+}
+
 function resolveEffectiveMode(
   entry: ImproveProcessConfig,
   profileName: string | undefined,

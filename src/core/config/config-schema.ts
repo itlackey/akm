@@ -29,6 +29,7 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
+import { VALID_HARNESS_IDS } from "./config-types";
 
 // ── Reusable atomic schemas ─────────────────────────────────────────────────
 
@@ -124,7 +125,9 @@ export const EmbeddingConnectionConfigSchema = z
 
 // ── Agent profiles ──────────────────────────────────────────────────────────
 
-const AgentPlatformSchema = z.enum(["opencode", "claude", "opencode-sdk"]);
+// Derives from the canonical VALID_HARNESS_IDS (#565) so the Zod gate cannot
+// drift from the TS union / parse check / setup detection.
+const AgentPlatformSchema = z.enum(VALID_HARNESS_IDS);
 
 export const AgentProfileConfigSchema = z
   .object({

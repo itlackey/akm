@@ -31,8 +31,6 @@ import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg } from "../../output/context";
 
-const SECRET_SUBCOMMAND_SET = new Set(["list", "path", "run", "set", "remove"]);
-
 /** Walk `secrets/` across all stashes, returning one entry per secret file. */
 function listSecretsRecursive(): Array<{ ref: string; path: string }> {
   const result: Array<{ ref: string; path: string }> = [];
@@ -267,19 +265,24 @@ const secretRemoveCommand = defineCommand({
   },
 });
 
+// Single source of truth: the routing set is derived from the subCommands keys
+// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
+const secretSubCommands = {
+  list: secretListCommand,
+  path: secretPathCommand,
+  run: secretRunCommand,
+  set: secretSetCommand,
+  remove: secretRemoveCommand,
+};
+const SECRET_SUBCOMMAND_SET = new Set(Object.keys(secretSubCommands));
+
 export const secretCommand = defineCommand({
   meta: {
     name: "secret",
     description:
       "Manage secrets — a single sensitive value used on its own for authentication (an API token, a PEM private key, a TLS cert), one value per file. Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`.",
   },
-  subCommands: {
-    list: secretListCommand,
-    path: secretPathCommand,
-    run: secretRunCommand,
-    set: secretSetCommand,
-    remove: secretRemoveCommand,
-  },
+  subCommands: secretSubCommands,
   run({ args }) {
     return runWithJsonErrors(async () => {
       if (hasSubcommand(args, SECRET_SUBCOMMAND_SET)) return;

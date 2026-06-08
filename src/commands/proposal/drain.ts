@@ -38,6 +38,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertNever } from "../../core/assert";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -375,6 +376,10 @@ async function dispatchJudgment(
       raw = stdout;
       break;
     }
+    default:
+      // Exhaustiveness arm (H1): a 4th RunnerSpec kind becomes a compile error
+      // here instead of leaving `raw` undefined at runtime.
+      return assertNever(runner);
   }
   return parseJudgmentVerdict(raw);
 }
