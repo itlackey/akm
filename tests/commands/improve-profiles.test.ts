@@ -47,6 +47,10 @@ describe("resolveImproveProfile", () => {
     const profile = resolveImproveProfile("quick", MINIMAL_CONFIG);
     expect(profile.description).toContain("Reflect-only");
     expect(profile.processes?.reflect?.enabled).toBe(true);
+    // 0.8.3: extract is default-ON, so "reflect-only" must disable it explicitly —
+    // otherwise `quick` runs the full session-extract backlog (~40 min) and cron
+    // timeouts SIGTERM it every run.
+    expect(profile.processes?.extract?.enabled).toBe(false);
     expect(profile.processes?.distill?.enabled).toBe(false);
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(false);
