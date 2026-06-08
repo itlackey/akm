@@ -20,6 +20,18 @@ for await (const src of assetGlob.scan(".")) {
   await Bun.write(dest, Bun.file(src));
 }
 
+// 3. Copy the Node-runtime entry wrapper + text-import loader hook into dist/.
+//    These let `node dist/cli-node.mjs` run akm end-to-end on Node (the bun:*
+//    text-import that Bun loads natively needs a loader hook on Node). They are
+//    plain Node ESM (.mjs), copied verbatim — never imported under Bun.
+const nodeRuntimeFiles = ["scripts/node-runtime/cli-node.mjs", "scripts/node-runtime/text-import-hook.mjs"];
+for (const src of nodeRuntimeFiles) {
+  const dest = src.replace(/^scripts\/node-runtime\//, "dist/");
+  await mkdir(dirname(dest), { recursive: true });
+  await Bun.write(dest, Bun.file(src));
+}
+chmodSync("dist/cli-node.mjs", 0o755);
+
 const migrationEntrypoints = [
   "scripts/migrate-storage.ts",
   "scripts/migrations/import-fs-improve-runs-to-db.ts",
