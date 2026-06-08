@@ -20,7 +20,7 @@ import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
 import { listAgentProfileNames } from "../../integrations/agent";
 import { resolveAssetPath } from "../../sources/resolve";
-import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
+import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
 import { parseTaskDocument } from "../../tasks/parser";
 import { resolveAkmInvocation } from "../../tasks/resolveAkmBin";
 import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from "../../tasks/runner";
@@ -297,7 +297,13 @@ export async function akmTasksSetEnabled(
   fs.writeFileSync(filePath, updated, "utf8");
   const sched = selectBackend();
   try {
-    await sched.setEnabled(normalised, enabled);
+    // Reinstall from the (just-updated) definition rather than only toggling
+    // the comment. A plain toggle leaves a stale schedule in place if the
+    // .yml's `schedule:` changed while the task was disabled — re-enabling
+    // would silently keep the old cron line. install() renders the block with
+    // both the current schedule and the new enabled state, and is idempotent.
+    const task = parseTaskDocument({ yaml: updated, filePath, id: normalised });
+    await sched.install(task);
   } catch (err) {
     // Roll the file back so the YAML source-of-truth and the OS
     // scheduler don't diverge silently when the backend call fails.
@@ -341,6 +347,8 @@ export async function akmTasksHistory(input: { id?: string; limit?: number }): P
 
 export interface TasksSyncResult {
   installed: string[];
+  /** Tasks whose installed schedule/enabled state drifted from the .yml and were reinstalled. */
+  updated: string[];
   removed: string[];
   unchanged: string[];
   skipped: { id: string; reason: string }[];
@@ -351,9 +359,12 @@ export interface TasksSyncResult {
  * Reconcile the on-disk task files with the OS scheduler.
  *   • install missing tasks (after validating them — invalid files are
  *     skipped with a per-task reason rather than aborting the whole sync)
+ *   • reinstall tasks whose schedule or enabled state changed in the .yml
+ *     (drift detected by comparing the backend's installed signature against
+ *     the signature the current definition would produce)
  *   • remove orphan scheduler entries that no longer have a backing file
  */
-export async function akmTasksSync(): Promise<TasksSyncResult> {
+export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promise<TasksSyncResult> {
   const stashDir = resolveStashDir();
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
@@ -363,10 +374,13 @@ export async function akmTasksSync(): Promise<TasksSyncResult> {
         .filter((f) => f.endsWith(".yml"))
         .map((f) => f.slice(0, -4))
     : [];
-  const sched = selectBackend();
+  const sched = deps.backend ?? selectBackend();
   const backend = backendNameForPlatform();
-  const present = new Set((await sched.list()).map((t) => t.id));
+  // Map id → installed signature so sync can detect schedule/enabled drift on
+  // tasks that already exist in the scheduler, not just presence/absence.
+  const present = new Map((await sched.list()).map((t) => [t.id, t.signature] as const));
   const installed: string[] = [];
+  const updated: string[] = [];
   const unchanged: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
 
@@ -385,22 +399,34 @@ export async function akmTasksSync(): Promise<TasksSyncResult> {
       skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
       continue;
     }
-    if (present.has(id)) {
+    if (!present.has(id)) {
+      await sched.install(task);
+      installed.push(id);
+      continue;
+    }
+    // Already installed — reconcile against the current definition. Compare the
+    // installed signature to what this task would render to; reinstall on drift.
+    // When the backend can't produce a signature (no expectedSignature, or it
+    // didn't record one), reinstall unconditionally — install() is idempotent,
+    // so the cost is one crontab write and correctness is guaranteed.
+    const installedSig = present.get(id);
+    const expectedSig = sched.expectedSignature?.(task);
+    if (installedSig !== undefined && expectedSig !== undefined && installedSig === expectedSig) {
       unchanged.push(id);
     } else {
       await sched.install(task);
-      installed.push(id);
+      updated.push(id);
     }
   }
 
   const removed: string[] = [];
-  for (const installedId of present) {
+  for (const installedId of present.keys()) {
     if (!fileIds.includes(installedId)) {
       await sched.uninstall(installedId);
       removed.push(installedId);
     }
   }
-  return { installed, removed, unchanged, skipped, backend: sched.name };
+  return { installed, updated, removed, unchanged, skipped, backend: sched.name };
 }
 
 export interface TasksDoctorResult {

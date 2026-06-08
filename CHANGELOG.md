@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm tasks sync` ignored schedule changes** — forward-ported from 0.8.4.
+  Sync classified any task already present in the OS scheduler as "unchanged"
+  without comparing its installed entry, so editing a task's `schedule:` in the
+  `.yml` never reached the crontab; the same gap affected `tasks enable`/`disable`
+  (toggled the comment, re-enabling a stale schedule). Sync now compares the
+  backend's installed signature against the signature the current definition
+  renders to and reinstalls on drift (new `updated[]` field); `enable`/`disable`
+  reinstall from the current `.yml`. The cron backend gains `expectedSignature()`
+  and a per-entry signature on `list()`; other backends fall back to an
+  idempotent reinstall.
+
+### Added
+
+- **`akm improve --skip-if-locked`** — forward-ported from 0.8.4. When another
+  improve run already holds the lock, the run logs and exits 0 with a no-op
+  result (`skipped.reason: "lock-held"`) instead of failing with the "already
+  running" config error (exit 78). Intended for high-frequency scheduled runs
+  (e.g. an every-30-min `quick` pass) that overlap a longer run. Default off.
+
 ### Removed
 
 - **`akm config edit`** — the interactive menu-based editor was removed. A
