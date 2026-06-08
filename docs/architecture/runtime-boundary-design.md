@@ -112,8 +112,8 @@ spawnSync(['git', 'ls-files', ...])
 - Add `better-sqlite3` as `optionalDependency` (prebuilt binaries, no compile step on common platforms)
 - Add `@types/better-sqlite3` to `devDependencies`
 - Add `semver` to `dependencies` (tiny, zero-deps)
-- Add `node: ">=18.0.0"` to `engines`
-- Relax `preinstall` guard to allow Node >= 18
+- Add `node: ">=20.0.0"` to `engines` (Node 20 floor: @clack/core uses node:util styleText)
+- Relax `preinstall` guard to allow Node >= 20
 
 ---
 

@@ -3,26 +3,25 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: akm-cli 0.9 runs on Bun (primary) and Node.js >= 18 (#465,
+// Runtime guard: akm-cli 0.9 runs on Bun (primary) and Node.js >= 20 (#465,
 // #560). The runtime boundary (src/runtime.ts, src/storage/database.ts) makes
 // the Node path additive. Under Node the CLI must be launched via the
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The only hard requirement here is a new-enough Node:
-// the runtime boundary uses Web-stream <-> node:stream bridges (Readable.toWeb)
-// and `node:module` register() that require Node 18+.
+// the supported entry. The hard floor is Node 20: `@clack/core` (prompts) imports
+// `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
     const major = Number.parseInt((process.versions.node ?? "0").split(".")[0], 10);
-    if (Number.isNaN(major) || major < 18) {
+    if (Number.isNaN(major) || major < 20) {
       console.error(
-        "\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh) or Node.js >= 18.\n" +
+        "\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh) or Node.js >= 20.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
           "  Install options:\n" +
           "    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\n" +
-          "    2. Node:   upgrade to Node.js 18 or newer (https://nodejs.org)\n" +
+          "    2. Node:   upgrade to Node.js 20 or newer (https://nodejs.org)\n" +
           "    3. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n",
       );
       process.exit(1);
