@@ -582,6 +582,79 @@ describe("missing-ref check", () => {
     const result = akmLint({ dir: stashDir });
     expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
   });
+
+  // ── H4: registry-derived REF_RE + path mapping ────────────────────────────
+  // env/secret are 0.9 asset types that the legacy hand-written REF_RE +
+  // refToRelPath omitted, so refs to them were invisible to the missing-ref
+  // linter. Now that both are derived from the asset registry, env:/secret:
+  // refs are matched and path-resolved like any other type.
+
+  test("missing-ref: flags a missing env: ref (env/<name>.env)", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "agents",
+      "env-agent.md",
+      "---\nname: env-agent\ntype: agent\nupdated: 2025-01-01\n---\n\nLoads `env:prod` before running.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    const issue = result.flagged.find((i) => i.issue === "missing-ref" && i.detail.includes("env:prod"));
+    expect(issue).toBeDefined();
+    expect(issue?.detail).toContain(path.join("env", "prod.env"));
+  });
+
+  test("missing-ref: flags a missing secret: ref (secrets/<name>)", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "agents",
+      "secret-agent.md",
+      "---\nname: secret-agent\ntype: agent\nupdated: 2025-01-01\n---\n\nAuth via `secret:deploy-key` here.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    const issue = result.flagged.find((i) => i.issue === "missing-ref" && i.detail.includes("secret:deploy-key"));
+    expect(issue).toBeDefined();
+    expect(issue?.detail).toContain(path.join("secrets", "deploy-key"));
+  });
+
+  test("missing-ref: does NOT flag env:/secret: refs when the target files exist", () => {
+    const stashDir = makeTempStash();
+    // env:default -> env/.env ; env:prod -> env/prod.env ; secret:id_rsa -> secrets/id_rsa
+    writeFile(stashDir, "env", ".env", "TOKEN=x\n");
+    writeFile(stashDir, "env", "prod.env", "TOKEN=y\n");
+    writeFile(stashDir, "secrets", "id_rsa", "-----BEGIN-----\n");
+    writeFile(
+      stashDir,
+      "agents",
+      "uses-real.md",
+      "---\nname: uses-real\ntype: agent\nupdated: 2025-01-01\n---\n\nUses `env:default`, `env:prod`, and `secret:id_rsa`.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
+  test("missing-ref: all previously-supported types still resolve unchanged", () => {
+    const stashDir = makeTempStash();
+    writeFile(stashDir, "agents", "a.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "commands", "c.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "knowledge", "k.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "memories", "m.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "workflows", "w.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "lessons", "l.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "wikis", "wk.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(stashDir, "tasks", "t.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(path.join(stashDir, "skills", "s"), "", "SKILL.md", "---\nupdated: 2025-01-01\n---\nx\n");
+    writeFile(
+      stashDir,
+      "agents",
+      "hub.md",
+      "---\nname: hub\ntype: agent\nupdated: 2025-01-01\n---\n\n" +
+        "Refs: `agent:a` `command:c` `knowledge:k` `memory:m` `workflow:w` " +
+        "`lesson:l` `wiki:wk` `task:t` `skill:s`. Also `script:nested/foo` is skipped.\n",
+    );
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
 });
 
 // ── Exit code simulation tests ────────────────────────────────────────────────
