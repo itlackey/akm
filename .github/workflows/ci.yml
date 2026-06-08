@@ -1,12 +1,15 @@
 name: CI
 
-# `release/*` is intentionally listed only under `pull_request`. Every change
-# to a release branch goes through a PR, and the pre-merge pull_request run
-# already validates the merged state (pull_request CI runs against the
-# `refs/pull/N/merge` ref, which is the PR head merged into its base). Adding
-# `release/*` to `push` duplicated every merge with a second redundant run.
-# Direct pushes to `release/*` are not an expected flow; if one is ever needed,
-# re-add the pattern and trust the human operator to read the resulting run.
+# Fast per-commit CI: lint + types + unit tests only. The heavy validation
+# (integration, Node runtime matrix, semantic-search e2e, docker-install,
+# order-dependence flake-detect) runs in `release-gates.yml` on release PRs
+# (into `main`) and on manual dispatch — those are RELEASE gates, not commit
+# gates, so day-to-day commits get fast feedback.
+#
+# `release/*` is intentionally listed only under `pull_request`. Every change to
+# a release branch goes through a PR, and the pull_request run validates the
+# merged state (against `refs/pull/N/merge`). Adding `release/*` to `push` would
+# duplicate every merge with a redundant run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -30,13 +33,14 @@ on:
       - "schemas/**"
       - "CLAUDE.md"
       - "LICENSE"
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    # GitHub-hosted runners have ~4 cores; the test scripts default to
-    # --parallel=12 (tuned for dev machines). Over-subscribing the runner caused
-    # an intermittent Bun-runtime `epoll_ctl EEXIST` race under load, so cap the
-    # worker count to the runner's core count on CI (TEST_PARALLEL).
+    # GitHub runners have ~4 cores; the test scripts default to --parallel=12
+    # (dev machines). Over-subscribing the runner caused an intermittent
+    # Bun-runtime `epoll_ctl EEXIST` race under load, so cap workers to the
+    # runner's core count on CI.
     env:
       TEST_PARALLEL: "4"
     steps:
@@ -46,119 +50,5 @@ jobs:
 
       - run: bun install
 
-      - name: Full project check
-        run: bun run check
-
-  # Order-dependence / flake detector. `bun test` shares ONE process across the
-  # whole unit suite, so a test that leaks process.env, a singleton, fake timers,
-  # or stateful DB rows can pass on one scheduling and fail on another. Running
-  # the unit suite a SECOND time in a fresh, independent process surfaces those
-  # nondeterministic flakes that a single run hides. Informational only
-  # (continue-on-error) so a pre-existing intermittent flake never blocks a merge
-  # — but a consistently-red run here is a strong signal of new order-dependence.
-  flake-detect:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    env:
-      TEST_PARALLEL: "4"
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
-
-      - run: bun install
-
-      - name: Unit suite — run 1
-        run: bun run test:unit
-
-      - name: Unit suite — run 2 (fresh process, catches order-dependence)
-        run: bun run test:unit
-
-  # Node runtime matrix (#465 / #560). The runtime boundary
-  # (src/runtime.ts + src/storage/database.ts) makes akm Node-capable, but the
-  # whole `bun test` suite can only run under Bun — so the Node code paths are
-  # otherwise never exercised. This job builds dist/ (with Bun, as release.yml
-  # does), installs + compiles the `better-sqlite3` native driver against each
-  # Node version, then runs `test:node-smoke` UNDER NODE end-to-end against the
-  # built CLI. It fails the matrix leg if any Node branch of the boundary breaks.
-  node-smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20, 22]
-    steps:
-      - uses: actions/checkout@v5
-
-      # Bun is needed for the build step only (`bun run build` runs tsc + the
-      # asset/ESM-extension post-processing). release.yml already puts Bun and
-      # Node on the same runner, so this is an established pattern.
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.node-version }}
-
-      # Full dep tree (incl. devDeps) for the build. Bun installs better-sqlite3
-      # into its store but does NOT compile the native binding for Node's ABI.
-      - run: bun install
-
-      # Compile better-sqlite3 against THIS Node version's ABI. npm runs the
-      # node-gyp lifecycle that produces build/Release/better_sqlite3.node, which
-      # `require('better-sqlite3')` under Node needs. `--no-save` keeps the
-      # bun-managed package.json/lockfile untouched.
-      - name: Install + compile better-sqlite3 for Node ${{ matrix.node-version }}
-        run: npm install --no-save better-sqlite3@^11.8.0
-
-      - name: Verify better-sqlite3 native binding loads under Node
-        run: node -e "const D=require('better-sqlite3');const db=new D(':memory:');db.exec('CREATE TABLE t(x)');db.prepare('INSERT INTO t VALUES (?)').run(1);if(db.prepare('SELECT x FROM t').get().x!==1)process.exit(1);console.log('better-sqlite3 OK on Node '+process.versions.node)"
-
-      - name: Build dist (Bun)
-        run: bun run build
-
-      - name: Node smoke test (runs the built CLI under node)
-        run: bun run test:node-smoke
-
-  semantic-search:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - run: bun install
-
-      - name: Cache HuggingFace models
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/huggingface
-          key: hf-models-${{ runner.os }}-v1
-
-      - name: Run semantic search e2e tests
-        run: AKM_SEMANTIC_TESTS=1 bun test tests/semantic-search-e2e.test.ts
-        env:
-          HF_HOME: ~/.cache/huggingface
-
-  docker-install:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - run: bun install
-
-      - name: Run Docker install tests
-        run: AKM_DOCKER_TESTS=1 bun test tests/integration/docker-install.test.ts
-        env:
-          HF_HOME: ~/.cache/huggingface
-          DOCKER_BUILDKIT: "1"
+      - name: Lint + types + unit tests
+        run: bun run check:fast
