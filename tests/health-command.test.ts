@@ -2,15 +2,53 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmHealth, parseHealthSince } from "../src/commands/health";
+import { type AkmHealthOptions, akmHealth, parseHealthSince } from "../src/commands/health";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
-import { appendEvent } from "../src/core/events";
+import { resolveDataContext } from "../src/core/context";
+import { type AppendEventInput, appendEvent } from "../src/core/events";
 import { openStateDatabase, recordImproveRun, upsertTaskHistory } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
 import { runCliCapture } from "./_helpers/cli";
 
 function fixtureResult(partial: Record<string, unknown>): AkmImproveResult {
   return partial as unknown as AkmImproveResult;
+}
+
+// C2 env-threading: each test resolves its data context ONCE (from the tmpdir
+// created in beforeEach) and threads the explicit stateDbPath into every DB
+// open, event append, and akmHealth call. The leaves never re-read
+// process.env.XDG_DATA_HOME, so a parallel test file mutating that global can
+// no longer redirect this test's state.db open/migrate to a wrong or
+// just-deleted tmpdir — the #553/#554/#499 flake root cause. The in-process
+// CLI tests (runCliCapture) still resolve env at CLI startup, which is the
+// single-resolution boundary and is race-free.
+let dataDir = "";
+let stateDbPath = "";
+
+/** Open the current test's state.db by explicit path (no env read). */
+function openDb() {
+  return openStateDatabase(stateDbPath);
+}
+
+/** Append an event to the current test's state.db by explicit path. */
+function emit(input: AppendEventInput): void {
+  appendEvent(input, { dbPath: stateDbPath });
+}
+
+/** Run akmHealth with the current test's data context threaded in. */
+function health(options: AkmHealthOptions = {}): ReturnType<typeof akmHealth> {
+  return akmHealth({ ...options, dataContext: resolveDataContext({ dataDir }) });
+}
+
+/**
+ * Re-resolve the threaded data context from the CURRENT process.env. The
+ * in-process CLI tests below intentionally re-pin XDG_DATA_HOME after
+ * beforeEach and drive the real CLI (which resolves env at its own boundary);
+ * the seeding openDb() must therefore target that re-pinned dir, not the
+ * beforeEach one. Call this immediately after re-pinning the env.
+ */
+function repinDataContext(): void {
+  ({ dataDir, stateDbPath } = resolveDataContext({ env: process.env }));
 }
 
 const savedEnv = {
@@ -31,8 +69,12 @@ function makeTempDir(prefix: string): string {
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-health-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-");
+  const xdgData = makeTempDir("akm-health-data-");
+  process.env.XDG_DATA_HOME = xdgData;
   process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-");
+  // getDataDir(XDG_DATA_HOME) appends the `akm` subdir; resolve the explicit
+  // data context here so DB/event/health paths are threaded, not env-read.
+  ({ dataDir, stateDbPath } = resolveDataContext({ env: process.env }));
 });
 
 afterEach(() => {
@@ -56,15 +98,15 @@ describe("parseHealthSince", () => {
 describe("akmHealth", () => {
   test("reports invoked/completed/skipped from the events stream", () => {
     const now = new Date().toISOString();
-    appendEvent({ eventType: "improve_invoked", ref: "improve:all:all", metadata: { dryRun: false } });
-    appendEvent({ eventType: "improve_skipped", ref: "memory:alpha", metadata: { reason: "reflect_cooldown" } });
-    appendEvent({
+    emit({ eventType: "improve_invoked", ref: "improve:all:all", metadata: { dryRun: false } });
+    emit({ eventType: "improve_skipped", ref: "memory:alpha", metadata: { reason: "reflect_cooldown" } });
+    emit({
       eventType: "improve_completed",
       ref: "improve:all:all",
       metadata: { completedAt: now },
     });
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
 
     expect(result.schemaVersion).toBe(2);
     expect(result.improve.invoked).toBe(1);
@@ -82,7 +124,7 @@ describe("akmHealth", () => {
     const endDry = new Date(Date.now() - 5_000).toISOString();
 
     // Wall-time rows in task_history for task_id='akm-improve'.
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       upsertTaskHistory(db, {
         task_id: "akm-improve",
@@ -232,7 +274,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
 
     // Dry-run was excluded — plannedRefs is 3 + 1, not 999+.
     expect(result.improve.plannedRefs).toBe(4);
@@ -312,7 +354,7 @@ describe("akmHealth", () => {
   test("manual run row with distinct started_at<completed_at and no task_history yields wallTime from the row delta (#499)", () => {
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 45_000).toISOString(); // 15s row delta
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       // No task_history interval — this is a manually-invoked `akm improve`.
       recordImproveRun(db, {
@@ -340,7 +382,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
 
     // wallTime comes from the row's own (completed_at - started_at) delta (15s),
     // NOT from any task_history join (there is none).
@@ -354,7 +396,7 @@ describe("akmHealth", () => {
     const taskEnd = new Date(Date.now() - 38_000).toISOString(); // 22s interval
     // Legacy/backfill row: started_at == completed_at, falling inside the task interval.
     const stamp = new Date(Date.now() - 50_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       upsertTaskHistory(db, {
         task_id: "akm-improve",
@@ -392,7 +434,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
 
     // Row delta is 0, so wallTime is sourced from the containing task interval (22s).
     expect(result.improve.wallTime.count).toBe(1);
@@ -403,7 +445,7 @@ describe("akmHealth", () => {
   test("reflect content-policy guard hits are counted separately from failed (Pattern A)", () => {
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: "run-guard",
@@ -455,7 +497,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     // The two guard hits MUST land in guardRejected, NOT failed. The user's
     // dashboards depend on "failed = LLM faults only" semantics.
     expect(result.improve.actions.reflect.ok).toBe(1);
@@ -466,7 +508,7 @@ describe("akmHealth", () => {
   test("distill outcome:skipped surfaces as actions.distill.deferred with skipReason breakdown", () => {
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: "run-deferred",
@@ -516,7 +558,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     // Pre-fix: deferred would be 0 (silently dropped by missing case "skipped").
     expect(result.improve.actions.distill.deferred).toBe(3);
     expect(result.improve.actions.distill.queued).toBe(1);
@@ -534,7 +576,7 @@ describe("akmHealth", () => {
     // `distill.deferredByReason` shape (commit d1273d0).
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: "run-reflect-skipped",
@@ -570,7 +612,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     expect(result.improve.actions.reflect.skipped).toBe(5);
     expect(result.improve.actions.reflect.skippedByReason).toEqual({
       "type-filter": 2,
@@ -591,7 +633,7 @@ describe("akmHealth", () => {
     // sum for back-compat.
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: "run-distill-split",
@@ -623,7 +665,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     expect(result.improve.actions.distill.judgeRejected).toBe(2);
     expect(result.improve.actions.distill.validatorRejected).toBe(3);
     // Sum invariant: legacy qualityRejected == judge + validator.
@@ -640,7 +682,7 @@ describe("akmHealth", () => {
     // free-text warnings bag into a typed histogram.
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: "run-consolidate-tuning",
@@ -693,7 +735,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     expect(result.improve.consolidation.judgedNoAction).toBe(78);
     expect(result.improve.consolidation.skipReasons).toEqual({
       dedup_pending_proposal: 2,
@@ -704,7 +746,7 @@ describe("akmHealth", () => {
   });
 
   test("createUnknownImproveMetrics-like shape when nothing recorded", () => {
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     expect(result.improve.actions.reflect).toEqual({
       ok: 0,
       failed: 0,
@@ -746,7 +788,7 @@ describe("akmHealth", () => {
     const logDir = makeTempDir("akm-health-logs-");
     const okLog = path.join(logDir, "ok.log");
     fs.writeFileSync(okLog, "ok\n", "utf8");
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       upsertTaskHistory(db, {
         task_id: "ok-task",
@@ -778,7 +820,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
 
     expect(result.metrics.taskFailRate).toBe(0.5);
     expect(result.metrics.agentFailureRate).toBe(0.5);
@@ -792,7 +834,7 @@ describe("akmHealth", () => {
     // the ACTIVE_RUN_WARN_MS (15min) staleness comparison deterministically.
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       upsertTaskHistory(db, {
         task_id: "active-task",
@@ -812,7 +854,16 @@ describe("akmHealth", () => {
     // Pin the read clock 5 minutes after start (< 15min warn threshold). With
     // the real wall-clock this row would already read as stuck; the pinned
     // clock proves the seam — not Date.now() — drives the staleness comparison.
-    const result = akmHealth({ since: "30d", now: () => startedAtMs + 5 * 60 * 1000 });
+    // Stub the session-log scan: this test asserts the clock seam against
+    // task_history rows, not real on-disk session logs. Without the stub the
+    // `since: "30d"` window makes getExecutionLogCandidates scan ~30 days of
+    // the host's real harness logs (multi-second, machine-dependent) and the
+    // test blows the default 5s timeout — unrelated to what it verifies.
+    const result = health({
+      since: "30d",
+      now: () => startedAtMs + 5 * 60 * 1000,
+      getExecutionLogCandidatesFn: () => [],
+    });
     expect(result.metrics.stuckActiveRuns).toBe(0);
   });
 
@@ -820,7 +871,7 @@ describe("akmHealth", () => {
     // A row started ~20min before real now must read as stuck without passing
     // `now`, proving the default path is identical to calling Date.now().
     const startedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       upsertTaskHistory(db, {
         task_id: "active-task-default",
@@ -837,7 +888,10 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "30d" });
+    // Same rationale as above: stub the real session-log scan so the wide
+    // `since: "30d"` window does not scan the host's logs and time out. The
+    // default `now` path (omitted here) is still exercised against the DB row.
+    const result = health({ since: "30d", getExecutionLogCandidatesFn: () => [] });
     expect(result.metrics.stuckActiveRuns).toBe(1);
   });
 
@@ -848,7 +902,7 @@ describe("akmHealth", () => {
       return [];
     };
 
-    akmHealth({ since: "12h", getExecutionLogCandidatesFn });
+    health({ since: "12h", getExecutionLogCandidatesFn });
 
     expect(seen).toEqual([1]);
   });
@@ -863,7 +917,7 @@ describe("akmHealth", () => {
       },
     ];
 
-    const result = akmHealth({ since: "7d", getExecutionLogCandidatesFn });
+    const result = health({ since: "7d", getExecutionLogCandidatesFn });
 
     // session-log-failures is informational only (never warns) as of v0.8.1 —
     // it reports raw keyword matches, not LLM-validated extraction outcomes.
@@ -886,7 +940,7 @@ describe("akmHealth", () => {
   test("memoryInference.yieldRate uses freshAttempts (considered - cacheHits), not considered", () => {
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() - 30_000).toISOString();
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: "run-cache-heavy",
@@ -920,7 +974,7 @@ describe("akmHealth", () => {
       db.close();
     }
 
-    const result = akmHealth({ since: "7d" });
+    const result = health({ since: "7d" });
     expect(result.improve.memoryInference.considered).toBe(20);
     expect(result.improve.memoryInference.cacheHits).toBe(18);
     expect(result.improve.memoryInference.freshAttempts).toBe(2);
@@ -938,7 +992,7 @@ describe("health — window comparison", () => {
       const endA = new Date(Date.now() - 30_000).toISOString();
       const startB = new Date(Date.now() - 25_000).toISOString();
       const endB = new Date(Date.now() - 10_000).toISOString();
-      const db = openStateDatabase();
+      const db = openDb();
       try {
         upsertTaskHistory(db, {
           task_id: "akm-improve",
@@ -1014,13 +1068,13 @@ describe("health — window comparison", () => {
 
     test("default mode omits runs[]", () => {
       seedTwoRuns();
-      const result = akmHealth({ since: "7d" });
+      const result = health({ since: "7d" });
       expect(result.runs).toBeUndefined();
     });
 
     test("--group-by run returns runs[] with the right shape", () => {
       seedTwoRuns();
-      const result = akmHealth({ since: "7d", groupBy: "run" });
+      const result = health({ since: "7d", groupBy: "run" });
       expect(result.runs).toBeDefined();
       expect(result.runs?.length).toBe(2);
       const ids = result.runs?.map((r) => r.id) ?? [];
@@ -1031,7 +1085,7 @@ describe("health — window comparison", () => {
     test("--group-by run rows are ordered newest first", () => {
       const { startA, startB } = seedTwoRuns();
       expect(new Date(startB).getTime()).toBeGreaterThan(new Date(startA).getTime());
-      const result = akmHealth({ since: "7d", groupBy: "run" });
+      const result = health({ since: "7d", groupBy: "run" });
       expect(result.runs?.[0].id).toBe("run-b");
       expect(result.runs?.[1].id).toBe("run-a");
     });
@@ -1040,7 +1094,7 @@ describe("health — window comparison", () => {
       // Seed a single run, then compare aggregator output vs runs[0].
       const startA = new Date(Date.now() - 60_000).toISOString();
       const endA = new Date(Date.now() - 30_000).toISOString();
-      const db = openStateDatabase();
+      const db = openDb();
       try {
         upsertTaskHistory(db, {
           task_id: "akm-improve",
@@ -1109,8 +1163,8 @@ describe("health — window comparison", () => {
       } finally {
         db.close();
       }
-      const aggregate = akmHealth({ since: "7d" });
-      const perRun = akmHealth({ since: "7d", groupBy: "run" });
+      const aggregate = health({ since: "7d" });
+      const perRun = health({ since: "7d", groupBy: "run" });
       const row = perRun.runs?.[0];
       expect(row).toBeDefined();
       if (!row) return;
@@ -1125,7 +1179,7 @@ describe("health — window comparison", () => {
     }, 30_000);
 
     test("invalid --group-by value raises UsageError", () => {
-      expect(() => akmHealth({ since: "7d", groupBy: "bogus" as unknown as "run" })).toThrow(
+      expect(() => health({ since: "7d", groupBy: "bogus" as unknown as "run" })).toThrow(
         /Invalid value for --group-by/,
       );
     });
@@ -1134,7 +1188,7 @@ describe("health — window comparison", () => {
   // ── Phase 3: window-compare ────────────────────────────────────────────────
   describe("akm health --window-compare / --windows", () => {
     test("--window-compare 1h returns two windows named current and prior", () => {
-      const result = akmHealth({ windowCompare: "1h" });
+      const result = health({ windowCompare: "1h" });
       expect(result.windows?.length).toBe(2);
       expect(result.windows?.[0].name).toBe("current");
       expect(result.windows?.[1].name).toBe("prior");
@@ -1149,7 +1203,7 @@ describe("health — window comparison", () => {
       const w1Since = new Date(now - 3 * 60 * 60 * 1000).toISOString();
       const w1Until = new Date(now - 2 * 60 * 60 * 1000).toISOString();
       const w2Since = new Date(now - 1 * 60 * 60 * 1000).toISOString();
-      const result = akmHealth({
+      const result = health({
         windows: [
           { name: "baseline", since: w1Since, until: w1Until },
           { name: "post-fix", since: w2Since },
@@ -1167,7 +1221,7 @@ describe("health — window comparison", () => {
       const lateSince = new Date(now - 2 * 60 * 60 * 1000).toISOString();
       const lateEnd = new Date(now - 30 * 60 * 1000).toISOString();
 
-      const db = openStateDatabase();
+      const db = openDb();
       try {
         // Earlier window: 2 distill llm_failed
         recordImproveRun(db, {
@@ -1221,7 +1275,7 @@ describe("health — window comparison", () => {
         db.close();
       }
 
-      const result = akmHealth({
+      const result = health({
         windows: [
           { name: "early", since: earlySince, until: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
           { name: "late", since: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
@@ -1248,7 +1302,7 @@ describe("health — window comparison", () => {
       const latestRunStart = new Date(now - 90 * 60 * 1000).toISOString();
       const earliestRunStart = new Date(now - 5 * 60 * 60 * 1000).toISOString();
 
-      const db = openStateDatabase();
+      const db = openDb();
       try {
         // Earliest window: 5 llm_failed (the regression we'd want to see
         // disappear over time).
@@ -1302,7 +1356,7 @@ describe("health — window comparison", () => {
       // Pass windows in REVERSE chronological order (latest first, mimicking
       // what --window-compare 24h produces). Deltas should still read
       // earliest→latest, not array-order.
-      const result = akmHealth({
+      const result = health({
         windows: [
           { name: "current", since: latestSince },
           { name: "prior", since: earliestSince, until: earliestUntil },
@@ -1324,7 +1378,7 @@ describe("health — window comparison", () => {
       const lateStart = new Date(now - 2 * 60 * 60 * 1000).toISOString();
       const lateEnd = new Date(now - 30 * 60 * 1000).toISOString();
 
-      const db = openStateDatabase();
+      const db = openDb();
       try {
         recordImproveRun(db, {
           id: "run-late-only",
@@ -1349,7 +1403,7 @@ describe("health — window comparison", () => {
         db.close();
       }
 
-      const result = akmHealth({
+      const result = health({
         windows: [
           { name: "early", since: earlySince, until: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
           { name: "late", since: new Date(now - 3 * 60 * 60 * 1000).toISOString() },
@@ -1360,7 +1414,7 @@ describe("health — window comparison", () => {
 
     test("mutually exclusive flags throw UsageError", () => {
       expect(() =>
-        akmHealth({
+        health({
           windowCompare: "1h",
           windows: [{ name: "x", since: new Date().toISOString() }],
         }),
@@ -1369,7 +1423,7 @@ describe("health — window comparison", () => {
 
     test("duplicate window names throw UsageError", () => {
       expect(() =>
-        akmHealth({
+        health({
           windows: [
             { name: "dup", since: new Date(Date.now() - 7200_000).toISOString() },
             { name: "dup", since: new Date(Date.now() - 3600_000).toISOString() },
@@ -1381,7 +1435,7 @@ describe("health — window comparison", () => {
     test("more than 4 windows throws UsageError", () => {
       const now = Date.now();
       expect(() =>
-        akmHealth({
+        health({
           windows: [
             { name: "w1", since: new Date(now - 5 * 3600_000).toISOString() },
             { name: "w2", since: new Date(now - 4 * 3600_000).toISOString() },
@@ -1394,7 +1448,7 @@ describe("health — window comparison", () => {
     });
 
     test("invalid --window-compare duration throws UsageError", () => {
-      expect(() => akmHealth({ windowCompare: "not-a-duration" })).toThrow();
+      expect(() => health({ windowCompare: "not-a-duration" })).toThrow();
     });
   });
 });
@@ -1414,7 +1468,7 @@ describe("health — window comparison", () => {
 // `distill.skipped`.
 describe("health — distill skipReasons", () => {
   function insertImproveRun(result: Record<string, unknown>, tsIso: string): void {
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       recordImproveRun(db, {
         id: `run-${Math.random().toString(36).slice(2, 10)}`,
@@ -1438,7 +1492,7 @@ describe("health — distill skipReasons", () => {
     test("collects sub-reasons from distill-skipped actions and totals match the scalar", () => {
       // Seed an improve_completed event so the run window is non-empty.
       const tsIso = new Date(Date.now() - 60_000).toISOString();
-      appendEvent({ eventType: "improve_completed", metadata: {} });
+      emit({ eventType: "improve_completed", metadata: {} });
 
       insertImproveRun(
         {
@@ -1469,7 +1523,7 @@ describe("health — distill skipReasons", () => {
         tsIso,
       );
 
-      const result = akmHealth({ since: "7d" });
+      const result = health({ since: "7d" });
       expect(result.improve.actions.distill.skipped).toBe(6);
       expect(result.improve.actions.distill.skippedByReason).toEqual({
         "no new signal since last proposal": 2,
@@ -1485,7 +1539,7 @@ describe("health — distill skipReasons", () => {
 
     test("scalar `distill.skipped` is preserved (backwards-compat)", () => {
       const tsIso = new Date(Date.now() - 60_000).toISOString();
-      appendEvent({ eventType: "improve_completed", metadata: {} });
+      emit({ eventType: "improve_completed", metadata: {} });
       insertImproveRun(
         {
           schemaVersion: 1,
@@ -1496,7 +1550,7 @@ describe("health — distill skipReasons", () => {
         tsIso,
       );
 
-      const result = akmHealth({ since: "7d" });
+      const result = health({ since: "7d" });
       expect(result.improve.actions.distill.skipped).toBe(1);
     });
   });
@@ -1521,6 +1575,7 @@ describe("akm health CLI exit code", () => {
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-cli-");
     process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-cli-");
     process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-cli-");
+    repinDataContext();
 
     const { stdout, code } = await runCliCapture(["health", "--format", "json"]);
     // stdout must be valid JSON regardless of exit code so monitors can parse.
@@ -1535,11 +1590,12 @@ describe("akm health CLI exit code", () => {
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-cli-fail-");
     process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-cli-fail-");
     process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-cli-fail-");
+    repinDataContext();
 
     // Seed state.db with a task_history row that references a log_path that
     // does NOT exist on disk. That forces the deterministic `task-log-backing`
     // hardCheck to fail, which sets overall status="fail".
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       upsertTaskHistory(db, {
         task_id: "missing-log-task",
@@ -1573,11 +1629,12 @@ describe("akm health --group-by run", () => {
     process.env.XDG_CONFIG_HOME = makeTempDir(`akm-health-config-${label}-`);
     process.env.XDG_DATA_HOME = makeTempDir(`akm-health-data-${label}-`);
     process.env.XDG_STATE_HOME = makeTempDir(`akm-health-state-${label}-`);
+    repinDataContext();
   }
 
   test("--group-by run emits a runs[] section", async () => {
     pinHealthEnv("gbrun");
-    const db = openStateDatabase();
+    const db = openDb();
     try {
       const startA = new Date(Date.now() - 60_000).toISOString();
       const endA = new Date(Date.now() - 30_000).toISOString();
