@@ -3,25 +3,31 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: akm-cli 0.8 is Bun-only. The `preinstall` hook in
-// package.json blocks `npm install`, but it does not protect against a
-// stale node-resolved shebang, a wrong PATH entry, or someone running
-// `node dist/cli.js` directly from a clone. In any of those cases the
-// next line — `import { spawnSync } from "node:child_process";` — would
-// itself succeed under node, only to die a few imports later with a
-// confusing `ERR_MODULE_NOT_FOUND` for our extensionless internal paths.
-// Catch the wrong-runtime case here with a friendly message instead of
-// a stack trace. Cross-runtime support is planned for 0.9 (issue #465).
-if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
-  console.error(
-    "\n  ERROR: akm-cli 0.8 requires the Bun runtime (https://bun.sh) or the prebuilt binary.\n" +
-      "  Running under Node.js is not supported in this release.\n" +
-      "  Install options:\n" +
-      "    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\n" +
-      "    2. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n" +
-      "  Cross-runtime support is planned for 0.9.0.\n",
-  );
-  process.exit(1);
+// Runtime guard: akm-cli 0.9 runs on Bun (primary) and Node.js >= 18 (#465,
+// #560). The runtime boundary (src/runtime.ts, src/storage/database.ts) makes
+// the Node path additive. Under Node the CLI must be launched via the
+// `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
+// before this module graph loads; running `node dist/cli.js` directly still
+// works for code paths that touch no embedded text asset, but the wrapper is
+// the supported entry. The only hard requirement here is a new-enough Node:
+// the runtime boundary uses Web-stream <-> node:stream bridges (Readable.toWeb)
+// and `node:module` register() that require Node 18+.
+{
+  const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+  if (!isBun) {
+    const major = Number.parseInt((process.versions.node ?? "0").split(".")[0], 10);
+    if (Number.isNaN(major) || major < 18) {
+      console.error(
+        "\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh) or Node.js >= 18.\n" +
+          `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
+          "  Install options:\n" +
+          "    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\n" +
+          "    2. Node:   upgrade to Node.js 18 or newer (https://nodejs.org)\n" +
+          "    3. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n",
+      );
+      process.exit(1);
+    }
+  }
 }
 
 // Global error handlers (#478) — route any async work outside the
@@ -556,7 +562,13 @@ const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 // `import.meta.main` is false and we skip all startup side effects (argv
 // mutation, output-mode init, index cleanup, banner, runMain) so importers
 // can drive the `main` command themselves without the process exiting.
-if (import.meta.main) {
+//
+// Node path: this module carries a `#!/usr/bin/env bun` shebang and is launched
+// under Node via the `dist/cli-node.mjs` wrapper, which `import()`s this file
+// (so `import.meta.main` is false here even though the CLI is the real entry).
+// The wrapper sets `AKM_NODE_ENTRY=1` to opt into the startup block. The test
+// harness never sets it, so importing cli.ts under Bun stays inert as before.
+if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // citty reads process.argv directly and does not accept a custom argv array,
   // so we must replace process.argv with the normalized version before runMain.
   process.argv = normalizeShowArgv(process.argv);

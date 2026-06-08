@@ -169,9 +169,13 @@ function loadBetterSqlite3(): BetterSqlite3Ctor {
 
 function openNodeDatabase(path: string, opts?: OpenDatabaseOptions): Database {
   const BetterSqlite3 = loadBetterSqlite3();
-  const db = new BetterSqlite3(path, {
-    readonly: opts?.readonly,
-    fileMustExist: opts?.create === false,
-  });
+  // better-sqlite3 validates option *values* strictly and throws
+  // `Expected the "readonly" option to be a boolean` if the key is present with
+  // an `undefined` value — so only include each option when it is actually set,
+  // matching the no-opts byte-identical path on the Bun side.
+  const options: { readonly?: boolean; fileMustExist?: boolean } = {};
+  if (opts?.readonly !== undefined) options.readonly = opts.readonly;
+  if (opts?.create === false) options.fileMustExist = true;
+  const db = opts ? new BetterSqlite3(path, options) : new BetterSqlite3(path);
   return db as unknown as Database;
 }

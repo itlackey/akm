@@ -67,6 +67,52 @@ jobs:
       - name: Unit suite — run 2 (fresh process, catches order-dependence)
         run: bun run test:unit
 
+  # Node runtime matrix (#465 / #560). The runtime boundary
+  # (src/runtime.ts + src/storage/database.ts) makes akm Node-capable, but the
+  # whole `bun test` suite can only run under Bun — so the Node code paths are
+  # otherwise never exercised. This job builds dist/ (with Bun, as release.yml
+  # does), installs + compiles the `better-sqlite3` native driver against each
+  # Node version, then runs `test:node-smoke` UNDER NODE end-to-end against the
+  # built CLI. It fails the matrix leg if any Node branch of the boundary breaks.
+  node-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v5
+
+      # Bun is needed for the build step only (`bun run build` runs tsc + the
+      # asset/ESM-extension post-processing). release.yml already puts Bun and
+      # Node on the same runner, so this is an established pattern.
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Full dep tree (incl. devDeps) for the build. Bun installs better-sqlite3
+      # into its store but does NOT compile the native binding for Node's ABI.
+      - run: bun install
+
+      # Compile better-sqlite3 against THIS Node version's ABI. npm runs the
+      # node-gyp lifecycle that produces build/Release/better_sqlite3.node, which
+      # `require('better-sqlite3')` under Node needs. `--no-save` keeps the
+      # bun-managed package.json/lockfile untouched.
+      - name: Install + compile better-sqlite3 for Node ${{ matrix.node-version }}
+        run: npm install --no-save better-sqlite3@^11.8.0
+
+      - name: Verify better-sqlite3 native binding loads under Node
+        run: node -e "const D=require('better-sqlite3');const db=new D(':memory:');db.exec('CREATE TABLE t(x)');db.prepare('INSERT INTO t VALUES (?)').run(1);if(db.prepare('SELECT x FROM t').get().x!==1)process.exit(1);console.log('better-sqlite3 OK on Node '+process.versions.node)"
+
+      - name: Build dist (Bun)
+        run: bun run build
+
+      - name: Node smoke test (runs the built CLI under node)
+        run: bun run test:node-smoke
+
   semantic-search:
     runs-on: ubuntu-latest
     timeout-minutes: 10
