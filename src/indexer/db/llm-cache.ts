@@ -11,6 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { bestEffort } from "../../core/best-effort";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 
 /**
@@ -58,7 +59,7 @@ export async function withLlmCache<T>(
 ): Promise<T | undefined> {
   const bodyHash = precomputedHash ?? computeBodyHash(body);
   if (!reEnrich) {
-    try {
+    const cacheHit = bestEffort(() => {
       const cached = getLlmCacheEntry(db, cacheKey, bodyHash, cacheVariant);
       if (cached) {
         const result = validate(JSON.parse(cached.resultJson));
@@ -67,17 +68,16 @@ export async function withLlmCache<T>(
           return result;
         }
       }
-    } catch {
-      // Cache corrupt — fall through
-    }
+      return undefined;
+    }, "llm cache read corrupt — fall through to recompute");
+    if (cacheHit !== undefined) return cacheHit;
   }
   const result = await llmFn();
   if (result !== undefined) {
-    try {
-      upsertLlmCacheEntry(db, cacheKey, bodyHash, JSON.stringify(result), cacheVariant);
-    } catch {
-      // Cache write failure is non-fatal
-    }
+    bestEffort(
+      () => upsertLlmCacheEntry(db, cacheKey, bodyHash, JSON.stringify(result), cacheVariant),
+      "llm cache write failure is non-fatal",
+    );
   }
   return result;
 }
