@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { InstalledTaskRef } from "../src/tasks/backends";
 import {
   buildCronLine,
   CRON_BACKEND,
@@ -158,12 +159,16 @@ const SYNC_TASK: TaskDocument = {
 
 describe("cron backend drift detection", () => {
   const opts = (exec: CronExec) => ({ exec, logDir: "/var/log/akm", akmArgv: ["/usr/local/bin/akm"] });
+  // The cron backend's list() is synchronous, but the TaskBackend interface
+  // types it as `… | Promise<…>`; resolve through the concrete array shape so
+  // indexing stays type-safe.
+  const listSync = (b: ReturnType<typeof CRON_BACKEND>): InstalledTaskRef[] => b.list() as InstalledTaskRef[];
 
   test("list() returns a signature equal to expectedSignature for an installed task", () => {
     const exec = memoryExec();
     const backend = CRON_BACKEND(opts(exec));
     backend.install(SYNC_TASK);
-    const listed = backend.list();
+    const listed = listSync(backend);
     expect(listed).toHaveLength(1);
     expect(listed[0].id).toBe("ping");
     expect(listed[0].signature).toBe(backend.expectedSignature?.(SYNC_TASK));
@@ -173,7 +178,7 @@ describe("cron backend drift detection", () => {
     const exec = memoryExec();
     const backend = CRON_BACKEND(opts(exec));
     backend.install(SYNC_TASK);
-    const installedSig = backend.list()[0].signature;
+    const installedSig = listSync(backend)[0].signature;
     const rescheduled: TaskDocument = { ...SYNC_TASK, schedule: "45 */6 * * *" };
     expect(backend.expectedSignature?.(rescheduled)).not.toBe(installedSig);
   });
@@ -188,9 +193,9 @@ describe("cron backend drift detection", () => {
   test("signature is stable across reinstall when nothing changed", () => {
     const backend = CRON_BACKEND(opts(memoryExec()));
     backend.install(SYNC_TASK);
-    const sig1 = backend.list()[0].signature;
+    const sig1 = listSync(backend)[0].signature;
     backend.install(SYNC_TASK);
-    const sig2 = backend.list()[0].signature;
+    const sig2 = listSync(backend)[0].signature;
     expect(sig1).toBe(sig2);
     expect(sig1).toBe(backend.expectedSignature?.(SYNC_TASK));
   });
