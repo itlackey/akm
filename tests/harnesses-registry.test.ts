@@ -169,7 +169,8 @@ describe("v1ProfilePlatform — registry-backed v1→v2 platform inference (#566
 
 describe("matchesV1ProfileName — per-harness ownership (#566)", () => {
   it("each harness claims its own canonical id and aliases", () => {
-    const claude = getHarness("claude")!;
+    const claude = getHarness("claude");
+    if (!claude) throw new Error("claude harness not registered");
     expect(claude.matchesV1ProfileName("claude")).toBe(true);
     expect(claude.matchesV1ProfileName("claude-code")).toBe(true);
     expect(claude.matchesV1ProfileName("opencode")).toBe(false);

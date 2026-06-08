@@ -140,7 +140,7 @@ export function v1ProfilePlatform(name: string): string | undefined {
  */
 export function defaultProfileName(detected: string): string | undefined {
   const h = HARNESS_BY_ANY_ID.get(detected);
-  if (!h || !h.capabilities.agentDispatch) return undefined;
+  if (!h?.capabilities.agentDispatch) return undefined;
   return h.id;
 }
 
