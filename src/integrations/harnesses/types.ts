@@ -78,6 +78,19 @@ export interface AkmHarness {
    * session-logs provider name. Absent ⇒ same as `id`.
    */
   readonly runtimeId?: string;
+  /**
+   * Home-relative config directory that `akm setup` scans to offer this
+   * harness as a stash source (#567). e.g. `.claude`, `.config/opencode`.
+   *
+   * Only harnesses that ALSO have `capabilities.sessionLogs === true` are
+   * offered as setup stash-source candidates — selecting a harness with no
+   * session-log provider would be a silent no-op (the old `AGENT_PLATFORMS`
+   * trap that listed Continue/Codeium/Cursor/Codex CLI). `detectAgentPlatforms`
+   * derives its candidate list from `SESSION_LOG_HARNESSES` that declare this
+   * field, so the registry is the single source of which harnesses are real
+   * stash sources. Absent ⇒ not offered during setup.
+   */
+  readonly setupDetectionDir?: string;
   /** Capability membership — which subsystems include this harness. */
   readonly capabilities: HarnessCapabilities;
 
@@ -112,6 +125,7 @@ export abstract class BaseHarness implements AkmHarness {
   abstract readonly aliases: readonly string[];
   abstract readonly capabilities: HarnessCapabilities;
   readonly runtimeId?: string;
+  readonly setupDetectionDir?: string;
 
   /**
    * Lowercase prefixes that a decorated v1 profile name may start with and

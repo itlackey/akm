@@ -55,6 +55,9 @@ export class ClaudeHarness extends BaseHarness {
   readonly displayName = "Claude Code";
   readonly aliases = ["claude-code"] as const;
   readonly runtimeId = "claude-code";
+  // Home-relative config dir scanned by `akm setup` (#567). Claude Code has a
+  // session-log provider, so offering it as a stash source is functional.
+  readonly setupDetectionDir = ".claude";
   readonly capabilities = caps({
     sessionLogs: true,
     agentDispatch: true,

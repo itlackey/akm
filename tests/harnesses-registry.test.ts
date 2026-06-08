@@ -68,6 +68,24 @@ describe("capability-derived sublists", () => {
   it("DETECTION_HARNESSES = every harness", () => {
     expect(DETECTION_HARNESSES.map((h) => h.id)).toEqual(["opencode", "claude", "opencode-sdk"]);
   });
+
+  // #567 — only session-log-capable harnesses may be offered as setup stash
+  // sources. A harness that declares a `setupDetectionDir` (so `akm setup`
+  // offers it) MUST have a session-log provider, otherwise selecting it is a
+  // silent no-op. This pins the registry so a future harness can't reintroduce
+  // the detection trap.
+  it("every harness with a setupDetectionDir also has sessionLogs capability", () => {
+    for (const h of HARNESS_REGISTRY) {
+      if (h.setupDetectionDir) {
+        expect(h.capabilities.sessionLogs).toBe(true);
+      }
+    }
+  });
+
+  it("setup stash-source candidates = session-log harnesses with a detection dir (claude, opencode)", () => {
+    const candidates = SESSION_LOG_HARNESSES.filter((h) => h.setupDetectionDir).map((h) => h.id);
+    expect(candidates).toEqual(["opencode", "claude"]);
+  });
 });
 
 describe("id normalization bridge ('claude' ↔ 'claude-code')", () => {

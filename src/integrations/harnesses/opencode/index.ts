@@ -46,6 +46,9 @@ export class OpencodeHarness extends BaseHarness {
   readonly id = "opencode" as const;
   readonly displayName = "OpenCode";
   readonly aliases = [] as const;
+  // Home-relative config dir scanned by `akm setup` (#567). OpenCode has a
+  // session-log provider, so offering it as a stash source is functional.
+  readonly setupDetectionDir = ".config/opencode";
   // Decorated v1 profile names like "opencode-fast" still belong to OpenCode.
   // `v1ProfilePlatform()` resolves most-specific-id-first, so "opencode-sdk-*"
   // is claimed by OpencodeSdkHarness before this prefix can over-match it.
