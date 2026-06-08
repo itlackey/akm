@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.4] - 2026-06-08
+
+### Fixed
+
+- **`akm tasks sync` ignored schedule changes.** Sync classified any task already
+  present in the OS scheduler as "unchanged" without comparing its installed
+  entry, so editing a task's `schedule:` in the `.yml` never reached the crontab —
+  the only way to apply a new schedule was to `remove` and re-`add` the task. The
+  same gap affected `tasks enable`/`disable`, which merely toggled the existing
+  cron line's comment and so re-enabled a stale schedule. Sync now compares the
+  backend's installed signature against the signature the current definition would
+  produce and reinstalls on drift (reported in a new `updated[]` field);
+  `enable`/`disable` reinstall from the current `.yml` instead of toggling in
+  place. Backends that can't cheaply read their installed form fall back to an
+  idempotent reinstall, so the fix is correct on launchd/schtasks too. The cron
+  backend gains `expectedSignature()` and a signature on each `list()` entry.
+
+### Added
+
+- **`akm improve --skip-if-locked`.** When another improve run already holds the
+  lock, the run logs and exits 0 with a no-op result (`skipped.reason:
+  "lock-held"`) instead of failing with the "already running" config error
+  (exit 78). Intended for high-frequency scheduled runs (e.g. an every-30-min
+  `quick` pass) that would otherwise pile up exit-78 failures whenever a longer
+  run overlaps them. Default off — the hard error is preserved for interactive
+  use. The result is still recorded so the skip is auditable.
+
 ## [0.8.3] - 2026-06-08
 
 ### Fixed

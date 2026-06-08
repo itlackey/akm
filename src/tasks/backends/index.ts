@@ -22,6 +22,14 @@ import { SCHTASKS_BACKEND, type SchtasksBackendOptions } from "./schtasks";
 
 export interface InstalledTaskRef {
   id: string;
+  /**
+   * Opaque, backend-specific fingerprint of the *currently installed* entry
+   * (e.g. the cron line incl. enabled/disabled state). `tasks sync` compares
+   * it against {@link TaskBackend.expectedSignature} to detect schedule drift
+   * on tasks that already exist in the scheduler. Undefined when the backend
+   * cannot cheaply read its installed form — sync then reinstalls to be safe.
+   */
+  signature?: string;
 }
 
 export interface TaskBackend {
@@ -31,6 +39,14 @@ export interface TaskBackend {
   uninstall(id: string): Promise<void> | void;
   setEnabled(id: string, enabled: boolean): Promise<void> | void;
   list(): Promise<InstalledTaskRef[]> | InstalledTaskRef[];
+  /**
+   * The signature the task *should* have once installed, derived from its
+   * current on-disk definition. Compared against {@link InstalledTaskRef.signature}
+   * during `tasks sync` so a changed schedule (or enabled state) is reinstalled
+   * instead of being silently reported "unchanged". Optional — backends that
+   * omit it fall back to always-reinstall during sync.
+   */
+  expectedSignature?(task: TaskDocument): string;
 }
 
 export interface SelectBackendOptions {
