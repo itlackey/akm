@@ -285,12 +285,27 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {
-    const ok = validation.ok === true;
     const findings = Array.isArray(validation.findings) ? (validation.findings as Array<Record<string, unknown>>) : [];
+    // Partition findings by severity. `severity: "warn"` findings are
+    // non-blocking (the validator reports `ok: true` for a warn-only proposal),
+    // so they must read as advisory — a distinct icon/label from blocking errors.
+    const warnings = findings.filter((f) => f.severity === "warn");
+    const errors = findings.filter((f) => f.severity !== "warn");
     lines.push("");
-    lines.push(`validation: ${ok ? "ok" : `${findings.length} finding(s)`}`);
-    for (const f of findings) {
-      lines.push(`  - [${String(f.kind)}] ${String(f.message)}`);
+    if (errors.length > 0) {
+      const warnSuffix = warnings.length > 0 ? `, ${warnings.length} warning(s)` : "";
+      lines.push(`✗ invalid (${errors.length} error(s)${warnSuffix})`);
+    } else if (warnings.length > 0) {
+      lines.push(`✓ valid (${warnings.length} warning(s))`);
+    } else {
+      lines.push("✓ valid");
+    }
+    // Errors first (blocking), then warnings (advisory, non-blocking).
+    for (const f of errors) {
+      lines.push(`  ✗ error  [${String(f.kind)}] ${String(f.message)}`);
+    }
+    for (const f of warnings) {
+      lines.push(`  ⚠ warning  [${String(f.kind)}] ${String(f.message)} (non-blocking)`);
     }
   }
   const payload = p.payload as Record<string, unknown> | undefined;
