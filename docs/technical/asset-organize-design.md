@@ -189,15 +189,18 @@ Use the entity adjacency map + BFS from `graph-boost.ts` (`readParsedGraphContex
 
 ---
 
-## 9. Open decisions needing owner sign-off
+## 9. Decisions (RESOLVED 2026-06-08) + status
 
-1. **entry_id continuity vs. accept-loss.** On a name change, do we (a) preserve `entries.id` by migrating `utility_scores`/`utility_scores_scoped`/`embeddings` to the new entry_key before reindex, or (b) accept that usage history + embeddings regenerate? (a) is correct-but-complex; (b) is simpler but silently drops ranking history. **Recommend (a)** but needs sign-off on the migration cost.
-2. **Inline body-ref rewrite scope.** `REF_RE` matches refs in prose AND fenced code/commands. Do we rewrite refs inside fenced code blocks (could break documented command examples that intentionally reference the old path) or only outside them? **Recommend: rewrite everywhere but record each rewrite in the journal for review.**
-3. **Frontmatter edge-field canonicalization.** `derived_from` vs `derivedFrom`, `supersededBy` vs `superseded_by` both appear. Confirm the authoritative set of ref-bearing frontmatter keys to rewrite (and whether to normalize casing while we're in there).
-4. **Subdir-name source.** Dominant-entity slug (explainable, but can be ugly/unstable) vs. an LLM-named cluster label (prettier, but adds an LLM call + nondeterminism at organize time). **Recommend: dominant-entity slug for v1; LLM naming as an opt-in.**
-5. **Threshold defaults.** `minSharedEntities = 2`, `minClusterSize = 3`, max-component-size cap — confirm or tune against the owner's real stash.
-6. **Graph-absent behavior.** Confirm the no-op-not-guess posture: when no graph is extracted and no embeddings configured, organize prints "no relation signal available; run `akm index` with graph extraction enabled" and exits 0 with an empty plan. (Recommended.)
-7. **Reversibility UX.** Is the single git boundary commit + `.akm/organize-backup/<ts>/` sufficient, or do we want an `akm organize --undo <run-id>` that replays the journal in reverse?
+**STATUS: design complete; implementation DEFERRED off the 0.9.0 milestone** (0.9.0 is the stabilization line). Build in a post-0.9.0 milestone, starting at Phase 0.
+
+Owner sign-off:
+1. **entry_id continuity — RESOLVED: preserve (option a).** On a name change, the engine migrates `utility_scores`/`utility_scores_scoped`/`embeddings` to the new entry_key in place so `entries.id` stays stable — no usage-history loss, no re-embed. The migration cost is accepted (matches the "never lose user data" bar).
+2. **Inline body-ref rewrite scope — DEFAULT: skip refs inside fenced code blocks** (illustrative command examples should not be silently rewritten); rewrite refs in prose only, and record every rewrite in the journal. (Owner may revisit at build time.)
+3. **Frontmatter edge-field canonicalization — DEFAULT: derive the authoritative ref-bearing key set from the live frontmatter schema at build time; rewrite values, do NOT normalize casing** (out of scope — a separate concern).
+4. **Subdir-name source — DEFAULT: dominant-entity slug for v1** (deterministic, explainable, LLM-free at organize time); LLM cluster naming is an opt-in later.
+5. **Threshold defaults — DEFAULT:** `minSharedEntities = 2`, `minClusterSize = 3`, plus a max-component-size cap; tune against a real stash during P1.
+6. **Graph-absent behavior — RESOLVED: no-op-not-guess.** No graph + no embeddings ⇒ empty plan + a `processes.organize` skip event; never a guess.
+7. **Reversibility UX — DEFAULT for v1:** journal + `.akm/organize-backup/<ts>/` + git-revert of the single boundary commit is sufficient; a dedicated `--undo <run-id>` is a later nice-to-have.
 
 ---
 
