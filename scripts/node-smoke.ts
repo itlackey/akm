@@ -74,6 +74,9 @@ interface StepOptions {
   stdin?: string;
   /** Allow a non-zero exit (e.g. search with no provider still exits 0; default requires 0). */
   allowNonZero?: boolean;
+  /** Exit codes that count as success (in addition to 0). E.g. `akm health` exits 4
+   *  (EXIT_HEALTH_WARN) on a minimal fresh stash — a valid outcome, not a crash. */
+  allowExitCodes?: number[];
   /** Per-step timeout (ms). */
   timeoutMs?: number;
 }
@@ -98,9 +101,10 @@ function step(label: string, args: string[], opts: StepOptions = {}): string {
     ok = false;
     problems.push(`spawn error: ${res.error.message}`);
   }
-  if (!opts.allowNonZero && code !== 0) {
+  const allowedCodes = new Set<number>([0, ...(opts.allowExitCodes ?? [])]);
+  if (!opts.allowNonZero && code !== null && !allowedCodes.has(code)) {
     ok = false;
-    problems.push(`exit code ${code} (expected 0)`);
+    problems.push(`exit code ${code} (expected ${[...allowedCodes].join(" or ")})`);
   }
   if (opts.expect && !out.includes(opts.expect)) {
     ok = false;
@@ -152,7 +156,10 @@ try {
   // Read a single asset back out of the stash.
   step("show", ["show", "memory:node-smoke-widget-memory-alpha"], { expect: '"type": "memory"' });
   // Health aggregates DB + artifacts; touches detection.
-  step("health", ["health"], { expect: '"shape": "health"' });
+  // health exits 0 (ok) or 4 (EXIT_HEALTH_WARN) — a minimal fresh stash often
+  // reports `status: "warn"` (e.g. semantic search not ready), which is a valid,
+  // non-error outcome. Both prove the SQLite/runtime boundary works under Node.
+  step("health", ["health"], { expect: '"shape": "health"', allowExitCodes: [4] });
   // spawnSync + writeResponseToFile (ripgrep download) + spawn agent detection.
   step("setup", ["setup", "--yes"], { expect: '"shape": "setup"', timeoutMs: 180_000 });
 } finally {
