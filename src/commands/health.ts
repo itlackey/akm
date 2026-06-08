@@ -4,10 +4,9 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import type { DataContext } from "../core/context";
-import { resolveDataContext } from "../core/context";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
+import { getStateDbPathInDataDir } from "../core/paths";
 import {
   type ImproveRunSummaryRow,
   listExistingTableNames,
@@ -474,17 +473,6 @@ export interface AkmHealthOptions {
    * additive — when omitted, behaviour is identical to calling `Date.now()`.
    */
   now?: () => number;
-  /**
-   * C2 env-threading seam. When provided, the state.db path is taken directly
-   * from this {@link DataContext} (resolved ONCE at the command boundary)
-   * instead of re-reading `process.env.XDG_DATA_HOME` via
-   * `getStateDbPathInDataDir()` deep in the read path. This removes the
-   * #553/#554/#499 flake root cause: parallel test files mutating
-   * `XDG_DATA_HOME` in `beforeEach` can no longer redirect this command's
-   * DB open/migrate to a wrong/just-deleted tmpdir. Production callers omit
-   * it and resolve from the live (single-process) environment.
-   */
-  dataContext?: DataContext;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -1509,12 +1497,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   validateAkmHealthOptions(options);
   const now = options.now ?? (() => Date.now());
   const since = parseHealthSince(options.since);
-  // C2: resolve the data context ONCE at this command boundary, then thread
-  // `stateDbPath` down to every leaf (openStateDatabase, readEvents, probes,
-  // window bundles). Leaves never re-read process.env, so a parallel test
-  // file mutating XDG_DATA_HOME cannot redirect this DB open/migrate.
-  const dataContext: DataContext = options.dataContext ?? resolveDataContext();
-  const stateDbPath = dataContext.stateDbPath;
+  const stateDbPath = getStateDbPathInDataDir();
   const hardChecks: HealthCheckResult[] = [];
   const advisories: HealthCheckResult[] = [];
   const getExecutionLogCandidatesFn = options.getExecutionLogCandidatesFn ?? getExecutionLogCandidates;

@@ -112,7 +112,6 @@ import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { loadConfig } from "./core/config/config";
-import { resolveDataContext } from "./core/context";
 import { UsageError } from "./core/errors";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
@@ -356,15 +355,11 @@ const healthCommand = defineCommand({
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
       const groupBy = (args as Record<string, unknown>)["group-by"] as string | undefined;
       const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
-      // C2: resolve the data-path context once at this command boundary and
-      // thread it into akmHealth, rather than letting the read path re-read
-      // process.env deep in the tree.
       const result = akmHealth({
         since: args.since,
         groupBy: groupBy as "run" | undefined,
         windowCompare: windowCompareRaw,
         windows,
-        dataContext: resolveDataContext(),
       });
       resultStatus = result.status;
       // `--format md` is health-specific: render a TSV-shaped per-run or
