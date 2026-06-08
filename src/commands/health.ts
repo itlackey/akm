@@ -473,6 +473,15 @@ export interface AkmHealthOptions {
    * additive — when omitted, behaviour is identical to calling `Date.now()`.
    */
   now?: () => number;
+  /**
+   * C2 (#499): explicit state.db path override. Defaults to
+   * `getStateDbPathInDataDir()` (the `XDG_DATA_HOME`-derived path). Tests pass a
+   * path from their isolated storage root so the entire health read is pinned to
+   * one file and never re-reads `process.env` — immune to a parallel test file
+   * mutating `XDG_DATA_HOME` across an await boundary and redirecting this read
+   * to a foreign/just-deleted DB. Purely additive: omitted ⇒ identical to before.
+   */
+  stateDbPath?: string;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -1497,7 +1506,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   validateAkmHealthOptions(options);
   const now = options.now ?? (() => Date.now());
   const since = parseHealthSince(options.since);
-  const stateDbPath = getStateDbPathInDataDir();
+  const stateDbPath = options.stateDbPath ?? getStateDbPathInDataDir();
   const hardChecks: HealthCheckResult[] = [];
   const advisories: HealthCheckResult[] = [];
   const getExecutionLogCandidatesFn = options.getExecutionLogCandidatesFn ?? getExecutionLogCandidates;

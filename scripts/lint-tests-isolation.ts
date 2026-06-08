@@ -199,7 +199,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/distill.test.ts",
   "tests/graph-extraction-batch.test.ts",
   "tests/graph-extraction.test.ts",
-  "tests/health-command.test.ts",
+  // tests/health-command.test.ts — migrated to withIsolatedAkmStorage (C2/#499).
   "tests/commands/improve/improve-dry-run-side-effects.test.ts",
   "tests/commands/improve/improve-no-hang.test.ts",
   "tests/index-clean.test.ts",
@@ -238,7 +238,7 @@ const ALLOWED_FILES = new Set<string>([
  *
  * KPI (WS4): drive this from ~73 toward ~5.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 65;
+export const ALLOWLIST_RATCHET_BASELINE = 64;
 
 /** Live size of the combined grandfather allowlist (both rule sets). */
 export function combinedAllowlistSize(): number {
