@@ -1,0 +1,283 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * OpenCode SDK agent runner (migrated from `agent/sdk-runner.ts`, #564).
+ *
+ * Uses the embedded `@opencode-ai/sdk` instead of `Bun.spawn`. Requires no
+ * agent CLI binary to be installed. The user provides an OpenAI-compatible
+ * endpoint (or inherits from config.llm) for the SDK.
+ *
+ * This is the runtime surface of the {@link OpencodeSdkHarness} (`id =
+ * 'opencode-sdk'`). It is the dispatch path for `sdkMode` profiles; it exposes
+ * no native session logs of its own (`capabilities.sessionLogs = false`).
+ */
+
+import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
+import type { ShowResponse } from "../../../sources/types";
+import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
+import type { AgentProfile } from "../../agent/profiles";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../agent/spawn";
+
+/** Minimal surface of the OpenCode SDK client used by this runner. */
+interface SdkClient {
+  session: {
+    create(args: { body: { title: string } }): Promise<{ data?: { id?: string } }>;
+    prompt(args: {
+      path: { id: string };
+      // `system` and `tools` are forwarded when present — see the #564 bug
+      // fixes in runOpencodeSdk(). They mirror @opencode-ai/sdk's
+      // SessionPromptData.body shape (system?: string; tools?: Record<string, boolean>).
+      body: {
+        parts: { type: string; text: string }[];
+        system?: string;
+        tools?: Record<string, boolean>;
+      };
+    }): Promise<{ data?: { parts?: { type: string; text?: string }[] } }>;
+    delete(args: { path: { id: string } }): Promise<unknown>;
+  };
+}
+
+/** Typed server instance returned by `createOpencode`. */
+interface SdkServer {
+  client: SdkClient;
+  server: { close(): void };
+}
+
+// Singleton server — started once per process, reused across calls
+let _server: SdkServer | null = null;
+
+/**
+ * Test-only seam: inject a fake {@link SdkServer} so `runOpencodeSdk` can be
+ * exercised without the real `@opencode-ai/sdk` (which would spin up a server).
+ * Pass `null` to clear. NOT part of the public runtime API — used only to
+ * assert the #564 bug fixes (systemPrompt/tools forwarding + timeout). The
+ * leading underscores mark it as internal.
+ */
+export function __setTestServer(server: SdkServer | null): void {
+  _server = server;
+}
+
+/**
+ * Close the singleton OpenCode SDK server and reset the handle.
+ * Primarily for use in tests to ensure clean teardown between test runs.
+ */
+export function closeServer(): void {
+  try {
+    _server?.server.close();
+  } catch {
+    /* ignore */
+  }
+  _server = null;
+}
+
+/**
+ * Convert an `AgentDispatchRequest.tools` policy into the SDK's tool-allowlist
+ * shape (`{ [toolName]: boolean }`).
+ *
+ * #564 bug fix (2): the tool list was previously dropped entirely. The CLI
+ * builder passes tools as a comma-separated `--allowedTools` flag; the SDK
+ * instead wants a per-tool boolean map. A list/comma-string of tool names is
+ * treated as an allowlist (each name → true). A structured policy object whose
+ * values are already booleans is forwarded as-is.
+ *
+ * Returns `undefined` when there is nothing to forward, so an absent policy
+ * leaves the SDK's own defaults untouched (behaviour-preserving for callers
+ * that pass no tools).
+ */
+function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, boolean> | undefined {
+  if (tools === undefined || tools === null) return undefined;
+  const names: string[] = [];
+  if (typeof tools === "string") {
+    names.push(
+      ...tools
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    );
+  } else if (Array.isArray(tools)) {
+    for (const t of tools) {
+      if (typeof t === "string" && t.trim()) names.push(t.trim());
+    }
+  } else if (typeof tools === "object") {
+    // Structured policy: forward boolean entries directly.
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(tools as Record<string, unknown>)) {
+      if (typeof v === "boolean") out[k] = v;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+  if (names.length === 0) return undefined;
+  const out: Record<string, boolean> = {};
+  for (const n of names) out[n] = true;
+  return out;
+}
+
+async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
+  if (_server) return _server;
+
+  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
+    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
+  });
+
+  // Resolve endpoint and model: profile fields take precedence over config.llm
+  const endpoint = profile.endpoint ?? llmConfig?.endpoint;
+  const apiKey = resolveSecret(profile.apiKey ?? llmConfig?.apiKey);
+  const model = profile.model;
+
+  const sdkConfig: Record<string, unknown> = {};
+  if (model) sdkConfig.model = model;
+  if (endpoint || apiKey) {
+    // Configure a custom OpenAI-compatible provider
+    sdkConfig.provider = {
+      "akm-custom": {
+        npm: "@ai-sdk/openai-compatible",
+        options: {
+          baseURL: endpoint?.replace(/\/chat\/completions$/, "").replace(/\/$/, ""),
+          ...(apiKey ? { apiKey } : {}),
+        },
+      },
+    };
+    // Use the custom provider's model if not already qualified
+    if (model && !model.includes("/")) {
+      sdkConfig.model = `akm-custom/${model}`;
+    }
+  }
+
+  _server = (await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {})) as SdkServer;
+
+  process.once("exit", () => {
+    closeServer();
+  });
+
+  if (!_server) throw new Error("Failed to initialise OpenCode SDK server.");
+  return _server;
+}
+
+export async function runOpencodeSdk(
+  profile: AgentProfile,
+  prompt: string,
+  opts: RunAgentOptions = {},
+  llmConfig?: LlmConnectionConfig,
+): Promise<AgentRunResult> {
+  const start = Date.now();
+
+  let client: SdkClient;
+  try {
+    ({ client } = await getOrStartServer(profile, llmConfig));
+  } catch (e) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: String(e),
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason: "spawn_failed" as AgentFailureReason,
+      error: String(e),
+    };
+  }
+
+  // One session per call — do NOT reuse (history accumulates, token costs grow)
+  const sessionRes = await client.session.create({ body: { title: "akm" } });
+  const sessionId = sessionRes.data?.id;
+  if (!sessionId) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: "Failed to create session",
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason: "spawn_failed" as AgentFailureReason,
+      error: "Failed to create OpenCode session",
+    };
+  }
+
+  // #564 bug fixes (1) + (2): forward systemPrompt and tools from the abstract
+  // dispatch request. Both were previously accepted on AgentDispatchRequest but
+  // silently dropped on the SDK path, so SDK-mode dispatch ignored agent-asset
+  // system prompts and tool policies entirely (the CLI path honours both).
+  const dispatch = opts.dispatch;
+  const system = dispatch?.systemPrompt;
+  const tools = toolsToSdkAllowlist(dispatch?.tools);
+  const body: {
+    parts: { type: string; text: string }[];
+    system?: string;
+    tools?: Record<string, boolean>;
+  } = { parts: [{ type: "text", text: prompt }] };
+  if (system) body.system = system;
+  if (tools) body.tools = tools;
+
+  // #564 bug fix (3): enforce a hard timeout like the CLI path (runAgent).
+  // Previously runOpencodeSdk() awaited session.prompt() with no timeout, so a
+  // hung SDK call (e.g. a stalled local-model endpoint) blocked the caller
+  // indefinitely while the CLI path would have killed the process. We resolve
+  // the same budget runAgent uses (opts.timeoutMs override → profile.timeoutMs
+  // → DEFAULT_AGENT_TIMEOUT_MS) and race the prompt against it. null disables
+  // the timer (parity with runAgent's "no timeout" contract). There is no
+  // OS process to SIGTERM/SIGKILL here, so on timeout we best-effort delete the
+  // session (the SDK's equivalent of reaping the in-flight work) and return a
+  // structured `timeout` failure with the same reason vocabulary as the CLI.
+  const timeoutMs: number | null =
+    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
+  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
+  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+
+  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
+  const TIMED_OUT = Symbol("opencode-sdk-timeout");
+
+  try {
+    const promptPromise = client.session.prompt({ path: { id: sessionId }, body });
+
+    const result =
+      timeoutMs === null
+        ? await promptPromise
+        : await Promise.race<{ data?: { parts?: { type: string; text?: string }[] } } | typeof TIMED_OUT>([
+            promptPromise,
+            new Promise<typeof TIMED_OUT>((resolve) => {
+              timer = setTimeoutImpl(() => resolve(TIMED_OUT), timeoutMs);
+            }),
+          ]);
+
+    if (result === TIMED_OUT) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: null,
+        reason: "timeout" as AgentFailureReason,
+        error: `opencode-sdk agent "${profile.name}" timed out after ${timeoutMs}ms`,
+      };
+    }
+
+    const parts = result.data?.parts ?? [];
+    const textPart = parts.find((p) => p.type === "text");
+    const stdout = textPart?.text ?? "";
+
+    return {
+      ok: true,
+      stdout,
+      stderr: "",
+      durationMs: Date.now() - start,
+      exitCode: 0,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: String(e),
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason: "non_zero_exit" as AgentFailureReason,
+      error: String(e),
+    };
+  } finally {
+    if (timer !== undefined) clearTimeoutImpl(timer);
+    // Clean up session to prevent disk accumulation in ~/.local/share/opencode/
+    await client.session.delete({ path: { id: sessionId } }).catch(() => {});
+  }
+}
+
+/** @deprecated Use {@link runOpencodeSdk} instead. */
+export const runAgentSdk = runOpencodeSdk;

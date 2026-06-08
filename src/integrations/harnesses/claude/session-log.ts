@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractInlineRefMentions } from "../inline-refs";
+import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type {
   InlineRefMention,
   SessionData,
@@ -13,7 +13,7 @@ import type {
   SessionLogHarness,
   SessionRef,
   SessionSummary,
-} from "../types";
+} from "../../session-logs/types";
 
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 
@@ -87,7 +87,22 @@ function parseClaudeEvent(
   };
 }
 
+/**
+ * Claude Code native session-log reader.
+ *
+ * id-normalization note (#563): the canonical harness id is `'claude'`, but
+ * the provider's `name` — which is STAMPED onto every {@link SessionEvent} /
+ * {@link SessionRef} (`harness: this.name`), used as the extracted-session
+ * dedup key, and embedded in `session:<harness>:<id>` proposal refs — stays
+ * `'claude-code'` (the harness runtimeId). Changing it would silently break
+ * round-tripping of already-persisted session-tracking rows and refs. Registry
+ * lookups normalize `'claude-code'` → `'claude'` via the #562 bridge
+ * (`getHarness`), and the `--type` flag accepts both, so the canonical id and
+ * the persisted runtime string coexist without drift.
+ */
 export class ClaudeCodeProvider implements SessionLogHarness {
+  // Runtime identity (NOT the canonical id) — see class doc. Equals
+  // HARNESS_BY_ID.get("claude").runtimeId.
   readonly name = "claude-code";
 
   isAvailable(): boolean {

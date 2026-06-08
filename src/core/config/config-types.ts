@@ -2,6 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// VALID_HARNESS_IDS now derives from the unified HARNESS_REGISTRY (#562), which
+// is the single source of truth replacing the previously-disconnected
+// registries. config ← harnesses is the only import direction (harnesses/ is a
+// dependency-graph leaf), so there is no cycle.
+import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
 /**
  * Type definitions for the `AkmConfig` shape and its sub-shapes.
  *
@@ -13,13 +18,13 @@
 import type { InstalledStashEntry } from "../../registry/types";
 
 /**
- * Canonical list of valid agent harness / platform ids — the single source of
- * truth (#565). The Zod `AgentPlatformSchema` enum, the `AgentProfileConfigV2`
- * platform union, `parseAgentProfilesMapV2`'s membership check, and setup's
- * `DetectedHarness` union all derive from this array so they cannot drift.
- * Add a harness here and every validation gate updates with it.
+ * Canonical list of valid agent harness / platform ids. Re-exported from the
+ * unified harness registry (#562) so the Zod `AgentPlatformSchema` enum, the
+ * `AgentProfileConfigV2` platform union, `parseAgentProfilesMapV2`'s membership
+ * check, and setup's `DetectedHarness` union all derive from one place and
+ * cannot drift. Add a harness in `src/integrations/harnesses/index.ts`.
  */
-export const VALID_HARNESS_IDS = ["opencode", "claude", "opencode-sdk"] as const;
+export { VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];

@@ -42,6 +42,7 @@ import {
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
+import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
@@ -172,7 +173,15 @@ export function parseSinceArg(value: string | undefined, now: number = Date.now(
  */
 function resolveHarness(type: string, harnesses?: SessionLogHarness[]): SessionLogHarness | undefined {
   const pool = harnesses ?? getAvailableHarnesses();
-  return pool.find((h) => h.name === type);
+  // #563 id-normalization bridge: a provider's `name` is its runtime id (e.g.
+  // the Claude provider is "claude-code"), but the canonical harness id is
+  // "claude". Normalize BOTH the requested `--type` and each provider name to
+  // canonical before comparing, so `--type claude` and `--type claude-code`
+  // both resolve to the Claude provider. Behaviour fix: previously only the
+  // exact runtime string ("claude-code") matched; the canonical "claude" used
+  // everywhere else (agent profiles, config schema) silently found nothing.
+  const wanted = normalizeHarnessId(type);
+  return pool.find((h) => normalizeHarnessId(h.name) === wanted);
 }
 
 /**

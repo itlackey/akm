@@ -19,6 +19,7 @@
  *
  * @module workflows/agent-identity
  */
+import { denormalizeRuntimeIdentity } from "../../integrations/harnesses";
 
 export interface AgentIdentity {
   harness: string | null;
@@ -49,9 +50,12 @@ export function resolveAgentIdentity(env: NodeJS.ProcessEnv = process.env): Agen
     // Claude Code" flag does not mean a given run is owned by an agent session,
     // so it must not silently stamp identity onto manual CLI invocations.
     if (firstNonEmpty(env, ["CLAUDE_SESSION_ID"])) {
-      harness = "claude-code";
+      // Runtime identity for Claude Code is "claude-code" (vs the canonical
+      // config id "claude"). Derived from the unified registry's bridge (#562)
+      // so the persisted runtime string can't drift — still emits "claude-code".
+      harness = denormalizeRuntimeIdentity("claude");
     } else if (firstNonEmpty(env, ["OPENCODE_SESSION_ID"])) {
-      harness = "opencode";
+      harness = denormalizeRuntimeIdentity("opencode");
     }
   }
 

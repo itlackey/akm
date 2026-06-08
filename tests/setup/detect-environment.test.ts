@@ -227,6 +227,35 @@ describe("deriveRecommendedConfig", () => {
     expect(recommended.llm?.model).toBe("m-instruct");
     expect(recommended.embedding?.model).toBe("nomic-embed-text");
   });
+
+  test("(#566) derives the agent default profile name from the harness registry", () => {
+    // The old hardcoded if-chain only knew claude/opencode/opencode-sdk; the
+    // default is now derived from the registry so any dispatch-capable harness
+    // gets its canonical id as the headless default.
+    for (const id of ["opencode", "claude", "opencode-sdk"] as const) {
+      const recommended = deriveRecommendedConfig({
+        harness: id,
+        providers: [],
+        harnessConfigs: [],
+        localServers: [],
+        stashSuggestions: [],
+        agentPlatforms: [],
+      });
+      expect(recommended.agentDefault).toBe(id);
+    }
+  });
+
+  test("(#566) harness 'none' yields no agent default (no spurious profile)", () => {
+    const recommended = deriveRecommendedConfig({
+      harness: "none",
+      providers: [],
+      harnessConfigs: [],
+      localServers: [],
+      stashSuggestions: [],
+      agentPlatforms: [],
+    });
+    expect(recommended.agentDefault).toBeUndefined();
+  });
 });
 
 // ── CLI integration ──────────────────────────────────────────────────────────

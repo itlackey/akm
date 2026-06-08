@@ -47,7 +47,7 @@ import { appendEvent } from "../../core/events";
 import { info, warn } from "../../core/warn";
 import { type AgentRunResult, runAgent } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject } from "./proposal";
 import { listProposals, type Proposal } from "./validators/proposals";

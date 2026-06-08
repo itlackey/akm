@@ -45,13 +45,46 @@ describe("detectAgentPlatforms", () => {
     expect(opencode?.path).toBe(path.join(testHome, ".config", "opencode"));
   });
 
-  test("detects multiple platforms", async () => {
+  test("detects multiple session-log-capable platforms", async () => {
     fs.mkdirSync(path.join(testHome, ".claude"), { recursive: true });
-    fs.mkdirSync(path.join(testHome, ".cursor"), { recursive: true });
-    fs.mkdirSync(path.join(testHome, ".continue"), { recursive: true });
+    fs.mkdirSync(path.join(testHome, ".config", "opencode"), { recursive: true });
     const { detectAgentPlatforms } = await import("../src/setup/detect");
     const result = detectAgentPlatforms();
-    expect(result.length).toBeGreaterThanOrEqual(3);
+    const names = result.map((p) => p.name).sort();
+    expect(names).toEqual(["Claude Code", "OpenCode"]);
+  });
+
+  // #567 — detection-trap fix. The old AGENT_PLATFORMS list offered four
+  // harnesses with no session-log provider (Continue, Codeium/Windsurf, Cursor,
+  // Codex CLI). Selecting them added a stash source that was never indexed — a
+  // silent no-op. detectAgentPlatforms now derives only from
+  // SESSION_LOG_HARNESSES, so those config dirs are NOT offered even when present.
+  test("does NOT offer harnesses with no session-log provider (Continue/Codeium/Cursor/Codex)", async () => {
+    fs.mkdirSync(path.join(testHome, ".continue"), { recursive: true });
+    fs.mkdirSync(path.join(testHome, ".codeium"), { recursive: true });
+    fs.mkdirSync(path.join(testHome, ".cursor"), { recursive: true });
+    fs.mkdirSync(path.join(testHome, ".codex"), { recursive: true });
+    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const result = detectAgentPlatforms();
+    // None of the dead-option dirs surface as candidates.
+    expect(result).toEqual([]);
+  });
+
+  // The candidate list must equal the session-log-capable harnesses that
+  // declare a setup detection dir — the registry is the single source.
+  test("offered platforms equal SESSION_LOG_HARNESSES with a setupDetectionDir", async () => {
+    fs.mkdirSync(path.join(testHome, ".claude"), { recursive: true });
+    fs.mkdirSync(path.join(testHome, ".config", "opencode"), { recursive: true });
+    fs.mkdirSync(path.join(testHome, ".cursor"), { recursive: true });
+    const { detectAgentPlatforms } = await import("../src/setup/detect");
+    const { SESSION_LOG_HARNESSES } = await import("../src/integrations/harnesses");
+    const expected = SESSION_LOG_HARNESSES.filter((h) => h.setupDetectionDir)
+      .map((h) => h.displayName)
+      .sort();
+    const got = detectAgentPlatforms()
+      .map((p) => p.name)
+      .sort();
+    expect(got).toEqual(expected);
   });
 
   test("ignores files (only detects directories)", async () => {
