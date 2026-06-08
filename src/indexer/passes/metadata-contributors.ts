@@ -17,16 +17,18 @@ export interface MetadataContributor {
 }
 
 const contributors: MetadataContributor[] = [];
-let builtinsPromise: Promise<void> | undefined;
 
+/**
+ * Ensure that all built-in indexer contributors are registered.
+ *
+ * Delegates to the single `initIndexer()` composition root (see
+ * `src/indexer/init.ts`). Imported dynamically to keep this a lazy gate and to
+ * avoid a static import cycle (init -> renderers -> metadata-contributors).
+ * Called on first use of getMetadataContributors; idempotent.
+ */
 async function ensureBuiltinMetadataContributorsRegistered(): Promise<void> {
-  if (!builtinsPromise) {
-    builtinsPromise = (async () => {
-      await import("../../output/renderers.js");
-      await import("../../workflows/renderer.js");
-    })();
-  }
-  return builtinsPromise;
+  const { initIndexer } = await import("../init.js");
+  await initIndexer();
 }
 
 export function registerMetadataContributor(contributor: MetadataContributor): void {
