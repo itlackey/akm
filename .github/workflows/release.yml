@@ -282,7 +282,22 @@ jobs:
         run: |
           VERSION="${{ needs.version.outputs.tag }}"
           VERSION="${VERSION#v}"
-          bun install -g "akm-cli@$VERSION"
+          # `npm view` (above) and bun's installer hit DIFFERENT registry caches,
+          # so the version can be visible to one and not yet the other for a few
+          # seconds after publish. Retry the actual install through that lag —
+          # "No version matching ... (but package exists)" is the propagation race.
+          for attempt in 1 2 3 4 5 6; do
+            if bun install -g "akm-cli@$VERSION"; then
+              echo "installed akm-cli@$VERSION on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" = 6 ]; then
+              echo "FAIL: could not install akm-cli@$VERSION after 6 attempts."
+              exit 1
+            fi
+            echo "install attempt $attempt failed (likely propagation lag); sleeping 20s..."
+            sleep 20
+          done
           ACTUAL="$(akm --version 2>&1)"
           echo "akm --version: $ACTUAL"
           # Expect the version string to appear somewhere in the output —
