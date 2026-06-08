@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`akm config edit`** — the interactive menu-based editor was removed. A
+  prompt-driven drill-down was clunkier than just editing the file. Edit the
+  config directly (the path is shown by `akm config path`), use
+  `akm config set/get/unset` for scripted changes, and `akm config validate` to
+  check it.
+
 ## [0.9.0-beta.1] - 2026-06-08
 
 ### Fixed
