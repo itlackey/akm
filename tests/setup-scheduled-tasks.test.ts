@@ -84,7 +84,7 @@ function makeDeps(installed: Array<{ id: string; enabled: boolean }>) {
     },
     sync: async () => {
       calls.syncCalls += 1;
-      return { installed: [], removed: [], unchanged: [], skipped: [], backend: "cron" as const };
+      return { installed: [], updated: [], removed: [], unchanged: [], skipped: [], backend: "cron" as const };
     },
     gitSync: (() => {
       calls.gitSyncCalls += 1;
