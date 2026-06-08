@@ -115,6 +115,28 @@ export function releaseLock(lockPath: string): void {
 }
 
 /**
+ * Release a lock ONLY if it is still owned by `ownerPid`. Safe to call from a
+ * `process.exit()` / `'exit'` handler as a backstop: `process.exit()` skips
+ * `finally` blocks — so the normal lock-release never runs on signal death
+ * (SIGTERM/SIGINT) — but it DOES fire `'exit'` listeners synchronously. Checking
+ * ownership first means that if the lock was already released and re-acquired by
+ * a different process, this leaves that process's lock intact (no cross-run
+ * deletion / PID-reuse footgun). Synchronous so it is valid inside an exit handler.
+ */
+export function releaseLockIfOwned(lockPath: string, ownerPid: number): void {
+  let rawContent: string;
+  try {
+    rawContent = fs.readFileSync(lockPath, "utf8");
+  } catch {
+    // Absent or unreadable — nothing of ours to release.
+    return;
+  }
+  if (extractHolderPid(rawContent) === ownerPid) {
+    releaseLock(lockPath);
+  }
+}
+
+/**
  * Extract a PID from a sentinel body. Accepts the two shapes used across
  * the codebase: a bare numeric string (config-io, vault, lockfile) and
  * a JSON object with a `pid` field (improve). Returns undefined when the

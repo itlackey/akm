@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.3] - 2026-06-08
+
+### Fixed
+
+- **`improve.lock` leaked on signal death (cron timeout).** The improve
+  SIGTERM/SIGINT/SIGHUP handler calls `process.exit()`, which skips `finally`
+  blocks — so the `finally` that releases `improve.lock` never ran, and every
+  timed-out cron run leaked the lock sentinel. (It wasn't a permanent deadlock
+  only because the next run reclaims a dead-PID lock, a path that PID reuse can
+  defeat.) The lock is now released from a `process.on("exit", …)` handler
+  registered at acquire time (exit handlers DO run on `process.exit()`), via a
+  new ownership-checked `releaseLockIfOwned(path, pid)` so a backstop release can
+  never delete a different run's lock. This generalizes to the budget watchdog
+  and any future exit path.
+- **`quick` profile was not quick.** It was documented "Reflect-only" but did
+  not disable the session-`extract` process (which is default-ON), so a `quick`
+  run processed the entire unindexed-session backlog (~40 min) — guaranteeing a
+  5-minute cron timeout → SIGTERM → the lock leak above, every run. `quick` now
+  explicitly sets `processes.extract.enabled: false`.
+
 ## [0.8.2] - 2026-06-05
 
 ### Added
