@@ -2,10 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { getWorkflowDbPath } from "../core/paths";
+import { type Database, openDatabase } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 
 /**
@@ -50,7 +50,7 @@ export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = new Database(dbPath);
+  const db = openDatabase(dbPath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   ensureBaseSchema(db);
@@ -184,7 +184,7 @@ const SCOPE_KEY_MIGRATION_ID = "001-add-scope-key";
  * Detect whether a column exists on a given table.
  */
 function hasColumn(db: Database, table: string, column: string): boolean {
-  const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+  const rows = db.prepare<{ name: string }>(`PRAGMA table_info(${table})`).all();
   return rows.some((r) => r.name === column);
 }
 

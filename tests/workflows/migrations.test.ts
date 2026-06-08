@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Database as AkmDatabase } from "../../src/storage/database";
 import { closeWorkflowDatabase, openWorkflowDatabase, runMigrations } from "../../src/workflows/db";
 
 /**
@@ -39,7 +40,7 @@ afterEach(() => {
   }
 });
 
-function listAppliedMigrations(db: Database): string[] {
+function listAppliedMigrations(db: AkmDatabase): string[] {
   return (
     db.prepare("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{
       id: string;
@@ -47,8 +48,8 @@ function listAppliedMigrations(db: Database): string[] {
   ).map((r) => r.id);
 }
 
-function hasColumn(db: Database, table: string, column: string): boolean {
-  const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+function hasColumn(db: AkmDatabase, table: string, column: string): boolean {
+  const rows = db.prepare<{ name: string }>(`PRAGMA table_info(${table})`).all();
   return rows.some((r) => r.name === column);
 }
 

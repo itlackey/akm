@@ -10,8 +10,8 @@
  * duplicating the hash-compute → lookup → write pattern inline.
  */
 
-import type { Database } from "bun:sqlite";
 import { bestEffort } from "../../core/best-effort";
+import type { Database } from "../../storage/database";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 
 /**

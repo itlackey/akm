@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openStateDatabase, runMigrations as runStateMigrations } from "../../src/core/state-db";
+import type { Database as AkmDatabase } from "../../src/storage/database";
 import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "../../src/workflows/db";
 
 /**
@@ -30,7 +31,7 @@ import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "..
  * - `schema`: every CREATE statement in sqlite_master, ordered deterministically
  *   by (type, name). Auto-generated internal objects (sqlite_*) are excluded.
  */
-function snapshotSchema(db: Database): {
+function snapshotSchema(db: AkmDatabase): {
   migrations: string[];
   schema: Array<{ type: string; name: string; sql: string | null }>;
 } {
@@ -160,7 +161,7 @@ describe("SQLite migration runner characterization", () => {
       const snap = snapshotSchema(db);
       expect(snap.migrations).toEqual(["001-add-scope-key", "002-add-agent-identity", "003-checkin-and-step-summary"]);
       // The scope_key column must exist exactly once (bootstrap did not re-ALTER).
-      const cols = db.query<{ name: string }, []>("PRAGMA table_info(workflow_runs)").all();
+      const cols = db.prepare<{ name: string }>("PRAGMA table_info(workflow_runs)").all();
       expect(cols.filter((c) => c.name === "scope_key").length).toBe(1);
     } finally {
       db.close();

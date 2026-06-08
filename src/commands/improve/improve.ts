@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { assertNever } from "../../core/assert";
@@ -47,6 +46,7 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../../llm/feature-gate";
 import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
+import type { Database } from "../../storage/database";
 import { akmLint } from "../lint/index";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
@@ -1025,7 +1025,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let clearBudgetTimer = (): void => {};
   // I1: open a single state.db connection for the entire improve run so all
   // appendEvent calls reuse one handle instead of open/migrate/close per call.
-  let eventsDb: import("bun:sqlite").Database | undefined;
+  let eventsDb: import("../../storage/database").Database | undefined;
   // `eventsCtx` is read by the main catch (improve_failed) and finally, so it
   // lives in the outer scope. It is always assigned at the top of the try.
   let eventsCtx: EventsContext = {};
@@ -2258,7 +2258,7 @@ async function runImprovePreparationStage(args: {
   const noFeedbackCandidates = processableRefs.filter((r) => !signalBearingSet.has(r.ref));
 
   let highRetrievalRefs: ImproveEligibleRef[] = [];
-  let dbForRetrieval: import("bun:sqlite").Database | undefined;
+  let dbForRetrieval: import("../../storage/database").Database | undefined;
   try {
     dbForRetrieval = openExistingDatabase();
     const showEventCount = countUsageEventsByType(dbForRetrieval, "show");

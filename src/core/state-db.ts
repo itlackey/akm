@@ -51,10 +51,10 @@
  * @module state-db
  */
 
-import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import type { Proposal } from "../commands/proposal/validators/proposals";
+import { type Database, openDatabase, type SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
@@ -62,8 +62,9 @@ import { classifyImproveAction } from "./improve-types";
 import { getDataDir } from "./paths";
 import { error } from "./warn";
 
-// Re-export the bun:sqlite Database type so command modules can type their repo
-// parameters against the owner module rather than reaching into bun:sqlite.
+// Re-export the boundary Database type so command modules can type their repo
+// parameters against the owner module rather than reaching into the runtime
+// boundary directly.
 export type { Database };
 
 // ── Path helper ──────────────────────────────────────────────────────────────
@@ -112,7 +113,7 @@ export function openStateDatabase(dbPath?: string): Database {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = new Database(resolvedPath);
+  const db = openDatabase(resolvedPath);
 
   // PRAGMAs must run before any DDL or DML.
   db.exec("PRAGMA journal_mode = WAL");
@@ -719,7 +720,7 @@ export function readStateEvents(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = db
     .prepare(`SELECT id, event_type, ts, ref, metadata_json FROM events ${where} ORDER BY id ASC`)
-    .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as EventRow[];
+    .all(...(params as SqlValue[])) as EventRow[];
 
   const events = rows.map(eventRowToEnvelope);
   const nextId = events.length > 0 ? events[events.length - 1].id : (options.sinceId ?? 0);
@@ -809,7 +810,7 @@ export function listStateProposals(
               content, frontmatter_json, metadata_json
        FROM proposals ${where} ORDER BY created_at ASC`,
     )
-    .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as ProposalRow[];
+    .all(...(params as SqlValue[])) as ProposalRow[];
   return rows.map(proposalRowToProposal);
 }
 
@@ -918,7 +919,7 @@ export function queryTaskHistory(
               target_kind, target_ref, metadata_json
        FROM task_history ${where} ORDER BY started_at DESC`,
     )
-    .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as TaskHistoryRow[];
+    .all(...(params as SqlValue[])) as TaskHistoryRow[];
 }
 
 /**
@@ -969,7 +970,7 @@ export function listExistingTableNames(db: Database, names: readonly string[]): 
   const placeholders = names.map(() => "?").join(", ");
   return db
     .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders}) ORDER BY name`)
-    .all(...(names as import("bun:sqlite").SQLQueryBindings[])) as Array<{ name: string }>;
+    .all(...(names as SqlValue[])) as Array<{ name: string }>;
 }
 
 // ── events.jsonl import ──────────────────────────────────────────────────────

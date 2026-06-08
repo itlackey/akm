@@ -142,7 +142,7 @@ function resolveGraphStashPath(source?: string): string {
 
 function loadGraph(source?: string): LoadedGraph {
   const stashPath = resolveGraphStashPath(source);
-  let db: import("bun:sqlite").Database | undefined;
+  let db: import("../../storage/database").Database | undefined;
   try {
     db = openExistingDatabase();
     const snapshot = loadStoredGraphSnapshot(stashPath, db);
@@ -345,7 +345,7 @@ export async function akmGraphRelated(options: {
   }
   const target = await resolveGraphTarget(ref, options.source);
   const { graph, stashPath, graphPath } = loadGraph(target.stashPath);
-  let db: import("bun:sqlite").Database | undefined;
+  let db: import("../../storage/database").Database | undefined;
   const related = (() => {
     try {
       db = openExistingDatabase();
@@ -374,7 +374,7 @@ function normalizeGraphName(value: string): string {
 
 function buildRefByPath(
   stashRoot: string,
-  db: import("bun:sqlite").Database,
+  db: import("../../storage/database").Database,
 ): Map<string, { ref: string; type: string }> {
   const rows = getEntryRefRowsForStashRoot(db, stashRoot);
   const map = new Map<string, { ref: string; type: string }>();
@@ -407,7 +407,7 @@ export function akmGraphEntity(options: { name: string; source?: string; limit?:
   const { graph, stashPath, graphPath } = loadGraph(options.source);
   const target = normalizeGraphName(name);
 
-  let db: import("bun:sqlite").Database | undefined;
+  let db: import("../../storage/database").Database | undefined;
   let refByPath: Map<string, { ref: string; type: string }>;
   try {
     db = openExistingDatabase();
@@ -457,7 +457,7 @@ export function akmGraphOrphans(options?: { source?: string; limit?: number }): 
   }
   const { graph, stashPath, graphPath } = loadGraph(options?.source);
 
-  let db: import("bun:sqlite").Database | undefined;
+  let db: import("../../storage/database").Database | undefined;
   let refByPath: Map<string, { ref: string; type: string }>;
   try {
     db = openExistingDatabase();
@@ -548,7 +548,7 @@ export async function akmGraphUpdate(options: {
   if (scoped && options.refs) {
     // Resolve each ref to an absolute file path via the index DB.
     const dbPath = getDbPath();
-    let db: import("bun:sqlite").Database | undefined;
+    let db: import("../../storage/database").Database | undefined;
     const resolvedPaths = new Set<string>();
     try {
       db = openDatabase(dbPath);
@@ -589,7 +589,7 @@ export async function akmGraphUpdate(options: {
   const extractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
   const passOptions: GraphExtractionPassOptions = candidatePaths ? { candidatePaths } : {};
 
-  let db: import("bun:sqlite").Database | undefined;
+  let db: import("../../storage/database").Database | undefined;
   const startMs = Date.now();
   try {
     db = openDatabase(getDbPath());

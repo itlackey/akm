@@ -12,14 +12,13 @@
  * no global state pollution between test files.
  */
 
-import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import type { AkmConfig } from "../src/core/config/config";
 import type { SearchSource } from "../src/indexer/search/search-source";
+import type { Database } from "../src/storage/database";
 
 // ── Local LLM server (graph extraction) ──────────────────────────────────────
 // A real HTTP server on a random port stands in for the LLM endpoint.

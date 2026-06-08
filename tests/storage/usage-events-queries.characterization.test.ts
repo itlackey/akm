@@ -11,6 +11,7 @@ import {
   getUsageEvents,
   type UsageEventRow,
 } from "../../src/indexer/usage/usage-events";
+import type { Database as AkmDatabase } from "../../src/storage/database";
 
 /**
  * Characterization tests for the `usage_events` read queries that WS5 lifted
@@ -23,10 +24,10 @@ import {
  * proving zero behaviour change.
  */
 describe("usage_events query characterization (WS5)", () => {
-  let db: Database;
+  let db: AkmDatabase;
 
   beforeEach(() => {
-    db = new Database(":memory:");
+    db = new Database(":memory:") as unknown as AkmDatabase;
     ensureUsageEventsSchema(db);
     // Seed a representative spread of events. created_at is set explicitly so
     // the `since` filter is deterministic.
@@ -94,7 +95,9 @@ describe("usage_events query characterization (WS5)", () => {
       const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
                    FROM usage_events ${where}
                    ORDER BY id ASC`;
-      return db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as UsageEventRow[];
+      return db
+        .prepare(sql)
+        .all(...(params as Array<string | number | bigint | boolean | null | Uint8Array>)) as UsageEventRow[];
     };
 
     // since only.
@@ -114,7 +117,7 @@ describe("usage_events query characterization (WS5)", () => {
   });
 
   test("getUsageEvents fully materialises results (survive db.close)", () => {
-    const local = new Database(":memory:");
+    const local = new Database(":memory:") as unknown as AkmDatabase;
     ensureUsageEventsSchema(local);
     local
       .prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, ?)")
