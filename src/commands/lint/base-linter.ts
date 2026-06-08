@@ -19,18 +19,28 @@
 // will fail.
 //
 // Cases the contract covers (see fixture in the contract test):
-//   - existing memory / knowledge / agent / workflow / skill / vault refs
+//   - existing memory / knowledge / agent / workflow / skill refs
 //   - knowledge subdirectory layout (knowledge/<category>/<slug>.md)
 //   - skill multi-file layout (skills/<slug>/SKILL.md)
 //   - memory `.derived.md` sibling
-//   - vault default vs named (.env vs <name>.env)
 //   - namespaced slugs containing `/`
+//   - env (`env/.env`, `env/<name>.env`) and secret (`secrets/<name>`) refs
 //   - non-existent refs
 //   - script type (unresolvable by design — both must return false)
+//
+// As of 0.9 the type alternation in `REF_RE` and the path mapping in
+// `refToRelPath` are DERIVED FROM THE ASSET REGISTRY (`getAssetTypes()` /
+// `resolveAssetPathFromName` in `src/core/asset/asset-spec.ts`) rather than
+// hand-encoded, so they can no longer drift from the registry. The previously
+// hand-listed `vault` type was removed from the registry in 0.9 (replaced by
+// `env`); `vault:` refs are therefore no longer matched here. `env:`/`secret:`
+// refs are now matched and path-resolved. `script` stays unresolvable and
+// `task` keeps its legacy `.md` resolution (see refToRelPath for both).
 // ----------------------------------------------------------------------------
 
 import fs from "node:fs";
 import path from "node:path";
+import { getAssetTypes, resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { findSafeInsertionPoint } from "./markdown-insertion";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
 
@@ -96,39 +106,53 @@ function checkStalePath(body: string): string | null {
 
 // ── missing-ref helpers ───────────────────────────────────────────────────────
 
-const REF_RE =
-  /(?:^|[\s`"'(])((agent|command|knowledge|memory|script|skill|workflow|lesson|task|wiki):[^\s"'`)\]>,\n]+)/gm;
+/**
+ * Type alternation for {@link REF_RE}, derived from the asset registry at
+ * module load so it can never drift from `ASSET_SPECS`. Longest-first ordering
+ * is defensive (no built-in type is a prefix of another, but a future custom
+ * `registerAssetType` one might be) so the alternation prefers the longest
+ * match. Regex metacharacters are escaped in case a custom type introduces one.
+ */
+function buildRefTypeAlternation(): string {
+  const types = [...getAssetTypes()].sort((a, b) => b.length - a.length);
+  return types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+}
+
+// Only the TYPE alternation is registry-derived; the surrounding grammar
+// (boundary prefix, capture group, slug charset) is byte-identical to the
+// legacy hand-written pattern. Deriving the types from `getAssetTypes()` means
+// `env`/`secret` (added in 0.9) are now matched, and the removed `vault` type
+// is not — both follow the registry automatically.
+const REF_RE = new RegExp(`(?:^|[\\s\`"'(])((${buildRefTypeAlternation()}):[^\\s"'\`)\\]>,\\n]+)`, "gm");
 
 /**
- * Map from ref type to relative path pattern within stashRoot. Returns null to skip.
+ * Map from ref type to relative path pattern within stashRoot. Returns null to
+ * skip (type is unresolvable by the slug walker).
+ *
+ * Path layout is owned by the asset registry: we resolve through
+ * `resolveAssetPathFromName(type, TYPE_DIRS[type], name)` so the linter and the
+ * rest of the CLI agree on where an asset lives. Two legacy carve-outs are
+ * preserved to keep pre-0.9 behaviour byte-identical:
+ *   - `script`: returns null (scripts live in nested dirs with arbitrary
+ *     extensions — unresolvable by the slug-based walker, as the contract pins).
+ *   - `task`: the registry stores tasks as `<id>.yml`, but the missing-ref
+ *     linter has always resolved `task:` refs against `tasks/<id>.md`; that
+ *     behaviour is held constant here (non-env/secret behaviour is unchanged).
  *
  * Exported for contract testing — see header CONTRACT block.
  */
 export function refToRelPath(refType: string, refName: string): string | null {
-  switch (refType) {
-    case "agent":
-      return path.join("agents", `${refName}.md`);
-    case "command":
-      return path.join("commands", `${refName}.md`);
-    case "knowledge":
-      return path.join("knowledge", `${refName}.md`);
-    case "memory":
-      return path.join("memories", `${refName}.md`);
-    case "script":
-      return null; // scripts live in nested dirs — skip
-    case "skill":
-      return path.join("skills", refName, "SKILL.md");
-    case "workflow":
-      return path.join("workflows", `${refName}.md`);
-    case "lesson":
-      return path.join("lessons", `${refName}.md`);
-    case "task":
-      return path.join("tasks", `${refName}.md`);
-    case "wiki":
-      return path.join("wikis", `${refName}.md`);
-    default:
-      return null;
-  }
+  // script is intentionally unresolvable (contract-pinned).
+  if (refType === "script") return null;
+  // Preserve the legacy `.md` resolution for tasks.
+  if (refType === "task") return path.join(TYPE_DIRS.task ?? "tasks", `${refName}.md`);
+
+  const typeDir = TYPE_DIRS[refType];
+  if (!typeDir) return null; // unknown type — skip
+  // resolveAssetPathFromName returns a path rooted at the type dir we pass in,
+  // i.e. "<typeDir>/<...>" — exactly the stash-relative path this helper has
+  // always returned.
+  return resolveAssetPathFromName(refType, typeDir, refName);
 }
 
 /**
