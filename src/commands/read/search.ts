@@ -249,7 +249,7 @@ export async function akmSearch(input: {
  * Resolve entry IDs by file_path lookup (exact match, not LIKE).
  */
 function resolveEntryIds(
-  db: import("bun:sqlite").Database,
+  db: import("../../storage/database").Database,
   hits: SourceSearchHit[],
 ): Array<{ entryId: number; ref: string }> {
   const results: Array<{ entryId: number; ref: string }> = [];

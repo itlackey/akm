@@ -21,8 +21,8 @@
  *     degrades gracefully to its non-graph behaviour, exactly as today.
  */
 
-import type { Database } from "bun:sqlite";
 import type { AkmConfig } from "../../core/config/config";
+import type { Database } from "../../storage/database";
 import { loadStoredGraphMeta, loadStoredGraphSnapshot } from "../db/graph-db";
 import type { GraphFile, GraphFileNode } from "./graph-extraction";
 

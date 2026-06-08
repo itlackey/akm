@@ -49,6 +49,7 @@ import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProf
 import { defaultProfileName, v1ProfilePlatform } from "../integrations/harnesses";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
+import { getDirname, spawn } from "../runtime";
 import { saveGitStash } from "../sources/providers/git";
 import { backendNameForPlatform } from "../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../tasks/embedded";
@@ -520,8 +521,8 @@ async function prepareSemanticSearchAssets(
       const spin = p.spinner();
       spin.start("Installing @huggingface/transformers...");
       try {
-        const pkgRoot = path.resolve(import.meta.dir, "../..");
-        const proc = Bun.spawn(["bun", "add", "@huggingface/transformers"], {
+        const pkgRoot = path.resolve(getDirname(import.meta.url), "../..");
+        const proc = spawn(["bun", "add", "@huggingface/transformers"], {
           cwd: pkgRoot,
           stdout: "pipe",
           stderr: "pipe",

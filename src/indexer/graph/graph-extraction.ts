@@ -37,7 +37,6 @@
  *     reserved for asset writes (CLAUDE.md / spec §10 step 5).
  */
 
-import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
@@ -49,6 +48,7 @@ import { isProcessEnabled } from "../../llm/feature-gate";
 import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../../llm/graph-extract";
 import * as graphExtract from "../../llm/graph-extract";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
+import type { Database } from "../../storage/database";
 import {
   computeBodyHash,
   GRAPH_SCHEMA_VERSION,

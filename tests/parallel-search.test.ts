@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,6 +17,7 @@ import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import type { SourceSearchHit } from "../src/sources/types";
+import type { Database } from "../src/storage/database";
 import {
   type Cleanup,
   sandboxStashDir,

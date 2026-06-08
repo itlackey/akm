@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -12,6 +11,7 @@ import {
   upsertEntry,
 } from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { Database } from "../src/storage/database";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────

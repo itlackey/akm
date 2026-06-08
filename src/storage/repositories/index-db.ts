@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
+import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 
 /**

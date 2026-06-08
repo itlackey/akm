@@ -1,9 +1,9 @@
-import type { Database } from "bun:sqlite";
 import path from "node:path";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { deleteStoredGraph, loadStoredGraphSnapshot, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import type { GraphFile } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
+import type { Database } from "../../src/storage/database";
 
 /**
  * Seed a stored graph snapshot, also creating the minimal `entries` rows

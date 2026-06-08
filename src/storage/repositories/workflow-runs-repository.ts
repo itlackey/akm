@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
 import type { WorkflowRunStatus, WorkflowRunStepStatus } from "../../sources/types";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../workflows/db";
+import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 
 /**
@@ -167,11 +167,13 @@ export class WorkflowRunsRepository {
   findActiveOrBlockedRunForScope(
     scopeKey: string,
   ): { id: string; current_step_id: string | null; workflow_ref: string } | null {
-    return this.db
-      .query<{ id: string; current_step_id: string | null; workflow_ref: string }, [string]>(
-        "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE scope_key = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
-      )
-      .get(scopeKey);
+    return (
+      this.db
+        .prepare<{ id: string; current_step_id: string | null; workflow_ref: string }>(
+          "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE scope_key = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
+        )
+        .get(scopeKey) ?? null
+    );
   }
 
   // ── writes ─────────────────────────────────────────────────────────────────

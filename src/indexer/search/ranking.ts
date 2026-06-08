@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
+import type { Database } from "../../storage/database";
 import { type DbSearchResult, getUtilityScoresByIds } from "../db/db";
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { StashEntry } from "../passes/metadata";

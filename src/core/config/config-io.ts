@@ -15,6 +15,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { sleepSync } from "../../runtime";
 import { writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../file-lock";
@@ -170,22 +171,12 @@ const CONFIG_LOCK_MAX_RETRIES = 10;
 const CONFIG_LOCK_RETRY_DELAY_MS = 50;
 
 /**
- * Block the current thread for `ms` without busy-spinning (H8).
- *
- * Prefers `Bun.sleepSync`, a real blocking sleep that yields the thread to the
- * OS scheduler. Falls back to a bounded spin only when Bun is unavailable (e.g.
- * bare-node test harness), mirroring `src/commands/env/secret.ts`.
+ * Block the current thread for `ms` without busy-spinning (H8). Delegates to
+ * the runtime boundary's `sleepSync`, a real blocking sleep that yields the
+ * thread to the OS scheduler.
  */
 function sleepSyncMs(ms: number): void {
-  const bun = (globalThis as { Bun?: { sleepSync?: (ms: number) => void } }).Bun;
-  if (typeof bun?.sleepSync === "function") {
-    bun.sleepSync(ms);
-    return;
-  }
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    // Fallback spin (non-Bun runtimes only).
-  }
+  sleepSync(ms);
 }
 
 /**
@@ -219,9 +210,9 @@ export function acquireConfigLock(): () => void {
       // H8: yield the thread between retries instead of busy-spinning.
       // The previous `while (Date.now() < deadline)` loop burned CPU for up to
       // 50ms per retry (≈500ms total), freezing the single JS thread and
-      // starving co-scheduled work under parallel load. `Bun.sleepSync` is a
+      // starving co-scheduled work under parallel load. `sleepSync` is a
       // real blocking sleep that releases the thread to the OS scheduler.
-      // Kept synchronous (rather than `await Bun.sleep`) to preserve the sync
+      // Kept synchronous (rather than an async sleep) to preserve the sync
       // `withConfigLock` signature and avoid an async ripple through every
       // `saveConfig`/`loadConfig` caller. Lock semantics are unchanged: same
       // retry count, same delay budget, same best-effort fall-through.

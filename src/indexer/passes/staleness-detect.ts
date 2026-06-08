@@ -43,7 +43,6 @@
  * `features.index.staleness_detection.options.thresholdDays` (default 90).
  */
 
-import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -54,6 +53,7 @@ import { warn } from "../../core/warn";
 import { resolveValidationRunner, runnerIsLlm } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isProcessEnabled } from "../../llm/feature-gate";
+import type { Database } from "../../storage/database";
 import { findEntryIdByRef } from "../db/db";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";

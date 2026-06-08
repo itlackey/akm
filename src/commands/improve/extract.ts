@@ -25,7 +25,6 @@
  *     consolidate-writer fix.
  */
 
-import type { Database } from "bun:sqlite";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
@@ -48,6 +47,7 @@ import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 

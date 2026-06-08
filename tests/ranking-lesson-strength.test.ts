@@ -7,11 +7,11 @@
  * monotonicity and the 0.3 cap.
  */
 
-import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
+import type { Database } from "../src/storage/database";
 
 function makeLesson(name: string, lessonStrength?: number): RankedEntryInput {
   const entry: StashEntry = { name, type: "lesson" };

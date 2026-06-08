@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -12,6 +11,8 @@ import { getDbPath } from "../../core/paths";
 import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
+import { sha256Hex } from "../../runtime";
+import { type Database, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
 import { ensureUsageEventsSchema } from "../usage/usage-events";
@@ -65,7 +66,7 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = new Database(resolvedPath);
+  const db = openSqlite(resolvedPath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
@@ -111,7 +112,7 @@ function resolveConfiguredEmbeddingDim(): number | undefined {
 
 export function openExistingDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getDbPath();
-  const db = new Database(resolvedPath);
+  const db = openSqlite(resolvedPath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
@@ -135,6 +136,10 @@ function loadVecExtension(db: Database): void {
   try {
     const esmRequire = createRequire(import.meta.url);
     const sqliteVec = esmRequire("sqlite-vec");
+    // `db` here is the genuine underlying driver handle returned by the storage
+    // boundary (bun:sqlite on Bun, better-sqlite3 on Node) — only structurally
+    // narrowed for callers. sqlite-vec's `load()` accepts either real handle,
+    // so no raw-handle escape hatch is required.
     sqliteVec.load(db);
     vecStatus.set(db, true);
   } catch {
@@ -1339,7 +1344,7 @@ function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: 
   }
 
   try {
-    const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as Array<{
+    const rows = db.prepare(sql).all(...(params as SqlValue[])) as Array<{
       id: number;
       filePath: string;
       entry_json: string;
@@ -1440,9 +1445,7 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
     params = [];
   }
 
-  const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as Array<
-    Record<string, unknown>
-  >;
+  const rows = db.prepare(sql).all(...(params as SqlValue[])) as Array<Record<string, unknown>>;
   return parseEntryRows(rows, "getAllEntries");
 }
 
@@ -1779,7 +1782,7 @@ export function getLlmCacheEntriesByRefs(db: Database, refs: string[], cacheVari
         `SELECT asset_ref, cache_variant, body_hash, result_json, updated_at FROM llm_enrichment_cache
          WHERE cache_variant = ? AND asset_ref IN (${placeholders})`,
       )
-      .all(cacheVariant, ...(chunk as import("bun:sqlite").SQLQueryBindings[])) as Array<{
+      .all(cacheVariant, ...(chunk as SqlValue[])) as Array<{
       asset_ref: string;
       cache_variant: string;
       body_hash: string;
@@ -1841,16 +1844,12 @@ export function clearStaleCacheEntries(db: Database): void {
 }
 
 /**
- * Compute a stable SHA-256 hex digest of a UTF-8 string using Bun's native
- * hashing. Used as the body_hash key in `llm_enrichment_cache`.
- *
- * Bun.CryptoHasher is synchronous and allocation-free compared to Web Crypto,
- * making it suitable for use inside tight per-asset loops.
+ * Compute a stable SHA-256 hex digest of a UTF-8 string. Used as the body_hash
+ * key in `llm_enrichment_cache`. Routed through the runtime boundary so the
+ * SQLite layer stays free of direct runtime-specific references.
  */
 export function computeBodyHash(body: string): string {
-  const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(body);
-  return hasher.digest("hex");
+  return sha256Hex(body);
 }
 
 /**
@@ -1871,7 +1870,7 @@ export function getRetrievalCounts(db: Database, refs: string[]): Map<string, nu
          WHERE event_type IN ('search','show') AND entry_ref IN (${placeholders})
          GROUP BY entry_ref`,
       )
-      .all(...(chunk as import("bun:sqlite").SQLQueryBindings[])) as Array<{ entry_ref: string; cnt: number }>;
+      .all(...(chunk as SqlValue[])) as Array<{ entry_ref: string; cnt: number }>;
     for (const r of rows) result.set(r.entry_ref, r.cnt);
   }
   return result;

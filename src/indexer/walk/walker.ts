@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "../../core/asset/asset-spec";
+import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "bin", ".cache"]);
@@ -89,7 +90,7 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   if (!isInsideGitRepo(stashRoot)) return null;
 
   // Get tracked + untracked (non-ignored) files
-  const result = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
+  const result = spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
     cwd: stashRoot,
   });
   // result.success is false if the process exited non-zero OR git was not found

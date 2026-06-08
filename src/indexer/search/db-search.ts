@@ -15,7 +15,6 @@
  * implementation, not a "local vs. remote" distinction.
  */
 
-import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
 import { makeAssetRef } from "../../core/asset/asset-ref";
@@ -25,6 +24,7 @@ import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
+import type { Database } from "../../storage/database";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import {
   closeDatabase,

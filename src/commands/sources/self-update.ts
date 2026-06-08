@@ -9,6 +9,7 @@ import path from "node:path";
 import { fetchWithRetry, IS_WINDOWS } from "../../core/common";
 import { warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
+import { getDirname, mainPath, semverOrder } from "../../runtime";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 
 const REPO = "itlackey/akm";
@@ -29,8 +30,8 @@ export interface InstallSignals {
 /** Read live runtime signals. */
 export function getInstallSignals(): InstallSignals {
   return {
-    bunMain: typeof Bun !== "undefined" ? Bun.main : undefined,
-    importMetaDir: import.meta.dir ?? undefined,
+    bunMain: mainPath,
+    importMetaDir: getDirname(import.meta.url),
     hasAkmVersion: typeof AKM_VERSION !== "undefined",
   };
 }
@@ -51,8 +52,8 @@ export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
     return "npm";
   }
 
-  // Bun-compiled binaries: Bun.main points to a virtual /$bunfs/ path,
-  // NOT process.execPath. The old check (Bun.main === process.execPath) was
+  // Bun-compiled binaries: mainPath points to a virtual /$bunfs/
+  // path, NOT process.execPath. The old check (mainPath === process.execPath) was
   // always false for compiled binaries, causing "unknown" for every binary user.
   if (s.bunMain !== undefined) {
     // Primary check: compiled binaries embed sources under /$bunfs/
@@ -97,7 +98,7 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
   return {
     currentVersion,
     latestVersion,
-    updateAvailable: latestVersion !== "" && Bun.semver.order(currentVersion, latestVersion) < 0,
+    updateAvailable: latestVersion !== "" && semverOrder(currentVersion, latestVersion) < 0,
     installMethod,
   };
 }
@@ -426,7 +427,7 @@ function normalizePathSeparators(value: string | undefined): string {
 
 function getInstalledPackageName(): string {
   try {
-    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../../../package.json");
+    const pkgPath = path.resolve(getDirname(import.meta.url), "../../../package.json");
     if (fs.existsSync(pkgPath)) {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: unknown };
       if (typeof pkg.name === "string" && pkg.name.trim()) {

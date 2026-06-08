@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
 import type { AkmConfig } from "../../core/config/config";
+import type { Database } from "../../storage/database";
 import type { SearchSource } from "../search/search-source";
 
 /**

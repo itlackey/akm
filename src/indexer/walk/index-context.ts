@@ -12,8 +12,8 @@
  * sequence.
  */
 
-import type { Database } from "bun:sqlite";
 import type { AkmConfig } from "../../core/config/config";
+import type { Database } from "../../storage/database";
 import type { GraphExtractionResult } from "../graph/graph-extraction";
 import type { SearchSource } from "../search/search-source";
 import type { SemanticSearchReason } from "../search/semantic-status";

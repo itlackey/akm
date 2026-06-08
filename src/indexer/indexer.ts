@@ -2,6 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
+import path from "node:path";
+import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
+import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
+import { concurrentMap } from "../core/concurrent";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
+import { getDbPath } from "../core/paths";
+import { isVerbose, warn, warnVerbose } from "../core/warn";
+import { resolveIndexPassLLM } from "../llm/index-passes";
 /**
  * M-4 / #395 — Index Consistency Architecture Decision Record
  *
@@ -31,16 +40,7 @@
  *
  * See docs/technical/index-consistency-adr.md for the full analysis.
  */
-import type { Database } from "bun:sqlite";
-import fs from "node:fs";
-import path from "node:path";
-import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
-import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
-import { concurrentMap } from "../core/concurrent";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
-import { getDbPath } from "../core/paths";
-import { isVerbose, warn, warnVerbose } from "../core/warn";
-import { resolveIndexPassLLM } from "../llm/index-passes";
+import type { Database } from "../storage/database";
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import {
   clearStaleCacheEntries,

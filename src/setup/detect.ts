@@ -15,6 +15,7 @@ import path from "node:path";
 import type { HarnessId } from "../core/config/config";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
 import { SESSION_LOG_HARNESSES } from "../integrations/harnesses";
+import { spawn } from "../runtime";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ export async function detectOllama(): Promise<OllamaDetectionResult> {
 
   // CLI fallback
   try {
-    const proc = Bun.spawn(["ollama", "list"], {
+    const proc = spawn(["ollama", "list"], {
       stdout: "pipe",
       stderr: "pipe",
     });

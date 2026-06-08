@@ -23,7 +23,7 @@
  *   - To add a column: use `ALTER TABLE … ADD COLUMN … DEFAULT …`.
  */
 
-import type { Database } from "bun:sqlite";
+import type { Database } from "../database";
 
 /**
  * A single, append-only schema migration.

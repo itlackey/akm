@@ -199,7 +199,10 @@ const SAMPLE_LLM = {
   model: "llama3.2",
 };
 
-function withGraphDb<T>(name: string, fn: (db: import("bun:sqlite").Database) => Promise<T> | T): Promise<T> | T {
+function withGraphDb<T>(
+  name: string,
+  fn: (db: import("../src/storage/database").Database) => Promise<T> | T,
+): Promise<T> | T {
   void name;
   const db = openDatabase(path.join(tmpStash, "graph-test.db"));
   const result = fn(db);

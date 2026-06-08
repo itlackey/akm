@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { getAssetTypes } from "../../core/asset/asset-spec";
 import { getSources, loadConfig } from "../../core/config/config";
@@ -10,6 +9,7 @@ import { getDbPath } from "../../core/paths";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../../indexer/db/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../../indexer/search/semantic-status";
 import type { InfoResponse } from "../../sources/types";
+import type { Database } from "../../storage/database";
 import { pkgVersion } from "../../version";
 
 /**

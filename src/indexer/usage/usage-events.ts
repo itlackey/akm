@@ -9,7 +9,7 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
-import type { Database } from "bun:sqlite";
+import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
                FROM usage_events ${where}
                ORDER BY id ASC`;
 
-  return db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as UsageEventRow[];
+  return db.prepare(sql).all(...(params as SqlValue[])) as UsageEventRow[];
 }
 
 /**
