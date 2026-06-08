@@ -22,7 +22,14 @@ describe("migration help", () => {
 
   test("supports latest alias when changelog text is available", () => {
     const result = renderMigrationHelp("latest");
-    expect(result).toContain("## [0.8.2]");
+    // Derive the expected version from the changelog so this never re-breaks on a
+    // version bump: "latest" resolves to the newest RELEASED (non-Unreleased) section.
+    const changelog = fs.readFileSync(path.join(PROJECT_ROOT, "CHANGELOG.md"), "utf8");
+    const latest = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]
+      .map((m) => m[1])
+      .find((v) => v.toLowerCase() !== "unreleased");
+    expect(latest).toBeTruthy();
+    expect(result).toContain(`## [${latest}]`);
   });
 
   test("ensures published static files exist in the repo", () => {
