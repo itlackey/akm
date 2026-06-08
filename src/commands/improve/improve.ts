@@ -12,7 +12,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
 import type {
   AkmImproveResult,
   ImproveActionResult,
@@ -855,6 +855,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     lockAcquired = false;
   };
 
+  // Signal-safe lock release. The SIGTERM/SIGINT/SIGHUP handler in improve-cli.ts
+  // calls `process.exit()`, which does NOT run the `finally` below that owns lock
+  // release — so a cron-timeout SIGTERM leaked `improve.lock` every run.
+  // `process.exit()` DOES fire `'exit'` listeners, so we release the lock from
+  // one. `releaseLockIfOwned` only unlinks a lock still owned by this PID, so it
+  // is safe even if a later run re-acquired it. The listener is removed in the
+  // `finally` so the normal path stays single-release and repeated in-process
+  // `akmImprove` calls (tests) do not accumulate listeners.
+  const releaseLockOnExit = (): void => {
+    releaseLockIfOwned(resolvedLockPath, process.pid);
+  };
+
   const preEnsureCleanupWarnings: string[] = [];
   let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"];
   let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"];
@@ -870,6 +882,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (!options.dryRun) {
       acquireLock();
       lockAcquired = true;
+      // Backstop release on process.exit() (signal handler / budget watchdog),
+      // which skips the finally below. Removed in that finally on the normal path.
+      process.on("exit", releaseLockOnExit);
 
       // Phase 4 triage pre-pass (§7, §13): drain the standing pending backlog
       // BEFORE ensureIndex so improve generates fresh proposals against a cleared
@@ -1346,6 +1361,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     } catch {
       // ignore
     }
+    // The normal path released the lock above; drop the process.exit backstop so
+    // it does not fire later (or accumulate across repeated in-process calls).
+    process.removeListener("exit", releaseLockOnExit);
     // I1: close the long-lived state.db connection opened at the top of the run.
     try {
       eventsDb?.close();

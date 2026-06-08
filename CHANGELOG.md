@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`improve.lock` leaked on signal death (cron timeout)** — forward-ported from
+  0.8.3. The improve SIGTERM/SIGINT/SIGHUP handler calls `process.exit()`, which
+  skips `finally` blocks, so the `finally` releasing `improve.lock` never ran and
+  every timed-out cron run leaked the lock. It is now released from a
+  `process.on("exit", …)` handler registered at acquire time, via a new
+  ownership-checked `releaseLockIfOwned(path, pid)`.
+- **`quick` profile was not quick** — forward-ported from 0.8.3. It did not
+  disable the default-ON session-`extract` process, so a `quick` run processed
+  the entire session backlog (~40 min). `quick` now sets
+  `processes.extract.enabled: false`.
+
 ## [0.9.0-beta.0] - 2026-06-08
 
 ### Added
