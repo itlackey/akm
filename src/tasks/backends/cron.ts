@@ -88,12 +88,11 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
     },
     list(): InstalledTaskRef[] {
       const existing = readCrontab(exec);
-      const ids: string[] = [];
-      for (const line of existing.split(/\r?\n/)) {
-        const m = line.match(BLOCK_RE);
-        if (m) ids.push(m[1]);
-      }
-      return ids.map((id) => ({ id }));
+      return listBlocks(existing).map(({ id, body }) => ({ id, signature: normalizeSignature(body) }));
+    },
+    expectedSignature(task: TaskDocument): string {
+      const cronLine = buildCronLine(task, akmArgv, logDir);
+      return normalizeSignature(cronBlockBody(cronLine, task.enabled));
     },
   };
 }
@@ -108,9 +107,50 @@ export function buildCronLine(task: TaskDocument, akmArgv: string[], logDir: str
   return `${cronExpr} ${cmd} >> ${quoteForCron(logPath)} 2>&1`;
 }
 
+/** The crontab line as it appears inside a block — commented when disabled. */
+export function cronBlockBody(cronLine: string, enabled: boolean): string {
+  return enabled ? cronLine : `${DISABLED_PREFIX}${cronLine}`;
+}
+
 export function renderBlock(id: string, cronLine: string, enabled: boolean): string {
-  const body = enabled ? cronLine : `${DISABLED_PREFIX}${cronLine}`;
-  return [BEGIN(id), body, END(id)].join("\n");
+  return [BEGIN(id), cronBlockBody(cronLine, enabled), END(id)].join("\n");
+}
+
+/**
+ * Parse the akm-owned blocks out of a crontab, returning each task id with the
+ * raw body line(s) between its BEGIN/END markers. Used by `list()` to build a
+ * drift signature, and exported for tests.
+ */
+export function listBlocks(existing: string): Array<{ id: string; body: string }> {
+  const out: Array<{ id: string; body: string }> = [];
+  const lines = existing.split(/\r?\n/);
+  let currentId: string | null = null;
+  let body: string[] = [];
+  for (const line of lines) {
+    const begin = line.match(BLOCK_RE);
+    if (begin) {
+      currentId = begin[1];
+      body = [];
+      continue;
+    }
+    if (currentId !== null && line === END(currentId)) {
+      out.push({ id: currentId, body: body.join("\n") });
+      currentId = null;
+      body = [];
+      continue;
+    }
+    if (currentId !== null) body.push(line);
+  }
+  return out;
+}
+
+/** Collapse incidental whitespace so signature comparison ignores it. */
+function normalizeSignature(body: string): string {
+  return body
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .join("\n");
 }
 
 export function upsertBlock(existing: string, id: string, block: string): string {

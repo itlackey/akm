@@ -99,6 +99,14 @@ export interface AkmImproveOptions {
   /** Wall-clock budget for the entire improve run in milliseconds. Defaults to 2 hours. */
   timeoutMs?: number;
   limit?: number;
+  /**
+   * When another improve run already holds the lock, skip gracefully (return a
+   * no-op result, exit 0) instead of failing with a "already running" config
+   * error (exit 78). Intended for high-frequency scheduled runs (e.g. the
+   * every-30-min `quick` pass) that would otherwise pile up exit-78 failures
+   * whenever a longer run is in progress. Default: false (preserve hard error).
+   */
+  skipIfLocked?: boolean;
   /** Named improve profile from profiles.improve or built-in profile names (default, quick, thorough, memory-focus). */
   profile?: string;
   consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
@@ -240,6 +248,12 @@ export interface AkmImproveResult {
     value?: string;
   };
   dryRun: boolean;
+  /**
+   * Present when the run did no work because another improve held the lock and
+   * `skipIfLocked` was set. The run still exits 0 and records a (non-productive)
+   * row so the skip is auditable; `reason` is `"lock-held"`.
+   */
+  skipped?: { reason: string };
   guidance?: string;
   memorySummary: {
     eligible: number;
@@ -853,10 +867,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     : path.join(options.stashDir ?? ".", ".akm", "improve.lock");
   const MAX_LOCK_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-  const acquireLock = (): void => {
+  const acquireLock = (): "acquired" | "skipped" => {
     fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
     const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
-    if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return;
+    if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return "acquired";
 
     // Lock file already exists — probe to determine whether it's still held
     // or whether the prior run died without cleaning up.
@@ -890,11 +904,24 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         /* event emission is best-effort; never block lock recovery */
       }
       releaseLock(resolvedLockPath);
-      if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return;
+      if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return "acquired";
+      // Lost the race to another run that grabbed the freed stale lock.
+      if (options.skipIfLocked) {
+        warn("[improve] another run acquired the lock during stale recovery; skipping (--skip-if-locked)");
+        return "skipped";
+      }
       throw new ConfigError(
         `akm improve is already running. Delete ${resolvedLockPath} to force.`,
         "INVALID_CONFIG_FILE",
       );
+    }
+
+    // Lock is held by a live run within the staleness window.
+    if (options.skipIfLocked) {
+      warn(
+        `[improve] another improve run holds the lock (PID ${lock?.pid}, started ${lock?.startedAt}); skipping (--skip-if-locked)`,
+      );
+      return "skipped";
     }
 
     throw new ConfigError(
@@ -948,7 +975,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // The dry-run branch below produces plannedRefs/memorySummary WITHOUT the lock
     // or triage (decision: dry-run never mutates the queue).
     if (!options.dryRun) {
-      acquireLock();
+      if (acquireLock() === "skipped") {
+        // Another improve holds the lock and the caller asked to skip rather
+        // than fail. Return a clean no-op result (exit 0) before any index/DB
+        // work — never registered the exit listener, never set lockAcquired,
+        // so we release nothing belonging to the run that owns the lock.
+        return {
+          schemaVersion: 1,
+          ok: true,
+          scope,
+          dryRun: false,
+          skipped: { reason: "lock-held" },
+          memorySummary: { eligible: 0, derived: 0 },
+          plannedRefs: [],
+        };
+      }
       lockAcquired = true;
       // Backstop release on process.exit() (signal handler / budget watchdog),
       // which skips the finally below. Removed in that finally on the normal path.

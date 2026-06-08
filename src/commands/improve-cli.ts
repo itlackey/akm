@@ -67,6 +67,12 @@ export const improveCommand = defineCommand({
         "Emit the full JSON result on stdout (legacy behaviour). (0.8.0+: full result is recorded in the improve_runs table of state.db and stdout is empty; use this flag for the prior behaviour, e.g. `akm improve --json-to-stdout | jq`.)",
       default: false,
     },
+    "skip-if-locked": {
+      type: "boolean",
+      description:
+        "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
+      default: false,
+    },
     profile: {
       type: "string",
       description:
@@ -115,6 +121,7 @@ export const improveCommand = defineCommand({
       const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
+      const skipIfLocked = getHyphenatedBoolean(args, "skip-if-locked");
       const profileArg = getStringArg(args, "profile");
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
@@ -197,6 +204,7 @@ export const improveCommand = defineCommand({
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
           ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
+          ...(skipIfLocked ? { skipIfLocked } : {}),
           ...(profileArg !== undefined ? { profile: profileArg } : {}),
           ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
           consolidateOptions: {
