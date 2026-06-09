@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.6] - 2026-06-09
+
+### Added
+
+- **`consolidate.incrementalSince` profile config field.** Setting
+  `incrementalSince: "7d"` (or any duration string) in the `consolidate` block
+  of an improve profile narrows the candidate pool to memories modified within
+  that window plus their top-5 graph neighbours, keeping each pass focused on
+  recent changes. This makes it practical to run consolidation more often than
+  once per day (e.g. via `akm-improve-consolidate` every 4 h) without
+  re-scanning the full pool every time. The nightly default profile leaves this
+  unset (full-pool sweep, same as before). The `incrementalSince` option already
+  existed in `akmConsolidate()` but was hardcoded off at the call site; the
+  field is now surfaced in the config schema and read from the profile.
+
 ## [0.8.5] - 2026-06-09
 
 ### Fixed
