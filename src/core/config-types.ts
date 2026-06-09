@@ -154,6 +154,15 @@ export interface ImproveProcessConfig {
    */
   maxChunkSize?: number;
   /**
+   * When set, narrows the consolidation candidate pool to memories modified
+   * within this window (e.g. `"7d"`, `"48h"`) plus their top-5 graph
+   * neighbours. Useful when consolidation runs more than once per day —
+   * keeps each pass focused on recent changes. Leave absent for a full-pool
+   * sweep (correct and affordable for nightly runs).
+   * Only meaningful on the `consolidate` process.
+   */
+  incrementalSince?: string;
+  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.

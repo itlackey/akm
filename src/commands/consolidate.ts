@@ -2392,14 +2392,27 @@ async function checkPreEmitDedup(opts: {
  * everything changed or the index can't answer (fail-open to preserve merge
  * correctness). `since` is an ISO timestamp.
  */
+/**
+ * Parse a human-readable duration string (e.g. "30m", "24h", "7d") to an ISO
+ * timestamp representing `now - duration`. Returns the input unchanged when it
+ * doesn't match the pattern (assumed to already be an ISO timestamp).
+ */
+function parseSinceToIso(since: string): string {
+  const m = since.match(/^(\d+)(m|h|d)$/);
+  if (!m) return since;
+  const multiplier = { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
+  return new Date(Date.now() - parseInt(m[1], 10) * multiplier).toISOString();
+}
+
 export function narrowToIncrementalCandidates(
   memories: MemoryEntry[],
   since: string,
   warnings: string[],
 ): MemoryEntry[] {
+  const sinceIso = parseSinceToIso(since);
   const isChanged = (m: MemoryEntry): boolean => {
     try {
-      return fs.statSync(m.filePath).mtime.toISOString() > since;
+      return fs.statSync(m.filePath).mtime.toISOString() > sinceIso;
     } catch {
       return true; // never silently drop a memory we cannot stat
     }
@@ -2434,7 +2447,7 @@ export function narrowToIncrementalCandidates(
 
   const candidates = memories.filter((m) => keep.has(m.name));
   warnings.push(
-    `Incremental consolidation: ${changed.length} changed + neighbours → ${candidates.length}/${memories.length} memories considered (since ${since}).`,
+    `Incremental consolidation: ${changed.length} changed + neighbours → ${candidates.length}/${memories.length} memories considered (since ${since}${sinceIso !== since ? ` = ${sinceIso}` : ""}).`,
   );
   return candidates;
 }
