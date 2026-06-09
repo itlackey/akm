@@ -2875,13 +2875,11 @@ async function runImprovePostLoopStage(args: {
       // Tie consolidate proposals back to this improve invocation so
       // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
       sourceRun: `consolidate-${Date.now()}`,
-      // Full-pool sweep: consolidation only runs on the nightly default-profile
-      // pass (quick/frequent disable it), so a complete re-cluster is correct and
-      // affordable here. Do NOT pass incrementalSince — the time-window narrowing
-      // it triggers permanently excludes stale-but-unmerged duplicate clusters,
-      // starving merge recall and letting the pool grow unbounded. (The narrowing
-      // was a band-aid for an every-30-min consolidation cadence that the profile
-      // split has since eliminated.) lastConsolidateTs still gates whether we run.
+      // incrementalSince: when set in the profile config, narrows the candidate
+      // pool to memories modified within that window + their graph neighbours,
+      // keeping each pass focused on recent changes. Omit for a full-pool sweep
+      // (default for nightly passes). See config-schema.ts for guidance.
+      incrementalSince: improveProfile?.processes?.consolidate?.incrementalSince,
       maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
       // Honor profile.autoAccept (already merged into options.autoAccept at the
       // top of akmImprove). The CLI parser always supplies 90 when --auto-accept

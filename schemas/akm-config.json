@@ -203,6 +203,10 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -323,6 +327,10 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
                       },
                       "applyMode": {
                         "type": "string",
@@ -445,6 +453,10 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -565,6 +577,10 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
                       },
                       "applyMode": {
                         "type": "string",
@@ -687,6 +703,10 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -808,6 +828,10 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -928,6 +952,10 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string",
+                        "minLength": 1
                       },
                       "applyMode": {
                         "type": "string",
@@ -1647,6 +1675,10 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -1767,6 +1799,10 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
                           },
                           "applyMode": {
                             "type": "string",
@@ -1889,6 +1925,10 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -2009,6 +2049,10 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
                           },
                           "applyMode": {
                             "type": "string",
@@ -2131,6 +2175,10 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -2252,6 +2300,10 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -2372,6 +2424,10 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string",
+                            "minLength": 1
                           },
                           "applyMode": {
                             "type": "string",
@@ -3073,6 +3129,10 @@
           "minimum": 1,
           "maximum": 50
         },
+        "incrementalSince": {
+          "type": "string",
+          "minLength": 1
+        },
         "applyMode": {
           "type": "string",
           "enum": [
@@ -3204,6 +3264,10 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -3324,6 +3388,10 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
                 },
                 "applyMode": {
                   "type": "string",
@@ -3446,6 +3514,10 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -3566,6 +3638,10 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
                 },
                 "applyMode": {
                   "type": "string",
@@ -3688,6 +3764,10 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -3809,6 +3889,10 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -3929,6 +4013,10 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string",
+                  "minLength": 1
                 },
                 "applyMode": {
                   "type": "string",

@@ -151,6 +151,12 @@ export const ImproveProcessConfigSchema = z
     defaultSince: z.string().min(1).optional(),
     maxTotalChars: positiveInt.optional(),
     maxChunkSize: z.number().int().min(1).max(50).optional(),
+    // Consolidate process: when set, narrows the candidate pool to memories
+    // modified within this window (e.g. "7d", "48h") plus their graph
+    // neighbours. Useful when consolidation runs more than once per day —
+    // keeps each pass focused on recent changes without re-scanning the full
+    // pool. Leave unset (full-pool sweep) for the nightly default pass.
+    incrementalSince: z.string().min(1).optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

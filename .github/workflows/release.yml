@@ -40,8 +40,10 @@ jobs:
             echo "Dispatched from default branch ($BRANCH)."
           elif [[ "$BRANCH" == release/* ]] && echo "$VERSION" | grep -qE '-'; then
             echo "Dispatched from release branch ($BRANCH) with prerelease version ($VERSION)."
+          elif [[ "$BRANCH" == hotfix/* ]] && ! echo "$VERSION" | grep -qE '-'; then
+            echo "Dispatched from hotfix branch ($BRANCH) with stable version ($VERSION)."
           else
-            echo "Releases must be dispatched from $DEFAULT, or from a release/* branch with a prerelease version (e.g. 0.6.0-rc1)."
+            echo "Releases must be dispatched from $DEFAULT, from a release/* branch with a prerelease version, or from a hotfix/* branch with a stable version."
             echo "Got branch=$BRANCH version=$VERSION"
             exit 1
           fi
