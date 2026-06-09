@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.2] - 2026-06-09
+
 ### Fixed
 
+- **Consolidation starved merge recall; the memory pool grew unbounded.** Commit
+  `633ece41` made the `incrementalSince` narrowing unconditional, so every
+  consolidation run only judged memories changed since the last run plus their
+  immediate vector-neighbors. Stale-but-unmerged duplicate clusters were never
+  re-examined, so the eligible pool grew monotonically and never shrank, and
+  contradiction detection (which rides on the consolidation pass) went dark.
+  Consolidation only runs on the nightly default-profile pass (`quick`/`frequent`
+  disable it), so a full-pool sweep is correct and affordable; the override is
+  removed. `lastConsolidateTs` still gates whether the pass runs. (Forward-port
+  of the 0.8.5 fix.)
 - **`akm tasks sync` ignored schedule changes** — forward-ported from 0.8.4.
   Sync classified any task already present in the OS scheduler as "unchanged"
   without comparing its installed entry, so editing a task's `schedule:` in the
