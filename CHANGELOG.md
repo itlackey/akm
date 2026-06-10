@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.7] - 2026-06-09
+
+### Fixed
+
+- **`incrementalSince` duration strings were silently ignored.** Values like
+  `"30m"`, `"24h"`, `"7d"` were passed raw to `narrowToIncrementalCandidates`,
+  which compared them against ISO timestamps via string sort. All `2026-...`
+  timestamps are lexicographically less than `"30m"` (`'2' < '3'`) and `"24h"`
+  (`"20" < "24"`), so `isChanged()` always returned `false` and the candidate
+  pool was silently emptied rather than filtered to the window. The fix adds
+`parseSinceToIso()`, which resolves human duration strings to absolute ISO
+  timestamps before comparison. Values that already look like ISO timestamps
+  are passed through unchanged.
+
 ## [0.8.6] - 2026-06-09
 
 ### Added
