@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.13] - 2026-06-11
+
+### Fixed
+
+- **`akm extract` minContentChars gate filtered all sessions.** The threshold was
+  checked against `filtered.stats.outputCount` (post-noise-filter chars), but the
+  pre-filter strips so much boilerplate that even signal-bearing sessions end up
+  below 500 chars of output. All 75 sessions in the first post-deploy run were
+  filtered, dropping candidates from 4–13 to 0. Fix: gate on `inputCount` (raw
+  session size) instead — a session with < 500 raw chars has nothing worth
+  extracting regardless of what the pre-filter produces. Closes #596.
+
 ## [0.8.12] - 2026-06-11
 
 ### Fixed

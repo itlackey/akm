@@ -148,10 +148,12 @@ export interface ImproveProcessConfig {
    */
   maxTotalChars?: number;
   /**
-   * Minimum post-filter character count for the extract pass. Sessions whose
-   * content falls below this threshold after pre-filtering are skipped before
-   * the LLM call — avoids burning inference capacity on noise sessions that
-   * never yield candidates. Default 500; set 0 to disable.
+   * Minimum raw session character count for the extract pass. Sessions whose
+   * total content falls below this threshold are skipped before the LLM call —
+   * avoids burning inference capacity on trivially short sessions that never
+   * yield candidates. Checked against pre-filter inputCount (raw size), not
+   * outputCount, since the pre-filter strips so much boilerplate that even
+   * signal-bearing sessions can have tiny output. Default 500; set 0 to disable.
    * Only meaningful on the `extract` process.
    */
   minContentChars?: number;
