@@ -248,7 +248,7 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     expect((result.actions ?? []).some((a) => a.ref === "skill:alpha" && a.mode === "reflect")).toBe(true);
   });
 
-  test("emits one improve_skipped event per pre-filtered ref with reason profile_filtered_all_passes", async () => {
+  test("emits a single summary improve_skipped event for all pre-filtered refs with reason profile_filtered_all_passes", async () => {
     const stash = makeTempDir("akm-planner-prefilter-event-stash-");
     fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
     fs.writeFileSync(path.join(stash, "scripts", "a.sh"), "#!/bin/sh\n", "utf8");
@@ -268,7 +268,8 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     const profileFilteredEvents = events.filter(
       (e) => (e.metadata as { reason?: string } | undefined)?.reason === "profile_filtered_all_passes",
     );
-    const filteredScriptRefs = profileFilteredEvents.map((e) => e.ref).filter((r): r is string => !!r);
-    expect(filteredScriptRefs.sort()).toEqual(["script:a.sh", "script:b.sh", "script:c.sh"]);
+    // One summary event (not one per ref) to avoid O(n) DB writes on large stashes.
+    expect(profileFilteredEvents).toHaveLength(1);
+    expect((profileFilteredEvents[0]?.metadata as { count?: number } | undefined)?.count).toBe(3);
   });
 });

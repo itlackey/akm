@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.10] - 2026-06-11
+
+### Fixed
+
+- **`akm improve` taking 8–10 minutes per run due to O(n) DB writes for
+  profile-filtered refs.** When a profile disables reflect and distill for
+  certain asset types, `collectEligibleRefs` marks those refs as
+  `profile_filtered_all_passes`. The caller then emitted one `improve_skipped`
+  event per ref — a sequential DB write for each. On a ~9 000-ref stash this
+  was ~500 s of SQLite writes before any consolidation or memory inference
+  began. The fix collapses the per-ref loop into a single summary event
+  carrying a `count` field, eliminating ~9 000 sequential writes per run.
+  Closes #590.
+
 ## [0.8.9] - 2026-06-11
 
 ### Fixed

@@ -1191,16 +1191,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
     // 2026-05-27: emit `improve_skipped` audit events for refs the planner
     // pre-filtered (reflect AND distill both refuse them under the active
-    // profile). One event per ref so the existing improve_skipped histogram in
-    // `health.ts#improveSummary.skipReasons` accumulates the right count under
-    // the new `profile_filtered_all_passes` reason code. See
-    // `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
-    for (const filtered of profileFilteredRefs) {
+    // profile). Emitted as a single summary event (count only) rather than one
+    // event per ref — the per-ref loop caused O(n) sequential DB writes that
+    // consumed ~500 s on a 9 000-ref stash. The health histogram reads the
+    // `profile_filtered_all_passes` reason from `improve_completed` metadata
+    // (distillSkippedActions / profileFilteredAllPasses counters) so the
+    // per-ref audit trail is not required for any downstream consumer.
+    if (profileFilteredRefs.length > 0) {
       appendEvent(
         {
           eventType: "improve_skipped",
-          ref: filtered.ref,
-          metadata: { reason: "profile_filtered_all_passes" },
+          ref: undefined,
+          metadata: {
+            reason: "profile_filtered_all_passes",
+            count: profileFilteredRefs.length,
+          },
         },
         eventsCtx,
       );
