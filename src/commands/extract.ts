@@ -471,7 +471,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // Minimum post-filter content threshold — sessions below this are skipped
   // before the LLM call. Prevents burning LLM capacity on tiny noise sessions
   // that never yield candidates. Default 500 chars; set to 0 to disable.
-  const minContentChars = typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : 500;
+  const minContentChars = typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : 10;
   // Default discovery window — process config can override the built-in 24h.
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
 

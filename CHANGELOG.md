@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.14] - 2026-06-11
+
+### Fixed
+
+- **`akm extract` minContentChars default lowered from 500 to 10.** The 500-char
+  threshold used inputCount (raw session size) but analysis showed 209 of 218
+  candidate-producing sessions had inputCount < 500 — tiny agent sessions (22–368
+  chars) regularly yield 1–5 candidates. The only reliably skippable sessions are
+  empty ones (0 chars, journal files). Default lowered to 10 to catch only
+  truly empty sessions while preserving all signal-bearing content. Closes #597.
+
 ## [0.8.13] - 2026-06-11
 
 ### Fixed
