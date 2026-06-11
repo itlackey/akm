@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.11] - 2026-06-11
+
+### Fixed
+
+- **`akm improve --profile <name>` ignored profile's `extract.enabled: false` setting.**
+  The session-extraction gate in the preparation stage called
+  `isLlmFeatureEnabled(config, "session_extraction")`, which hardcodes a lookup
+  against `profiles.improve.default.processes.extract.enabled`. Any non-default
+  profile that set `extract.enabled: false` (e.g. `quick-shredder`) was silently
+  ignored, causing the extract pass to run regardless. The fix adds a
+  `resolveProcessEnabled("extract", improveProfile)` check so the active
+  resolved profile gates the pass correctly. Closes #593.
+
 ## [0.8.10] - 2026-06-11
 
 ### Fixed

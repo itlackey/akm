@@ -1615,10 +1615,7 @@ async function runImprovePreparationStage(args: {
     budgetMs,
     eventsCtx,
     initialCleanupWarnings,
-    // improveProfile is part of the preparation-stage signature for future use
-    // (per-process gating moved into the in-loop stage). Kept here so the
-    // signature does not drift away from the rest of the planner stack.
-    improveProfile: _improveProfile,
+    improveProfile,
   } = args;
 
   const actions: ImproveActionResult[] = [];
@@ -1669,7 +1666,7 @@ async function runImprovePreparationStage(args: {
     config: extractConfig,
     eventsCtx,
   });
-  if (isLlmFeatureEnabled(extractConfig, "session_extraction")) {
+  if (isLlmFeatureEnabled(extractConfig, "session_extraction") && resolveProcessEnabled("extract", improveProfile)) {
     const availableHarnesses = getAvailableHarnesses();
     if (availableHarnesses.length > 0) {
       extractResults = [];
