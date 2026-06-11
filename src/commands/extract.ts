@@ -117,7 +117,7 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted";
+  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short";
 }
 
 export interface AkmExtractResult {
@@ -215,6 +215,7 @@ async function processSession(
   dryRun: boolean,
   timeoutMs: number,
   maxTotalChars: number | undefined,
+  minContentChars: number,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -236,6 +237,24 @@ async function processSession(
   const filtered = preFilterSession(data, {
     ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
   });
+
+  if (minContentChars > 0 && filtered.stats.outputCount < minContentChars) {
+    return {
+      sessionId: sessionRef.sessionId,
+      harness: harness.name,
+      candidateCount: 0,
+      proposalIds: [],
+      preFilter: {
+        inputCount: filtered.stats.inputCount,
+        outputCount: filtered.stats.outputCount,
+        truncatedCount: filtered.stats.truncatedCount,
+      },
+      warnings: [],
+      skipped: true,
+      skipReason: "too_short",
+    };
+  }
+
   const prompt = buildExtractPrompt({ data, events: filtered.events, inlineRefs: data.inlineRefs });
 
   let llmRaw = "";
@@ -449,6 +468,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     60_000;
   // Pre-filter budget — process config can raise it for large-context models.
   const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
+  // Minimum post-filter content threshold — sessions below this are skipped
+  // before the LLM call. Prevents burning LLM capacity on tiny noise sessions
+  // that never yield candidates. Default 500 chars; set to 0 to disable.
+  const minContentChars = typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : 500;
   // Default discovery window — process config can override the built-in 24h.
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
 
@@ -584,6 +607,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         dryRun,
         timeoutMs,
         maxTotalChars,
+        minContentChars,
       );
       sessions.push(result);
       if (result.skipped) skippedCount += 1;

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.12] - 2026-06-11
+
+### Fixed
+
+- **`akm extract` calling the LLM for noise sessions that never yield candidates.**
+  96% of processed sessions (72/75 measured) produced zero candidates, consuming
+  ~330 s of LLM time per run. The pre-filter had no minimum content threshold —
+  sessions as short as 50 chars were sent to the LLM regardless. A new
+  `minContentChars` gate (default 500) skips the LLM call when post-filter
+  content falls below threshold, cutting extract LLM calls by ~95% on typical
+  stashes. Configurable via `profiles.improve.<name>.processes.extract.minContentChars`.
+  Closes #595.
+
 ## [0.8.11] - 2026-06-11
 
 ### Fixed

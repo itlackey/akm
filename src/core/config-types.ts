@@ -148,6 +148,14 @@ export interface ImproveProcessConfig {
    */
   maxTotalChars?: number;
   /**
+   * Minimum post-filter character count for the extract pass. Sessions whose
+   * content falls below this threshold after pre-filtering are skipped before
+   * the LLM call — avoids burning inference capacity on noise sessions that
+   * never yield candidates. Default 500; set 0 to disable.
+   * Only meaningful on the `extract` process.
+   */
+  minContentChars?: number;
+  /**
    * Max chunk size for the consolidation pass (1–50).
    * Overrides the computed value derived from the model context window.
    * Absent = use computed value (capped at 50).
