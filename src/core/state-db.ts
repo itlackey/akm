@@ -93,11 +93,10 @@ export function getStateDbPath(): string {
  *     backwards compatibility; enabling them prevents orphaned rows in tables
  *     that reference each other (not used in v1 schema but guards future ones).
  *
- *   busy_timeout = 5000
+ *   busy_timeout = 30000
  *     When another connection holds a write lock, SQLite retries for up to
- *     5 000 ms before returning SQLITE_BUSY. Without this, the default timeout
- *     is 0 ms — any concurrent writer causes an immediate error. 5 s matches
- *     the same value used in openDatabase() for index.db.
+ *     30 000 ms before returning SQLITE_BUSY. Without this, the default timeout
+ *     is 0 ms — any concurrent writer causes an immediate error.
  */
 export function openStateDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getStateDbPath();
@@ -111,7 +110,7 @@ export function openStateDatabase(dbPath?: string): Database {
   // PRAGMAs must run before any DDL or DML.
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA busy_timeout = 30000");
 
   runMigrations(db);
 

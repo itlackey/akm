@@ -66,7 +66,7 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
 
   const db = new Database(resolvedPath);
   db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA busy_timeout = 30000");
   db.exec("PRAGMA foreign_keys = ON");
 
   // Try to load sqlite-vec extension
@@ -112,7 +112,7 @@ export function openExistingDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const db = new Database(resolvedPath);
   db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA busy_timeout = 30000");
   db.exec("PRAGMA foreign_keys = ON");
 
   // Existing-DB callers must not mutate schema or embedding metadata on open,

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.8] - 2026-06-11
+
+### Fixed
+
+- **SQLite `SQLITE_BUSY` errors under concurrent improve runs.** `busy_timeout`
+  was set to 5 000 ms in all three database open paths (`openDatabase`,
+  `openExistingDatabase`, `openStateDatabase`). Under a busy cron schedule — or
+  when a reindex triggered by memory inference ran concurrently with an event
+  write — the 5 s window was routinely exhausted, producing "database is locked"
+  failures. Raised to 30 000 ms across all three paths so transient lock
+  contention is retried for up to 30 s before surfacing as an error.
+
 ## [0.8.7] - 2026-06-09
 
 ### Fixed
