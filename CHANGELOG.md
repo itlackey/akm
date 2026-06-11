@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.9] - 2026-06-11
+
+### Fixed
+
+- **`akm improve` validation pass was O(n) in stash size, causing ~510 s overhead
+  on large stashes.** For every indexed ref, the preparation phase called
+  `findAssetFilePath()` — an async round-trip to the index DB followed by a
+  filesystem probe — serially inside a `for…await` loop. With ~9 000 indexed
+  refs at ~55 ms each, this loop consumed the entire 600–900 s run budget before
+  any reflect, triage, or memory-inference work began. The fix threads
+  `filePath` from the planning stage (`collectEligibleRefs`) through
+  `ImproveEligibleRef` so the validation pass and the disk-existence guard can
+  use the pre-resolved path directly. The async lookup is retained only as a
+  fallback for refs that enter via a narrow scope (e.g. `--scope ref:foo`).
+  Closes #587.
+
 ## [0.8.8] - 2026-06-11
 
 ### Fixed

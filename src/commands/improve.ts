@@ -201,6 +201,9 @@ export interface AkmImproveOptions {
 export interface ImproveEligibleRef {
   ref: string;
   reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
+  /** Absolute path on disk, pre-resolved from the index at planning time. Avoids
+   *  repeated async DB lookups in the validation and disk-check passes. */
+  filePath?: string;
 }
 
 export interface ImproveActionResult {
@@ -603,12 +606,14 @@ async function collectEligibleRefs(
           profileFiltered.set(ref, {
             ref,
             reason: "profile_filtered_all_passes",
+            filePath: indexed.filePath,
           });
         } else {
           planned.set(ref, {
             ref,
             reason:
               scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
+            filePath: indexed.filePath,
           });
         }
       }
@@ -1773,7 +1778,13 @@ async function runImprovePreparationStage(args: {
   const validationFailures: Array<{ ref: string; reason: string }> = [];
   for (const candidate of postCleanupRefs) {
     try {
-      const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+      // Use the pre-resolved path from the planning stage when available to avoid
+      // a serial async DB lookup per ref. Fall back to findAssetFilePath only for
+      // refs that weren't loaded via collectEligibleRefs (e.g. scope-ref mode).
+      const filePath =
+        candidate.filePath && fs.existsSync(candidate.filePath)
+          ? candidate.filePath
+          : await findAssetFilePath(candidate.ref, options.stashDir);
       if (!filePath) {
         validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
         continue;
@@ -2112,7 +2123,10 @@ async function runImprovePreparationStage(args: {
   const assetMissingOnDisk: string[] = [];
   const existsCheckedActionable: ImproveEligibleRef[] = [];
   for (const candidate of sorted) {
-    const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+    const filePath =
+      candidate.filePath && fs.existsSync(candidate.filePath)
+        ? candidate.filePath
+        : await findAssetFilePath(candidate.ref, options.stashDir);
     if (filePath && fs.existsSync(filePath)) {
       existsCheckedActionable.push(candidate);
     } else {
