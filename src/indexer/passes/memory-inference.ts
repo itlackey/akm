@@ -86,11 +86,16 @@ export interface MemoryInferenceResult {
   /** Parents skipped because the LLM returned no usable derived memory (left unmarked → retried next run). */
   skippedNoFacts: number;
   /**
-   * Parents where the LLM returned a valid derived draft but the
-   * `<parent>.derived.md` file already exists on disk (or the write threw).
-   * The LLM attempt was consumed but no new fact was written — without this
-   * counter the attempt would silently bleed into `freshAttempts` and drag
-   * the health-reported yield rate below the operational truth.
+   * Parents whose `<parent>.derived.md` already exists on disk. The common
+   * case (#588) is caught by a pre-check BEFORE any LLM/cache call — the
+   * parent looked pending only because `markParentProcessed` never ran
+   * (process killed between write and mark) or the child was created
+   * externally; no LLM attempt is consumed and the parent is marked
+   * processed on the spot. The rare residual case is a child appearing
+   * mid-flight (or the write throwing) AFTER a fresh LLM call — tracked in
+   * the same counter so the attempt does not silently bleed into
+   * `freshAttempts` and drag the health-reported yield rate below the
+   * operational truth.
    */
   skippedChildExists: number;
   /**
@@ -216,6 +221,27 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
       // 2026-05-26).
       if (signal?.aborted) return { aborted: true } as const;
 
+      // Pre-check (#588): when `<parent>.derived.md` is already on disk the
+      // inference is by definition complete — the parent only looks pending
+      // because `markParentProcessed` never ran (process killed between the
+      // child write and the mark) or the child was created externally (e.g.
+      // consolidation). Skip the LLM/cache call entirely and mark the parent
+      // so it never re-pends. Before this check, production measurements
+      // showed ~55% of the pass's LLM budget re-deriving such parents only to
+      // discover the existing child after the fact.
+      if (fs.existsSync(derivedChildPath(record))) {
+        markParentProcessed(record);
+        return {
+          skipped: false,
+          splitParent: false,
+          written: 0,
+          fromCache: false,
+          retryAttempts: 0,
+          childExists: true,
+          precheck: true,
+        } as const;
+      }
+
       // Incremental cache: skip LLM call when body hash is unchanged and
       // --re-enrich was not requested. The cache ref is the absolute file path.
       const validate = (raw: unknown): DerivedMemoryDraft | undefined => {
@@ -296,23 +322,30 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
         return { skipped: false, splitParent: true, written: writeOutcome.written, fromCache, retryAttempts } as const;
       }
       // LLM produced a valid derived draft but no file was written — either
-      // because `<parent>.derived.md` already exists on disk or
-      // `writeAssetToSource` threw. Categorise as `childExists` so the
-      // attempt is accounted for in health metrics rather than vanishing
-      // into the freshAttempts denominator.
+      // because `<parent>.derived.md` appeared on disk after the pre-check
+      // above (a rare mid-flight race) or `writeAssetToSource` threw.
+      // Categorise as `childExists` so the consumed attempt is accounted for
+      // in health metrics rather than vanishing into the freshAttempts
+      // denominator.
       //
-      // When the child already exists on disk the inference is, by definition,
-      // already complete — so mark the parent processed here too (#550).
-      // Without this, `isPendingMemory()` re-queues the same parent every run
-      // (the `written > 0` path was previously the only site that marks it),
-      // causing permanent re-queueing and wasted LLM calls. A genuine write
-      // *failure* (`writeAssetToSource` threw) must NOT mark the parent — it
-      // should be retried next run — so we key off the explicit `childExists`
-      // outcome rather than the conflated `written === 0`.
+      // When the child exists the inference is, by definition, complete — so
+      // mark the parent processed here too (#550), otherwise
+      // `isPendingMemory()` re-queues the same parent every run. A genuine
+      // write *failure* (`writeAssetToSource` threw) must NOT mark the parent
+      // — it should be retried next run — so we key off the explicit
+      // `childExists` outcome rather than the conflated `written === 0`.
       if (writeOutcome.childExists) {
         markParentProcessed(record);
       }
-      return { skipped: false, splitParent: false, written: 0, fromCache, retryAttempts, childExists: true } as const;
+      return {
+        skipped: false,
+        splitParent: false,
+        written: 0,
+        fromCache,
+        retryAttempts,
+        childExists: true,
+        precheck: false,
+      } as const;
     },
     // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
     // in config.json for local model servers (LM Studio, Ollama).
@@ -348,13 +381,18 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
       result.splitParents += 1;
       result.writtenFacts += res.written;
     } else if ("childExists" in res && res.childExists) {
-      // LLM call was consumed but the derived file already existed (or the
-      // write threw). Track separately so this category is observable in
-      // health output and stops bleeding into the freshAttempts denominator.
+      // Derived child already on disk. Track separately so this category is
+      // observable in health output and stops bleeding into the
+      // freshAttempts denominator. Pre-check skips (#588) are the routine
+      // self-healing path — no LLM attempt was consumed and the parent has
+      // been marked processed — so only the rare post-LLM case (mid-flight
+      // race or write failure) warrants a per-ref warning.
       result.skippedChildExists += 1;
-      warn(
-        `memory inference: derived child for ${pending[i]?.ref ?? "<unknown>"} already existed or write failed; counted as skippedChildExists`,
-      );
+      if (!res.precheck) {
+        warn(
+          `memory inference: derived child for ${pending[i]?.ref ?? "<unknown>"} already existed or write failed; counted as skippedChildExists`,
+        );
+      }
     } else {
       // The per-record state machine should cover every outcome. A hit here
       // means a new code path slipped past the categorisation — surface it
@@ -467,6 +505,15 @@ interface WriteDerivedOutcome {
   childExists: boolean;
 }
 
+/**
+ * Absolute path of the derived child for a parent memory. Single source of
+ * truth for the `<parent>.derived.md` naming convention — used both by the
+ * pre-LLM existence check (#588) and the write path.
+ */
+function derivedChildPath(parent: MemoryRecord): string {
+  return path.join(parent.stashRoot, "memories", `${parent.name}.derived.md`);
+}
+
 async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): Promise<WriteDerivedOutcome> {
   const writeTarget: WriteTargetSource = {
     kind: "filesystem",
@@ -482,11 +529,10 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 
   const childName = `${parent.name}.derived`;
   const childRefStr = `memory:${childName}`;
-  const childPath = path.join(parent.stashRoot, "memories", `${childName}.md`);
-  if (fs.existsSync(childPath)) {
-    // The derived child is already on disk — inference for this parent is
-    // complete. Report `childExists` so the caller marks the parent processed
-    // (#550) instead of re-queueing it forever.
+  if (fs.existsSync(derivedChildPath(parent))) {
+    // The derived child appeared on disk after the caller's pre-check (#588)
+    // — a rare mid-flight race. Report `childExists` so the caller marks the
+    // parent processed (#550) instead of re-queueing it forever.
     return { written: 0, childExists: true };
   }
 
