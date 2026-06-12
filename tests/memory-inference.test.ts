@@ -463,39 +463,84 @@ describe("runMemoryInferencePass — enabled", () => {
   // Regression guard for the 2026-05-26 yield-leak investigation: when a
   // parent already has its `<parent>.derived.md` on disk but is NOT marked
   // `inferenceProcessed: true` (crash mid-write, manual edit, etc.), the
-  // LLM is still re-invoked. Pre-fix that attempt vanished into the
-  // `freshAttempts` denominator. Now it must surface as
-  // `skippedChildExists`.
-  test("counts skippedChildExists when derived file already exists on disk", async () => {
+  // skip must surface as `skippedChildExists` rather than vanishing into
+  // the `freshAttempts` denominator. Since #588 the existing child is
+  // detected by a pre-check BEFORE any LLM call — the compressor must not
+  // be invoked at all.
+  test("#588: skips the LLM entirely and counts skippedChildExists when derived file already exists", async () => {
     writeMemory("parent", {}, "Body.");
-    // Seed the derived child on disk so writeDerivedMemory short-circuits.
+    // Seed the derived child on disk so the pre-check short-circuits.
     fs.writeFileSync(
       path.join(tmpStash, "memories", "parent.derived.md"),
       "---\ninferred: true\n---\n\nPre-existing child.\n",
       "utf8",
     );
-    compressor = () => sampleDraft();
+    let calls = 0;
+    compressor = () => {
+      calls += 1;
+      return sampleDraft();
+    };
 
     const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
 
+    // The whole point of #588: no LLM budget spent on an already-derived parent.
+    expect(calls).toBe(0);
     expect(result.considered).toBe(1);
     expect(result.skippedChildExists).toBe(1);
+    expect(result.cacheHits).toBe(0);
     expect(result.skippedNoFacts).toBe(0);
     expect(result.splitParents).toBe(0);
     expect(result.writtenFacts).toBe(0);
     expect(result.unaccounted).toBe(0);
   });
 
-  // Regression for #550: when a hot parent already has its `<parent>.derived.md`
-  // child on disk, the inference is complete, so the parent MUST be marked
-  // `inferenceProcessed: true`. Pre-fix the parent was left unmarked (the mark
-  // only happened on the `written > 0` path), so `isPendingMemory()` re-queued
-  // the same parent on every run — wasted LLM calls forever. `skippedChildExists`
-  // must still count the skip (we ADD the parent-mark, not remove the skip).
-  test("#550: marks parent processed and stops re-queue when derived child already exists", async () => {
+  // The pre-check must not over-skip: in a mixed batch only the parent whose
+  // derived child is on disk is short-circuited; the other parent still goes
+  // through the normal LLM path.
+  test("#588: pre-check only skips parents whose derived child exists — others run normally", async () => {
+    const skippedParent = writeMemory("has-child", {}, "Already derived body.");
+    const freshParent = writeMemory("needs-llm", {}, "Fresh body.");
+    fs.writeFileSync(
+      path.join(tmpStash, "memories", "has-child.derived.md"),
+      "---\ninferred: true\n---\n\nPre-existing child.\n",
+      "utf8",
+    );
+    const seenBodies: string[] = [];
+    compressor = (body) => {
+      seenBodies.push(body.trim());
+      return sampleDraft();
+    };
+
+    const result = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+
+    // Only the fresh parent reached the LLM.
+    expect(seenBodies).toHaveLength(1);
+    expect(seenBodies[0]).toContain("Fresh body.");
+    expect(seenBodies[0]).not.toContain("Already derived body.");
+    expect(result.considered).toBe(2);
+    expect(result.skippedChildExists).toBe(1);
+    expect(result.splitParents).toBe(1);
+    expect(result.writtenFacts).toBe(1);
+    expect(result.unaccounted).toBe(0);
+
+    // Both parents end up marked processed: the skipped one opportunistically,
+    // the fresh one via the normal write path.
+    for (const filePath of [skippedParent, freshParent]) {
+      const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+      expect(fm.data.inferenceProcessed).toBe(true);
+    }
+    expect(fs.existsSync(path.join(tmpStash, "memories", "needs-llm.derived.md"))).toBe(true);
+  });
+
+  // Regression for #550 + #588: when a parent already has its
+  // `<parent>.derived.md` child on disk, the inference is complete, so the
+  // parent MUST be marked `inferenceProcessed: true` (#550 — pre-fix it was
+  // re-queued on every run forever) and the LLM must not be called at all
+  // (#588 — pre-fix the call was issued and only afterwards discovered the
+  // existing child, wasting ~55% of the pass's production LLM budget).
+  test("#550/#588: marks parent processed, stops re-queue, and never calls the LLM when derived child already exists", async () => {
     const filePath = writeMemory("parent", { description: "keep me" }, "Body.");
-    // Seed the derived child on disk so writeDerivedMemory short-circuits via
-    // the childExists path (written === 0).
+    // Seed the derived child on disk so the pre-check short-circuits.
     fs.writeFileSync(
       path.join(tmpStash, "memories", "parent.derived.md"),
       "---\ninferred: true\n---\n\nPre-existing child.\n",
@@ -526,9 +571,9 @@ describe("runMemoryInferencePass — enabled", () => {
     const second = await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
     expect(second.considered).toBe(0);
     expect(second.skippedChildExists).toBe(0);
-    // The compressor was invoked exactly once (first pass only); the permanent
-    // re-queue bug is gone.
-    expect(calls).toBe(1);
+    // The compressor was never invoked: the first pass pre-check skipped it
+    // (#588) and the second pass never considered the parent (#550).
+    expect(calls).toBe(0);
   });
 
   test("counts skippedAborted when the signal aborts before the LLM call", async () => {
