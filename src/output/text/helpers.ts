@@ -249,6 +249,53 @@ export function formatProposalProducerPlain(command: string, r: Record<string, u
   return `${command}: queued proposal ${id} (${ref}) [${status}]`;
 }
 
+/**
+ * Render a one-line gate-decision summary for the proposal list / show surfaces
+ * (#577), e.g. `gate=deferred:below-threshold (0.72 < 0.90)`. Returns the empty
+ * string for a missing or malformed decision so legacy proposals render cleanly.
+ */
+export function formatGateDecisionSummary(raw: unknown): string {
+  if (typeof raw !== "object" || raw === null) return "";
+  const d = raw as Record<string, unknown>;
+  const outcome = typeof d.outcome === "string" ? d.outcome : undefined;
+  if (!outcome) return "";
+  const reason = typeof d.reason === "string" && d.reason.length > 0 ? `:${d.reason}` : "";
+  const cmp = formatGateThresholdComparison(d);
+  return `gate=${outcome}${reason}${cmp ? ` (${cmp})` : ""}`;
+}
+
+/**
+ * Reconstruct the threshold comparison the gate applied, when both sides are
+ * present (e.g. confidence 0.72 vs. autoAccept 0.90 → "0.72 < 0.90"). Returns
+ * the empty string when the decision lacks the operands.
+ */
+function formatGateThresholdComparison(d: Record<string, unknown>): string {
+  const thresholds = (typeof d.thresholds === "object" && d.thresholds !== null ? d.thresholds : {}) as Record<
+    string,
+    unknown
+  >;
+  const confidence = typeof d.confidence === "number" ? d.confidence : undefined;
+  const autoAccept = typeof thresholds.autoAccept === "number" ? thresholds.autoAccept : undefined;
+  if (confidence !== undefined && autoAccept !== undefined) {
+    const op = confidence >= autoAccept ? ">=" : "<";
+    return `${confidence.toFixed(2)} ${op} ${autoAccept.toFixed(2)}`;
+  }
+  // Drain bands: when the measured value is present, render the full comparison
+  // ("210 > 200" / "1 < 5"); otherwise fall back to the bound alone (#577).
+  const measured = typeof d.measured === "number" ? d.measured : undefined;
+  if (typeof thresholds.maxDiffLines === "number") {
+    return measured !== undefined
+      ? `${measured} > ${thresholds.maxDiffLines}`
+      : `maxDiffLines=${thresholds.maxDiffLines}`;
+  }
+  if (typeof thresholds.minContentLines === "number") {
+    return measured !== undefined
+      ? `${measured} < ${thresholds.minContentLines}`
+      : `minContentLines=${thresholds.minContentLines}`;
+  }
+  return "";
+}
+
 export function formatProposalListPlain(r: Record<string, unknown>): string {
   const proposals = Array.isArray(r.proposals) ? (r.proposals as Array<Record<string, unknown>>) : [];
   const total = typeof r.totalCount === "number" ? r.totalCount : proposals.length;
@@ -262,7 +309,11 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
     const status = String(p.status ?? "?");
     const source = String(p.source ?? "?");
     const created = String(p.createdAt ?? "?");
-    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}`);
+    // #577: surface the gate verdict inline so the queue explains itself
+    // ("deferred: below-threshold"). Legacy proposals carry no gateDecision.
+    const gate = formatGateDecisionSummary(p.gateDecision);
+    const gateSuffix = gate ? `  ${gate}` : "";
+    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}`);
   }
   return lines.join("\n").trimEnd();
 }
@@ -277,6 +328,21 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   if (p.sourceRun) lines.push(`sourceRun: ${String(p.sourceRun)}`);
   if (p.createdAt) lines.push(`createdAt: ${String(p.createdAt)}`);
   if (p.updatedAt) lines.push(`updatedAt: ${String(p.updatedAt)}`);
+  if (typeof p.confidence === "number") lines.push(`confidence: ${p.confidence.toFixed(2)}`);
+  // #577: gate decision (auto-accepted / deferred / auto-rejected + reason +
+  // thresholds). Absent on legacy proposals — render "unknown" so the field is
+  // always present and the operator never sees a silent gap.
+  const gate = p.gateDecision as Record<string, unknown> | undefined;
+  if (gate && typeof gate.outcome === "string") {
+    lines.push(`gate.decision: ${String(gate.outcome)}`);
+    lines.push(`gate.reason: ${gate.reason ? String(gate.reason) : "unknown"}`);
+    const cmp = formatGateThresholdComparison(gate);
+    if (cmp) lines.push(`gate.thresholds: ${cmp}`);
+    if (gate.gate) lines.push(`gate.by: ${String(gate.gate)}`);
+    if (gate.decidedAt) lines.push(`gate.decidedAt: ${String(gate.decidedAt)}`);
+  } else {
+    lines.push("gate.decision: unknown");
+  }
   const review = p.review as Record<string, unknown> | undefined;
   if (review) {
     lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);

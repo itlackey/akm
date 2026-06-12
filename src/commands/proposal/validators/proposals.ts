@@ -203,6 +203,75 @@ export interface ProposalReview {
   decidedAt: string;
 }
 
+/**
+ * The verdict an automated gate (the deterministic drain/triage engine or the
+ * `akm improve` confidence gate) reached for this proposal (#577).
+ *
+ *   - `auto-accepted` — the gate promoted the proposal without review.
+ *   - `deferred`      — the gate left the proposal pending for human (or
+ *                       later automated) review.
+ *   - `auto-rejected` — the gate rejected the proposal without review.
+ */
+export type ProposalGateDecisionOutcome = "auto-accepted" | "deferred" | "auto-rejected";
+
+/**
+ * Per-proposal record of the automated gate decision (#577).
+ *
+ * Persisted onto the proposal row (in `metadata_json`) at gate time so tooling
+ * can explain WHY each proposal is in its current state — e.g. `akm proposal
+ * show` surfacing "deferred: below-threshold (72 < 90)" instead of forcing the
+ * operator to reconstruct it from the run-level `triage_deferred` aggregate.
+ *
+ * Forward-only: proposals created before 0.9.0 (and any pending proposal that
+ * predates this field) simply carry no `gateDecision`. Every renderer treats a
+ * missing decision as "unknown" rather than erroring.
+ */
+export interface ProposalGateDecision {
+  outcome: ProposalGateDecisionOutcome;
+  /**
+   * Short machine-stable reason token chosen by the gate that recorded the
+   * decision. The vocabulary actually persisted today:
+   *
+   *   - improve gate: `above-threshold`, `below-threshold`, `no-confidence`.
+   *   - drain/triage gate: `empty-diff`, `max-diff-lines`, `min-content-lines`,
+   *     `policy-accept`, `mid-band`, `possible-dup`, `no-judge-configured`,
+   *     `judgment-accept`, `judgment-reject`.
+   *
+   * The spec (#577) also names `type-filter` as an example token, but that is a
+   * *ref-level* improve pre-filter (`shouldSkipRef`) that runs before any
+   * proposal exists — there is no proposal to stamp at that point — so no gate
+   * path persists it. It is documented here only as a spec example.
+   */
+  reason: string;
+  /** Computed confidence score in `[0, 1]`, when the gate had one. */
+  confidence?: number;
+  /**
+   * The value the gate actually measured and compared against the threshold
+   * (drain gate). For the over-band defer this is the proposed content's line
+   * count, for the body-floor defer the non-empty body-line count — so a full
+   * comparison such as "210 > 200" stays reconstructable, not just the bound.
+   * The improve gate uses {@link confidence} as its measured value instead.
+   */
+  measured?: number;
+  /**
+   * The thresholds in effect when the decision was made, so a comparison such
+   * as "72 < 90" stays reconstructable later. Sparse — a gate records only the
+   * knobs it actually consulted.
+   */
+  thresholds?: {
+    /** Confidence auto-accept threshold in `[0, 1]` (improve gate). */
+    autoAccept?: number;
+    /** Maximum diff-line bound that deferred the proposal (drain gate). */
+    maxDiffLines?: number;
+    /** Minimum body-line floor that deferred the proposal (drain gate). */
+    minContentLines?: number;
+  };
+  /** Label of the gate that recorded the decision (e.g. `triage:personal-stash`, `improve:reflect`). */
+  gate?: string;
+  /** ISO timestamp the decision was recorded. */
+  decidedAt: string;
+}
+
 export interface Proposal {
   /** Stable random id (crypto.randomUUID()). Primary key in the store. */
   id: string;
@@ -243,6 +312,20 @@ export interface Proposal {
    * time so downstream code can rely on the invariant `0 <= confidence <= 1`.
    */
   confidence?: number;
+  /**
+   * The automated gate's verdict for this proposal (#577), recorded at gate
+   * time by the drain/triage engine or the `akm improve` confidence gate.
+   *
+   * Carries the decision (auto-accepted / deferred / auto-rejected), the reason
+   * token, the confidence the gate computed, and the thresholds in effect, so
+   * `akm proposal show` / `list` can explain why a proposal is pending without
+   * the operator reconstructing it from run-level aggregates.
+   *
+   * Absent on proposals that never passed through a gate, and on every proposal
+   * created before 0.9.0 (forward-only — no backfill). Renderers must treat a
+   * missing decision as "unknown".
+   */
+  gateDecision?: ProposalGateDecision;
   /**
    * Full content of the asset that existed at the target ref BEFORE promotion
    * (Advantage D6c / Phase 6C). Captured exclusively by {@link promoteProposal}
@@ -818,6 +901,38 @@ export function archiveProposal(
         ...(reason !== undefined ? { reason } : {}),
         decidedAt: nowIso(ctx),
       },
+    };
+    upsertProposal(db, updated, stashDir);
+    return updated;
+  });
+}
+
+/**
+ * Record an automated gate's decision onto a proposal (#577).
+ *
+ * Stamps `gateDecision` (decision / reason / confidence / thresholds) onto the
+ * row so `akm proposal show` and `list` can explain why a proposal landed where
+ * it did. The decision is metadata about the adjudication, so this does NOT
+ * change `status` or bump `updatedAt` — a `deferred` proposal stays `pending`,
+ * and the accept / reject status flips are owned by {@link promoteProposal} /
+ * {@link archiveProposal}. `decidedAt` defaults to now when the caller omits it.
+ *
+ * Best-effort: a proposal that no longer exists (e.g. concurrently archived) is
+ * skipped silently rather than throwing, so a gate run never aborts mid-batch.
+ * Returns the updated proposal, or undefined when no matching row exists.
+ */
+export function recordGateDecision(
+  stashDir: string,
+  id: string,
+  decision: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string },
+  ctx?: ProposalsContext,
+): Proposal | undefined {
+  return withProposalsDb(stashDir, ctx, (db) => {
+    const existing = getStateProposal(db, id, stashDir);
+    if (!existing) return undefined;
+    const updated: Proposal = {
+      ...existing,
+      gateDecision: { ...decision, decidedAt: decision.decidedAt ?? nowIso(ctx) },
     };
     upsertProposal(db, updated, stashDir);
     return updated;

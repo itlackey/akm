@@ -26,7 +26,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { info, warn } from "../../core/warn";
-import { promoteProposal } from "../proposal/validators/proposals";
+import { promoteProposal, recordGateDecision } from "../proposal/validators/proposals";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,17 +106,47 @@ export async function runAutoAcceptGate(
   const effectiveThreshold = Math.max(cfg.globalThreshold, cfg.minimumThreshold ?? 0) / 100;
 
   const resolvedConfig: AkmConfig = typeof cfg.config === "function" ? cfg.config() : cfg.config;
+  const gateLabel = `improve:${cfg.phase}`;
+
+  // #577: stamp the gate's verdict onto each proposal so `akm proposal show`
+  // can explain why a proposal is pending (e.g. "deferred: below-threshold,
+  // 0.72 < 0.90"). Best-effort — a recording failure must never abort the gate.
+  const stamp = (proposalId: string, decision: Parameters<typeof recordGateDecision>[2]): void => {
+    try {
+      recordGateDecision(cfg.stashDir as string, proposalId, decision);
+    } catch (err) {
+      warn(
+        `[improve] ${cfg.phase} failed to record gate decision for ${proposalId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
 
   for (const candidate of candidates) {
     const { proposalId, confidence } = candidate;
 
     if (confidence === undefined || confidence < effectiveThreshold) {
+      stamp(proposalId, {
+        outcome: "deferred",
+        reason: confidence === undefined ? "no-confidence" : "below-threshold",
+        ...(confidence !== undefined ? { confidence } : {}),
+        thresholds: { autoAccept: effectiveThreshold },
+        gate: gateLabel,
+      });
       result.skipped.push(proposalId);
       continue;
     }
 
     try {
       const promotion = await promoteFn(cfg.stashDir, resolvedConfig, proposalId, {}, undefined);
+      stamp(promotion.proposal.id, {
+        outcome: "auto-accepted",
+        reason: "above-threshold",
+        confidence,
+        thresholds: { autoAccept: effectiveThreshold },
+        gate: gateLabel,
+      });
       appendEvent(
         {
           eventType: "promoted",
