@@ -16,6 +16,7 @@ import { fetchWithTimeout } from "../core/common";
 import { type LlmConnectionConfig, resolveSecret } from "../core/config/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import { warnVerbose } from "../core/warn";
+import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
 // to resolve `parseJsonResponse` and `parseEmbeddedJsonResponse` from this module.
@@ -110,12 +111,17 @@ export interface ChatMessage {
 }
 
 interface ChatCompletionResponse {
+  /** Model id echoed by the provider; may differ from the requested alias. */
+  model?: string;
   choices: Array<{
     message: {
       content: string;
       reasoning_content?: string; // thinking models route output here
     };
+    finish_reason?: string;
   }>;
+  /** OpenAI-compatible token accounting. Best-effort: providers may omit it. */
+  usage?: RawUsage;
 }
 
 export interface ChatCompletionOptions {
@@ -284,6 +290,11 @@ async function chatCompletionAttempt(
       ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
       : {};
 
+  // Wall-clock start for per-call usage telemetry (#576). Captured here so the
+  // emitted duration covers the full request/response/parse cycle of a single
+  // attempt, not the retry-wrapping `chatCompletion`.
+  const requestStartedAt = Date.now();
+
   let response: Response;
   try {
     response = await fetchWithTimeout(
@@ -367,6 +378,17 @@ async function chatCompletionAttempt(
       response.status,
     );
   }
+  // Per-call usage telemetry (#576). Best-effort and fully isolated: a missing
+  // or garbled usage block still records duration + model, and a throwing sink
+  // can never fail the call (emitLlmUsage swallows its own errors). The stage
+  // is supplied ambiently by emitLlmUsage; no `stage` param is threaded here.
+  emitLlmUsage({
+    model: typeof json.model === "string" && json.model ? json.model : config.model,
+    durationMs: Date.now() - requestStartedAt,
+    finishReason: typeof json.choices?.[0]?.finish_reason === "string" ? json.choices[0].finish_reason : undefined,
+    ...extractUsageTokens(json.usage),
+  });
+
   const content = (json.choices?.[0]?.message?.content ?? "").trim();
   const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
   return content || reasoning;
