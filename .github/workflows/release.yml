@@ -11,6 +11,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Cap test workers to the runner's core count (~4); the scripts default to
+    # --parallel=12 (dev machines), which over-subscribes the runner and can
+    # trigger an intermittent Bun `epoll_ctl EEXIST` race under load.
+    env:
+      TEST_PARALLEL: "4"
     steps:
       - uses: actions/checkout@v5
         with:
