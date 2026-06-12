@@ -238,7 +238,8 @@ async function processSession(
     ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
   });
 
-  if (minContentChars > 0 && filtered.stats.inputCount < minContentChars) {
+  const rawContentChars = data.events.reduce((sum, event) => sum + (event.text?.length ?? 0), 0);
+  if (minContentChars > 0 && rawContentChars < minContentChars) {
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
