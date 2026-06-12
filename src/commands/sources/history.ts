@@ -105,7 +105,7 @@ export interface HistoryOptions {
    * and include them in the response as `acceptRateBySource` (F-4 / #385).
    *
    * Requires access to the stash directory. Reads all proposals (pending,
-   * accepted, rejected) from the `.akm/proposals/` tree.
+   * accepted, rejected) from the `proposals` table in state.db.
    */
   acceptRateBySource?: boolean;
   /** Override stash directory for proposal store access. */

@@ -3,39 +3,46 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proposal substrate (#225).
+ * Proposal substrate (#225, storage consolidated in #578).
  *
  * One durable proposal store for every future reflection / generation flow
  * (`akm reflect`, `akm propose`, `akm distill`, lesson distillation, …).
- * Proposals are *queue state*, not source-of-truth assets — they sit on disk
- * waiting for human (or automated) review and only become assets after
+ * Proposals are *queue state*, not source-of-truth assets — they sit in the
+ * queue waiting for human (or automated) review and only become assets after
  * `akm proposal accept` validates and promotes them via
  * {@link writeAssetToSource}.
  *
- * # Storage layout
+ * # Storage
  *
- *   <stashRoot>/.akm/proposals/<id>/proposal.json
- *   <stashRoot>/.akm/proposals/archive/<id>/proposal.json
+ * The canonical store is the `proposals` table in `state.db` (SQLite, WAL
+ * mode — see `src/core/state-db.ts`). Rows are partitioned by `stash_dir` so
+ * multi-stash installs keep independent queues, and the `status` column
+ * distinguishes the live queue (`pending`) from the archive (`accepted` /
+ * `rejected` / `reverted`). There is no separate archive location — archival
+ * is a status flip, and the full audit trail (review outcome, reason, backup
+ * content for revert) lives on the row.
  *
- * One directory per proposal id (a stable `crypto.randomUUID()`), so multiple
- * proposals can target the same `ref` without filesystem collisions.
+ * ## Legacy filesystem import
  *
- * # Why direct fs (and not `writeAssetToSource`)
+ * Before 0.9.0 proposals lived as per-uuid JSON directories under
+ * `<stashDir>/.akm/proposals/` (live) and `…/proposals/archive/` (archived).
+ * The first proposal operation against a stash imports any legacy
+ * `proposal.json` files into the table (INSERT OR IGNORE keyed on the UUID,
+ * so re-runs never duplicate) and records the stash in `proposal_fs_imports`
+ * so later invocations skip the directory walk. The legacy files are left in
+ * place untouched — they are inert after import and may be removed by the
+ * operator at leisure.
+ *
+ * # Why the queue bypasses `writeAssetToSource`
  *
  * The architectural rule "all writes go through `writeAssetToSource`" applies
- * to *assets*. Proposals are **not** assets — they live outside the asset tree
- * (under `.akm/proposals/`, parallel to how `events.jsonl` lives outside the
- * asset tree). Routing them through `writeAssetToSource` would force them into
- * a `TYPE_DIRS` slot, would commit them to git, and would leak unaccepted
- * drafts through the normal indexer. None of that is what we want for queue
- * state. The {@link promoteProposal} step is the bridge: it routes the
- * accepted payload through `writeAssetToSource` so the actual asset write
- * still funnels through the single dispatch point in
- * `src/core/write-source.ts`.
- *
- * Direct `fs` IO here is deliberate and the only place in the v1 codebase
- * that bypasses `writeAssetToSource` for "stash-adjacent" durable state. See
- * CLAUDE.md ("Writes" section) for the contract.
+ * to *assets*. Proposals are **not** assets — they live outside the asset
+ * tree (in state.db, parallel to how events do). Routing them through
+ * `writeAssetToSource` would force them into a `TYPE_DIRS` slot, would commit
+ * them to git, and would leak unaccepted drafts through the normal indexer.
+ * The {@link promoteProposal} step is the bridge: it routes the accepted
+ * payload through `writeAssetToSource` so the actual asset write still
+ * funnels through the single dispatch point in `src/core/write-source.ts`.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -47,6 +54,18 @@ import { resolveAssetPathFromName, TYPE_DIRS } from "../../../core/asset/asset-s
 import type { AkmConfig } from "../../../core/config/config";
 import { NotFoundError, UsageError } from "../../../core/errors";
 import { appendEvent } from "../../../core/events";
+import {
+  type Database,
+  getStateDbPath,
+  getStateProposal,
+  hasImportedFsProposals,
+  insertProposalIfAbsent,
+  listStateProposalIdsByPrefix,
+  listStateProposals,
+  openStateDatabase,
+  recordFsProposalsImport,
+  upsertProposal,
+} from "../../../core/state-db";
 import { warn } from "../../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -159,13 +178,15 @@ export interface ExpireStaleResult {
  * Lifecycle status of a proposal.
  *
  *   - `pending`   — Live queue entry awaiting review.
- *   - `accepted`  — Promoted into the asset tree via {@link promoteProposal};
- *                   archived under `.akm/proposals/archive/<id>/`.
+ *   - `accepted`  — Promoted into the asset tree via {@link promoteProposal}.
  *   - `rejected`  — Reviewer (or automated guard / orphan purge / expiration)
- *                   declined the proposal; archived.
+ *                   declined the proposal.
  *   - `reverted`  — Previously `accepted` proposal that was rolled back via the
  *                   `akm proposal revert <id>` flow (D6c). The asset on disk is
  *                   restored from the backup captured at promotion time.
+ *
+ * Any non-`pending` status is "archived": the row stays in the table for the
+ * audit trail but leaves the live queue.
  */
 export type ProposalStatus = "pending" | "accepted" | "rejected" | "reverted";
 
@@ -183,7 +204,7 @@ export interface ProposalReview {
 }
 
 export interface Proposal {
-  /** Stable random id (crypto.randomUUID()). Directory name on disk. */
+  /** Stable random id (crypto.randomUUID()). Primary key in the store. */
   id: string;
   /** Asset ref the proposal would create or update (`[origin//]type:name`). */
   ref: string;
@@ -223,22 +244,24 @@ export interface Proposal {
    */
   confidence?: number;
   /**
-   * Relative path (under the proposal directory) to the backup of the asset
-   * content that existed at the target ref BEFORE promotion (Advantage D6c /
-   * Phase 6C). Written exclusively by {@link promoteProposal} when the target
-   * file existed; absent for genuinely-new assets. Consumed by the
-   * `akm proposal revert <id>` flow to restore prior content.
+   * Full content of the asset that existed at the target ref BEFORE promotion
+   * (Advantage D6c / Phase 6C). Captured exclusively by {@link promoteProposal}
+   * when the target file existed; absent for genuinely-new assets. Consumed by
+   * the `akm proposal revert <id>` flow to restore prior content.
+   *
+   * Never surfaced by the `akm proposal` output shapes — it is internal
+   * revert state carried on the row.
    */
-  backup?: string;
+  backupContent?: string;
 }
 
 export interface ProposalsContext {
-  /** Override the stash root used for proposal storage. */
-  stashDir?: string;
   /** Test seam — defaults to `Date.now`. */
   now?: () => number;
   /** Test seam — defaults to `crypto.randomUUID`. */
   randomUUID?: () => string;
+  /** Test seam — override the state.db path (mirrors `EventsContext.dbPath`). */
+  dbPath?: string;
 }
 
 export interface CreateProposalInput {
@@ -340,24 +363,7 @@ function contentHash(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
-// ── Path helpers ────────────────────────────────────────────────────────────
-
-/**
- * Resolve `<stashRoot>/.akm/proposals` (or its archive subdirectory). Direct
- * fs paths because proposal storage is queue state, not asset state — see the
- * module docblock for the architectural carve-out.
- */
-export function getProposalsRoot(stashDir: string, archive = false): string {
-  return archive ? path.join(stashDir, ".akm", "proposals", "archive") : path.join(stashDir, ".akm", "proposals");
-}
-
-function proposalDir(stashDir: string, id: string, archive: boolean): string {
-  return path.join(getProposalsRoot(stashDir, archive), id);
-}
-
-function proposalFile(stashDir: string, id: string, archive: boolean): string {
-  return path.join(proposalDir(stashDir, id, archive), "proposal.json");
-}
+// ── Store access ─────────────────────────────────────────────────────────────
 
 function nowIso(ctx?: ProposalsContext): string {
   const fn = ctx?.now ?? Date.now;
@@ -369,45 +375,134 @@ function newId(ctx?: ProposalsContext): string {
   return fn();
 }
 
-// ── Read / write primitives ─────────────────────────────────────────────────
-
-function readProposalFile(filePath: string): Proposal {
-  let raw: string;
+/**
+ * Open the state database (honouring the `ctx.dbPath` test seam), run the
+ * legacy filesystem import for `stashDir` if it has not happened yet, hand the
+ * connection to `fn`, and close it in a `finally`. Every public function in
+ * this module funnels its store access through here so the legacy import is
+ * guaranteed to have run before any read or write.
+ */
+function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined, fn: (db: Database) => T): T {
+  const db = openStateDatabase(ctx?.dbPath ?? getStateDbPath());
   try {
-    raw = fs.readFileSync(filePath, "utf8");
-  } catch (err) {
-    throw new NotFoundError(
-      `Proposal not found at ${filePath}.`,
-      "FILE_NOT_FOUND",
-      `The proposal file is missing or unreadable: ${(err as Error).message}`,
-    );
+    importLegacyProposalFiles(db, stashDir);
+    return fn(db);
+  } finally {
+    db.close();
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new UsageError(
-      `Proposal file at ${filePath} is not valid JSON: ${(err as Error).message}`,
-      "INVALID_JSON_ARGUMENT",
-      "Re-create the proposal or remove the corrupt file under .akm/proposals/<id>/.",
-    );
-  }
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new UsageError(`Proposal file at ${filePath} is not a JSON object.`, "INVALID_JSON_ARGUMENT");
-  }
-  return parsed as Proposal;
 }
 
-function writeProposalFile(filePath: string, proposal: Proposal): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(proposal, null, 2)}\n`, "utf8");
+// ── Legacy filesystem import (#578) ─────────────────────────────────────────
+
+/** Legacy (pre-0.9.0) proposal directory: `<stashDir>/.akm/proposals[/archive]`. */
+function legacyProposalsRoot(stashDir: string, archive: boolean): string {
+  const root = path.join(stashDir, ".akm", "proposals");
+  return archive ? path.join(root, "archive") : root;
+}
+
+/**
+ * Shape of a legacy `proposal.json` file. Identical to {@link Proposal} except
+ * that the pre-0.9.0 `backup` field held a path (relative to the proposal
+ * directory) instead of the backup content itself.
+ */
+type LegacyProposalFile = Omit<Proposal, "backupContent"> & { backup?: string };
+
+/**
+ * One-shot import of legacy `proposal.json` files into the `proposals` table.
+ *
+ * Idempotent at two levels: the `proposal_fs_imports` ledger skips the
+ * directory walk after the first successful import, and INSERT OR IGNORE
+ * (keyed on the proposal UUID) protects against duplicates even if the walk
+ * re-runs. Legacy `backup.<ext>` files are inlined into `backupContent` so
+ * `akm proposal revert` keeps working for proposals accepted before 0.9.0.
+ *
+ * The legacy files are never modified or deleted — after import they are
+ * inert artifacts the operator can remove at leisure.
+ */
+function importLegacyProposalFiles(db: Database, stashDir: string): void {
+  if (hasImportedFsProposals(db, stashDir)) return;
+  const liveRoot = legacyProposalsRoot(stashDir, false);
+  if (!fs.existsSync(liveRoot)) return;
+
+  let imported = 0;
+  for (const archive of [false, true]) {
+    const root = legacyProposalsRoot(stashDir, archive);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === "archive") continue;
+      const proposalDir = path.join(root, entry.name);
+      const proposal = readLegacyProposalFile(proposalDir);
+      if (!proposal) continue;
+      if (insertProposalIfAbsent(db, proposal, stashDir)) imported += 1;
+    }
+  }
+
+  recordFsProposalsImport(db, stashDir, imported);
+  if (imported > 0) {
+    warn(`[proposals] imported ${imported} legacy proposal file(s) from ${liveRoot} into state.db`);
+  }
+}
+
+/**
+ * Parse one legacy proposal directory into a {@link Proposal}, inlining the
+ * backup file (when present) as `backupContent`. Returns undefined — with a
+ * warning — when the `proposal.json` is missing, unreadable, or malformed, so
+ * a single corrupt legacy entry never blocks the import of the rest.
+ */
+function readLegacyProposalFile(proposalDir: string): Proposal | undefined {
+  const filePath = path.join(proposalDir, "proposal.json");
+  let parsed: LegacyProposalFile;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as LegacyProposalFile;
+  } catch (err) {
+    warn(`[proposals] skipping legacy proposal at ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    typeof parsed.id !== "string" ||
+    typeof parsed.ref !== "string"
+  ) {
+    warn(`[proposals] skipping legacy proposal at ${filePath}: not a proposal object`);
+    return undefined;
+  }
+
+  const { backup, ...rest } = parsed;
+  let backupContent: string | undefined;
+  if (typeof backup === "string" && backup.length > 0) {
+    try {
+      backupContent = fs.readFileSync(path.join(proposalDir, backup), "utf8");
+    } catch {
+      // Backup file lost — import the proposal anyway; revert for it will
+      // surface "no backup available", same as a new-asset proposal.
+    }
+  }
+
+  return {
+    ...rest,
+    payload: {
+      content: rest.payload?.content ?? "",
+      ...(rest.payload?.frontmatter ? { frontmatter: rest.payload.frontmatter } : {}),
+    },
+    createdAt: rest.createdAt ?? "",
+    updatedAt: rest.updatedAt ?? rest.createdAt ?? "",
+    status: rest.status ?? "pending",
+    source: rest.source ?? "import",
+    ...(backupContent !== undefined ? { backupContent } : {}),
+  };
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
  * Create a new pending proposal. The id is a stable random UUID, so two
- * proposals with the same `ref` never collide on disk.
+ * proposals with the same `ref` never collide.
  *
  * **Dedup / cooldown guard** (F-2 / #363):
  *
@@ -421,7 +516,7 @@ function writeProposalFile(filePath: string, proposal: Proposal): void {
  *      others: 7 d). Bypass with `force: true`.
  *
  * When a guard fires the function returns a `CreateProposalSkipped` record
- * instead of writing to disk. Use {@link isProposalSkipped} to detect it.
+ * instead of writing. Use {@link isProposalSkipped} to detect it.
  */
 export function createProposal(
   stashDir: string,
@@ -494,180 +589,168 @@ export function createProposal(
 
   const normalizedRef = makeAssetRef(parsedRef.type, parsedRef.name, parsedRef.origin);
 
-  if (!input.force) {
-    const newHash = contentHash(input.payload.content);
-    const nowMs = (ctx?.now ?? Date.now)();
-    const cooldownMs = cooldownMsForSource(input.source);
-
-    // Scan pending proposals for ref+source matches.
-    const pending = listProposals(stashDir, { ref: normalizedRef, status: "pending" }).filter(
-      (p) => p.source === input.source,
-    );
-
-    if (pending.length > 0) {
-      // Check for identical content hash first (silent skip).
-      const hashMatch = pending.find((p) => contentHash(p.payload.content) === newHash);
-      if (hashMatch) {
-        return {
-          skipped: true,
-          reason: "content_hash_match",
-          message: `Identical proposal for ${normalizedRef} already pending (id: ${hashMatch.id}).`,
-          existingProposalId: hashMatch.id,
-        };
-      }
-      // Duplicate pending for same ref+source (different content).
-      const firstPending = pending[0];
-      return {
-        skipped: true,
-        reason: "duplicate_pending",
-        message: `A pending proposal for ${normalizedRef} from source "${input.source}" already exists (id: ${firstPending?.id ?? "unknown"}). Pass force:true to enqueue alongside it.`,
-        existingProposalId: firstPending?.id,
-      };
+  return withProposalsDb(stashDir, ctx, (db) => {
+    if (!input.force) {
+      const skip = checkDedupAndCooldown(db, stashDir, normalizedRef, input, ctx);
+      if (skip) return skip;
     }
 
-    // Check cooldown against recently archived rejected proposals.
-    const rejected = listProposals(stashDir, { ref: normalizedRef, status: "rejected", includeArchive: true })
-      .filter((p) => p.source === input.source)
-      .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
+    const created = nowIso(ctx);
 
-    if (rejected.length > 0 && rejected[0] !== undefined) {
-      const mostRecent = rejected[0];
-      // Check content hash against recently rejected.
-      if (contentHash(mostRecent.payload.content) === newHash) {
-        return {
-          skipped: true,
-          reason: "content_hash_match",
-          message: `Identical proposal for ${normalizedRef} was already rejected (id: ${mostRecent.id}).`,
-          existingProposalId: mostRecent.id,
-        };
-      }
-      // Check cooldown window.
-      const rejectedAt = new Date(mostRecent.updatedAt ?? 0).getTime();
-      if (nowMs - rejectedAt < cooldownMs) {
-        const cooldownDays = cooldownMs / MS_PER_DAY;
-        const remainingDays = Math.ceil((cooldownMs - (nowMs - rejectedAt)) / MS_PER_DAY);
-        return {
-          skipped: true,
-          reason: "cooldown",
-          message:
-            `Proposal for ${normalizedRef} from source "${input.source}" is in cooldown ` +
-            `(${cooldownDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
-          existingProposalId: mostRecent.id,
-        };
-      }
-    }
-  }
+    // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
+    // is dropped silently — we never store NaN, Infinity, or out-of-range values.
+    // Callers that mis-report confidence should not poison the auto-accept gate.
+    const sanitizedConfidence =
+      typeof input.confidence === "number" &&
+      Number.isFinite(input.confidence) &&
+      input.confidence >= 0 &&
+      input.confidence <= 1
+        ? input.confidence
+        : undefined;
 
-  const id = newId(ctx);
-  const created = nowIso(ctx);
+    const proposal: Proposal = {
+      id: newId(ctx),
+      ref: normalizedRef,
+      status: "pending",
+      source: input.source,
+      ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
+      createdAt: created,
+      updatedAt: created,
+      payload: {
+        content: input.payload.content,
+        ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
+      },
+      ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
+    };
 
-  // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
-  // is dropped silently — we never store NaN, Infinity, or out-of-range values.
-  // Callers that mis-report confidence should not poison the auto-accept gate.
-  const sanitizedConfidence =
-    typeof input.confidence === "number" &&
-    Number.isFinite(input.confidence) &&
-    input.confidence >= 0 &&
-    input.confidence <= 1
-      ? input.confidence
-      : undefined;
-
-  const proposal: Proposal = {
-    id,
-    ref: normalizedRef,
-    status: "pending",
-    source: input.source,
-    ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
-    createdAt: created,
-    updatedAt: created,
-    payload: {
-      content: input.payload.content,
-      ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
-    },
-    ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
-  };
-
-  writeProposalFile(proposalFile(stashDir, id, false), proposal);
-  return proposal;
+    upsertProposal(db, proposal, stashDir);
+    return proposal;
+  });
 }
 
 /**
- * List every proposal under the stash. By default returns pending proposals
- * from the live queue; pass `{ includeArchive: true }` to include rejected /
- * accepted entries that have been moved aside.
+ * Evaluate the F-2 dedup / cooldown guards against the store. Returns the
+ * skip record when a guard fires, or undefined when the create may proceed.
+ */
+function checkDedupAndCooldown(
+  db: Database,
+  stashDir: string,
+  normalizedRef: string,
+  input: CreateProposalInput,
+  ctx: ProposalsContext | undefined,
+): CreateProposalSkipped | undefined {
+  const newHash = contentHash(input.payload.content);
+  const nowMs = (ctx?.now ?? Date.now)();
+  const cooldownMs = cooldownMsForSource(input.source);
+
+  // Scan pending proposals for ref+source matches.
+  const pending = listStateProposals(db, { stashDir, ref: normalizedRef, status: "pending" }).filter(
+    (p) => p.source === input.source,
+  );
+
+  if (pending.length > 0) {
+    // Check for identical content hash first (silent skip).
+    const hashMatch = pending.find((p) => contentHash(p.payload.content) === newHash);
+    if (hashMatch) {
+      return {
+        skipped: true,
+        reason: "content_hash_match",
+        message: `Identical proposal for ${normalizedRef} already pending (id: ${hashMatch.id}).`,
+        existingProposalId: hashMatch.id,
+      };
+    }
+    // Duplicate pending for same ref+source (different content).
+    const firstPending = pending[0];
+    return {
+      skipped: true,
+      reason: "duplicate_pending",
+      message: `A pending proposal for ${normalizedRef} from source "${input.source}" already exists (id: ${firstPending?.id ?? "unknown"}). Pass force:true to enqueue alongside it.`,
+      existingProposalId: firstPending?.id,
+    };
+  }
+
+  // Check cooldown against recently rejected proposals.
+  const rejected = listStateProposals(db, { stashDir, ref: normalizedRef, status: "rejected" })
+    .filter((p) => p.source === input.source)
+    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
+
+  const mostRecent = rejected[0];
+  if (mostRecent !== undefined) {
+    // Check content hash against recently rejected.
+    if (contentHash(mostRecent.payload.content) === newHash) {
+      return {
+        skipped: true,
+        reason: "content_hash_match",
+        message: `Identical proposal for ${normalizedRef} was already rejected (id: ${mostRecent.id}).`,
+        existingProposalId: mostRecent.id,
+      };
+    }
+    // Check cooldown window.
+    const rejectedAt = new Date(mostRecent.updatedAt ?? 0).getTime();
+    if (nowMs - rejectedAt < cooldownMs) {
+      const cooldownDays = cooldownMs / MS_PER_DAY;
+      const remainingDays = Math.ceil((cooldownMs - (nowMs - rejectedAt)) / MS_PER_DAY);
+      return {
+        skipped: true,
+        reason: "cooldown",
+        message:
+          `Proposal for ${normalizedRef} from source "${input.source}" is in cooldown ` +
+          `(${cooldownDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
+        existingProposalId: mostRecent.id,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * List proposals for one stash. By default returns only the live (pending)
+ * queue; pass `{ includeArchive: true }` to include accepted / rejected /
+ * reverted entries as well.
  */
 export function listProposals(
   stashDir: string,
   options: { includeArchive?: boolean; status?: ProposalStatus; ref?: string; type?: string } = {},
+  ctx?: ProposalsContext,
 ): Proposal[] {
-  const out: Proposal[] = [];
-  const roots: { dir: string; archive: boolean }[] = [{ dir: getProposalsRoot(stashDir, false), archive: false }];
-  if (options.includeArchive) {
-    roots.push({ dir: getProposalsRoot(stashDir, true), archive: true });
-  }
-  for (const { dir } of roots) {
-    if (!fs.existsSync(dir)) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
+  return withProposalsDb(stashDir, ctx, (db) => {
+    // Without includeArchive, only the live queue is visible — an explicit
+    // non-pending status filter therefore matches nothing (mirrors the
+    // historical live-directory scan).
+    if (!options.includeArchive && options.status !== undefined && options.status !== "pending") {
+      return [];
     }
-    for (const entry of entries) {
-      // Skip the archive subdirectory when iterating the live queue.
-      if (!entry.isDirectory()) continue;
-      if (entry.name === "archive") continue;
-      const filePath = path.join(dir, entry.name, "proposal.json");
-      if (!fs.existsSync(filePath)) continue;
-      try {
-        out.push(readProposalFile(filePath));
-      } catch {
-        // Surface invalid proposal files via a synthetic stub so callers can
-        // see something in `akm proposal list` rather than the file
-        // disappearing silently.
-        out.push({
-          id: entry.name,
-          ref: "unknown:unknown",
-          status: "rejected",
-          source: "invalid",
-          createdAt: "",
-          updatedAt: "",
-          payload: { content: "" },
-          review: {
-            outcome: "rejected",
-            reason: "Invalid proposal file (could not be parsed).",
-            decidedAt: "",
-          },
-        });
-      }
-    }
-  }
-  return out
-    .filter((p) => (options.status ? p.status === options.status : true))
-    .filter((p) => (options.ref ? p.ref === options.ref : true))
-    .filter((p) => {
+    const status = options.includeArchive ? options.status : "pending";
+    return listStateProposals(db, {
+      stashDir,
+      ...(status !== undefined ? { status } : {}),
+      ...(options.ref !== undefined ? { ref: options.ref } : {}),
+    }).filter((p) => {
       if (!options.type) return true;
       try {
         return parseAssetRef(p.ref).type === options.type;
       } catch {
-        // Unparseable ref (e.g. the synthetic "unknown:unknown" stub for an
-        // invalid proposal file) never matches a concrete type filter.
         return false;
       }
-    })
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    });
+  });
 }
 
 /**
- * Look up a proposal by id. Searches the live queue first, then the archive.
- * Throws `NotFoundError` when no match exists.
+ * Look up a proposal by id (live or archived).
+ * Throws `NotFoundError` when no match exists in this stash.
  */
-export function getProposal(stashDir: string, id: string): Proposal {
-  const livePath = proposalFile(stashDir, id, false);
-  if (fs.existsSync(livePath)) return readProposalFile(livePath);
-  const archivedPath = proposalFile(stashDir, id, true);
-  if (fs.existsSync(archivedPath)) return readProposalFile(archivedPath);
-  throw new NotFoundError(`Proposal "${id}" not found.`, "FILE_NOT_FOUND");
+export function getProposal(stashDir: string, id: string, ctx?: ProposalsContext): Proposal {
+  return withProposalsDb(stashDir, ctx, (db) => requireProposal(db, stashDir, id));
+}
+
+function requireProposal(db: Database, stashDir: string, id: string): Proposal {
+  const proposal = getStateProposal(db, id, stashDir);
+  if (!proposal) {
+    throw new NotFoundError(`Proposal "${id}" not found.`, "FILE_NOT_FOUND");
+  }
+  return proposal;
 }
 
 /**
@@ -677,57 +760,44 @@ export function getProposal(stashDir: string, id: string): Proposal {
  *   1. Exact UUID match (existing behaviour).
  *   2. Asset ref (contains `:`) — finds the most-recent pending proposal for
  *      that ref; falls back to archived if nothing is pending.
- *   3. UUID prefix — matches any live proposal directory whose name starts
- *      with the given string; throws if ambiguous.
+ *   3. UUID prefix — matches any PENDING proposal whose id starts with the
+ *      given string; throws if ambiguous.
  */
-export function resolveProposalId(stashDir: string, idOrRef: string): Proposal {
-  // 1. Exact UUID.
-  try {
-    return getProposal(stashDir, idOrRef);
-  } catch (e) {
-    if (!(e instanceof NotFoundError)) throw e;
-  }
+export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: ProposalsContext): Proposal {
+  return withProposalsDb(stashDir, ctx, (db) => {
+    // 1. Exact UUID.
+    const exact = getStateProposal(db, idOrRef, stashDir);
+    if (exact) return exact;
 
-  // 2. Asset ref (e.g. "skill:akm-dream").
-  if (idOrRef.includes(":")) {
-    const pending = listProposals(stashDir, { ref: idOrRef });
-    if (pending.length > 0) {
-      return pending.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+    // 2. Asset ref (e.g. "skill:akm-dream") — most recent pending, else most
+    // recent archived.
+    if (idOrRef.includes(":")) {
+      const byRecency = (proposals: Proposal[]): Proposal | undefined =>
+        proposals.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+      const pending = byRecency(listStateProposals(db, { stashDir, ref: idOrRef, status: "pending" }));
+      if (pending) return pending;
+      const archived = byRecency(listStateProposals(db, { stashDir, ref: idOrRef }));
+      if (archived) return archived;
+      throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "FILE_NOT_FOUND");
     }
-    const archived = listProposals(stashDir, { ref: idOrRef, includeArchive: true });
-    if (archived.length > 0) {
-      return archived.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+
+    // 3. UUID prefix (pending queue only).
+    const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
+    if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]);
+    if (prefixMatches.length > 1) {
+      throw new UsageError(
+        `Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`,
+        "INVALID_FLAG_VALUE",
+      );
     }
-    throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "FILE_NOT_FOUND");
-  }
 
-  // 3. UUID prefix.
-  const liveDir = getProposalsRoot(stashDir, false);
-  let prefixMatches: string[] = [];
-  try {
-    prefixMatches = fs.readdirSync(liveDir).filter((name) => name.startsWith(idOrRef));
-  } catch {
-    /* live dir may not exist yet */
-  }
-  if (prefixMatches.length === 1) return getProposal(stashDir, prefixMatches[0]);
-  if (prefixMatches.length > 1) {
-    throw new UsageError(`Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`, "INVALID_FLAG_VALUE");
-  }
-
-  throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "FILE_NOT_FOUND");
+    throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "FILE_NOT_FOUND");
+  });
 }
 
 /**
- * Whether a proposal currently lives in the archive (used by callers that
- * need to know whether to look in the archive root for files / paths).
- */
-export function isProposalArchived(stashDir: string, id: string): boolean {
-  return !fs.existsSync(proposalFile(stashDir, id, false)) && fs.existsSync(proposalFile(stashDir, id, true));
-}
-
-/**
- * Move a proposal directory into the archive subtree and update its status.
- * Used by both accept (status `accepted`) and reject (status `rejected`)
+ * Archive a proposal: flip its status to `accepted` / `rejected`, bump
+ * `updatedAt`, and record the review block. Used by both accept and reject
  * paths so the live queue only contains pending entries.
  */
 export function archiveProposal(
@@ -737,44 +807,21 @@ export function archiveProposal(
   reason: string | undefined,
   ctx?: ProposalsContext,
 ): Proposal {
-  const sourceDir = proposalDir(stashDir, id, false);
-  if (!fs.existsSync(sourceDir)) {
-    // If it's already archived, just update the metadata in place.
-    const archived = proposalFile(stashDir, id, true);
-    if (fs.existsSync(archived)) {
-      const existing = readProposalFile(archived);
-      const updated: Proposal = {
-        ...existing,
-        status,
-        updatedAt: nowIso(ctx),
-        review: {
-          outcome: status,
-          ...(reason !== undefined ? { reason } : {}),
-          decidedAt: nowIso(ctx),
-        },
-      };
-      writeProposalFile(archived, updated);
-      return updated;
-    }
-    throw new NotFoundError(`Proposal "${id}" not found.`, "FILE_NOT_FOUND");
-  }
-
-  const targetDir = proposalDir(stashDir, id, true);
-  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-  fs.renameSync(sourceDir, targetDir);
-
-  const updated: Proposal = {
-    ...readProposalFile(proposalFile(stashDir, id, true)),
-    status,
-    updatedAt: nowIso(ctx),
-    review: {
-      outcome: status,
-      ...(reason !== undefined ? { reason } : {}),
-      decidedAt: nowIso(ctx),
-    },
-  };
-  writeProposalFile(proposalFile(stashDir, id, true), updated);
-  return updated;
+  return withProposalsDb(stashDir, ctx, (db) => {
+    const existing = requireProposal(db, stashDir, id);
+    const updated: Proposal = {
+      ...existing,
+      status,
+      updatedAt: nowIso(ctx),
+      review: {
+        outcome: status,
+        ...(reason !== undefined ? { reason } : {}),
+        decidedAt: nowIso(ctx),
+      },
+    };
+    upsertProposal(db, updated, stashDir);
+    return updated;
+  });
 }
 
 /**
@@ -795,7 +842,7 @@ export function purgeOrphanProposals(
   const t0 = Date.now();
   const orphans: Array<{ id: string; ref: string; reason: string }> = [];
   const byType: Record<string, number> = {};
-  const pending = listProposals(stashDir, { status: "pending" });
+  const pending = listProposals(stashDir, { status: "pending" }, ctx);
   const reflectPending = pending.filter((p) => p.source === "reflect");
 
   for (const p of reflectPending) {
@@ -879,7 +926,7 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
 
   const retentionMs = retentionDays * MS_PER_DAY;
   const nowMs = (ctx?.now ?? Date.now)();
-  const pending = listProposals(stashDir, { status: "pending" });
+  const pending = listProposals(stashDir, { status: "pending" }, ctx);
 
   for (const p of pending) {
     const createdMs = new Date(p.createdAt).getTime();
@@ -957,15 +1004,14 @@ export interface PromoteResult {
 /**
  * Validate a proposal, then promote it through the canonical
  * {@link writeAssetToSource} dispatch (the single place that branches on
- * `source.kind`). On success the proposal directory is moved to the archive
- * with status `accepted`. Validation failures throw a `UsageError` carrying
- * every finding so the CLI can render a single clear error envelope.
+ * `source.kind`). On success the proposal is archived with status `accepted`.
+ * Validation failures throw a `UsageError` carrying every finding so the CLI
+ * can render a single clear error envelope.
  *
  * Phase 6C: when the target asset already exists at the resolved write path,
- * a snapshot of the prior content is captured under
- * `<proposalsRoot>/<id>/backup.<ext>` BEFORE the write. The relative path is
- * recorded on the proposal record (`backup` field) so `akm proposal revert`
- * can restore the prior content. Genuinely-new assets carry no backup.
+ * its prior content is captured BEFORE the write and stored on the archived
+ * proposal record (`backupContent`) so `akm proposal revert` can restore it.
+ * Genuinely-new assets carry no backup.
  */
 export async function promoteProposal(
   stashDir: string,
@@ -974,7 +1020,7 @@ export async function promoteProposal(
   options: { target?: string } = {},
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
-  const proposal = getProposal(stashDir, id);
+  const proposal = getProposal(stashDir, id, ctx);
   if (proposal.status !== "pending") {
     throw new UsageError(
       `Proposal ${id} is not pending (current status: ${proposal.status}). Only pending proposals can be accepted.`,
@@ -999,25 +1045,15 @@ export async function promoteProposal(
 
   const target = resolveWriteTarget(config, options.target);
 
-  // Phase 6C: capture a backup of the prior content (if any) BEFORE writing the
-  // new asset. We use the resolved write target to compute the exact path the
+  // Phase 6C: capture the prior content (if any) BEFORE writing the new
+  // asset. We use the resolved write target to compute the exact path the
   // asset would land at — same resolver `writeAssetToSource` uses — so the
   // backup always mirrors what would be overwritten.
-  let backupRelPath: string | undefined;
+  let backupContent: string | undefined;
   try {
     const targetFilePath = resolveAssetFilePathSafe(target.source, ref);
     if (targetFilePath && fs.existsSync(targetFilePath)) {
-      const ext = path.extname(targetFilePath) || ".md";
-      const proposalRoot = proposalDir(stashDir, id, false);
-      // Store relative path on the proposal record so the directory remains
-      // portable if the stash is moved.
-      const backupFilename = `backup${ext}`;
-      const backupAbsPath = path.join(proposalRoot, backupFilename);
-      fs.mkdirSync(proposalRoot, { recursive: true });
-      // Use copyFileSync — file-system atomicity is sufficient here because the
-      // backup is single-file and never read concurrently with this write.
-      fs.copyFileSync(targetFilePath, backupAbsPath);
-      backupRelPath = backupFilename;
+      backupContent = fs.readFileSync(targetFilePath, "utf8");
     }
   } catch (err) {
     // Backup capture is best-effort. A failure here must not block promotion
@@ -1035,13 +1071,11 @@ export async function promoteProposal(
 
   const archived = archiveProposal(stashDir, id, "accepted", undefined, ctx);
 
-  // Persist the backup path on the archived proposal record. archiveProposal
-  // moves the proposal dir into the archive subtree, so the backup file moves
-  // with it (the relative path stays valid).
-  if (backupRelPath) {
-    const archivedFile = proposalFile(stashDir, id, true);
-    const withBackup: Proposal = { ...archived, backup: backupRelPath };
-    writeProposalFile(archivedFile, withBackup);
+  // Persist the backup content on the archived proposal record so the revert
+  // flow can restore the prior asset state.
+  if (backupContent !== undefined) {
+    const withBackup: Proposal = { ...archived, backupContent };
+    withProposalsDb(stashDir, ctx, (db) => upsertProposal(db, withBackup, stashDir));
     return { proposal: withBackup, assetPath: written.path, ref: written.ref };
   }
 
@@ -1061,23 +1095,24 @@ export interface RevertResult {
 }
 
 /**
- * Restore the prior content of an accepted proposal from its captured backup
- * (Advantage D6c / Phase 6C).
+ * Restore the prior content of an accepted proposal from the backup captured
+ * at promotion time (Advantage D6c / Phase 6C).
  *
  * Pre-conditions:
  *   - `id` resolves to a proposal with `status === "accepted"`.
- *   - The proposal carries a `backup` field pointing to a readable file under
- *     the proposal directory.
+ *   - The proposal carries `backupContent` (captured by promoteProposal when
+ *     the target asset existed before the write).
  *
  * On success:
  *   - The backup content is written back through {@link writeAssetToSource},
  *     so the canonical write-dispatch invariant is preserved.
- *   - The archived proposal record is updated to `status: "reverted"`.
+ *   - The proposal record is updated to `status: "reverted"`.
  *   - Caller emits a `proposal_reverted` event in the CLI layer (mirrors how
  *     `promoted` / `rejected` are emitted by the CLI command, not the core).
  *
  * Errors are thrown as `UsageError` / `NotFoundError` so the CLI can map them
- * cleanly to exit codes — see `src/commands/proposal.ts` for the wrapper.
+ * cleanly to exit codes — see `src/commands/proposal/proposal.ts` for the
+ * wrapper.
  */
 export async function revertProposal(
   stashDir: string,
@@ -1086,14 +1121,14 @@ export async function revertProposal(
   options: { target?: string } = {},
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
-  const proposal = getProposal(stashDir, id);
+  const proposal = getProposal(stashDir, id, ctx);
   if (proposal.status !== "accepted") {
     throw new UsageError(
       `only accepted proposals can be reverted (proposal ${id} status: ${proposal.status})`,
       "INVALID_FLAG_VALUE",
     );
   }
-  if (!proposal.backup) {
+  if (proposal.backupContent === undefined) {
     throw new UsageError(
       `no backup available for this proposal (id: ${id})`,
       "MISSING_REQUIRED_ARGUMENT",
@@ -1101,33 +1136,19 @@ export async function revertProposal(
     );
   }
 
-  // The proposal directory has been moved to the archive subtree (archiveProposal
-  // runs at the end of promoteProposal). Reads must resolve against that path.
-  const proposalRoot = proposalDir(stashDir, id, true);
-  const backupAbsPath = path.join(proposalRoot, proposal.backup);
-  if (!fs.existsSync(backupAbsPath)) {
-    throw new NotFoundError(
-      `no backup available for this proposal (id: ${id})`,
-      "FILE_NOT_FOUND",
-      `Expected backup file at ${backupAbsPath}; it may have been removed manually.`,
-    );
-  }
-
-  const backupContent = fs.readFileSync(backupAbsPath, "utf8");
   const ref = parseAssetRef(proposal.ref);
   if (!TYPE_DIRS[ref.type]) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
 
   const target = resolveWriteTarget(config, options.target);
-  const written = await writeAssetToSource(target.source, target.config, ref, backupContent);
+  const written = await writeAssetToSource(target.source, target.config, ref, proposal.backupContent);
   // 0.9.0 (issue #507): single batch commit at the write boundary for git
   // targets. No-op for filesystem/primary-stash targets.
   commitWriteTargetBoundary(target, `Revert ${formatRefForMessage(ref)}`);
 
-  // Update the archived proposal record to status: "reverted" and bump
-  // updatedAt + review so the audit trail reflects the second decision.
-  const archivedFile = proposalFile(stashDir, id, true);
+  // Update the proposal record to status: "reverted" and bump updatedAt +
+  // review so the audit trail reflects the second decision.
   const now = nowIso(ctx);
   const reverted: Proposal = {
     ...proposal,
@@ -1139,7 +1160,7 @@ export async function revertProposal(
       decidedAt: now,
     },
   };
-  writeProposalFile(archivedFile, reverted);
+  withProposalsDb(stashDir, ctx, (db) => upsertProposal(db, reverted, stashDir));
 
   return { proposal: reverted, assetPath: written.path, ref: written.ref };
 }
@@ -1170,8 +1191,9 @@ export function diffProposal(
   config: AkmConfig,
   id: string,
   options: { target?: string } = {},
+  ctx?: ProposalsContext,
 ): ProposalDiff {
-  const proposal = getProposal(stashDir, id);
+  const proposal = getProposal(stashDir, id, ctx);
   const ref = parseAssetRef(proposal.ref);
 
   let targetPath: string | undefined;

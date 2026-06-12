@@ -482,6 +482,34 @@ const MIGRATIONS: Migration[] = [
         ON extract_sessions_seen(processed_at);
     `,
   },
+
+  // ── Migration 005 — proposal_fs_imports ─────────────────────────────────────
+  //
+  // One-shot ledger for the legacy filesystem→SQLite proposal import (#578).
+  //
+  // Before 0.9.0 the proposal queue lived as per-uuid JSON directories under
+  // `<stashDir>/.akm/proposals/` and the `proposals` table (created in 001) was
+  // dead weight. 0.9.0 makes the table canonical; the first proposal operation
+  // against a stash imports any legacy `proposal.json` files it finds (INSERT
+  // OR IGNORE, so re-runs never duplicate) and records the stash here so later
+  // invocations skip the directory walk entirely.
+  //
+  // Indexed (query) columns:
+  //   stash_dir    TEXT PK  — absolute stash root the import ran against.
+  //
+  // Non-indexed columns:
+  //   imported_at    TEXT     — ISO-8601 UTC; when the import completed.
+  //   imported_count INTEGER  — rows actually inserted by the import.
+  {
+    id: "005-proposal-fs-imports",
+    up: `
+      CREATE TABLE IF NOT EXISTS proposal_fs_imports (
+        stash_dir      TEXT    PRIMARY KEY,
+        imported_at    TEXT    NOT NULL,
+        imported_count INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ];
 
 /**
@@ -547,8 +575,9 @@ export function eventRowToEnvelope(row: EventRow): EventEnvelope {
  * Raw SQLite row shape for the `proposals` table.
  *
  * Maps to the public {@link Proposal} interface from src/commands/proposal/validators/proposals.ts.
- * The `sourceRun` and `review` fields are stored in `metadata_json`; callers
- * that need them should `JSON.parse(row.metadata_json)`.
+ * The `sourceRun`, `review`, `confidence`, and `backupContent` fields are
+ * stored in `metadata_json`; callers that need them should
+ * `JSON.parse(row.metadata_json)` (or use {@link proposalRowToProposal}).
  */
 export interface ProposalRow {
   id: string;
@@ -596,6 +625,8 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
       ...(frontmatter !== undefined ? { frontmatter } : {}),
     },
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
+    ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
+    ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
   };
 }
 
@@ -608,6 +639,8 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   const metaObj: Record<string, unknown> = {};
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
+  if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
+  if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
 
   return {
     id: proposal.id,
@@ -784,7 +817,10 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 
 /**
  * List proposals, optionally filtered by stashDir, status, and/or ref.
- * Results are sorted by created_at ASC to match the existing listProposals() behaviour.
+ *
+ * Results are ordered by `created_at ASC` (matching the historical
+ * `listProposals()` sort), with `rowid` as a deterministic tiebreak so two
+ * proposals created in the same millisecond list in insertion order.
  */
 export function listStateProposals(
   db: Database,
@@ -809,24 +845,92 @@ export function listStateProposals(
     .prepare(
       `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
               content, frontmatter_json, metadata_json
-       FROM proposals ${where} ORDER BY created_at ASC`,
+       FROM proposals ${where} ORDER BY created_at ASC, rowid ASC`,
     )
     .all(...(params as SqlValue[])) as ProposalRow[];
   return rows.map(proposalRowToProposal);
 }
 
 /**
- * Look up a single proposal by id. Returns undefined when not found.
+ * Look up a single proposal by id, optionally scoped to one stash root.
+ * Returns undefined when not found.
  */
-export function getStateProposal(db: Database, id: string): Proposal | undefined {
-  const row = db
-    .prepare(
-      `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
+export function getStateProposal(db: Database, id: string, stashDir?: string): Proposal | undefined {
+  const sql = `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
               content, frontmatter_json, metadata_json
-       FROM proposals WHERE id = ?`,
-    )
-    .get(id) as ProposalRow | undefined;
+       FROM proposals WHERE id = ?${stashDir ? " AND stash_dir = ?" : ""}`;
+  const row = (stashDir ? db.prepare(sql).get(id, stashDir) : db.prepare(sql).get(id)) as ProposalRow | undefined;
   return row ? proposalRowToProposal(row) : undefined;
+}
+
+/**
+ * Find PENDING proposal ids in one stash whose id starts with `idPrefix`.
+ * Backs the UUID-prefix form of `akm proposal show/accept/... <prefix>` —
+ * prefix resolution is deliberately scoped to the live (pending) queue,
+ * mirroring the historical behaviour of scanning only the live directory.
+ *
+ * `%` / `_` / `\` in the prefix are escaped so the LIKE pattern is literal.
+ */
+export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idPrefix: string): string[] {
+  const escaped = idPrefix.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  const rows = db
+    .prepare(
+      `SELECT id FROM proposals
+       WHERE stash_dir = ? AND status = 'pending' AND id LIKE ? ESCAPE '\\'
+       ORDER BY id ASC`,
+    )
+    .all(stashDir, `${escaped}%`) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Whether the legacy filesystem proposal import has already run for `stashDir`.
+ * See migration 005 (`proposal_fs_imports`).
+ */
+export function hasImportedFsProposals(db: Database, stashDir: string): boolean {
+  // Drivers disagree on the no-row sentinel (bun:sqlite → null,
+  // better-sqlite3 → undefined) — Boolean() covers both.
+  return Boolean(db.prepare("SELECT 1 FROM proposal_fs_imports WHERE stash_dir = ?").get(stashDir));
+}
+
+/**
+ * Record that the legacy filesystem proposal import completed for `stashDir`
+ * so subsequent invocations skip the directory walk. INSERT OR REPLACE keeps
+ * the call idempotent.
+ */
+export function recordFsProposalsImport(db: Database, stashDir: string, importedCount: number): void {
+  db.prepare(
+    "INSERT OR REPLACE INTO proposal_fs_imports (stash_dir, imported_at, imported_count) VALUES (?, ?, ?)",
+  ).run(stashDir, new Date().toISOString(), importedCount);
+}
+
+/**
+ * Insert a proposal row ONLY when the id is not already present (used by the
+ * legacy filesystem import so re-runs never clobber rows that have since been
+ * mutated through the canonical store). Returns true when a row was inserted.
+ */
+export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDir: string): boolean {
+  const v = proposalToRowValues(proposal, stashDir);
+  const result = db
+    .prepare(`
+      INSERT OR IGNORE INTO proposals
+        (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      v.id,
+      v.stash_dir,
+      v.ref,
+      v.status,
+      v.source,
+      v.created_at,
+      v.updated_at,
+      v.content,
+      v.frontmatter_json,
+      v.metadata_json,
+    );
+  const changes = (result as { changes?: number | bigint }).changes ?? 0;
+  return Number(changes) > 0;
 }
 
 // ── task_history table helpers ───────────────────────────────────────────────
