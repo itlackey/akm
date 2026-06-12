@@ -210,7 +210,9 @@ const MIGRATIONS: Migration[] = [
       --
       -- Extensible (metadata_json) columns:
       --   metadata_json TEXT      — JSON object for future proposal fields.
-      --                             Current fields stored here: sourceRun, review.
+      --                             Current fields stored here: sourceRun,
+      --                             review, confidence, gateDecision (#577),
+      --                             backupContent.
       --
       -- ADD COLUMN extension points (future migrations):
       --   ALTER TABLE proposals ADD COLUMN source_run TEXT DEFAULT NULL;
@@ -574,8 +576,8 @@ export function eventRowToEnvelope(row: EventRow): EventEnvelope {
  * Raw SQLite row shape for the `proposals` table.
  *
  * Maps to the public {@link Proposal} interface from src/commands/proposal/validators/proposals.ts.
- * The `sourceRun`, `review`, `confidence`, and `backupContent` fields are
- * stored in `metadata_json`; callers that need them should
+ * The `sourceRun`, `review`, `confidence`, `gateDecision`, and `backupContent`
+ * fields are stored in `metadata_json`; callers that need them should
  * `JSON.parse(row.metadata_json)` (or use {@link proposalRowToProposal}).
  */
 export interface ProposalRow {
@@ -625,6 +627,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     },
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
+    ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
     ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
   };
 }
@@ -639,6 +642,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
+  if (proposal.gateDecision !== undefined) metaObj.gateDecision = proposal.gateDecision;
   if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
 
   return {
