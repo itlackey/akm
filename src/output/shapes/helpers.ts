@@ -55,7 +55,21 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
   }
   if (detail === "normal") {
-    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
+    // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
+    // so they are projected at `normal` for `akm proposal list/show` — both are
+    // optional and absent on legacy proposals.
+    return pickFields(entry, [
+      "id",
+      "ref",
+      "status",
+      "source",
+      "sourceRun",
+      "createdAt",
+      "updatedAt",
+      "confidence",
+      "gateDecision",
+      "review",
+    ]);
   }
   // full: project everything including the payload.
   return pickFields(entry, [
@@ -66,6 +80,8 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "sourceRun",
     "createdAt",
     "updatedAt",
+    "confidence",
+    "gateDecision",
     "payload",
     "review",
   ]);
