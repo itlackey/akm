@@ -4,6 +4,7 @@ import path from "node:path";
 import { akmHealth, parseHealthSince } from "../src/commands/health";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { appendEvent } from "../src/core/events";
+import { buildTaskRunId, insertTaskLogLines, openLogsDatabase } from "../src/core/logs-db";
 import { openStateDatabase, recordImproveRun, upsertTaskHistory } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
 import { runCliCapture } from "./_helpers/cli";
@@ -815,6 +816,46 @@ describe("akmHealth", () => {
     expect(result.metrics.agentFailureRate).toBe(0.5);
     expect(result.metrics.logBackingRate).toBe(0.5);
     expect(result.hardChecks.some((check) => check.name === "task-log-backing" && check.status === "fail")).toBe(true);
+  });
+
+  test("log backing is answered by logs.db rows, not the on-disk file (#579)", () => {
+    // The run's log_path points at a file that does NOT exist — under the old
+    // fs.existsSync-only check this run was unbacked. With #579, the presence
+    // of task_logs rows in logs.db for the run id makes it backed.
+    const startedAt = new Date().toISOString();
+    const logDir = makeTempDir("akm-health-dblogs-");
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "db-logged",
+        status: "completed",
+        started_at: startedAt,
+        completed_at: startedAt,
+        failed_at: null,
+        log_path: path.join(logDir, "missing.log"),
+        target_kind: "prompt",
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 10, detail: { exitCode: 0 }, profile: "opencode" }),
+      });
+    } finally {
+      db.close();
+    }
+    const logsDb = openLogsDatabase();
+    try {
+      insertTaskLogLines(logsDb, {
+        taskId: "db-logged",
+        runId: buildTaskRunId("db-logged", startedAt),
+        ts: startedAt,
+        lines: [{ line: "captured in logs.db" }],
+      });
+    } finally {
+      logsDb.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    expect(result.metrics.logBackingRate).toBe(1);
+    expect(result.hardChecks.some((check) => check.name === "task-log-backing" && check.status === "pass")).toBe(true);
   });
 
   test("now clock seam pins active-run staleness deterministically", () => {
