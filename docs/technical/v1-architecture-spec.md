@@ -881,29 +881,36 @@ content is never mutated by reflection, generation, or distillation paths.
 
 ### 11.1 Storage
 
-- Proposals live as one directory per proposal under
-  `<stashRoot>/.akm/proposals/<id>/`, each containing a single
-  `proposal.json` file. The store is plain filesystem state and survives
-  `akm index --full` and binary upgrades. Directory-per-id is what
-  guarantees multiple proposals can coexist for the same `ref` without
-  path collisions.
-- A single `proposal.json` carries: `id` (UUID), `ref` (the target asset
-  ref it would propose), `status` (`pending` | `accepted` | `rejected`),
+- Proposals live as rows in the `proposals` table of `state.db` (SQLite,
+  WAL mode — the same durable database that holds events and improve
+  runs). Each row is keyed by a random UUID `id`, so multiple proposals
+  can coexist for the same `ref` without collisions, and is partitioned
+  by `stash_dir` so multi-stash installs keep independent queues. The
+  store is non-regenerable state and survives `akm index --full` and
+  binary upgrades.
+- A proposal row carries: `id` (UUID), `ref` (the target asset
+  ref it would propose), `status` (`pending` | `accepted` | `rejected` |
+  `reverted`),
   `source` (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id),
   `sourceRun` (opaque correlation id), `createdAt`, `updatedAt`,
   `payload.frontmatter`, `payload.content`, and an optional `review`
   block (`outcome`, `reason`, `decidedAt`).
-- Rejected proposals are physically moved to
-  `<stashRoot>/.akm/proposals/archive/<id>/`. The move is the archival
-  state — there is no separate `archived` status, so the on-disk
-  location is the source of truth for "active vs. archived" listings.
-- Invalid `proposal.json` files are surfaced via `akm proposal list`
-  with a clear warning entry. They do not crash the queue.
+- Archival is a status flip, not a move: any non-`pending` status is
+  archived. There is no separate `archived` flag — the `status` column
+  is the source of truth for "active vs. archived" listings.
+- Legacy import: stashes created before 0.9.0 stored proposals as
+  per-uuid JSON directories under `<stashRoot>/.akm/proposals/<id>/`
+  (each containing a `proposal.json`, with archived entries moved under
+  `…/proposals/archive/<id>/`). The first proposal operation against
+  such a stash imports those files into the `proposals` table (keyed on
+  the UUID, so re-runs never duplicate) and records the stash in
+  `proposal_fs_imports`; the legacy files are left in place as inert
+  artifacts.
 - The proposal store is queue state, not asset state, so it does **not**
   go through `writeAssetToSource()` for proposal writes themselves
   (only the eventual promotion in `accept` does). This is the single
   documented carve-out from the §5.4 write-helper rule, recorded in the
-  module docblock of `src/core/proposals.ts`.
+  module docblock of `src/commands/proposal/validators/proposals.ts`.
 
 ### 11.2 Commands
 
@@ -927,8 +934,8 @@ write-source policy) **before** promoting. Promotion calls
 `writeAssetToSource()` for the configured write target (§5.4) — same path
 as `akm remember` / `akm import`.
 
-`reject` writes review metadata (outcome, reason, decidedAt) and moves
-the proposal directory under `<stashRoot>/.akm/proposals/archive/<id>/`.
+`reject` writes review metadata (outcome, reason, decidedAt) and flips the
+row's status to `rejected`, archiving it out of the live queue.
 The body is preserved.
 
 `diff` shows the proposed delta against the live asset (or the empty file

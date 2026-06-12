@@ -34,11 +34,20 @@ describe("v1 spec §11 — proposal queue", () => {
     expect(section).toContain("(shipped)");
   });
 
-  test("§11.1 names the per-id proposal directory layout as the durable store", () => {
-    // Storage is one directory per proposal under <stashRoot>/.akm/proposals/<id>/
-    // containing a single proposal.json (queue state, not asset state).
+  test("§11.1 names the state.db `proposals` table as the durable store", () => {
+    // Storage is the `proposals` table in state.db (#578) — one row per
+    // proposal, keyed by UUID, partitioned by stash_dir.
+    expect(section).toContain("`proposals` table");
+    expect(section).toContain("state.db");
+    expect(section).toContain("stash_dir");
+  });
+
+  test("§11.1 documents the legacy filesystem import for pre-0.9.0 stashes", () => {
+    // Pre-0.9.0 stashes stored proposals as per-uuid JSON directories; the
+    // first proposal operation imports them into the table (idempotent).
     expect(section).toContain(".akm/proposals/<id>/");
-    expect(section).toContain("proposal.json");
+    expect(section).toContain("proposal_fs_imports");
+    expect(section).toMatch(/never duplicate|idempotent/i);
   });
 
   test("§11.1 declares each required proposal field", () => {
@@ -47,12 +56,13 @@ describe("v1 spec §11 — proposal queue", () => {
     }
   });
 
-  test("§11.1 declares pending/accepted/rejected statuses + archive-by-move", () => {
+  test("§11.1 declares pending/accepted/rejected/reverted statuses + archive-by-status", () => {
     expect(section).toContain("`pending`");
     expect(section).toContain("`accepted`");
     expect(section).toContain("`rejected`");
-    // Archival is a directory move, not a separate status (see §11.1 prose).
-    expect(section).toMatch(/archive\/<id>\/|archive-by-move|moved to.*archive/i);
+    expect(section).toContain("`reverted`");
+    // Archival is a status flip, not a move (see §11.1 prose).
+    expect(section).toMatch(/status flip|archival is a status/i);
   });
 
   test("§11.2 lists every proposal subcommand", () => {
