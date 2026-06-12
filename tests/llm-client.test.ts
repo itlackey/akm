@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/core/config";
-import { chatCompletion, redactErrorBody } from "../src/llm/client";
+import { chatCompletion, LlmCallError, redactErrorBody } from "../src/llm/client";
 
 // ── redactErrorBody ─────────────────────────────────────────────────────────
 
