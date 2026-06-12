@@ -300,7 +300,7 @@ export interface ProposalRevertResult {
  *     (raised by `resolveProposalId` / `getProposal`).
  *   - Proposal is not `status === "accepted"` → `UsageError("INVALID_FLAG_VALUE")`
  *     with message `"only accepted proposals can be reverted ..."`.
- *   - No `backup` field, or the backup file is missing on disk →
+ *   - No backup content on the record (new-asset proposals capture none) →
  *     `UsageError` with message `"no backup available for this proposal ..."`.
  *
  * On success, emits a `proposal_reverted` event for observability, mirroring
