@@ -45,6 +45,8 @@ import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } f
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { isLlmFeatureEnabled, isProcessEnabled } from "../../llm/feature-gate";
+import { installLlmUsagePersistence } from "../../llm/usage-persist";
+import { withLlmStage } from "../../llm/usage-telemetry";
 import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import type { Database } from "../../storage/database";
 import { akmLint } from "../lint/index";
@@ -1030,7 +1032,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
       try {
         // Reuse the config resolved at the top of the run instead of a second load.
-        await detectAndWriteContradictions(primaryStashDir, _earlyConfig);
+        await withLlmStage("memory-contradiction", () => detectAndWriteContradictions(primaryStashDir, _earlyConfig));
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
         warn(
@@ -1093,6 +1095,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Pinned to the boundary snapshot so the fallback per-call `appendEvent`
   // opens (when the long-lived handle below fails to open) never re-read env.
   let eventsCtx: EventsContext = { dbPath: resolvedStateDbPath };
+  // #576: clears the per-run LLM usage sink. Defaults to a no-op until the sink
+  // is installed inside the try; the `finally` always calls it.
+  let disposeLlmUsageSink = (): void => {};
 
   try {
     // H7 (#566): arm the budget watchdog. `armBudgetWatchdog` captures both the
@@ -1113,6 +1118,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // still pinned to the boundary-resolved path, never a live env re-read.
       eventsCtx = { dbPath: resolvedStateDbPath };
     }
+
+    // #576: persist per-call LLM usage telemetry for this run as `llm_usage`
+    // events, reusing the same boundary-pinned events context (and long-lived
+    // handle when available). Disposed in `finally` so the sink never leaks
+    // across runs. Wrapping is best-effort end to end — see usage-telemetry.ts.
+    disposeLlmUsageSink = installLlmUsagePersistence(eventsCtx);
 
     // 2026-05-27: emit an `improve_skipped` audit event for refs the planner
     // pre-filtered (reflect AND distill both refuse them under the active
@@ -1394,6 +1405,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     );
     throw err;
   } finally {
+    // #576: clear the per-run LLM usage sink BEFORE closing `eventsDb` below, so
+    // no late sink invocation can write through a closed handle.
+    disposeLlmUsageSink();
     // O-1 (#364): Clear the budget abort timer so it does not keep the event
     // loop alive after the run completes.
     clearBudgetTimer();
@@ -1764,30 +1778,32 @@ async function runConsolidationPass(args: {
     );
     info(`[improve] consolidation skipped (pool ${eligiblePoolSize} < minPoolSize ${minPoolSize})`);
   } else if (!consolidationOnCooldown) {
-    consolidation = await akmConsolidate({
-      ...options.consolidateOptions,
-      config: consolidationConfig,
-      stashDir: options.stashDir,
-      autoTriggered: volumeTriggered,
-      // Tie consolidate proposals back to this improve invocation so
-      // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
-      sourceRun: `consolidate-${Date.now()}`,
-      // Full-pool sweep: consolidation only runs on the nightly default-profile
-      // pass (quick/frequent disable it), so a complete re-cluster is correct and
-      // affordable here. Do NOT pass incrementalSince — the time-window narrowing
-      // it triggers permanently excludes stale-but-unmerged duplicate clusters,
-      // starving merge recall and letting the pool grow unbounded. (The narrowing
-      // was a band-aid for an every-30-min consolidation cadence that the profile
-      // split has since eliminated.) lastConsolidateTs still gates whether we run.
-      maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
-      // Honor profile.autoAccept (already merged into options.autoAccept at the
-      // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
-      // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
-      // (which maps to undefined) from disabling consolidation auto-accept.
-      // options.consolidateOptions.autoAccept (if explicitly provided by caller)
-      // still wins because the spread above runs first.
-      autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
-    });
+    consolidation = await withLlmStage("consolidate", () =>
+      akmConsolidate({
+        ...options.consolidateOptions,
+        config: consolidationConfig,
+        stashDir: options.stashDir,
+        autoTriggered: volumeTriggered,
+        // Tie consolidate proposals back to this improve invocation so
+        // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
+        sourceRun: `consolidate-${Date.now()}`,
+        // Full-pool sweep: consolidation only runs on the nightly default-profile
+        // pass (quick/frequent disable it), so a complete re-cluster is correct and
+        // affordable here. Do NOT pass incrementalSince — the time-window narrowing
+        // it triggers permanently excludes stale-but-unmerged duplicate clusters,
+        // starving merge recall and letting the pool grow unbounded. (The narrowing
+        // was a band-aid for an every-30-min consolidation cadence that the profile
+        // split has since eliminated.) lastConsolidateTs still gates whether we run.
+        maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
+        // Honor profile.autoAccept (already merged into options.autoAccept at the
+        // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
+        // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
+        // (which maps to undefined) from disabling consolidation auto-accept.
+        // options.consolidateOptions.autoAccept (if explicitly provided by caller)
+        // still wins because the spread above runs first.
+        autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
+      }),
+    );
     {
       const consolidateGr = await runAutoAcceptGate(
         consolidation.promoted.map((proposalId) => {
@@ -1984,15 +2000,17 @@ async function runImprovePreparationStage(args: {
       extractResults = [];
       for (const h of availableHarnesses) {
         try {
-          const result = await akmExtract({
-            type: h.name,
-            ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
-            config: extractConfig,
-            dryRun: options.dryRun ?? false,
-            ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
-            // C2: pin extract's skip-tracking state.db open to the boundary path.
-            ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
-          });
+          const result = await withLlmStage("session-extraction", () =>
+            akmExtract({
+              type: h.name,
+              ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
+              config: extractConfig,
+              dryRun: options.dryRun ?? false,
+              ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+              // C2: pin extract's skip-tracking state.db open to the boundary path.
+              ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
+            }),
+          );
           extractResults.push(result);
 
           {
@@ -2786,10 +2804,12 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
             for (let s = 0; s < SC_N; s++) {
               if (remainingBudgetMs() <= 0) break;
               // draftMode: skip DB write so each sample doesn't create a proposal.
-              samples.push(await reflectFn({ ...reflectCallArgs, draftMode: true }));
+              samples.push(await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true })));
             }
             const winner = pickMajorityVote(
-              samples.length > 0 ? samples : [await reflectFn({ ...reflectCallArgs, draftMode: true })],
+              samples.length > 0
+                ? samples
+                : [await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }))],
             );
             // Persist only the majority-vote winner as a single real proposal.
             if (winner.ok && primaryStashDir) {
@@ -2813,7 +2833,7 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
               reflectResult = winner;
             }
           } else {
-            reflectResult = await reflectFn(reflectCallArgs);
+            reflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs));
           }
           const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
           // Content-policy guard hits (reflect size-rail rejections) are NOT
@@ -2993,11 +3013,13 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
           }
         }
 
-        const distillResult = await distillFn({
-          ref: planned.ref,
-          ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
-          ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-        });
+        const distillResult = await withLlmStage("distill", () =>
+          distillFn({
+            ref: planned.ref,
+            ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
+            ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+          }),
+        );
         actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
         if (distillResult.outcome === "queued" && distillResult.proposal) {
           const distillGr = await runAutoAcceptGate(
@@ -3274,19 +3296,21 @@ export async function runImproveMaintenancePasses(args: {
       const inferenceStart = Date.now();
       try {
         // O-1 (#364): pass budget signal so a hung inference call is cancelled.
-        memoryInference = await memoryInferenceFn({
-          config,
-          sources,
-          signal: budgetSignal,
-          db,
-          reEnrich: false,
-          onProgress: (event) => {
-            const current = event.currentRef ? ` ${event.currentRef}` : "";
-            info(
-              `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
-            );
-          },
-        });
+        memoryInference = await withLlmStage("memory-inference", () =>
+          memoryInferenceFn({
+            config,
+            sources,
+            signal: budgetSignal,
+            db,
+            reEnrich: false,
+            onProgress: (event) => {
+              const current = event.currentRef ? ` ${event.currentRef}` : "";
+              info(
+                `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+              );
+            },
+          }),
+        );
         memoryInferenceDurationMs = Date.now() - inferenceStart;
         actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
         info(
@@ -3373,15 +3397,17 @@ export async function runImproveMaintenancePasses(args: {
           );
         };
         // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
-        graphExtraction = await graphExtractionFn({
-          config,
-          sources,
-          signal: budgetSignal,
-          db,
-          reEnrich: false,
-          onProgress: progressHandler,
-          options: { candidatePaths },
-        });
+        graphExtraction = await withLlmStage("graph-extraction", () =>
+          graphExtractionFn({
+            config,
+            sources,
+            signal: budgetSignal,
+            db,
+            reEnrich: false,
+            onProgress: progressHandler,
+            options: { candidatePaths },
+          }),
+        );
         graphExtractionDurationMs = Date.now() - extractionStart;
         actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
         info(
@@ -3534,7 +3560,9 @@ export async function runImproveMaintenancePasses(args: {
     // and before the URL check (which lives in the outer caller).
     if (sources.length > 0) {
       try {
-        stalenessDetection = await stalenessDetectionFn({ config, sources, signal: budgetSignal, db });
+        stalenessDetection = await withLlmStage("staleness-detection", () =>
+          stalenessDetectionFn({ config, sources, signal: budgetSignal, db }),
+        );
         if (stalenessDetection.considered > 0) {
           info(
             `[improve] staleness detection complete (considered ${stalenessDetection.considered}, ` +

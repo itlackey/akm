@@ -218,6 +218,10 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
     return { tags: [] };
   }
   const { chatCompletion, parseEmbeddedJsonResponse: parseJsonResponse } = await import("../llm/client");
+  // #576: attribute this entry point's LLM call to the `remember` stage. The
+  // wrapper is ambient — if a usage sink is active it tags the record; if not,
+  // it is a no-op.
+  const { withLlmStage } = await import("../llm/usage-telemetry");
 
   const prompt = `You are a memory tagger for a developer knowledge base.
 Given the memory text below, return ONLY a JSON object with these fields:
@@ -235,13 +239,15 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     const result = await (async () => {
       try {
         return await Promise.race([
-          chatCompletion(
-            llmConfig,
-            [
-              { role: "system", content: "Return only valid JSON. No prose." },
-              { role: "user", content: prompt },
-            ],
-            { maxTokens: 256, temperature: 0.1 },
+          withLlmStage("remember", () =>
+            chatCompletion(
+              llmConfig,
+              [
+                { role: "system", content: "Return only valid JSON. No prose." },
+                { role: "user", content: prompt },
+              ],
+              { maxTokens: 256, temperature: 0.1 },
+            ),
           ),
           new Promise<never>((_, reject) => {
             timeoutHandle = setTimeout(() => reject(new Error("LLM enrichment timed out")), LLM_ENRICH_TIMEOUT_MS);
