@@ -19,6 +19,7 @@ import { parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/search/semantic-status";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
+import { LLM_USAGE_EVENT } from "../llm/usage-persist";
 import type { Database } from "../storage/database";
 import { HEALTH_CHECKS, type HealthCheckContext } from "./health/checks";
 
@@ -37,6 +38,37 @@ export interface HealthMetrics {
   stuckActiveRuns: number;
   logBackingRate: number;
   probeRoundTripMs: number | null;
+  /**
+   * Per-stage LLM usage aggregates (#576), derived from `llm_usage` events in
+   * the window. Replaces the prior GPU-time proxy: real token + wall-time
+   * accounting attributed to the pipeline stage that made each call. `stages`
+   * is keyed by stage name (`"reflect"`, `"memory-inference"`, …); calls made
+   * outside any stage scope land under the `unattributed` key.
+   */
+  llmUsage: LlmUsageAggregate;
+}
+
+/** Aggregated LLM usage over a window: a total plus a per-stage breakdown. */
+export interface LlmUsageAggregate {
+  /** Number of `llm_usage` events (== number of LLM calls) in the window. */
+  calls: number;
+  totalDurationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
+  byStage: Record<string, LlmUsageStageAggregate>;
+}
+
+/** LLM usage totals for one pipeline stage. */
+export interface LlmUsageStageAggregate {
+  calls: number;
+  totalDurationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
 }
 
 export interface ImproveHealthMetrics {
@@ -1418,6 +1450,67 @@ interface WindowMetricsBundle {
   runs: number;
 }
 
+/** Stage key used for `llm_usage` events recorded outside any stage scope. */
+const UNATTRIBUTED_STAGE = "unattributed";
+
+function emptyLlmUsageStageAggregate(): LlmUsageStageAggregate {
+  return {
+    calls: 0,
+    totalDurationMs: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    reasoningTokens: 0,
+  };
+}
+
+function emptyLlmUsageAggregate(): LlmUsageAggregate {
+  return { ...emptyLlmUsageStageAggregate(), byStage: {} };
+}
+
+/**
+ * Aggregate `llm_usage` events (#576) into a window total plus a per-stage
+ * breakdown of call count, wall-time, and token usage. Token fields absent from
+ * a best-effort record contribute 0. Calls with no `stage` land under
+ * {@link UNATTRIBUTED_STAGE}.
+ */
+function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"]): LlmUsageAggregate {
+  const aggregate = emptyLlmUsageAggregate();
+  for (const event of events) {
+    const meta = event.metadata ?? {};
+    const stageKey = typeof meta.stage === "string" && meta.stage ? meta.stage : UNATTRIBUTED_STAGE;
+    let stage = aggregate.byStage[stageKey];
+    if (!stage) {
+      stage = emptyLlmUsageStageAggregate();
+      aggregate.byStage[stageKey] = stage;
+    }
+
+    const durationMs = toFiniteNumber(meta.durationMs);
+    const promptTokens = toFiniteNumber(meta.promptTokens);
+    const completionTokens = toFiniteNumber(meta.completionTokens);
+    const totalTokens = toFiniteNumber(meta.totalTokens);
+    const reasoningTokens = toFiniteNumber(meta.reasoningTokens);
+
+    for (const target of [aggregate, stage]) {
+      target.calls += 1;
+      target.totalDurationMs += durationMs;
+      target.promptTokens += promptTokens;
+      target.completionTokens += completionTokens;
+      target.totalTokens += totalTokens;
+      target.reasoningTokens += reasoningTokens;
+    }
+  }
+  return aggregate;
+}
+
+function readLlmUsageAggregate(stateDbPath: string, since: string, until?: string): LlmUsageAggregate {
+  const events = readEvents({ since, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events.filter((event) => {
+    if (until === undefined) return true;
+    return new Date(event.ts ?? since).getTime() < new Date(until).getTime();
+  });
+  return summarizeLlmUsage(events);
+}
+
 function buildWindowMetrics(
   db: Database,
   stateDbPath: string,
@@ -1476,6 +1569,7 @@ function buildWindowMetrics(
     stuckActiveRuns,
     logBackingRate: roundRate(logBackingRate),
     probeRoundTripMs: null,
+    llmUsage: readLlmUsageAggregate(stateDbPath, since, until),
   };
 
   return { improve: improveSummary, metrics, runs: runCount };
@@ -1607,6 +1701,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       stuckActiveRuns,
       logBackingRate: roundRate(logBackingRate),
       probeRoundTripMs: probe.durationMs,
+      llmUsage: readLlmUsageAggregate(stateDbPath, since),
     };
 
     const hardFailure = hardChecks.some((check) => check.status === "fail");
