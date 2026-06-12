@@ -79,7 +79,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("sk-proj-LEAKYKEYABCDEF12345");
       expect(caught?.message).toContain("[REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -99,7 +99,7 @@ describe("chatCompletion error redaction", () => {
       // Status + URL prefix should remain; the body portion is truncated.
       expect((caught?.message ?? "").length).toBeLessThan(huge.length);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -117,7 +117,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("abcXYZsupersecret999");
       expect(caught?.message).toContain("Bearer [REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -256,7 +256,7 @@ describe("chatCompletion HTML response categorization", () => {
       expect(err.message).not.toContain("<html");
       expect(err.message).toContain("LM Studio");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -267,7 +267,7 @@ describe("chatCompletion HTML response categorization", () => {
       expect(err.code).toBe("provider_html_error");
       expect(err.statusCode).toBe(502);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -278,7 +278,7 @@ describe("chatCompletion HTML response categorization", () => {
       expect(err.code).toBe("provider_error");
       expect(err.statusCode).toBe(500);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -290,7 +290,7 @@ describe("chatCompletion HTML response categorization", () => {
       expect(err.statusCode).toBe(200);
       expect(err.message).not.toContain("<html");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -300,7 +300,7 @@ describe("chatCompletion HTML response categorization", () => {
       const err = await callExpectingError({ endpoint: url, model: "test-model" });
       expect(err.code).toBe("parse_error");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 });

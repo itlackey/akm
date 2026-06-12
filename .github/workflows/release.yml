@@ -11,12 +11,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Cap test workers to the runner's core count (~4); the scripts default to
-    # --parallel=12 (dev machines), which over-subscribes the runner and can
-    # trigger an intermittent Bun `epoll_ctl EEXIST` race under load.
+    timeout-minutes: 45
+    # Run test files sequentially to avoid a Bun v1.x epoll_ctl EEXIST race:
+    # force-stopping mock HTTP servers (stop(true)) recycles fd numbers fast,
+    # and concurrent workers can hit a stale epoll entry for the reused fd.
+    # Sequential execution eliminates concurrent fd pressure entirely.
+    # Tests complete in ~10-15 min sequentially, well within the 45-min cap.
     env:
-      TEST_PARALLEL: "4"
+      TEST_PARALLEL: "1"
     steps:
       - uses: actions/checkout@v5
         with:

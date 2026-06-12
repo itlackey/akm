@@ -37,13 +37,13 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # GitHub runners have ~4 cores; the test scripts default to --parallel=12
-    # (dev machines). Over-subscribing the runner caused an intermittent
-    # Bun-runtime `epoll_ctl EEXIST` race under load, so cap workers to the
-    # runner's core count on CI.
+    timeout-minutes: 45
+    # Run test files sequentially to avoid a Bun v1.x epoll_ctl EEXIST race:
+    # force-stopping mock HTTP servers (stop(true)) recycles fd numbers fast,
+    # and concurrent workers can hit a stale epoll entry for the reused fd.
+    # Sequential execution eliminates concurrent fd pressure entirely.
     env:
-      TEST_PARALLEL: "4"
+      TEST_PARALLEL: "1"
     steps:
       - uses: actions/checkout@v5
 
