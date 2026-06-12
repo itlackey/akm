@@ -6,6 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`SQLITE_BUSY` / "database is locked" under concurrent runs** (#584, #585,
+  #589). `busy_timeout` raised from 5 s to 30 s on every SQLite open path
+  (index.db and state.db); the improve maintenance pass now closes its index.db
+  handle before each reindex (which opens its own writer to the same WAL file);
+  and the post-loop purge reuses the long-lived events connection instead of
+  opening a second state.db writer. Together these eliminate all observed
+  lock failures from overlapping cron improve runs. (Backports of 0.8.8.)
+- **Extract gate ignored the active profile's `extract.enabled: false`** (#593,
+  #594). The session-extraction gate hardcoded the `default` profile, so a
+  non-default profile (e.g. a quick pass) ran extract anyway — 300–600 s of
+  redundant work per run when a dedicated extract task also exists. The gate
+  now resolves `extract` against the active improve profile. (Backport of
+  0.8.11.)
+- **Memory inference burned LLM calls on already-derived parents** (#588). The
+  primary pass now checks for the `<parent>.derived.md` child on disk *before*
+  the LLM/cache call, and opportunistically marks the parent processed so it
+  never re-pends. Previously ~55 % of the inference budget was spent
+  rediscovering children that already existed.
+- **Reflect no longer queues empty-diff or cosmetic-only proposals** (#580).
+  A deterministic, LLM-free noise gate diffs each candidate against the current
+  asset; byte-identical edits are dropped and changes that are pure formatting
+  (whitespace reflow, hard-wrap changes, code-fence language hints, YAML scalar
+  re-folding) are suppressed, each recorded via summary events so suppression
+  rates are visible in `akm health`.
+
+### Added
+
+- **`minContentChars` pre-LLM extract gate** (#595, #596). Sessions whose raw
+  size is below `profiles.improve.<name>.processes.extract.minContentChars`
+  (default 10 — only truly empty sessions/journal files) skip the extract LLM
+  call entirely. Gates on raw input size, not post-noise-filter size.
+  (Backports of 0.8.12–0.8.14.)
+- **Structured logs database** (#579). Task and run log lines now land in a
+  dedicated `logs.db` (WAL, 30 s busy_timeout) keyed by task, run, stream, and
+  time, with retention/purge wired into the existing purge pass and `ATTACH`
+  support for joining log lines to `state.db` rows (e.g. a failed
+  `task_history` row to its log output). The scattered-log audit and per-source
+  keep/move/drop decisions are documented in `docs/technical/logs-audit.md`.
+
+### Changed
+
+- **Proposals are now stored canonically in SQLite** (#578). The previously
+  bypassed `proposals` table in state.db is the single source of truth; all
+  proposal commands (`list`/`show`/`diff`/`accept`/`reject`/`revert`/`drain`),
+  the improve auto-accept gate, and health metrics read and write it through
+  one storage layer. Pending file-based proposals are imported on first read;
+  `akm proposal *` UX is unchanged. Design and migration notes live in
+  `docs/technical/proposal-storage.md`.
+- **Improve planning no longer does per-ref DB lookups or per-ref skip events**
+  (#591, #592). Eligible refs carry a pre-resolved `filePath`, removing a
+  serial async lookup per ref (~500 s on 9 k-ref stashes), and the
+  profile-filtered skip loop emits one summary event with a count instead of
+  thousands of rows. (Backports of 0.8.9–0.8.10.)
+
 ## [0.9.0-beta.2] - 2026-06-09
 
 ### Fixed

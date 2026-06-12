@@ -1242,9 +1242,17 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
 
 describe("Scenario: upgrade and update --force (no network)", () => {
   let savedStashDir: string | undefined;
+  let isolatedConfigDir: string;
 
   beforeEach(() => {
     savedStashDir = process.env.AKM_STASH_DIR;
+    // The CLI-help assertions below spawn `akm` as a subprocess. Without an
+    // explicit config override the child resolves config from the real
+    // `~/.config/akm`, so a developer's local config (e.g. a key a later
+    // release dropped) makes `akm --help` print a validation error instead of
+    // help. Point the child at an empty isolated dir so these tests assert the
+    // CLI's own output, not the host's config state.
+    isolatedConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-help-"));
   });
 
   afterEach(() => {
@@ -1253,7 +1261,17 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     } else {
       process.env.AKM_STASH_DIR = savedStashDir;
     }
+    fs.rmSync(isolatedConfigDir, { recursive: true, force: true });
   });
+
+  // Spawn the CLI with a hermetic config dir so help output never depends on
+  // the developer's real `~/.config/akm`.
+  const spawnHelpCli = (args: string[]) =>
+    spawnSync("bun", [CLI, ...args], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: { ...process.env, AKM_CONFIG_DIR: isolatedConfigDir },
+    });
 
   test("upgrade --check returns version info (mocked fetch)", async () => {
     const { checkForUpdate } = await import("../../src/commands/sources/self-update");
@@ -1281,10 +1299,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm update --help shows --force flag", async () => {
-    const result = spawnSync("bun", [CLI, "update", "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["update", "--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("--force");
     expect(output).toContain("Force fresh download");
@@ -1306,20 +1321,14 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm upgrade --help shows --check and --force flags", async () => {
-    const result = spawnSync("bun", [CLI, "upgrade", "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["upgrade", "--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("--check");
     expect(output).toContain("--force");
   });
 
   test("cli: akm help migrate prints migration guidance for a release", async () => {
-    const result = spawnSync("bun", [CLI, "help", "migrate", "0.5.0"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["help", "migrate", "0.5.0"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(result.status).toBe(0);
     expect(output).toContain("Migration notes for akm v0.5.0");
@@ -1327,10 +1336,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm help migrate with no version fails structurally even with --format json", async () => {
-    const result = spawnSync("bun", [CLI, "help", "migrate", "--format", "json"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["help", "migrate", "--format", "json"]);
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { code: string; error: string };
     expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
@@ -1338,10 +1344,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm --help lists the help command", async () => {
-    const result = spawnSync("bun", [CLI, "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("help");
     expect(output).toContain("focused help topics");
@@ -1351,10 +1354,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     // The setup subcommand should advertise its purpose so operators can
     // see what the wizard configures (embeddings, LLM, registries, sources,
     // agent profiles) without running the interactive flow.
-    const result = spawnSync("bun", [CLI, "setup", "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["setup", "--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("Interactive configuration wizard");
     expect(output).toContain("embeddings");
