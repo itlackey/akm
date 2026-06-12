@@ -3177,7 +3177,9 @@ async function runImprovePostLoopStage(args: {
 }
 
 // TODO(refactor): mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass.
-async function runImproveMaintenancePasses(args: {
+// Exported for tests (#584/#585 DB-locking regression coverage); production
+// callers reach it only through akmImprove → runImprovePostLoopStage.
+export async function runImproveMaintenancePasses(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
   actionableRefs: ImproveEligibleRef[];
@@ -3222,11 +3224,29 @@ async function runImproveMaintenancePasses(args: {
   let orphansPurged = 0;
   let proposalsExpired = 0;
 
+  const openIndexDb = () =>
+    openDatabase(getDbPath(), config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined);
+
+  // #584: reindexFn opens its own write handle on the same index.db WAL file.
+  // Holding our handle across that call produced SQLITE_BUSY / "database is
+  // locked" failures in production, so the handle is closed BEFORE every
+  // reindex and reopened after — the fresh handle also sees the post-reindex
+  // state that graph extraction and staleness detection below rely on. The
+  // reopen runs in `finally` so a failed reindex still leaves a usable handle.
+  const reindexWithIndexDbReleased = async (stashDir: string): Promise<void> => {
+    if (db) {
+      closeDatabase(db);
+      db = undefined;
+    }
+    try {
+      await reindexFn({ stashDir });
+    } finally {
+      db = openIndexDb();
+    }
+  };
+
   try {
-    db = openDatabase(
-      getDbPath(),
-      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-    );
+    db = openIndexDb();
 
     // Memory inference candidate-discovery (post-Item 9 fix from
     // memory:akm-improve-critical-review-2026-05-20). Previously this pass
@@ -3281,7 +3301,7 @@ async function runImproveMaintenancePasses(args: {
     if (memoryInference && (memoryInference.splitParents > 0 || memoryInference.writtenFacts > 0)) {
       info("[improve] reindexing after memory inference writes");
       try {
-        await reindexFn({ stashDir: primaryStashDir });
+        await reindexWithIndexDbReleased(primaryStashDir);
         reindexedAfterInference = true;
         info("[improve] reindex after memory inference complete");
       } catch (err) {
@@ -3315,20 +3335,15 @@ async function runImproveMaintenancePasses(args: {
         if (consolidationRan && !reindexedAfterInference) {
           info("[improve] reindexing after consolidation (graph extraction needs current state)");
           try {
-            await reindexFn({ stashDir: primaryStashDir });
+            await reindexWithIndexDbReleased(primaryStashDir);
             reindexedAfterInference = true;
             info("[improve] reindex after consolidation complete");
           } catch (err) {
             allWarnings.push(`reindex after consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
-        if (db && reindexedAfterInference) {
-          closeDatabase(db);
-          db = openDatabase(
-            getDbPath(),
-            config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-          );
-        }
+        // #584: no close/reopen needed here — reindexWithIndexDbReleased
+        // already swapped in a fresh post-reindex handle.
         // Resolve touched refs to absolute file paths. Skipped for fullScan
         // (candidatePaths stays undefined → extractor processes all files).
         let candidatePaths: Set<string> | undefined;
@@ -3457,13 +3472,17 @@ async function runImproveMaintenancePasses(args: {
       const retentionDays =
         typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
       if (retentionDays > 0) {
+        // #585: reuse the long-lived eventsCtx.db connection when akmImprove
+        // opened one — opening a second state.db write connection while
+        // eventsDb is still live made two simultaneous writers contend on the
+        // same WAL file ("database is locked"). Only the eventsCtx.dbPath
+        // fallback path (state.db failed to open up-front) opens — and then
+        // owns and closes — its own handle. C2 still holds: the fallback uses
+        // the boundary-pinned path, never a live `process.env` re-read.
+        const ownsStateDb = !eventsCtx?.db;
         let stateDb: ReturnType<typeof openStateDatabase> | undefined;
         try {
-          // C2: reuse the boundary-pinned state.db path carried on eventsCtx so
-          // this purge open never re-reads `process.env` live mid-run. The path
-          // is always set by akmImprove; openStateDatabase() falls back to the
-          // env-derived default only if a caller omitted it entirely.
-          stateDb = openStateDatabase(eventsCtx?.dbPath);
+          stateDb = eventsCtx?.db ?? openStateDatabase(eventsCtx?.dbPath);
           const purgedCount = purgeOldEvents(stateDb, retentionDays);
           if (purgedCount > 0) {
             info(`[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`);
@@ -3498,7 +3517,7 @@ async function runImproveMaintenancePasses(args: {
         } catch (err) {
           allWarnings.push(`events purge failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
-          if (stateDb) {
+          if (ownsStateDb && stateDb) {
             try {
               stateDb.close();
             } catch {
