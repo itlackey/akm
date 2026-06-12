@@ -396,7 +396,7 @@ async function collectEligibleRefs(
       };
     }
     return {
-      plannedRefs: [{ ref: scope.value, reason: "scope-ref" }],
+      plannedRefs: [{ ref: scope.value, reason: "scope-ref", filePath }],
       memorySummary: {
         eligible: parsed.type === "memory" ? 1 : 0,
         derived: parsed.type === "memory" && parsed.name.endsWith(".derived") ? 1 : 0,
@@ -460,12 +460,14 @@ async function collectEligibleRefs(
           profileFiltered.set(ref, {
             ref,
             reason: "profile_filtered_all_passes",
+            filePath: indexed.filePath,
           });
         } else {
           planned.set(ref, {
             ref,
             reason:
               scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
+            filePath: indexed.filePath,
           });
         }
       }
@@ -1112,18 +1114,22 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       eventsCtx = { dbPath: resolvedStateDbPath };
     }
 
-    // 2026-05-27: emit `improve_skipped` audit events for refs the planner
+    // 2026-05-27: emit an `improve_skipped` audit event for refs the planner
     // pre-filtered (reflect AND distill both refuse them under the active
-    // profile). One event per ref so the existing improve_skipped histogram in
-    // `health.ts#improveSummary.skipReasons` accumulates the right count under
-    // the new `profile_filtered_all_passes` reason code. See
-    // `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
-    for (const filtered of profileFilteredRefs) {
+    // profile). Emitted as a single summary event (count only) rather than one
+    // event per ref (#592) — the per-ref loop caused O(n) sequential state.db
+    // writes that consumed ~500 s on a 9 000-ref stash. No downstream consumer
+    // needs the per-ref audit trail: health's skip histogram reads the
+    // `profile_filtered_all_passes` counters from `improve_completed` metadata.
+    if (profileFilteredRefs.length > 0) {
       appendEvent(
         {
           eventType: "improve_skipped",
-          ref: filtered.ref,
-          metadata: { reason: "profile_filtered_all_passes" },
+          ref: undefined,
+          metadata: {
+            reason: "profile_filtered_all_passes",
+            count: profileFilteredRefs.length,
+          },
         },
         eventsCtx,
       );
@@ -2089,7 +2095,14 @@ async function runImprovePreparationStage(args: {
   const validationFailures: Array<{ ref: string; reason: string }> = [];
   for (const candidate of postCleanupRefs) {
     try {
-      const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+      // #591: use the path pre-resolved at planning time when it is still on
+      // disk — a serial async DB lookup per ref cost ~500 s on a 9 000-ref
+      // stash. Fall back to findAssetFilePath only for refs that bypassed
+      // collectEligibleRefs' index scan or whose file moved since planning.
+      const filePath =
+        candidate.filePath && fs.existsSync(candidate.filePath)
+          ? candidate.filePath
+          : await findAssetFilePath(candidate.ref, options.stashDir);
       if (!filePath) {
         validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
         continue;
@@ -2424,16 +2437,34 @@ async function runImprovePreparationStage(args: {
   const assetMissingOnDisk: string[] = [];
   const existsCheckedActionable: ImproveEligibleRef[] = [];
   for (const candidate of sorted) {
-    const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+    // #591: prefer the path pre-resolved at planning time (synchronous
+    // existsSync) over a serial async DB lookup per ref.
+    const filePath =
+      candidate.filePath && fs.existsSync(candidate.filePath)
+        ? candidate.filePath
+        : await findAssetFilePath(candidate.ref, options.stashDir);
     if (filePath && fs.existsSync(filePath)) {
       existsCheckedActionable.push(candidate);
     } else {
       assetMissingOnDisk.push(candidate.ref);
-      appendEvent(
-        { eventType: "improve_skipped", ref: candidate.ref, metadata: { reason: "asset_missing_on_disk" } },
-        eventsCtx,
-      );
     }
+  }
+  // #592 audit: one summary event instead of one per missing ref. Normally
+  // tiny, but a stash deletion racing the run could make this O(n) sequential
+  // state.db writes. `refs` is capped so the metadata row stays bounded.
+  if (assetMissingOnDisk.length > 0) {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: undefined,
+        metadata: {
+          reason: "asset_missing_on_disk",
+          count: assetMissingOnDisk.length,
+          refs: assetMissingOnDisk.slice(0, 50),
+        },
+      },
+      eventsCtx,
+    );
   }
   const actionableRefs = existsCheckedActionable;
 
@@ -3420,8 +3451,8 @@ async function runImproveMaintenancePasses(args: {
     // invocation, and every command surface emits at least one event besides —
     // without this trim, state.db is a permanent append-only log. Config key
     // `improve.eventRetentionDays` (default 90, set 0 to disable) controls the
-    // window. `purgeOldEvents()` opens its own state.db handle separate from
-    // the index `db` above (different SQLite file).
+    // window. The purge runs against state.db (a different SQLite file from
+    // the index `db` above).
     {
       const retentionDays =
         typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
