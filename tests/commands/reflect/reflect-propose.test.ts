@@ -513,7 +513,8 @@ describe("akm propose", () => {
     const entries = fs.readdirSync(skillsDir);
     expect(entries.filter((e) => e !== ".akm")).toEqual([]);
     // Proposal queue has exactly one entry.
-    const proposalsRoot = path.join(stash, ".akm", "proposals");
-    expect(fs.existsSync(proposalsRoot)).toBe(true);
+    const queued = listProposals(stash, { status: "pending" });
+    expect(queued.length).toBe(1);
+    expect(queued[0]?.ref).toBe("skill:hello");
   });
 });

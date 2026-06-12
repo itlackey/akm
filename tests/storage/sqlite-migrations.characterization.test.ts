@@ -70,6 +70,7 @@ describe("SQLite migration runner characterization", () => {
         "002-task-history-per-run",
         "003-improve-runs",
         "004-extract-sessions-seen",
+        "005-proposal-fs-imports",
       ]);
 
       // The set of durable objects the migrations create.

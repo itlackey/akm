@@ -134,9 +134,9 @@ describe("createProposal / listProposals / getProposal", () => {
     expect(result.proposal.status).toBe("rejected");
     expect(result.proposal.review?.reason).toBe("duplicate of existing lesson");
 
-    // archive directory contains it
-    const archivePath = path.join(stash, ".akm", "proposals", "archive", created.id, "proposal.json");
-    expect(fs.existsSync(archivePath)).toBe(true);
+    // archived (rejected) listing contains it
+    const archived = listProposals(stash, { status: "rejected", includeArchive: true });
+    expect(archived.map((p) => p.id)).toEqual([created.id]);
 
     // live queue empty
     const live = listProposals(stash);
@@ -749,7 +749,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
 // ── Phase 6C — Proposal reversion (Advantage D6c) ───────────────────────────
 
 describe("Phase 6C: promoteProposal captures backup; revertProposal restores it", () => {
-  test("backup is captured when target asset exists; backup field present on archived proposal", async () => {
+  test("backup is captured when target asset exists; backupContent present on archived proposal", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
     // Pre-write existing lesson so promotion has prior content to back up.
@@ -772,12 +772,9 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(accepted.ok).toBe(true);
 
-    // Backup file should exist under archive/<id>/backup.md
+    // Backup content should be carried on the archived proposal record.
     const reloaded = getProposal(stash, created.id);
-    expect(reloaded.backup).toBe("backup.md");
-    const backupAbs = path.join(stash, ".akm", "proposals", "archive", created.id, "backup.md");
-    expect(fs.existsSync(backupAbs)).toBe(true);
-    expect(fs.readFileSync(backupAbs, "utf8")).toContain("Original body content.");
+    expect(reloaded.backupContent).toContain("Original body content.");
 
     // New asset content was actually written.
     expect(fs.readFileSync(lessonPath, "utf8")).toContain("Prefer rg over grep");
@@ -797,7 +794,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
 
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
     const reloaded = getProposal(stash, created.id);
-    expect(reloaded.backup).toBeUndefined();
+    expect(reloaded.backupContent).toBeUndefined();
   });
 
   test("revert on an accepted proposal restores prior content and marks status=reverted", async () => {
