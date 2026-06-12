@@ -79,6 +79,7 @@ import {
   type ProposalsContext,
 } from "../proposal/validators/proposals";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
+import { classifyReflectChange } from "./reflect-noise";
 
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
@@ -1384,6 +1385,32 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     content: sanitizeOutcome.content,
     ...(sanitizeOutcome.frontmatter ? { frontmatter: sanitizeOutcome.frontmatter } : {}),
   };
+
+  // 7c. Noise gate (#580): never queue a proposal whose sanitized content is
+  // identical to the current asset (empty diff) or differs only cosmetically
+  // (whitespace reflow, code-fence language hints, YAML scalar re-folding).
+  // Pure deterministic text comparison — see `reflect-noise.ts`. Runs before
+  // the draftMode branch so self-consistency sampling never votes a no-op
+  // candidate into the queue either. Skipped when there is no source asset
+  // (new-asset proposals have nothing to diff against).
+  if (assetContent !== undefined) {
+    const changeKind = classifyReflectChange(assetContent, payload.content);
+    if (changeKind !== "substantive") {
+      const subreason = changeKind === "noop" ? "reflect_skipped_noop" : "reflect_skipped_cosmetic";
+      emitReflectFailed("no_change", subreason, options.ref, { changeKind });
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "no_change" as const,
+        error:
+          changeKind === "noop"
+            ? `Reflect skipped: proposed content for ${payload.ref} is identical to the current asset (empty diff); no proposal created.`
+            : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
+        ...(options.ref ? { ref: options.ref } : {}),
+        exitCode: result.exitCode,
+      };
+    }
+  }
 
   // 8. Create the proposal. The proposal queue is the ONLY thing reflect
   // writes — promotion to a real asset is gated by `akm proposal accept`.

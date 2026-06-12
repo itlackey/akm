@@ -403,7 +403,10 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "",
     ].join("\n");
 
-    // LLM tries to rename the skill in frontmatter (#26941510).
+    // LLM tries to rename the skill in frontmatter (#26941510). The body also
+    // carries a substantive edit — without one, restoring `name` would leave
+    // an empty diff and the #580 noise gate would suppress the proposal
+    // before the assertions below could inspect it.
     const llmBlob = [
       "---",
       "name: diagnostic-checklist",
@@ -412,6 +415,8 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "---",
       "",
       sourceBody,
+      "",
+      "A genuinely new troubleshooting paragraph added by the agent.",
     ].join("\n");
     const payload = JSON.stringify({ ref: "skill:openpalm-stack-diagnostics", content: llmBlob });
 
@@ -438,7 +443,18 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "\n",
     );
 
-    const llmBlob = ["---", "id: fabricated-by-llm", "description: doc", "---", "", LONG_SOURCE_BODY].join("\n");
+    // As above: include a substantive body edit so the restored-`id` proposal
+    // is not an empty diff (which the #580 noise gate would suppress).
+    const llmBlob = [
+      "---",
+      "id: fabricated-by-llm",
+      "description: doc",
+      "---",
+      "",
+      LONG_SOURCE_BODY,
+      "",
+      "A genuinely new paragraph added by the agent.",
+    ].join("\n");
     const payload = JSON.stringify({ ref: "knowledge:id-protected", content: llmBlob });
 
     const result = await akmReflect({
