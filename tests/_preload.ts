@@ -75,6 +75,8 @@ const HARNESSED: readonly string[] = [
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
   "AKM_EMBED_API_KEY",
+  // ECharts delivery toggle read by the html health report builder.
+  "AKM_ECHARTS",
   // Registry overrides used by registry-providers tests.
   "AKM_REGISTRY_URL",
   "AKM_NPM_REGISTRY",
