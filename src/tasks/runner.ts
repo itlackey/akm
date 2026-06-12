@@ -17,7 +17,9 @@
  *   4. Dispatch by target kind:
  *        • workflow → `startWorkflowRun(ref, params)`
  *        • prompt   → `runAgent(profile, prompt, { stdio: "captured" })`
- *   5. Capture stdout / stderr to `<cacheDir>/tasks/logs/<id>/<ts>.log`.
+ *   5. Capture stdout / stderr as structured rows in logs.db (task_logs) and,
+ *      transitionally, as a flat text tail at `<cacheDir>/tasks/logs/<id>/<ts>.log`
+ *      (see docs/technical/logs-audit.md).
  *   6. Write a history row to state.db task_history table.
  *
  * Returns a structured result so the CLI handler can shape it for `output()`
@@ -31,6 +33,14 @@ import { parseAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError } from "../core/errors";
+import {
+  buildTaskRunId,
+  insertTaskLogLines,
+  openLogsDatabase,
+  type TaskLogLevel,
+  type TaskLogLineInput,
+  type TaskLogStream,
+} from "../core/logs-db";
 import { getTaskLogDir } from "../core/paths";
 import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
 import { error } from "../core/warn";
@@ -112,7 +122,15 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       log: logPath,
       target: disabledTarget,
     };
-    fs.writeFileSync(logPath, `[akm tasks] task "${id}" is disabled — skipping run.\n`);
+    const disabledLine = `[akm tasks] task "${id}" is disabled — skipping run.`;
+    persistRunLog({
+      taskId: id,
+      startedAtIso: startedIso,
+      finishedAtIso: result.finishedAt,
+      logPath,
+      fileText: `${disabledLine}\n`,
+      dbLines: [{ line: disabledLine }],
+    });
     appendHistory(result);
     return result;
   }
@@ -161,7 +179,9 @@ async function runCommandTask(input: {
 
   const timeoutMs: number | null = task.timeoutMs !== undefined ? task.timeoutMs : null;
 
-  const logLines: string[] = [`[akm tasks] task=${task.id} kind=command cmd=${cmd.join(" ")}`];
+  const header = `[akm tasks] task=${task.id} kind=command cmd=${cmd.join(" ")}`;
+  const logLines: string[] = [header];
+  const dbLines: TaskLogLineInput[] = [{ line: header }];
 
   let stdout = "";
   let stderr = "";
@@ -201,24 +221,36 @@ async function runCommandTask(input: {
 
     if (timedOut) {
       logLines.push(`timed_out=true timeout_ms=${timeoutMs}`);
+      dbLines.push({ level: "error", line: `timed_out=true timeout_ms=${timeoutMs}` });
     }
     logLines.push(`exit_code=${exitCode}`);
+    dbLines.push({ level: exitCode === 0 ? "info" : "error", line: `exit_code=${exitCode}` });
     if (stdout) {
       logLines.push("--- stdout ---");
       logLines.push(stdout);
+      dbLines.push(...streamLines(stdout, "stdout", "info"));
     }
     if (stderr) {
       logLines.push("--- stderr ---");
       logLines.push(stderr);
+      dbLines.push(...streamLines(stderr, "stderr", "error"));
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logLines.push(`spawn_error=${msg}`);
+    dbLines.push({ level: "error", line: `spawn_error=${msg}` });
     exitCode = 1;
   }
 
-  fs.writeFileSync(logPath, `${logLines.join("\n")}\n`);
   const finishedAt = now();
+  persistRunLog({
+    taskId: task.id,
+    startedAtIso: startedAt.toISOString(),
+    finishedAtIso: finishedAt.toISOString(),
+    logPath,
+    fileText: `${logLines.join("\n")}\n`,
+    dbLines,
+  });
   const status: TaskRunStatus = exitCode === 0 ? "completed" : "failed";
   const result: TaskRunResult = {
     id: task.id,
@@ -264,7 +296,14 @@ async function runWorkflowTask(input: {
   const finishedAt = now();
   const status: TaskRunStatus = error ? "failed" : mapWorkflowStatus(detail?.run.status);
   const log = renderWorkflowLog({ task, detail, error });
-  fs.writeFileSync(logPath, log);
+  persistRunLog({
+    taskId: task.id,
+    startedAtIso: startedAt.toISOString(),
+    finishedAtIso: finishedAt.toISOString(),
+    logPath,
+    fileText: log.fileText,
+    dbLines: log.dbLines,
+  });
 
   const result: TaskRunResult = {
     id: task.id,
@@ -317,17 +356,18 @@ function mapWorkflowStatus(status: WorkflowRunStatus | undefined): TaskRunStatus
   }
 }
 
-function renderWorkflowLog(input: { task: TaskDocument; detail?: WorkflowRunDetail; error?: Error }): string {
-  const lines: string[] = [];
-  lines.push(`[akm tasks] task=${input.task.id} kind=workflow ref=${(input.task.target as { ref: string }).ref}`);
+function renderWorkflowLog(input: { task: TaskDocument; detail?: WorkflowRunDetail; error?: Error }): RunLogContent {
+  const dbLines: TaskLogLineInput[] = [
+    { line: `[akm tasks] task=${input.task.id} kind=workflow ref=${(input.task.target as { ref: string }).ref}` },
+  ];
   if (input.detail) {
-    lines.push(`run_id=${input.detail.run.id} status=${input.detail.run.status}`);
-    lines.push(`workflow_title=${input.detail.run.workflowTitle}`);
+    dbLines.push({ line: `run_id=${input.detail.run.id} status=${input.detail.run.status}` });
+    dbLines.push({ line: `workflow_title=${input.detail.run.workflowTitle}` });
   }
   if (input.error) {
-    lines.push(`error=${input.error.message}`);
+    dbLines.push({ level: "error", line: `error=${input.error.message}` });
   }
-  return `${lines.join("\n")}\n`;
+  return { fileText: `${dbLines.map((entry) => entry.line).join("\n")}\n`, dbLines };
 }
 
 // ── prompt target ───────────────────────────────────────────────────────────
@@ -406,7 +446,14 @@ async function runPromptTask(input: {
 
   const finishedAt = now();
   const log = renderPromptLog({ task, profileName: profile.name, result });
-  fs.writeFileSync(logPath, log);
+  persistRunLog({
+    taskId: task.id,
+    startedAtIso: startedAt.toISOString(),
+    finishedAtIso: finishedAt.toISOString(),
+    logPath,
+    fileText: log.fileText,
+    dbLines: log.dbLines,
+  });
 
   const status: TaskRunStatus = result.ok ? "completed" : "failed";
   const out: TaskRunResult = {
@@ -443,24 +490,85 @@ async function resolvePromptText(task: TaskDocument, stashDir: string): Promise<
   return fs.readFileSync(assetPath, "utf8");
 }
 
-function renderPromptLog(input: { task: TaskDocument; profileName: string; result: AgentRunResult }): string {
+function renderPromptLog(input: { task: TaskDocument; profileName: string; result: AgentRunResult }): RunLogContent {
   const lines: string[] = [];
-  lines.push(`[akm tasks] task=${input.task.id} kind=prompt profile=${input.profileName}`);
-  lines.push(
-    `ok=${input.result.ok} exit_code=${input.result.exitCode ?? "null"} duration_ms=${input.result.durationMs}`,
-  );
+  const dbLines: TaskLogLineInput[] = [];
+  const header = `[akm tasks] task=${input.task.id} kind=prompt profile=${input.profileName}`;
+  const summary = `ok=${input.result.ok} exit_code=${input.result.exitCode ?? "null"} duration_ms=${input.result.durationMs}`;
+  lines.push(header, summary);
+  dbLines.push({ line: header }, { level: input.result.ok ? "info" : "error", line: summary });
   if (!input.result.ok) {
-    lines.push(`reason=${input.result.reason ?? ""} error=${input.result.error ?? ""}`);
+    const failure = `reason=${input.result.reason ?? ""} error=${input.result.error ?? ""}`;
+    lines.push(failure);
+    dbLines.push({ level: "error", line: failure });
   }
   if (input.result.stdout) {
     lines.push("--- agent stdout ---");
     lines.push(input.result.stdout);
+    dbLines.push(...streamLines(input.result.stdout, "stdout", "info"));
   }
   if (input.result.stderr) {
     lines.push("--- agent stderr ---");
     lines.push(input.result.stderr);
+    dbLines.push(...streamLines(input.result.stderr, "stderr", "error"));
   }
-  return `${lines.join("\n")}\n`;
+  return { fileText: `${lines.join("\n")}\n`, dbLines };
+}
+
+// ── run logs ────────────────────────────────────────────────────────────────
+
+/**
+ * A finished run's log in both shapes: the flat text written to the per-run
+ * log file (transitional human tail) and the structured per-line rows written
+ * to logs.db (the queryable record — see src/core/logs-db.ts and
+ * docs/technical/logs-audit.md).
+ */
+interface RunLogContent {
+  fileText: string;
+  dbLines: readonly TaskLogLineInput[];
+}
+
+/** Split captured pipe output into per-line logs.db rows (blank lines dropped). */
+function streamLines(text: string, stream: TaskLogStream, level: TaskLogLevel): TaskLogLineInput[] {
+  return text
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => ({ stream, level, line }));
+}
+
+/**
+ * Persist a finished run's log: the flat text file (so `log_path` in
+ * task_history keeps resolving for humans and older consumers) plus
+ * structured rows in logs.db keyed by `buildTaskRunId(taskId, startedAt)`.
+ *
+ * The DB write is best-effort, mirroring {@link appendHistory}: an unwritable
+ * logs.db must never fail a task run.
+ */
+function persistRunLog(input: {
+  taskId: string;
+  startedAtIso: string;
+  finishedAtIso: string;
+  logPath: string;
+  fileText: string;
+  dbLines: readonly TaskLogLineInput[];
+}): void {
+  fs.writeFileSync(input.logPath, input.fileText);
+  try {
+    const db = openLogsDatabase();
+    try {
+      insertTaskLogLines(db, {
+        taskId: input.taskId,
+        runId: buildTaskRunId(input.taskId, input.startedAtIso),
+        ts: input.finishedAtIso,
+        lines: input.dbLines,
+      });
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    error(`[akm] task log DB write failed: ${String(err)}`);
+  }
 }
 
 // ── history ─────────────────────────────────────────────────────────────────
