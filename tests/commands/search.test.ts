@@ -234,7 +234,7 @@ describe("Database search path (FTS scoring)", () => {
         closeDatabase(db);
       }
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 

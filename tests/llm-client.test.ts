@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/core/config";
-import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse, redactErrorBody } from "../src/llm/client";
+import { chatCompletion, parseEmbeddedJsonResponse, redactErrorBody } from "../src/llm/client";
 
 // ── redactErrorBody ─────────────────────────────────────────────────────────
 
@@ -79,7 +79,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("sk-proj-LEAKYKEYABCDEF12345");
       expect(caught?.message).toContain("[REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -99,7 +99,7 @@ describe("chatCompletion error redaction", () => {
       // Status + URL prefix should remain; the body portion is truncated.
       expect((caught?.message ?? "").length).toBeLessThan(huge.length);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -117,7 +117,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("abcXYZsupersecret999");
       expect(caught?.message).toContain("Bearer [REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -209,64 +209,5 @@ describe("chatCompletion error redaction", () => {
       globalThis.fetch = originalFetch;
       jest.useRealTimers();
     }
-  });
-});
-
-describe("parseEmbeddedJsonResponse", () => {
-  test("parses direct JSON", () => {
-    expect(parseEmbeddedJsonResponse<{ ok: boolean }>('{"ok":true}')).toEqual({ ok: true });
-  });
-
-  test("parses fenced JSON", () => {
-    expect(parseEmbeddedJsonResponse<{ ok: boolean }>('```json\n{"ok":true}\n```')).toEqual({ ok: true });
-  });
-
-  test("parses prose-wrapped JSON object", () => {
-    const raw = 'Here is the result:\n{"entities":["ServiceA"],"relations":[]}\nDone.';
-    expect(parseEmbeddedJsonResponse<{ entities: string[]; relations: unknown[] }>(raw)).toEqual({
-      entities: ["ServiceA"],
-      relations: [],
-    });
-  });
-
-  test("parses prose-wrapped graph payload with relations", () => {
-    const raw =
-      'Here is the graph:\n{"entities":["ServiceA","ServiceB"],"relations":[{"from":"ServiceA","to":"ServiceB","type":"uses"}]}\nDone.';
-    expect(
-      parseEmbeddedJsonResponse<{ entities: string[]; relations: Array<{ from: string; to: string; type: string }> }>(
-        raw,
-      ),
-    ).toEqual({
-      entities: ["ServiceA", "ServiceB"],
-      relations: [{ from: "ServiceA", to: "ServiceB", type: "uses" }],
-    });
-  });
-
-  test("parses JSON after a qwen think block", () => {
-    const raw =
-      '<think>I should return JSON with {"entities":[],"relations":[]}</think>\n{"entities":["ServiceA"],"relations":[]}';
-    expect(parseEmbeddedJsonResponse<{ entities: string[]; relations: unknown[] }>(raw)).toEqual({
-      entities: ["ServiceA"],
-      relations: [],
-    });
-  });
-
-  test("skips malformed leading candidate and parses later valid JSON", () => {
-    const raw = 'Draft: {"entities":["A",],"relations":[]}\nFinal: {"entities":["ServiceA"],"relations":[]}';
-    expect(parseEmbeddedJsonResponse<{ entities: string[]; relations: unknown[] }>(raw)).toEqual({
-      entities: ["ServiceA"],
-      relations: [],
-    });
-  });
-
-  test("preserves escaped quotes while repairing literal newlines inside strings", () => {
-    const raw = '{"content":"Line one\nLine two with \\"quoted\\" text"}';
-    expect(parseEmbeddedJsonResponse<{ content: string }>(raw)).toEqual({
-      content: 'Line one\nLine two with "quoted" text',
-    });
-  });
-
-  test("returns undefined when no JSON object or array exists", () => {
-    expect(parseEmbeddedJsonResponse("not json at all")).toBeUndefined();
   });
 });

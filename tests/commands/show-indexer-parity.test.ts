@@ -169,7 +169,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
         closeDatabase(db);
       }
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
