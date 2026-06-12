@@ -62,6 +62,15 @@ import {
 /** Default minimum session duration (minutes) for session indexing (#561). */
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
 
+/**
+ * Default minimum raw session size (chars) below which the extract LLM call is
+ * skipped (#595/#596). Deliberately tiny: analysis of 218 candidate-producing
+ * sessions showed sessions of 22–368 raw chars regularly yield 1–5 candidates,
+ * so size is not a reliable proxy for value — only truly empty sessions
+ * (0 chars, journal files) are safe to skip.
+ */
+const DEFAULT_MIN_CONTENT_CHARS = 10;
+
 // ── Options + Result envelopes ──────────────────────────────────────────────
 
 export interface AkmExtractOptions {
@@ -143,7 +152,7 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted";
+  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short";
   /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
   sessionAssetRef?: string;
   /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
@@ -259,6 +268,7 @@ async function processSession(
   dryRun: boolean,
   timeoutMs: number,
   maxTotalChars: number | undefined,
+  minContentChars: number,
   sessionIndexing: {
     enabled: boolean;
     minDurationMinutes: number;
@@ -285,6 +295,33 @@ async function processSession(
   const filtered = preFilterSession(data, {
     ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
   });
+
+  // #595/#596 — minContentChars gate: skip the LLM call for sessions whose RAW
+  // size is below threshold. Measured on the raw event text BEFORE the noise
+  // pre-filter, NOT on post-filter output — the pre-filter strips boilerplate
+  // so aggressively that even signal-bearing sessions can have tiny output
+  // (#596: gating post-filter filtered out 100% of sessions). Note: the 0.8.x
+  // fix gated on `filtered.stats.inputCount`, which is an EVENT count, not a
+  // char count — this port measures actual raw chars so the threshold matches
+  // the config key's documented unit.
+  const rawContentChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
+  if (minContentChars > 0 && rawContentChars < minContentChars) {
+    return {
+      sessionId: sessionRef.sessionId,
+      harness: harness.name,
+      candidateCount: 0,
+      proposalIds: [],
+      preFilter: {
+        inputCount: filtered.stats.inputCount,
+        outputCount: filtered.stats.outputCount,
+        truncatedCount: filtered.stats.truncatedCount,
+      },
+      warnings: [],
+      skipped: true,
+      skipReason: "too_short",
+    };
+  }
+
   const prompt = buildExtractPrompt({ data, events: filtered.events, inlineRefs: data.inlineRefs });
 
   // #561 — ADDITIVE session indexing. Generate + write the session asset
@@ -524,6 +561,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     60_000;
   // Pre-filter budget — process config can raise it for large-context models.
   const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
+  // #595/#596 — minimum raw session size; sessions below it skip the LLM call
+  // entirely. Set `processes.extract.minContentChars: 0` to disable the gate.
+  const minContentChars =
+    typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : DEFAULT_MIN_CONTENT_CHARS;
   // Default discovery window — process config can override the built-in 24h.
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
 
@@ -696,6 +737,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         dryRun,
         timeoutMs,
         maxTotalChars,
+        minContentChars,
         sessionIndexing,
       );
       sessions.push(result);
