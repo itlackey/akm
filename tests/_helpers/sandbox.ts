@@ -220,6 +220,8 @@ export interface IsolatedAkmStorage {
   readonly configDir: string;
   /** Isolated state dir (`XDG_STATE_HOME`). */
   readonly stateDir: string;
+  /** Isolated Claude session-log root (`AKM_CLAUDE_PROJECTS_DIR`), empty by default. */
+  readonly sessionLogsDir: string;
   /** The single per-call temp root that contains every dir above. */
   readonly root: string;
   /** Restore every overridden env var and remove the temp root. Idempotent. */
@@ -272,12 +274,19 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
   fs.mkdirSync(path.join(configDir, "akm"), { recursive: true });
   fs.mkdirSync(stateDir, { recursive: true });
 
+  const sessionLogsDir = path.join(root, "claude-projects");
+  fs.mkdirSync(sessionLogsDir, { recursive: true });
+
   const env: Record<string, string> = {
     AKM_STASH_DIR: stashDir,
     XDG_DATA_HOME: dataDir,
     XDG_CACHE_HOME: cacheDir,
     XDG_CONFIG_HOME: configDir,
     XDG_STATE_HOME: stateDir,
+    // Redirect the Claude session-log scan at an empty fixture dir so the
+    // synchronous `akm health` session-log scan stays hermetic and fast
+    // instead of walking the host's real (and potentially huge) history.
+    AKM_CLAUDE_PROJECTS_DIR: sessionLogsDir,
   };
 
   // Snapshot + apply env (managed defaults first, then caller overrides so they
@@ -305,7 +314,7 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     }
   };
 
-  return { stashDir, dataDir, cacheDir, configDir, stateDir, root, cleanup };
+  return { stashDir, dataDir, cacheDir, configDir, stateDir, sessionLogsDir, root, cleanup };
 }
 
 // ── Config writer ────────────────────────────────────────────────────────────

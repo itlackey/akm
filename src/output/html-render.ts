@@ -35,23 +35,36 @@ export function resolveTemplatePath(command: string): string {
   return path.join(TEMPLATES_DIR, `${DEFAULT_TEMPLATE}.html`);
 }
 
+/** Matches a `%%TOKEN%%` placeholder (uppercase + underscore key). */
+const TOKEN_RE = /%%[A-Z_]+%%/g;
+
 /**
- * Read a template and substitute every `%%TOKEN%%` in `replacements`.
- * Unknown tokens in the template are left in place (the health template is
- * verified token-complete by tests); replacement keys missing from the
- * template are silently ignored, matching the skill renderer's behaviour.
+ * Read a template and substitute every `%%TOKEN%%` in `replacements` in a
+ * single pass. Substitution is order-independent: a value that happens to
+ * contain another token's literal text is never re-processed (the pass scans
+ * the original template, not the growing output). Unknown tokens in the
+ * template are left in place (the health template is verified token-complete by
+ * tests); replacement keys missing from the template are silently ignored,
+ * matching the skill renderer's behaviour.
  */
 export function renderHtml(templatePath: string, replacements: Record<string, string>): string {
-  let html = fs.readFileSync(templatePath, "utf8");
-  for (const [token, value] of Object.entries(replacements)) {
-    html = html.replaceAll(token, value);
-  }
-  return html;
+  const html = fs.readFileSync(templatePath, "utf8");
+  return html.replace(TOKEN_RE, (token) => (token in replacements ? replacements[token] : token));
 }
 
-/** Minimal HTML entity escaping for text interpolated into templates. */
+/**
+ * Minimal HTML entity escaping for text interpolated into templates. Escapes
+ * the single quote as well as the double quote so escaped values are safe in
+ * both `"…"` and `'…'` attribute contexts, not only the double-quoted
+ * attributes the bundled templates use today.
+ */
 export function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 /**

@@ -62,6 +62,15 @@ describe("renderHtml", () => {
     expect(renderHtml(tmpl, { "%%KNOWN%%": "x" })).toBe("x %%UNKNOWN%%");
   });
 
+  test("substitution is single-pass: a value containing another token is not re-processed", () => {
+    const dir = makeTempDir();
+    const tmpl = path.join(dir, "t.html");
+    fs.writeFileSync(tmpl, "%%A%%|%%B%%");
+    // %%A%%'s value embeds the literal %%B%% token; it must survive verbatim
+    // regardless of key iteration order.
+    expect(renderHtml(tmpl, { "%%A%%": "raw %%B%%", "%%B%%": "beta" })).toBe("raw %%B%%|beta");
+  });
+
   test("the default template renders COMMAND / CONTENT_JSON / GENERATED_AT", () => {
     const html = renderHtml(resolveTemplatePath(DEFAULT_TEMPLATE), {
       "%%COMMAND%%": "proposal-list",
@@ -77,8 +86,8 @@ describe("renderHtml", () => {
 });
 
 describe("escapeHtml", () => {
-  test("escapes the four HTML metacharacters", () => {
-    expect(escapeHtml(`<a href="x">&'</a>`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;'&lt;/a&gt;");
+  test("escapes the five HTML metacharacters (incl. single quote)", () => {
+    expect(escapeHtml(`<a href="x">&'</a>`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;");
   });
 });
 
