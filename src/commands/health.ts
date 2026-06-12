@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
+import { buildTaskRunId, getLoggedRunIds, openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
 import {
   type ImproveRunSummaryRow,
@@ -483,6 +484,11 @@ export interface AkmHealthOptions {
    * to a foreign/just-deleted DB. Purely additive: omitted ⇒ identical to before.
    */
   stateDbPath?: string;
+  /**
+   * Explicit logs.db path override (#579). Defaults to `getLogsDbPath()`.
+   * Same test-isolation rationale as {@link stateDbPath}.
+   */
+  logsDbPath?: string;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -1419,20 +1425,46 @@ interface WindowMetricsBundle {
   runs: number;
 }
 
+/**
+ * Partition task_history rows into "should have a log" (non-null log_path) and
+ * "log is actually backed". A run counts as backed when logs.db holds rows for
+ * its run_id (#579 — the DB is the primary record); rows written before logs.db
+ * existed fall back to the transitional on-disk file check. `logsDb` may be
+ * undefined when logs.db could not be opened — then only the file check runs.
+ */
+function partitionLogBackedRows(
+  taskRows: TaskHistoryRow[],
+  logsDb: Database | undefined,
+): { withLogs: TaskHistoryRow[]; backed: TaskHistoryRow[] } {
+  const withLogs = taskRows.filter((row) => row.log_path !== null);
+  const loggedRunIds = logsDb
+    ? getLoggedRunIds(
+        logsDb,
+        withLogs.map((row) => buildTaskRunId(row.task_id, row.started_at)),
+      )
+    : new Set<string>();
+  const backed = withLogs.filter(
+    (row) =>
+      loggedRunIds.has(buildTaskRunId(row.task_id, row.started_at)) ||
+      (row.log_path !== null && fs.existsSync(row.log_path)),
+  );
+  return { withLogs, backed };
+}
+
 function buildWindowMetrics(
   db: Database,
   stateDbPath: string,
   since: string,
   until: string,
   now: () => number = () => Date.now(),
+  logsDb?: Database,
 ): WindowMetricsBundle {
   const taskRows = queryTaskHistory(db, { since }).filter((row) => {
     const startMs = new Date(row.started_at).getTime();
     const untilMs = new Date(until).getTime();
     return !Number.isFinite(untilMs) || startMs < untilMs;
   });
-  const taskRowsWithLogs = taskRows.filter((row) => row.log_path !== null);
-  const existingLogRows = taskRowsWithLogs.filter((row) => row.log_path && fs.existsSync(row.log_path));
+  const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = taskRows.filter((row) => row.status === "active");
   const stuckActiveRuns = activeRows.filter(
@@ -1522,6 +1554,16 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     );
   }
 
+  // logs.db backs the log-backing metric (#579). Best-effort: when it cannot
+  // be opened, partitionLogBackedRows falls back to the on-disk file check, so
+  // health never hard-fails on a missing/locked logs database.
+  let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
+  try {
+    logsDb = openLogsDatabase(options.logsDbPath);
+  } catch {
+    logsDb = undefined;
+  }
+
   try {
     const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
     const tableNames = tables.map((row) => row.name).sort();
@@ -1531,8 +1573,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const probe = probeStateDbRoundTrip(stateDbPath);
 
     const taskRows = queryTaskHistory(db, { since });
-    const taskRowsWithLogs = taskRows.filter((row) => row.log_path !== null);
-    const existingLogRows = taskRowsWithLogs.filter((row) => row.log_path && fs.existsSync(row.log_path));
+    const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
     const failedTaskRows = taskRows.filter((row) => row.status === "failed");
     const activeRows = taskRows.filter((row) => row.status === "active");
     const stuckActiveRuns = activeRows.filter(
@@ -1634,7 +1675,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       windowResults = windowSpecs.map((spec) => {
         const winSince = parseHealthSince(spec.since);
         const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil, now);
+        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil, now, logsDb);
         return {
           name: spec.name,
           since: winSince,
@@ -1685,6 +1726,13 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     };
   } finally {
     db.close();
+    if (logsDb) {
+      try {
+        logsDb.close();
+      } catch {
+        // best-effort
+      }
+    }
   }
 }
 

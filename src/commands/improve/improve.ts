@@ -20,6 +20,7 @@ import type {
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
 import { classifyImproveAction } from "../../core/improve-types";
+import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
 import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
@@ -3535,6 +3536,40 @@ export async function runImproveMaintenancePasses(args: {
           if (ownsStateDb && stateDb) {
             try {
               stateDb.close();
+            } catch {
+              // best-effort
+            }
+          }
+        }
+
+        // task_logs in logs.db (#579) shares the same retention window as
+        // events/improve_runs — all three are observability data governed by
+        // the single improve.eventRetentionDays knob. Separate try/finally
+        // because logs.db is a different file: a locked/missing logs.db must
+        // not block the state.db purges above.
+        let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
+        try {
+          logsDb = openLogsDatabase();
+          const taskLogsPurged = purgeOldTaskLogs(logsDb, retentionDays);
+          if (taskLogsPurged > 0) {
+            info(
+              `[improve] task_logs purge: ${taskLogsPurged} log line(s) older than ${retentionDays}d removed from logs.db`,
+            );
+          }
+          appendEvent(
+            {
+              eventType: "task_logs_purged",
+              ref: "task_logs:_purge",
+              metadata: { purgedCount: taskLogsPurged, retentionDays },
+            },
+            eventsCtx,
+          );
+        } catch (err) {
+          allWarnings.push(`task_logs purge failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          if (logsDb) {
+            try {
+              logsDb.close();
             } catch {
               // best-effort
             }
