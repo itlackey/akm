@@ -2799,6 +2799,12 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
           // user's stack were this case; see review §1a row "Reflect refused
           // asset type".
           const isTypeRefused = !reflectResult.ok && reflectResult.reason === "unsupported_type";
+          // Noise-gate suppression (#580): the candidate edit was an empty
+          // diff or a cosmetic-only reformat of the current asset. Like
+          // `unsupported_type`, this is a deterministic skip — not an LLM
+          // fault — so it routes to the `reflect-skipped` bucket and stays
+          // out of recentErrors/avoidPatterns.
+          const isNoChange = !reflectResult.ok && reflectResult.reason === "no_change";
           actions.push({
             ref: planned.ref,
             mode: reflectResult.ok
@@ -2807,18 +2813,19 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
                 ? "reflect-cooldown"
                 : isGuardReject
                   ? "reflect-guard-rejected"
-                  : isTypeRefused
+                  : isTypeRefused || isNoChange
                     ? "reflect-skipped"
                     : "reflect-failed",
             result: reflectResult,
           });
-          // Cooldown skips, guard rejects, and type-refused skips are not
-          // failures — do not pollute recentErrors with them (those get
-          // injected as `avoidPatterns` into the next reflect prompt). Guard
-          // rejects ARE worth showing the LLM as a learn-signal so the next
-          // iteration sees "your last expansion was too large"; type-refused
-          // is deterministic and adds no learning signal.
-          if (!reflectResult.ok && !isCooldown && !isTypeRefused) {
+          // Cooldown skips, guard rejects, type-refused skips, and noise-gate
+          // skips are not failures — do not pollute recentErrors with them
+          // (those get injected as `avoidPatterns` into the next reflect
+          // prompt). Guard rejects ARE worth showing the LLM as a learn-signal
+          // so the next iteration sees "your last expansion was too large";
+          // type-refused and no-change are deterministic and add no learning
+          // signal.
+          if (!reflectResult.ok && !isCooldown && !isTypeRefused && !isNoChange) {
             const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
             pushRecentError("reflect", errMsg);
           }

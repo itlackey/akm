@@ -78,7 +78,8 @@ export interface ImproveHealthMetrics {
        * `actions[].result.reason` for `mode === "reflect-skipped"` entries.
        * Mirrors {@link distill.deferredByReason} (commit `d1273d0`). Values
        * observed today: `type-filter`, `raw-wiki`, `process-disabled`,
-       * `unsupported_type`, `derived-memory-reflect-skipped`. Totals here
+       * `unsupported_type`, `no_change` (#580 noise gate),
+       * `derived-memory-reflect-skipped`. Totals here
        * should match `skipped`. Pre-2026-05-26 this was discarded by the
        * rollup — the 18/18 reflect-skipped runs in `release/0.8.0` could not
        * be tuned because no operator could see WHY they were skipped. See

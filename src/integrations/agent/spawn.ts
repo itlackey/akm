@@ -40,7 +40,14 @@ import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
  * conflated with true LLM failures — see review §1a, "Reflect refused
  * asset type" row (~9% of reflect-failed events). Routed to the
  * `reflect-skipped` action bucket by the improve loop so it does not
- * inflate the failure-rate numerator. */
+ * inflate the failure-rate numerator.
+ *
+ * Note on `no_change`: deterministic noise-gate suppression (#580). The
+ * agent responded fine but the candidate edit is byte-identical to the
+ * current asset (empty diff) or differs only cosmetically (whitespace
+ * reflow, code-fence language hints, YAML scalar re-folding). Not an LLM
+ * fault and not a queue-worthy proposal — routed to the `reflect-skipped`
+ * action bucket like `unsupported_type`. */
 export type AgentFailureReason =
   | "timeout"
   | "spawn_failed"
@@ -51,7 +58,8 @@ export type AgentFailureReason =
   | "llm_content_filter"
   | "llm_invalid_json"
   | "content_policy_reject"
-  | "unsupported_type";
+  | "unsupported_type"
+  | "no_change";
 
 /** Minimum subprocess surface we need. The runtime spawn returns this shape. */
 export interface SpawnedSubprocess {
