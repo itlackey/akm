@@ -443,7 +443,7 @@ describe("stashRaw", () => {
     writeConfig(configDir, { semanticSearchMode: "off" });
 
     const server = http.createServer((_req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", Connection: "close" });
       res.end(
         "<html><head><title>Attention</title></head><body><h1>Attention</h1><p>Paper abstract.</p></body></html>",
       );
