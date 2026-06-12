@@ -123,6 +123,7 @@ import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { getHyphenatedBoolean, getOutputMode, initOutputMode, parseFlagValue } from "./output/context";
+import { deliverRendered, renderHtml, resolveTemplatePath } from "./output/html-render";
 import { pkgVersion } from "./version";
 
 function applyEarlyStderrFlags(argv: string[]): void {
@@ -350,10 +351,14 @@ const healthCommand = defineCommand({
       description:
         "Explicit comparison window 'name=...,since=ISO,until=ISO' (repeatable, up to 4; mutually exclusive with --window-compare)",
     },
+    compare: {
+      type: "string",
+      description: "Comparison window for the --format html report's trend deltas (default: 24h)",
+    },
   },
   async run({ args }) {
     let resultStatus: "pass" | "warn" | "fail" | undefined;
-    await runWithJsonErrors(() => {
+    await runWithJsonErrors(async () => {
       // citty only surfaces the last value of a repeated flag, so read --windows
       // directly from argv to support multi-window comparison.
       const rawWindows = parseAllFlagValues("--windows");
@@ -361,6 +366,31 @@ const healthCommand = defineCommand({
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
       const groupBy = (args as Record<string, unknown>)["group-by"] as string | undefined;
       const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
+      const mode = getOutputMode();
+
+      // `--format html` is health-specific: render the full HTML health
+      // report (charts, KPI cards, advisories) from the bespoke template.
+      // Mirrors the `md` intercept below. Two reads, exactly like the
+      // retired akm-health-report skill: the canonical per-run window plus a
+      // window-compare read for the trend deltas (defaults to 24h,
+      // overridable via --compare).
+      if (mode.format === "html") {
+        const compare = args.compare ?? windowCompareRaw ?? "24h";
+        const result = akmHealth({ since: args.since, groupBy: "run" });
+        resultStatus = result.status;
+        const deltas = akmHealth({ since: args.since, windowCompare: compare }).deltas;
+        const { buildHealthHtmlReplacements } = await import("./commands/health/html-report");
+        const { listPendingProposals } = await import("./commands/proposal/proposal");
+        const replacements = buildHealthHtmlReplacements(result, {
+          window: args.since ?? "24h",
+          compare,
+          proposals: listPendingProposals(),
+          deltas,
+        });
+        deliverRendered(renderHtml(resolveTemplatePath("health"), replacements), mode.outputPath);
+        return;
+      }
+
       const result = akmHealth({
         since: args.since,
         groupBy: groupBy as "run" | undefined,
@@ -371,12 +401,11 @@ const healthCommand = defineCommand({
       // `--format md` is health-specific: render a TSV-shaped per-run or
       // window-compare table to stdout instead of going through the JSON
       // envelope. Other modes fall through to the standard output() path.
-      const mode = getOutputMode();
       if (mode.format === "md") {
         if (result.windows && result.windows.length > 0) {
-          console.log(renderWindowCompareMd(result.windows, result.deltas));
+          deliverRendered(renderWindowCompareMd(result.windows, result.deltas), mode.outputPath);
         } else if (result.runs) {
-          console.log(renderRunsDetailMd(result.runs));
+          deliverRendered(renderRunsDetailMd(result.runs), mode.outputPath);
         } else {
           output("health", result);
         }
@@ -478,7 +507,11 @@ export const main = defineCommand({
       "  78  config error",
   },
   args: {
-    format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml|md|html)", default: "json" },
+    output: {
+      type: "string",
+      description: "Write rendered output to a file instead of stdout (all formats except jsonl)",
+    },
     detail: {
       type: "string",
       description: "Detail level (verbosity): brief|normal|full. Default: brief.",

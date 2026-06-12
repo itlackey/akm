@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>%%REPORT_TITLE%%</title>
+  <!-- %%ECHARTS_TAG%% : either an inlined <script>…echarts…</script> (self-contained
+       / deterministic / offline) or a CDN <script src> when the renderer is run
+       with --echarts cdn. -->
+  %%ECHARTS_TAG%%
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --surface2:#21262d;
+      --border:  #30363d;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --accent:  #58a6ff;
+      --green:   #3fb950;
+      --yellow:  #d29922;
+      --red:     #f85149;
+      --purple:  #bc8cff;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    header .logo { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; flex-shrink: 0; }
+    header .meta { color: var(--muted); font-size: 13px; min-width: 0; }
+    header .meta .title { font-weight: 600; color: var(--text); }
+    header .badges { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    @media (max-width: 600px) {
+      header { padding: 12px 16px; gap: 8px; }
+      header .badges { margin-left: 0; width: 100%; }
+    }
+
+    /* ── Badges ─────────────────────────────────────────────────────────── */
+    .badge-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    }
+    .badge-warn  { background: rgba(210,153,34,0.15);  color: var(--yellow); border: 1px solid rgba(210,153,34,0.3);  }
+    .badge-pass  { background: rgba(63,185,80,0.15);   color: var(--green);  border: 1px solid rgba(63,185,80,0.3);   }
+    .badge-fail  { background: rgba(248,81,73,0.15);   color: var(--red);    border: 1px solid rgba(248,81,73,0.3);   }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-warn { background: var(--yellow); }
+    .dot-pass { background: var(--green); }
+    .dot-fail { background: var(--red); }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    main { padding: 20px 32px; max-width: 1400px; margin: 0 auto; }
+    @media (max-width: 768px) { main { padding: 16px; } }
+
+    .section { margin-bottom: 32px; }
+    h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+
+    /* ── Executive summary (Discord card) ───────────────────────────────── */
+    .exec {
+      background: linear-gradient(180deg, var(--surface) 0%, #12161c 100%);
+      border: 1px solid var(--border); border-left: 4px solid var(--accent);
+      border-radius: 10px; padding: 18px 22px; margin-bottom: 28px;
+    }
+    .exec h2 { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .exec .exec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    @media (max-width: 900px) { .exec .exec-grid { grid-template-columns: 1fr; gap: 16px; } }
+    .exec . blk-title, .exec h4 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--muted); margin-bottom: 8px; font-weight: 600;
+    }
+    .exec ul { list-style: none; }
+    .exec li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 13px; border-bottom: 1px dashed rgba(48,54,61,0.6); }
+    .exec li:last-child { border-bottom: none; }
+    .exec li .k { color: var(--muted); }
+    .exec li .v { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .trend-pill {
+      display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px;
+      border-radius: 12px; font-size: 11px; font-weight: 600;
+    }
+    .trend-pill.up   { background: rgba(63,185,80,0.15);  color: var(--green); }
+    .trend-pill.down { background: rgba(248,81,73,0.15);  color: var(--red); }
+    .trend-pill.flat { background: rgba(139,148,158,0.12);color: var(--muted); }
+    .exec .overall {
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+      font-size: 13px; color: var(--muted);
+    }
+    .exec .overall b { color: var(--text); }
+
+    /* ── KPI cards ──────────────────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px; margin-bottom: 28px;
+    }
+    @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 20px; } }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+    .kpi-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .kpi-card .value { font-size: 26px; font-weight: 700; line-height: 1; }
+    .kpi-card .sub   { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    @media (max-width: 600px) { .kpi-card .value { font-size: 22px; } }
+    .kpi-card.green  .value { color: var(--green); }
+    .kpi-card.yellow .value { color: var(--yellow); }
+    .kpi-card.red    .value { color: var(--red); }
+    .kpi-card.blue   .value { color: var(--accent); }
+    .kpi-card.purple .value { color: var(--purple); }
+
+    /* ── Chart panels ───────────────────────────────────────────────────── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px; margin-bottom: 28px;
+    }
+    @media (max-width: 768px) {
+      .charts-grid { grid-template-columns: 1fr; gap: 10px; }
+      .chart-panel.full-width { grid-column: auto; }
+    }
+    .chart-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .chart-panel.full-width { grid-column: 1 / -1; }
+    .chart-panel .ec { width: 100%; height: 240px; }
+    .chart-panel.full-width .ec { height: 280px; }
+    @media (max-width: 600px) { .chart-panel .ec { height: 200px; } }
+
+    /* ── Tables ─────────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 480px; }
+    thead th {
+      text-align: left; padding: 8px 12px;
+      font-size: 11px; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.4px;
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); }
+    tbody tr:hover { background: var(--surface2); }
+    tbody td { padding: 9px 12px; color: var(--text); }
+    @media (max-width: 600px) {
+      table { font-size: 12px; }
+      thead th, tbody td { padding: 7px 10px; }
+    }
+    @media (hover: none) { tbody tr:active { background: var(--surface2); } }
+
+    /* ── Tags ───────────────────────────────────────────────────────────── */
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-extract     { background: rgba(88,166,255,0.15);  color: var(--accent); }
+    .tag-consolidate { background: rgba(188,140,255,0.15); color: var(--purple); }
+
+    /* ── Advisories ─────────────────────────────────────────────────────── */
+    .advisory-list { display: flex; flex-direction: column; gap: 10px; }
+    .advisory {
+      display: flex; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px 16px;
+    }
+    .advisory.warn { border-left: 3px solid var(--yellow); }
+    .advisory.fail { border-left: 3px solid var(--red); }
+    .advisory-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+    .advisory-body .title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .advisory-body .desc  { font-size: 12px; color: var(--muted); word-break: break-word; }
+
+    /* ── Trend indicators ───────────────────────────────────────────────── */
+    .trend      { font-size: 12px; }
+    .trend-up   { color: var(--green); }
+    .trend-down { color: var(--red); }
+    .trend-flat { color: var(--muted); }
+
+    /* ── Two-col ─────────────────────────────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── Summary table wrapper ──────────────────────────────────────────── */
+    .summary-table { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+
+    /* ── Code / command block ───────────────────────────────────────────── */
+    code {
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+      font-size: 11px; background: var(--surface2);
+      padding: 2px 6px; border-radius: 4px; color: var(--accent); word-break: break-all;
+    }
+    .command-block {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 12px 16px; font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12px; color: var(--muted); line-height: 1.8; overflow-x: auto;
+    }
+    .command-block span { color: var(--accent); }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border); padding: 14px 32px;
+      color: var(--muted); font-size: 12px;
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    }
+    @media (max-width: 600px) { footer { padding: 12px 16px; flex-direction: column; } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AKM</div>
+  <div class="meta">
+    <div class="title">Improve Health Report</div>
+    <div>Window: %%WINDOW%% &nbsp;·&nbsp; %%SINCE_HUMAN%% &nbsp;·&nbsp; %%RUN_COUNT%% runs</div>
+  </div>
+  <div class="badges">
+    %%STATUS_BADGE_HTML%%
+  </div>
+</header>
+
+<main>
+
+  <!-- Executive Summary (HTML rendering of the Discord/improve-health text report) -->
+  <section class="exec">
+    %%EXEC_SUMMARY_HTML%%
+  </section>
+
+  <!-- KPI Row -->
+  <div class="kpi-grid">
+    %%KPI_CARDS_HTML%%
+  </div>
+
+  <!-- Charts -->
+  <div class="section">
+    <h2>Run Trend Lines (%%WINDOW%%)</h2>
+    <div class="charts-grid">
+
+      <div class="chart-panel full-width">
+        <h3>Wall Time per Run (min) — with rolling average</h3>
+        <div id="chartWallTime" class="ec"></div>
+      </div>
+
+      <div class="chart-panel full-width">
+        <h3>Per-Phase Wall Time Decomposition (stacked, min)</h3>
+        <div id="chartPhases" class="ec"></div>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Stash Growth (derived vs eligible)</h3>
+        <div id="chartStash" class="ec"></div>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Consolidation Output (promoted / merged / deleted)</h3>
+        <div id="chartConsOutput" class="ec"></div>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Success / Failures per Run</h3>
+        <div id="chartSuccess" class="ec"></div>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Lint Flagged vs Fixed</h3>
+        <div id="chartLint" class="ec"></div>
+      </div>
+
+      <div class="chart-panel full-width">
+        <h3>Distill Skip-Reason Breakdown (stacked)</h3>
+        <div id="chartDistill" class="ec"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Summary + Advisories -->
+  <div class="section">
+    <h2>%%WINDOW%% Aggregate Summary</h2>
+    <div class="two-col">
+
+      <div class="summary-table">
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Metric</th><th>Value</th><th>Trend</th></tr></thead>
+          <tbody>
+            %%SUMMARY_ROWS_HTML%%
+          </tbody>
+        </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 style="margin-bottom:12px;">Decision Quality &amp; Advisories</h3>
+        <div class="advisory-list">
+          %%ADVISORY_CARDS_HTML%%
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Proposals -->
+  <div class="section">
+    <h2>Pending Proposals (%%PROPOSAL_COUNT%%)</h2>
+    <div class="summary-table">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Ref</th><th>Source</th><th>Created</th></tr></thead>
+        <tbody>
+          %%PROPOSAL_ROWS_HTML%%
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- What to watch -->
+  <div class="section">
+    <h2>What to Watch Next</h2>
+    <div class="advisory-list">
+      %%WATCH_ITEMS_HTML%%
+    </div>
+  </div>
+
+  <!-- Last 10 runs -->
+  <div class="section">
+    <h2>Last 10 Runs</h2>
+    <div class="summary-table">
+      <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Started (UTC)</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
+        </thead>
+        <tbody id="lastRunsTable"></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Command set -->
+  <div class="section">
+    <h2>Command Set Used</h2>
+    <div class="command-block">
+      %%COMMANDS_HTML%%
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  <span>AKM Health Report &nbsp;·&nbsp; Window: %%WINDOW%% &nbsp;·&nbsp; %%REPORT_TITLE%%</span>
+  <span>Generated %%GENERATED_AT%%</span>
+</footer>
+
+<script>
+// ── Injected run data ─────────────────────────────────────────────────────────
+%%RUNS_JS_CONST%%
+const DISTILL_REASONS = %%DISTILL_REASONS_JSON%%;
+
+// ── Theme constants ───────────────────────────────────────────────────────────
+const C = {
+  bg: '#161b22', surface2: '#21262d', border: '#30363d',
+  text: '#e6edf3', muted: '#8b949e',
+  accent: '#58a6ff', green: '#3fb950', yellow: '#d29922',
+  red: '#f85149', purple: '#bc8cff',
+};
+const SERIES_PALETTE = [C.accent, C.green, C.yellow, C.purple, C.red, '#39c5cf', '#db61a2', '#e3b341'];
+
+// x-axis category labels = run startedAt (UTC, sorted ascending by collect.py)
+const xLabels = RUNS.map(r => {
+  const d = new Date(r.startedAt);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+});
+
+const toMin = ms => ms ? +(ms / 60000).toFixed(2) : 0;
+
+// Centered rolling average (window = ~10% of runs, min 3) — deterministic.
+function rollingAvg(arr) {
+  const n = arr.length;
+  const w = Math.max(3, Math.floor(n / 10));
+  const half = Math.floor(w / 2);
+  return arr.map((_, i) => {
+    let sum = 0, cnt = 0;
+    for (let j = i - half; j <= i + half; j++) {
+      if (j >= 0 && j < n) { sum += arr[j]; cnt++; }
+    }
+    return cnt ? +(sum / cnt).toFixed(2) : 0;
+  });
+}
+
+const baseAxis = {
+  axisLine:  { lineStyle: { color: C.border } },
+  axisLabel: { color: C.muted, fontSize: 10 },
+  splitLine: { lineStyle: { color: 'rgba(48,54,61,0.5)' } },
+};
+const baseGrid = { left: 48, right: 16, top: 28, bottom: 28, containLabel: true };
+const baseTooltip = {
+  trigger: 'axis',
+  backgroundColor: C.surface2, borderColor: C.border, borderWidth: 1,
+  textStyle: { color: C.text, fontSize: 12 },
+};
+const baseLegend = { textStyle: { color: C.muted, fontSize: 11 }, top: 2, type: 'scroll' };
+
+function mkChart(id, option) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const chart = echarts.init(el, null, { renderer: 'canvas' });
+  // animation off → deterministic first paint & no per-frame randomness
+  option.animation = false;
+  option.textStyle = { color: C.text };
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+  return chart;
+}
+
+// ── 1. Wall time per run + rolling avg ────────────────────────────────────────
+const wall = RUNS.map(r => toMin(r.wallTimeMs));
+mkChart('chartWallTime', {
+  tooltip: baseTooltip,
+  legend: { ...baseLegend, data: ['Wall time', 'Rolling avg'] },
+  grid: baseGrid,
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', name: 'min', nameTextStyle: { color: C.muted }, ...baseAxis },
+  series: [
+    { name: 'Wall time', type: 'line', data: wall, showSymbol: false, smooth: true,
+      lineStyle: { color: C.accent, width: 1.5 }, areaStyle: { color: 'rgba(88,166,255,0.08)' } },
+    { name: 'Rolling avg', type: 'line', data: rollingAvg(wall), showSymbol: false, smooth: true,
+      lineStyle: { color: C.yellow, width: 2, type: 'dashed' } },
+  ],
+});
+
+// ── 2. Per-phase wall time decomposition (stacked area) ──────────────────────
+mkChart('chartPhases', {
+  tooltip: baseTooltip,
+  legend: { ...baseLegend, data: ['Consolidation', 'Memory inference', 'Graph extraction', 'Other / LLM'] },
+  grid: baseGrid,
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', name: 'min', nameTextStyle: { color: C.muted }, ...baseAxis },
+  series: [
+    { name: 'Consolidation',    type: 'line', stack: 'p', areaStyle: { color: 'rgba(88,166,255,0.55)' },  lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.consDurationMs)) },
+    { name: 'Memory inference', type: 'line', stack: 'p', areaStyle: { color: 'rgba(63,185,80,0.55)' },   lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.miDurationMs)) },
+    { name: 'Graph extraction', type: 'line', stack: 'p', areaStyle: { color: 'rgba(188,140,255,0.55)' }, lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.geDurationMs)) },
+    { name: 'Other / LLM',      type: 'line', stack: 'p', areaStyle: { color: 'rgba(210,153,34,0.45)' },  lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.otherMs)) },
+  ],
+});
+
+// ── 3. Stash growth (dual line) ───────────────────────────────────────────────
+mkChart('chartStash', {
+  tooltip: baseTooltip,
+  legend: { ...baseLegend, data: ['Derived', 'Eligible'] },
+  grid: baseGrid,
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', ...baseAxis },
+  series: [
+    { name: 'Derived',  type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.green,  width: 1.8 }, data: RUNS.map(r => r.derived) },
+    { name: 'Eligible', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.accent, width: 1.8 }, data: RUNS.map(r => r.eligible) },
+  ],
+});
+
+// ── 4. Consolidation output (promoted / merged / deleted) ────────────────────
+mkChart('chartConsOutput', {
+  tooltip: baseTooltip,
+  legend: { ...baseLegend, data: ['Promoted', 'Merged', 'Deleted'] },
+  grid: baseGrid,
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', ...baseAxis },
+  series: [
+    { name: 'Promoted', type: 'bar', itemStyle: { color: 'rgba(88,166,255,0.75)' }, data: RUNS.map(r => r.promoted) },
+    { name: 'Merged',   type: 'bar', itemStyle: { color: 'rgba(63,185,80,0.75)' },  data: RUNS.map(r => r.merged) },
+    { name: 'Deleted',  type: 'bar', itemStyle: { color: 'rgba(248,81,73,0.75)' },  data: RUNS.map(r => r.deleted) },
+  ],
+});
+
+// ── 5. Success / failures (failed runs as distinct red scatter) ──────────────
+mkChart('chartSuccess', {
+  tooltip: {
+    ...baseTooltip,
+    formatter: p => {
+      const arr = Array.isArray(p) ? p : [p];
+      const i = arr[0].dataIndex;
+      return `${xLabels[i]}<br/>${RUNS[i].ok ? '✅ ok' : '❌ failed'} · ${toMin(RUNS[i].wallTimeMs)}m`;
+    },
+  },
+  legend: { ...baseLegend, data: ['Wall time (ok)', 'Failed run'] },
+  grid: baseGrid,
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', name: 'min', nameTextStyle: { color: C.muted }, ...baseAxis },
+  series: [
+    { name: 'Wall time (ok)', type: 'line', showSymbol: false, smooth: true,
+      lineStyle: { color: C.green, width: 1.2 }, data: RUNS.map(r => r.ok ? toMin(r.wallTimeMs) : null) },
+    { name: 'Failed run', type: 'scatter', symbolSize: 9,
+      itemStyle: { color: C.red },
+      data: RUNS.map((r, i) => r.ok ? null : [i, toMin(r.wallTimeMs)]) },
+  ],
+});
+
+// ── 6. Lint flagged vs fixed ──────────────────────────────────────────────────
+mkChart('chartLint', {
+  tooltip: baseTooltip,
+  legend: { ...baseLegend, data: ['Flagged', 'Fixed'] },
+  grid: baseGrid,
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', ...baseAxis },
+  series: [
+    { name: 'Flagged', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.yellow, width: 1.6 }, areaStyle: { color: 'rgba(210,153,34,0.10)' }, data: RUNS.map(r => r.lintFlagged) },
+    { name: 'Fixed',   type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.green,  width: 1.6 }, data: RUNS.map(r => r.lintFixed) },
+  ],
+});
+
+// ── 7. Distill skip-reason breakdown (stacked bar) ───────────────────────────
+const distillSeries = DISTILL_REASONS.map((reason, idx) => ({
+  name: reason,
+  type: 'bar',
+  stack: 'd',
+  itemStyle: { color: SERIES_PALETTE[idx % SERIES_PALETTE.length] },
+  data: RUNS.map(r => (r.distillByReason && r.distillByReason[reason]) || 0),
+}));
+mkChart('chartDistill', {
+  tooltip: baseTooltip,
+  legend: { ...baseLegend, data: DISTILL_REASONS },
+  grid: { ...baseGrid, top: 40 },
+  xAxis: { type: 'category', data: xLabels, ...baseAxis },
+  yAxis: { type: 'value', ...baseAxis },
+  series: distillSeries.length ? distillSeries
+    : [{ name: 'none', type: 'bar', data: RUNS.map(() => 0) }],
+});
+
+// ── Last 10 runs table ────────────────────────────────────────────────────────
+const tbody = document.getElementById('lastRunsTable');
+RUNS.slice(-10).forEach(r => {
+  const tr = document.createElement('tr');
+  const ts  = new Date(r.startedAt).toISOString().replace('T', ' ').slice(0, 16);
+  const dur = r.wallTimeMs ? (r.wallTimeMs / 60000).toFixed(1) + 'm' : '—';
+  const badge = r.ok
+    ? '<span class="badge-pill badge-pass" style="padding:2px 8px;font-size:11px;"><span class="dot dot-pass" style="width:6px;height:6px;"></span>&nbsp;ok</span>'
+    : '<span class="badge-pill badge-fail" style="padding:2px 8px;font-size:11px;"><span class="dot dot-fail" style="width:6px;height:6px;"></span>&nbsp;failed</span>';
+  tr.innerHTML = `
+    <td style="font-family:monospace;font-size:12px;">${ts}</td>
+    <td>${dur}</td>
+    <td style="color:var(--accent);font-weight:600;">${r.promoted || 0}</td>
+    <td>${r.merged || 0}</td>
+    <td style="color:${(r.contradicted||0)>5?'var(--yellow)':'var(--text)'};">${r.contradicted || 0}</td>
+    <td style="color:var(--green);">${r.miWritten || 0}</td>
+    <td>${r.geEntities || 0}</td>
+    <td>${r.lintFixed || 0}</td>
+    <td>${badge}</td>
+  `;
+  tbody.appendChild(tr);
+});
+</script>
+</body>
+</html>
