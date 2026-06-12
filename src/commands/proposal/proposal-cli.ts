@@ -18,6 +18,8 @@ import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
+import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
+import { withLlmStage } from "../../llm/usage-telemetry";
 import { resolveImproveProfile } from "../improve/improve-profiles";
 import { drainProposals } from "./drain";
 import { resolveDrainPolicy } from "./drain-policies";
@@ -459,16 +461,27 @@ const proposalDrainCommand = defineJsonCommand({
     // emits triage_deferred.
     const judgment = args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg) : null;
 
-    const result = await drainProposals({
-      stashDir,
-      policy,
-      applyMode,
-      maxAccepts,
-      dryRun,
-      ...(maxDiffLines !== undefined ? { maxDiffLines } : {}),
-      ...(excludeIds ? { excludeIds } : {}),
-      judgment,
-    });
+    // #576: persist + attribute per-call LLM usage for the standalone drain
+    // path. `IfAbsent` keeps an enclosing `akm improve` sink in charge when
+    // drain runs as a sub-step; the disposer clears only a sink we installed.
+    const disposeDrainUsageSink = installLlmUsagePersistenceIfAbsent();
+    let result: Awaited<ReturnType<typeof drainProposals>>;
+    try {
+      result = await withLlmStage("drain", () =>
+        drainProposals({
+          stashDir,
+          policy,
+          applyMode,
+          maxAccepts,
+          dryRun,
+          ...(maxDiffLines !== undefined ? { maxDiffLines } : {}),
+          ...(excludeIds ? { excludeIds } : {}),
+          judgment,
+        }),
+      );
+    } finally {
+      disposeDrainUsageSink();
+    }
 
     output("proposal-drain", {
       schemaVersion: 1,

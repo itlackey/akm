@@ -80,6 +80,8 @@ export type EventType =
   | "proposal_creation_rejected"
   /** Emitted by the improve loop after each per-asset reflect call — carries `ok`, `durationMs`, `reason`. */
   | "improve_reflect_outcome"
+  /** Per-call LLM usage telemetry (#576) — carries `{stage?, model?, durationMs, *Tokens?, finishReason?}`. */
+  | "llm_usage"
   | string;
 
 export interface AppendEventInput {
