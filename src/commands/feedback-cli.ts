@@ -5,18 +5,24 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
-import { parseAssetRef } from "../core/asset-ref";
-import { assembleAsset } from "../core/asset-serialize";
+import { parseAssetRef } from "../core/asset/asset-ref";
+import { assembleAsset } from "../core/asset/asset-serialize";
+import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { writeFileAtomic } from "../core/common";
-import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config";
+import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
+import {
+  applyFeedbackToUtilityScore,
+  closeDatabase,
+  findEntryIdByRef,
+  getEntryFilePathById,
+  openExistingDatabase,
+} from "../indexer/db/db";
 import { ensureIndex } from "../indexer/ensure-index";
-import { resolveSourceEntries } from "../indexer/search-source";
-import { insertUsageEvent } from "../indexer/usage-events";
+import { resolveSourceEntries } from "../indexer/search/search-source";
+import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -75,14 +81,12 @@ function appendLessonStrength(type: string, name: string, feedbackRef: string): 
       warn(`[feedback] --applied-to: lesson ${ref} is not in the index.`);
       return null;
     }
-    const row = db.prepare("SELECT file_path FROM entries WHERE id = ?").get(entryId) as
-      | { file_path: string }
-      | undefined;
-    if (!row?.file_path) {
+    const resolvedPath = getEntryFilePathById(db, entryId);
+    if (!resolvedPath) {
       warn(`[feedback] --applied-to: cannot resolve file path for ${ref}.`);
       return null;
     }
-    filePath = row.file_path;
+    filePath = resolvedPath;
   } finally {
     closeDatabase(db);
   }
@@ -154,7 +158,6 @@ export const feedbackCommand = defineCommand({
       type: "string",
       description: "Reason for the feedback (required for negative feedback by default; used by distillation)",
     },
-    note: { type: "string", description: "Alias for --reason (backward-compatible, prefer --reason)" },
     "failure-mode": {
       type: "string",
       description:
@@ -192,14 +195,7 @@ export const feedbackCommand = defineCommand({
         throw new UsageError("Specify --positive or --negative.");
       }
       const signal = args.positive ? "positive" : "negative";
-      // `--note` is a deprecated back-compat alias for `--reason` (removed in
-      // 0.9.0). Warn on stderr when it is used as the sole source (i.e. without
-      // an explicit `--reason`). Warnings go to stderr only so JSON stdout
-      // consumers are unaffected.
-      if ((args.note as string | undefined) !== undefined && (args.reason as string | undefined) === undefined) {
-        warn("warning: '--note' is deprecated for 'akm feedback'; use '--reason'. Removed in 0.9.0.");
-      }
-      const reason = (args.reason as string | undefined) ?? (args.note as string | undefined);
+      const reason = args.reason as string | undefined;
 
       // F-3 / #384: Validate --failure-mode against the curated enum.
       const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
@@ -284,17 +280,7 @@ export const feedbackCommand = defineCommand({
         // usage_events so the delta reflects the entire signal history.
         // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
         try {
-          const counts = db
-            .prepare(
-              `SELECT
-                 SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
-                 SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
-               FROM usage_events
-               WHERE event_type = 'feedback' AND entry_id = ?`,
-            )
-            .get(entryId) as { pos: number | null; neg: number | null } | undefined;
-          const pos = counts?.pos ?? 0;
-          const neg = counts?.neg ?? 0;
+          const { pos, neg } = countFeedbackSignals(db, entryId);
           utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
         } catch {
           // best-effort — feedback recording succeeds even if utility update fails

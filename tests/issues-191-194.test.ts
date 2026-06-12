@@ -30,8 +30,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resetConfigCache } from "../src/core/config";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { resetConfigCache } from "../src/core/config/config";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 
@@ -171,7 +171,7 @@ describe("issue #193 — database is locked under contention", () => {
   test("openDatabase sets PRAGMA busy_timeout so contended writers wait", async () => {
     // Use the actual openDatabase helper via dynamic import so we exercise
     // the same code path the CLI uses.
-    const { openDatabase, closeDatabase } = await import("../src/indexer/db");
+    const { openDatabase, closeDatabase } = await import("../src/indexer/db/db");
     const tmp = path.join(makeTempDir("akm-issue-193-"), "test.db");
     const db = openDatabase(tmp);
     try {
@@ -186,7 +186,7 @@ describe("issue #193 — database is locked under contention", () => {
   });
 
   test("WAL journal mode is preserved (regression guard)", async () => {
-    const { openDatabase, closeDatabase } = await import("../src/indexer/db");
+    const { openDatabase, closeDatabase } = await import("../src/indexer/db/db");
     const tmp = path.join(makeTempDir("akm-issue-193-wal-"), "test.db");
     const db = openDatabase(tmp);
     try {

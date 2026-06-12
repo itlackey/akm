@@ -18,7 +18,7 @@
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../src/core/config";
+import type { LlmConnectionConfig } from "../src/core/config/config";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
 

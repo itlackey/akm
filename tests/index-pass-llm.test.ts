@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig } from "../src/core/config";
-import { loadUserConfig, resetConfigCache } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
+import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
 import { resolveIndexPassLLM } from "../src/llm/index-passes";
@@ -181,7 +181,7 @@ describe("config loader: `index` block parsing", () => {
       },
     });
     const config = loadUserConfig();
-    const { getIndexPassConfig } = await import("../src/core/config");
+    const { getIndexPassConfig } = await import("../src/core/config/config");
     expect(getIndexPassConfig(config.index, "graph")?.graphExtractionIncludeTypes).toEqual(["memory", "command"]);
   });
 

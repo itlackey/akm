@@ -104,7 +104,7 @@ akm show skill:code-review
 akm show workflow:ship-release
 akm show script:deploy.sh
 akm show knowledge:api-guide
-akm show vault:prod         # shows key names only; values never appear in output
+akm show env:prod           # shows key names only; values never appear in output
 akm show wiki:ops/runbook
 
 # From a specific source (origin-qualified ref):
@@ -112,7 +112,7 @@ akm show "npm:@scope/pkg//script:deploy.sh"
 akm show "github:owner/repo//workflow:release"
 ```
 
-**Get refs from search.** Agents should call `akm search --detail agent` or
+**Get refs from search.** Agents should call `akm search --shape agent` or
 `akm curate` to discover refs — not guess them. The `ref` field in search
 results is the stable token to pass to `akm show`.
 
@@ -126,7 +126,7 @@ akm curate "deploy to production" --limit 3
 akm show workflow:deploy-to-prod
 
 # 3. Record outcome
-akm feedback workflow:deploy-to-prod --positive --note "Completed without issues"
+akm feedback workflow:deploy-to-prod --positive --reason "Completed without issues"
 ```
 
 ## akm agent — dispatching with a stash agent asset

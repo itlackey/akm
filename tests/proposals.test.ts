@@ -9,9 +9,7 @@ import {
   akmProposalReject,
   akmProposalRevert,
   akmProposalShow,
-} from "../src/commands/proposal";
-import type { AkmConfig } from "../src/core/config";
-import { readEvents } from "../src/core/events";
+} from "../src/commands/proposal/proposal";
 import {
   AUTOMATED_PROPOSAL_SOURCES,
   archiveProposal,
@@ -25,17 +23,15 @@ import {
   listProposals,
   PROPOSAL_SOURCES,
   validateProposal,
-} from "../src/core/proposals";
+} from "../src/commands/proposal/validators/proposals";
+import type { AkmConfig } from "../src/core/config/config";
+import { readEvents } from "../src/core/events";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
-const savedEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-};
+let storage: IsolatedAkmStorage;
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -61,20 +57,11 @@ function makeConfig(stashDir: string): AkmConfig {
 }
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-proposals-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-proposals-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-proposals-data-");
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
-  if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
-  else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
-  if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
-  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-  if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  storage.cleanup();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -147,9 +134,9 @@ describe("createProposal / listProposals / getProposal", () => {
     expect(result.proposal.status).toBe("rejected");
     expect(result.proposal.review?.reason).toBe("duplicate of existing lesson");
 
-    // archive directory contains it
-    const archivePath = path.join(stash, ".akm", "proposals", "archive", created.id, "proposal.json");
-    expect(fs.existsSync(archivePath)).toBe(true);
+    // archived (rejected) listing contains it
+    const archived = listProposals(stash, { status: "rejected", includeArchive: true });
+    expect(archived.map((p) => p.id)).toEqual([created.id]);
 
     // live queue empty
     const live = listProposals(stash);
@@ -521,7 +508,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
       payload: { content: VALID_LESSON },
     });
     expect(isProposalSkipped(result)).toBe(false);
-    const proposal = result as import("../src/core/proposals").Proposal;
+    const proposal = result as import("../src/commands/proposal/validators/proposals").Proposal;
     expect(proposal.source).toBe("reflect");
     expect(proposal.sourceRun).toBe("run-abc-123");
   });
@@ -762,7 +749,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
 // ── Phase 6C — Proposal reversion (Advantage D6c) ───────────────────────────
 
 describe("Phase 6C: promoteProposal captures backup; revertProposal restores it", () => {
-  test("backup is captured when target asset exists; backup field present on archived proposal", async () => {
+  test("backup is captured when target asset exists; backupContent present on archived proposal", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
     // Pre-write existing lesson so promotion has prior content to back up.
@@ -785,12 +772,9 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(accepted.ok).toBe(true);
 
-    // Backup file should exist under archive/<id>/backup.md
+    // Backup content should be carried on the archived proposal record.
     const reloaded = getProposal(stash, created.id);
-    expect(reloaded.backup).toBe("backup.md");
-    const backupAbs = path.join(stash, ".akm", "proposals", "archive", created.id, "backup.md");
-    expect(fs.existsSync(backupAbs)).toBe(true);
-    expect(fs.readFileSync(backupAbs, "utf8")).toContain("Original body content.");
+    expect(reloaded.backupContent).toContain("Original body content.");
 
     // New asset content was actually written.
     expect(fs.readFileSync(lessonPath, "utf8")).toContain("Prefer rg over grep");
@@ -810,7 +794,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
 
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
     const reloaded = getProposal(stash, created.id);
-    expect(reloaded.backup).toBeUndefined();
+    expect(reloaded.backupContent).toBeUndefined();
   });
 
   test("revert on an accepted proposal restores prior content and marks status=reverted", async () => {

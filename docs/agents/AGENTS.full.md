@@ -1,6 +1,6 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, vaults, wikis, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, env files, secrets, wikis, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
@@ -16,7 +16,7 @@ akm curate "<task>"                          # Curate the best matches for a tas
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `vault`, `wiki`, `lesson`, `any` | `any` |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `env`, `secret`, `wiki`, `lesson`, `any` | `any` |
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
@@ -49,7 +49,8 @@ akm show wiki:research                        # Wiki summary (same as akm wiki s
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
-| vault | `keys`, `comments` (values are never returned) |
+| env | `keys`, `comments` (values are never returned) |
+| secret | metadata only (the single value is never returned) |
 | wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
 | lesson | `content` plus `when_to_use` from frontmatter — read both before applying the lesson |
 
@@ -80,7 +81,7 @@ ranking can learn from actual usage.
 ## Proposals & improvement (0.8.0+)
 
 Reflective edits, new asset drafts, and feedback-distilled lessons land
-in a durable proposal queue first — `akm accept` is the only
+in a durable proposal queue first — `akm proposal accept` is the only
 path that mutates the live stash.
 
 ```sh
@@ -111,7 +112,7 @@ The six proposal subcommands are now accessed via the `proposal` noun group:
 - `akm proposal reject` (was `akm reject`)
 - `akm proposal revert` (was `akm revert`)
 
-The flat verbs remain as deprecated aliases that warn on stderr (removed in 0.9.0).
+The flat verbs were removed in 0.9.0; use the `akm proposal <verb>` forms.
 
 ## Wikis
 
@@ -134,8 +135,8 @@ akm wiki lint research                         # Structural checks: orphans, bro
 akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
 akm wiki ingest research --profile claude --model sonnet  # Override agent profile and model
 akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout
-akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
-akm wiki remove research --force --with-sources # Full nuke, including raw/
+akm wiki remove research -y                    # Delete pages/schema/index/log; preserves raw/
+akm wiki remove research -y --with-sources     # Full nuke, including raw/
 ```
 
 **For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`
@@ -184,8 +185,7 @@ When `--dest` is provided, `akm setup` is not required first.
 ## Sync
 
 Commit local changes in a git-backed stash. Behaviour adapts automatically.
-(`akm save` is the deprecated 0.7 spelling — it still works but warns; removed
-in 0.9.0.)
+(`akm save`, the pre-0.8 spelling, was removed in 0.9.0 — use `akm sync`.)
 
 - **Not a git repo** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default stash always falls here)
@@ -263,9 +263,9 @@ Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
 - `timeoutMs: null` — disable the agent kill timer (useful for long-running local-model tasks)
 - `timeoutMs: 120000` — override with a specific value in milliseconds
 
-## Events — Accepted Types
+## Log — Accepted Event Types
 
-`akm events list --type <type>` accepts: `add`, `remove`, `update`, `remember`,
+`akm log list --type <type>` accepts: `add`, `remove`, `update`, `remember`,
 `import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`,
 `select`, `improve_skipped`, `reflect_completed`.
 

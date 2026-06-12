@@ -171,19 +171,25 @@ export async function writeAssetToSource(
 
   const filePath = resolveAssetPath(source.path(), ref);
   await writeFile(filePath, content);
-
-  // git-specific convenience: commit and optionally push
-  if (source.kind === "git") {
-    await git("-C", source.path(), "add", filePath);
-    await git("-C", source.path(), "commit", "-m", `Update ${formatRef(ref)}`);
-    if (config.options.pushOnCommit) {
-      await git("-C", source.path(), "push");
-    }
-  }
+  // No commit here — for any kind. See the 0.9.0 amendment below.
 }
 ```
 
-This is the **only** place in the codebase that branches on `source.kind`, and it's intentional — "git has a commit step" is domain knowledge, not polymorphism. If a third kind ever needs special write handling, it gets added here. If it becomes more than two or three cases, revisit and introduce a hook. For v1 it's two cases.
+> **0.9.0 amendment (issue #507) — single batch-at-boundary commit.** The
+> original v1 design committed (and optionally pushed) per asset write for
+> `kind === "git"`, gated on `config.options.pushOnCommit`. That model staged
+> only the single asset file (leaving `.akm/` state dirty) and produced one
+> noisy commit per asset (~25 per improve run). It is **retired**. `writeAssetToSource`
+> / `deleteAssetFromSource` now perform a plain filesystem write/unlink for
+> **every** kind and never commit. Git-backed targets are committed **once** at
+> the operation boundary by `commitWriteTargetBoundary(target, message, { push })`,
+> which delegates to `saveGitStash` — `git add -A` (staging `.akm/` + sibling
+> assets as one complete commit), a guarded commit, and a push gated on
+> `writable && hasRemote && push !== false` (the same gate as `improve` sync
+> push). The deprecated `pushOnCommit` knob still parses but only maps its push
+> intent onto that gate and emits a one-time deprecation warning.
+
+With the commit removed, `writeAssetToSource` no longer branches on `source.kind` for commit behaviour — the only remaining `kind` check is the unsupported-kind guard (filesystem / git only).
 
 ### 2.7 Delete is symmetric
 
@@ -196,17 +202,12 @@ export async function deleteAssetFromSource(
   if (!config.writable) throw new UsageError(/* ... */);
   const filePath = resolveAssetPath(source.path(), ref);
   await unlink(filePath);
-  if (source.kind === "git") {
-    await git("-C", source.path(), "add", filePath);
-    await git("-C", source.path(), "commit", "-m", `Remove ${formatRef(ref)}`);
-    if (config.options.pushOnCommit) {
-      await git("-C", source.path(), "push");
-    }
-  }
+  // No commit here — for any kind (0.9.0 amendment, issue #507). The caller
+  // fires commitWriteTargetBoundary() once after a batch of mutations.
 }
 ```
 
-Same pattern.
+Same pattern — symmetric with the write path, and likewise committed once at the operation boundary rather than per asset.
 
 ---
 
@@ -338,7 +339,8 @@ union. The v1 contract is:
 - **Well-known types**, each with a renderer, a directory under the working
   stash, and frontmatter expectations:
   `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `workflow`,
-  `env`, `vault`, `secret`, `wiki`, `task`, and (Planned for v1) `lesson`. See
+  `env`, `vault`, `secret`, `wiki`, `task`, `session`, and (Planned for v1)
+  `lesson`. See
   §13. The `task` type stores cron-style scheduled invocations of workflows or
   prompts; `akm tasks` registers them with the OS-native scheduler (cron /
   launchd / schtasks). The `env` type stores a group of related configuration
@@ -348,7 +350,11 @@ union. The v1 contract is:
   predecessor of `env` (removed in 0.9.0). The `secret` type stores a single
   sensitive value used on its own for authentication (one per file); like `env`,
   the values never appear in structured output and are used only via
-  `akm secret run` / `akm secret path`.
+  `akm secret run` / `akm secret path`. The `session` type (#561) is a
+  generated, searchable record of a prior agent session, written by the
+  `extract` pass to `sessions/<harness>/<id>.md`; it carries `log_path` +
+  `access` frontmatter so an agent can navigate into the raw session log, and an
+  LLM `## Summary` / `## Key topics` body that is the searchable surface.
 - **Plugin-registered types** are allowed via `registerAssetType()` (see
   `src/core/asset-spec.ts`) and behave like well-known types as long as they
   register a renderer. Unknown types parse, index, and search; they render as
@@ -408,8 +414,10 @@ introduces on the locked hit type. Both are optional. Renderers in
       "writable": true },
 
     { "name": "team", "kind": "git",
-      "options": { "url": "git+https://github.com/team/kit", "pushOnCommit": true },
+      "options": { "url": "git+https://github.com/team/kit" },
       "writable": true },
+    // 0.9.0: a writable git source with a remote is pushed by the single
+    // boundary commit; the old per-asset `pushOnCommit` knob is deprecated.
 
     { "name": "upstream", "kind": "git",
       "options": { "url": "git+https://github.com/someone/kit" },
@@ -873,29 +881,36 @@ content is never mutated by reflection, generation, or distillation paths.
 
 ### 11.1 Storage
 
-- Proposals live as one directory per proposal under
-  `<stashRoot>/.akm/proposals/<id>/`, each containing a single
-  `proposal.json` file. The store is plain filesystem state and survives
-  `akm index --full` and binary upgrades. Directory-per-id is what
-  guarantees multiple proposals can coexist for the same `ref` without
-  path collisions.
-- A single `proposal.json` carries: `id` (UUID), `ref` (the target asset
-  ref it would propose), `status` (`pending` | `accepted` | `rejected`),
+- Proposals live as rows in the `proposals` table of `state.db` (SQLite,
+  WAL mode — the same durable database that holds events and improve
+  runs). Each row is keyed by a random UUID `id`, so multiple proposals
+  can coexist for the same `ref` without collisions, and is partitioned
+  by `stash_dir` so multi-stash installs keep independent queues. The
+  store is non-regenerable state and survives `akm index --full` and
+  binary upgrades.
+- A proposal row carries: `id` (UUID), `ref` (the target asset
+  ref it would propose), `status` (`pending` | `accepted` | `rejected` |
+  `reverted`),
   `source` (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id),
   `sourceRun` (opaque correlation id), `createdAt`, `updatedAt`,
   `payload.frontmatter`, `payload.content`, and an optional `review`
   block (`outcome`, `reason`, `decidedAt`).
-- Rejected proposals are physically moved to
-  `<stashRoot>/.akm/proposals/archive/<id>/`. The move is the archival
-  state — there is no separate `archived` status, so the on-disk
-  location is the source of truth for "active vs. archived" listings.
-- Invalid `proposal.json` files are surfaced via `akm proposal list`
-  with a clear warning entry. They do not crash the queue.
+- Archival is a status flip, not a move: any non-`pending` status is
+  archived. There is no separate `archived` flag — the `status` column
+  is the source of truth for "active vs. archived" listings.
+- Legacy import: stashes created before 0.9.0 stored proposals as
+  per-uuid JSON directories under `<stashRoot>/.akm/proposals/<id>/`
+  (each containing a `proposal.json`, with archived entries moved under
+  `…/proposals/archive/<id>/`). The first proposal operation against
+  such a stash imports those files into the `proposals` table (keyed on
+  the UUID, so re-runs never duplicate) and records the stash in
+  `proposal_fs_imports`; the legacy files are left in place as inert
+  artifacts.
 - The proposal store is queue state, not asset state, so it does **not**
   go through `writeAssetToSource()` for proposal writes themselves
   (only the eventual promotion in `accept` does). This is the single
   documented carve-out from the §5.4 write-helper rule, recorded in the
-  module docblock of `src/core/proposals.ts`.
+  module docblock of `src/commands/proposal/validators/proposals.ts`.
 
 ### 11.2 Commands
 
@@ -919,8 +934,8 @@ write-source policy) **before** promoting. Promotion calls
 `writeAssetToSource()` for the configured write target (§5.4) — same path
 as `akm remember` / `akm import`.
 
-`reject` writes review metadata (outcome, reason, decidedAt) and moves
-the proposal directory under `<stashRoot>/.akm/proposals/archive/<id>/`.
+`reject` writes review metadata (outcome, reason, decidedAt) and flips the
+row's status to `rejected`, archiving it out of the live queue.
 The body is preserved.
 
 `diff` shows the proposed delta against the live asset (or the empty file

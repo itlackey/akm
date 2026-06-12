@@ -18,18 +18,18 @@
  *    `belief=historical`.
  */
 
-import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmImprove } from "../src/commands/improve";
-import { akmSearch } from "../src/commands/search";
-import { saveConfig } from "../src/core/config";
+import { akmImprove } from "../src/commands/improve/improve";
+import { akmSearch } from "../src/commands/read/search";
+import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
-import type { StashEntry } from "../src/indexer/metadata";
-import type { RankedEntryInput } from "../src/indexer/ranking";
-import { applyScoreContributors } from "../src/indexer/ranking-contributors";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { RankedEntryInput } from "../src/indexer/search/ranking";
+import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
+import type { Database } from "../src/storage/database";
 
 const tempDirs: string[] = [];
 const savedEnv = {

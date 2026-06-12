@@ -15,9 +15,9 @@ import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 // contract change, not a rename of a doc-only schematic.
 const REQUIRED_FILES = [
   "src/cli.ts",
-  "src/core/asset-ref.ts",
+  "src/core/asset/asset-ref.ts",
   "src/core/errors.ts",
-  "src/core/config.ts",
+  "src/core/config/config.ts",
   "src/core/write-source.ts",
 ];
 

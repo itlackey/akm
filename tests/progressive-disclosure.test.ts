@@ -2,10 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmShowUnified as akmShow } from "../src/commands/show";
-import { saveConfig } from "../src/core/config";
-import { buildDbHit } from "../src/indexer/db-search";
-import type { StashEntry } from "../src/indexer/metadata";
+import { akmShowUnified as akmShow } from "../src/commands/read/show";
+import { saveConfig } from "../src/core/config/config";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { buildDbHit } from "../src/indexer/search/db-search";
 
 // Trigger source-provider self-registration
 import "../src/sources/providers/index";

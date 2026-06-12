@@ -2,12 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { fetchWithRetry } from "../../core/common";
-import type { SourceSpec } from "../../core/config";
+import type { SourceSpec } from "../../core/config/config";
+import { writeResponseToFile } from "../../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
@@ -47,11 +48,16 @@ export function detectStashRoot(extractedDir: string): string {
   return root;
 }
 
+/** A collision-resistant slug used to isolate cache dirs that lack a stable version. */
+function uniqueSlug(): string {
+  return randomUUID();
+}
+
 /**
  * Build a per-source cache directory under `cacheRootDir`.
  *
  * Versioned sources get `${source}-${id}/${version}` for cache reuse;
- * `local` sources get a unique timestamped slug so each install is isolated.
+ * `local` sources get a unique slug so each install is isolated.
  */
 export function buildInstallCacheDir(
   cacheRootDir: string,
@@ -60,10 +66,7 @@ export function buildInstallCacheDir(
   version?: string,
 ): string {
   const slug = `${source}-${id.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "")}`;
-  const versionSlug =
-    source === "local"
-      ? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-      : (version?.replace(/[^a-zA-Z0-9_.-]+/g, "-") ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  const versionSlug = source === "local" ? uniqueSlug() : (version?.replace(/[^a-zA-Z0-9_.-]+/g, "-") ?? uniqueSlug());
   return path.join(cacheRootDir, slug || source, versionSlug);
 }
 
@@ -87,23 +90,14 @@ export function applyAkmIncludeConfig(
   return selectedDir;
 }
 
-/** Stream a remote archive to disk using Bun.write when available. */
+/** Stream a remote archive to disk via the runtime boundary's response writer. */
 export async function downloadArchive(url: string, destination: string): Promise<void> {
   const response = await fetchWithRetry(url, undefined, { timeout: 120_000 });
   if (!response.ok) {
     throw new Error(`Failed to download archive (${response.status}) from ${url}`);
   }
   // Stream response to disk instead of buffering the entire archive in memory.
-  // Uses Bun.write which handles Response streaming natively.
-  const BunRuntime: { write(path: string, body: Response): Promise<number> } = (globalThis as Record<string, unknown>)
-    .Bun as typeof BunRuntime;
-  if (BunRuntime?.write) {
-    await BunRuntime.write(destination, response);
-  } else {
-    // Fallback for non-Bun environments (e.g., tests)
-    const arrayBuffer = await response.arrayBuffer();
-    fs.writeFileSync(destination, Buffer.from(arrayBuffer));
-  }
+  await writeResponseToFile(destination, response);
 }
 
 /** SHA-256 of a file, returned as `sha256:<hex>`. */

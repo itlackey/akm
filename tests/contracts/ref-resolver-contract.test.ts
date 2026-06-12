@@ -41,6 +41,9 @@ function buildFixtureStash(root: string): void {
   touch(path.join(root, "lessons", "no-fine-tuning.md"));
   touch(path.join(root, "tasks", "ship-0.8.0.md"));
   touch(path.join(root, "wikis", "akm-internals.md"));
+  touch(path.join(root, "agents", "release-captain.md"));
+  touch(path.join(root, "commands", "akm-sync.md"));
+  touch(path.join(root, "lessons", "ship-small.md"));
 
   // Skill multi-file layout.
   touch(path.join(root, "skills", "rollout", "SKILL.md"));
@@ -50,10 +53,6 @@ function buildFixtureStash(root: string): void {
 
   // Knowledge subdirectory layout (knowledge/<category>/<slug>.md).
   touch(path.join(root, "knowledge", "projects", "akm-release.md"));
-
-  // Vault: default (.env) and named (<name>.env).
-  touch(path.join(root, "vaults", ".env"));
-  touch(path.join(root, "vaults", "scheduler.env"));
 
   // Namespaced slug containing `/` — knowledge ref pointing at a file the
   // ref consumer has spelled with the full subpath.
@@ -87,6 +86,9 @@ const CONTRACT_CASES: ContractCase[] = [
   { description: "existing lesson", type: "lesson", slug: "no-fine-tuning", reachable: true },
   { description: "existing task", type: "task", slug: "ship-0.8.0", reachable: true },
   { description: "existing wiki", type: "wiki", slug: "akm-internals", reachable: true },
+  { description: "existing agent (2)", type: "agent", slug: "release-captain", reachable: true },
+  { description: "existing command (2)", type: "command", slug: "akm-sync", reachable: true },
+  { description: "existing lesson (2)", type: "lesson", slug: "ship-small", reachable: true },
   { description: "skill multi-file layout (SKILL.md inside dir)", type: "skill", slug: "rollout", reachable: true },
   {
     description: "memory backed only by .derived.md sibling",
@@ -104,13 +106,6 @@ const CONTRACT_CASES: ContractCase[] = [
     description: "namespaced knowledge slug (slug contains '/')",
     type: "knowledge",
     slug: "projects/akm/deep-dive",
-    reachable: true,
-  },
-  { description: "default vault (slug='default' -> .env)", type: "vault", slug: "default", reachable: true },
-  {
-    description: "named vault (slug='scheduler' -> scheduler.env)",
-    type: "vault",
-    slug: "scheduler",
     reachable: true,
   },
 
@@ -132,12 +127,6 @@ const CONTRACT_CASES: ContractCase[] = [
     description: "skill pointing at non-existent slug",
     type: "skill",
     slug: "no-such-skill",
-    reachable: false,
-  },
-  {
-    description: "named vault pointing at non-existent slug",
-    type: "vault",
-    slug: "no-such-vault",
     reachable: false,
   },
   // `script` is intentionally unresolvable by the contract — the type is

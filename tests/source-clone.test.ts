@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmClone } from "../src/commands/source-clone";
-import { saveConfig } from "../src/core/config";
+import { akmClone } from "../src/commands/sources/source-clone";
+import { saveConfig } from "../src/core/config/config";
 import { UsageError } from "../src/core/errors";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 

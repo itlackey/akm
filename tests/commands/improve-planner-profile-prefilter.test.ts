@@ -12,9 +12,9 @@
  * After the fix:
  *   - Refs where EVERY per-ref pass (reflect + distill) on the active profile
  *     would refuse them are dropped at planner time.
- *   - The audit trail moves to a single `improve_skipped` event per ref with
- *     `reason: "profile_filtered_all_passes"` and an envelope entry under
- *     `profileFilteredRefs`.
+ *   - The audit trail moves to a single summary `improve_skipped` event with
+ *     metadata `{reason: "profile_filtered_all_passes", count}` (#592) and an
+ *     envelope entry per ref under `profileFilteredRefs`.
  *   - Refs that some-but-not-all passes refuse still flow through (so the
  *     partial-pass work still happens).
  *   - Refs whose type IS accepted are unaffected.
@@ -26,10 +26,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AkmDistillResult } from "../../src/commands/distill";
-import { akmImprove } from "../../src/commands/improve";
-import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/reflect";
-import { saveConfig } from "../../src/core/config";
+import type { AkmDistillResult } from "../../src/commands/improve/distill";
+import { akmImprove } from "../../src/commands/improve/improve";
+import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/improve/reflect";
+import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
 
@@ -268,7 +268,8 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     const profileFilteredEvents = events.filter(
       (e) => (e.metadata as { reason?: string } | undefined)?.reason === "profile_filtered_all_passes",
     );
-    // One summary event (not one per ref) to avoid O(n) DB writes on large stashes.
+    // #592: one summary event (not one per ref) to avoid O(n) sequential
+    // state.db writes on large stashes.
     expect(profileFilteredEvents).toHaveLength(1);
     expect((profileFilteredEvents[0]?.metadata as { count?: number } | undefined)?.count).toBe(3);
   });

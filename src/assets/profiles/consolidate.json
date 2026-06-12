@@ -1,0 +1,13 @@
+{
+  "description": "Consolidation-only pass — merges, deduplicates, and prunes memories every 4h.",
+  "processes": {
+    "reflect": { "enabled": false },
+    "distill": { "enabled": false },
+    "consolidate": { "enabled": true, "allowedTypes": ["memory"], "maxChunkSize": 25, "minPoolSize": 500 },
+    "memoryInference": { "enabled": false },
+    "graphExtraction": { "enabled": false },
+    "extract": { "enabled": false },
+    "triage": { "enabled": false }
+  },
+  "sync": { "enabled": true, "push": true }
+}

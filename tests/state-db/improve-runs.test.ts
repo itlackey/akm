@@ -14,31 +14,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import type { AkmImproveResult } from "../../src/commands/improve";
+import type { AkmImproveResult } from "../../src/commands/improve/improve";
 import {
   computeImproveRunMetrics,
   openStateDatabase,
   purgeOldImproveRuns,
   recordImproveRun,
 } from "../../src/core/state-db";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
-const savedEnv = {
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
-
-const tempDirs: string[] = [];
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+let storage: IsolatedAkmStorage;
 
 function buildMinimalResult(overrides: Partial<AkmImproveResult> = {}): AkmImproveResult {
   return {
@@ -54,20 +39,11 @@ function buildMinimalResult(overrides: Partial<AkmImproveResult> = {}): AkmImpro
 }
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-impr-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-impr-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-impr-data-");
-  process.env.XDG_STATE_HOME = makeTempDir("akm-impr-state-");
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
-  for (const [key, value] of Object.entries(savedEnv)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  storage.cleanup();
 });
 
 describe("migration 003 — improve_runs", () => {
@@ -279,6 +255,33 @@ describe("recordImproveRun", () => {
     }
   });
 
+  test("buckets reflect-guard-rejected as rejected (round-2 health fix)", () => {
+    // Behaviour change (code-health round-2, audit items C1/H3): before the
+    // shared classifyImproveAction was introduced, computeImproveRunMetrics'
+    // switch had no case for `reflect-guard-rejected` and no default arm, so a
+    // guard rejection was silently counted in NONE of accepted/rejected/error —
+    // a data-integrity miscount. Owner-approved decision: bucket it as
+    // "rejected" (a deliberate non-application of the action). This asserts the
+    // corrected total: the guard rejection now contributes to rejectedCount.
+    const metrics = computeImproveRunMetrics(
+      buildMinimalResult({
+        plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
+        actions: [
+          { ref: "lesson:a", mode: "reflect", result: { ok: true } as never },
+          {
+            ref: "lesson:b",
+            mode: "reflect-guard-rejected",
+            result: { ok: true, reason: "EXCESSIVE_SHRINKAGE" },
+          },
+        ],
+      }),
+    );
+    expect(metrics.acceptedCount).toBe(1);
+    // Was 0 before the fix (the variant vanished); now 1.
+    expect(metrics.rejectedCount).toBe(1);
+    expect(metrics.errorCount).toBe(0);
+  });
+
   test("computeImproveRunMetrics is a pure helper consistent with recorded metrics", () => {
     const result = buildMinimalResult({
       plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
@@ -405,7 +408,7 @@ describe("purgeOldImproveRuns", () => {
 // `akm health` can see what happened without inferring from task_history.
 describe("recordTerminatedImproveRun", () => {
   test("writes an ok:false row with metadata.terminated.reason for SIGTERM", async () => {
-    const { recordTerminatedImproveRun } = await import("../../src/commands/improve-result-file");
+    const { recordTerminatedImproveRun } = await import("../../src/commands/improve/improve-result-file");
     const db = openStateDatabase();
     try {
       const runId = "2026-05-26T05-07-01-587Z-deadbeef";
@@ -446,7 +449,7 @@ describe("recordTerminatedImproveRun", () => {
   });
 
   test("captures errorMessage for exception terminations and preserves scope_value", async () => {
-    const { recordTerminatedImproveRun } = await import("../../src/commands/improve-result-file");
+    const { recordTerminatedImproveRun } = await import("../../src/commands/improve/improve-result-file");
     const db = openStateDatabase();
     try {
       const runId = "2026-05-26T05-08-00-000Z-cafebabe";

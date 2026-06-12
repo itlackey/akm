@@ -1,7 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AutoAcceptGateConfig, ProposalCandidate } from "../../../src/commands/improve-auto-accept";
-import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "../../../src/commands/improve-auto-accept";
-import type { AkmConfig } from "../../../src/core/config";
+import type { AutoAcceptGateConfig, ProposalCandidate } from "../../../src/commands/improve/improve-auto-accept";
+import {
+  makeGateConfig,
+  resolveExtractConfidence,
+  runAutoAcceptGate,
+} from "../../../src/commands/improve/improve-auto-accept";
+import type { AkmConfig } from "../../../src/core/config/config";
 import type { EventsContext } from "../../../src/core/events";
 
 // ---------------------------------------------------------------------------

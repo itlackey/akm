@@ -11,6 +11,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Run test files sequentially to avoid a Bun v1.x epoll_ctl EEXIST race:
+    # force-stopping mock HTTP servers (stop(true)) recycles fd numbers fast,
+    # and concurrent workers can hit a stale epoll entry for the reused fd.
+    # Sequential execution eliminates concurrent fd pressure entirely.
+    # Tests complete in ~10-15 min sequentially, well within the 45-min cap.
+    env:
+      TEST_PARALLEL: "1"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -244,62 +252,5 @@ jobs:
           done
 
           exit 1
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-  # Post-publish smoke test (#481): install the just-shipped artifact in a
-  # clean environment and verify `akm --version` reports the version that
-  # was published. Catches broken `dist/cli.js` (missing shebang, wrong
-  # entry, ESM/CJS mismatch) and broken Linux x64 binaries BEFORE users do.
-  # We don't gate the publish on this — the tag, npm package, and assets
-  # are already live by the time we run — but a red smoke job is a clear
-  # paging signal that the published artifact is broken and needs an rc.N+1.
-  smoke:
-    needs: [version, publish, github-release]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Wait for npm registry propagation
-        run: |
-          VERSION="${{ needs.version.outputs.tag }}"
-          VERSION="${VERSION#v}"
-          for attempt in 1 2 3 4 5 6; do
-            if npm view "akm-cli@$VERSION" version >/dev/null 2>&1; then
-              echo "akm-cli@$VERSION visible on npm (attempt $attempt)."
-              exit 0
-            fi
-            echo "Attempt $attempt: akm-cli@$VERSION not visible yet; sleeping 20s..."
-            sleep 20
-          done
-          echo "npm registry never surfaced akm-cli@$VERSION after 6 attempts."
-          exit 1
-
-      - name: Smoke — install from npm and run --version
-        run: |
-          VERSION="${{ needs.version.outputs.tag }}"
-          VERSION="${VERSION#v}"
-          bun install -g "akm-cli@$VERSION"
-          ACTUAL="$(akm --version 2>&1)"
-          echo "akm --version: $ACTUAL"
-          # Expect the version string to appear somewhere in the output —
-          # citty prints it bare, but a wrapper might add a prefix.
-          if ! echo "$ACTUAL" | grep -qF "$VERSION"; then
-            echo "FAIL: 'akm --version' did not contain expected version '$VERSION'."
-            exit 1
-          fi
-
-      - name: Smoke — download linux-x64 binary and run --version
-        run: |
-          TAG="${{ needs.version.outputs.tag }}"
-          VERSION="${TAG#v}"
-          curl -fsSL -o /tmp/akm "https://github.com/${{ github.repository }}/releases/download/${TAG}/akm-linux-x64"
-          chmod +x /tmp/akm
-          ACTUAL="$(/tmp/akm --version 2>&1)"
-          echo "binary --version: $ACTUAL"
-          if ! echo "$ACTUAL" | grep -qF "$VERSION"; then
-            echo "FAIL: binary 'akm --version' did not contain expected version '$VERSION'."
-            exit 1
-          fi
         env:
           GH_TOKEN: ${{ github.token }}

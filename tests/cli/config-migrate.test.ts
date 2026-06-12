@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { migrateConfigShape } from "../../src/cli/config-migrate";
-import { CURRENT_CONFIG_VERSION, migrateConfigShape as migrateConfigShapeCore } from "../../src/core/config-migration";
+import {
+  CURRENT_CONFIG_VERSION,
+  migrateConfigShape as migrateConfigShapeCore,
+} from "../../src/core/config/config-migration";
 import { setQuiet } from "../../src/core/warn";
 
 describe("migrateConfigShape (CLI wrapper)", () => {
@@ -169,6 +172,46 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(defaults.agent).toBe("opencode");
     const profiles = result.profiles as { agent?: Record<string, { platform?: string; bin?: string }> };
     expect(profiles.agent?.opencode?.bin).toBe("opencode");
+    expect(profiles.agent?.opencode?.platform).toBe("opencode");
+  });
+
+  test("(#566) infers v1 agent-profile platform via the harness registry, keeping legacy names", () => {
+    // v1 profiles carry no explicit `platform`; it is inferred from the name.
+    // After #566 this goes through the registry-backed v1ProfilePlatform so the
+    // legacy 'claude-code' profile name resolves to canonical 'claude' (the
+    // normalization bridge keeps round-tripping) and an 'opencode-sdk-fast'
+    // decorated name resolves to 'opencode-sdk', not 'opencode'.
+    const input = {
+      agent: {
+        profiles: {
+          "claude-code": { bin: "claude" },
+          "opencode-sdk-fast": { bin: "opencode" },
+        },
+      },
+    };
+    const { result } = migrateConfigShape(input);
+    const profiles = result.profiles as { agent?: Record<string, { platform?: string }> };
+    expect(profiles.agent?.["claude-code"]?.platform).toBe("claude");
+    expect(profiles.agent?.["opencode-sdk-fast"]?.platform).toBe("opencode-sdk");
+  });
+
+  test("(#566) an unknown v1 agent-profile harness name is dropped, NOT misclassified to opencode", () => {
+    // Pre-#566, guessAgentPlatform returned undefined only for non-prefixed
+    // names; the real hazard is silent MISclassification elsewhere. Here the
+    // contract is: a name no harness claims has no usable platform and is
+    // dropped rather than written as a bogus 'opencode' profile.
+    const input = {
+      agent: {
+        profiles: {
+          cursor: { bin: "cursor" },
+          opencode: { bin: "opencode" },
+        },
+      },
+    };
+    const { result } = migrateConfigShape(input);
+    const profiles = result.profiles as { agent?: Record<string, { platform?: string }> };
+    expect(profiles.agent?.cursor).toBeUndefined();
+    // the known one still migrates correctly
     expect(profiles.agent?.opencode?.platform).toBe("opencode");
   });
 

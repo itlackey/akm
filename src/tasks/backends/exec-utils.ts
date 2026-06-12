@@ -3,12 +3,68 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 
 /** Shared result type for synchronous command execution. */
 export interface ExecResult {
   status: number;
   stdout: string;
   stderr: string;
+}
+
+/**
+ * Common structural shape of the synchronous exec seam shared by the task
+ * backends. Backends declare their own *Exec interfaces (some add fields such
+ * as `uid()`); this is the subset they all share and that {@link nodeExec}
+ * provides by default.
+ */
+export interface NodeExec {
+  run(args: string[]): ExecResult;
+}
+
+/**
+ * Default exec strategy: run commands synchronously via {@link spawnCommand}.
+ *
+ * This is the shared default for every task backend's `exec` seam. Backends
+ * that need extra fields (e.g. launchd's `uid()`) spread this and add them.
+ */
+export function nodeExec(): NodeExec {
+  return {
+    run(args: string[]) {
+      return spawnCommand(args);
+    },
+  };
+}
+
+/**
+ * Common structural shape of the synchronous filesystem seam shared by the
+ * task backends. Backends declare their own *Fs interfaces with additional
+ * members (launchd adds `list`/`exists`; schtasks adds `tmpdir`); this is the
+ * subset whose default implementation is byte-identical across them and that
+ * {@link nodeFs} provides.
+ */
+export interface NodeFs {
+  writeFile(file: string, content: string): void;
+  ensureDir(dir: string): void;
+}
+
+/**
+ * Default filesystem strategy for the shared subset of the backend `fs` seam
+ * (`writeFile` + `ensureDir`), backed by `node:fs`.
+ *
+ * Backends spread this and add their own members. Note `removeFile` is NOT
+ * shared here: the launchd and schtasks defaults differ observably (schtasks
+ * swallows errors; launchd does not), so each keeps its own.
+ */
+export function nodeFs(): NodeFs {
+  return {
+    writeFile(file: string, content: string) {
+      fs.writeFileSync(file, content, { encoding: "utf8" });
+    },
+    ensureDir(dir: string) {
+      fs.mkdirSync(dir, { recursive: true });
+    },
+  };
 }
 
 /**

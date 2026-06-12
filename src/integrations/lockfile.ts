@@ -7,7 +7,7 @@ import path from "node:path";
 import { writeFileAtomic } from "../core/common";
 import { rethrowIfTestIsolationError } from "../core/errors";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
-import { getDataDir } from "../core/paths";
+import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
 // ("npm" | "github" | "git" | "local"). It is now derived from
@@ -37,26 +37,13 @@ export interface LockfileEntry {
   integrity?: string;
 }
 
-// ── Paths ───────────────────────────────────────────────────────────────────
-
-const LOCKFILE_NAME = "akm.lock";
-
-function getLockfilePath(): string {
-  return path.join(getDataDir(), LOCKFILE_NAME);
-}
-
 // ── Lock sentinel ────────────────────────────────────────────────────────────
 
 const LOCK_MAX_RETRIES = 3;
 const LOCK_RETRY_DELAY_MS = 100;
 
-function getLockSentinelPath(): string {
-  // The sentinel always lives next to the lock file it guards.
-  return `${path.join(getDataDir(), LOCKFILE_NAME)}.lck`;
-}
-
 async function acquireLockSentinel(): Promise<boolean> {
-  const sentinelPath = getLockSentinelPath();
+  const sentinelPath = getLockfileLockPath();
   // Ensure the directory exists before attempting to create the sentinel.
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
@@ -77,7 +64,7 @@ async function acquireLockSentinel(): Promise<boolean> {
 }
 
 function releaseLockSentinel(): void {
-  releaseLock(getLockSentinelPath());
+  releaseLock(getLockfileLockPath());
 }
 
 // ── Read / Write ────────────────────────────────────────────────────────────
@@ -99,7 +86,7 @@ export function readLockfile(): LockfileEntry[] {
 
 export function writeLockfile(entries: LockfileEntry[]): void {
   // Always write to $DATA — never to the legacy $CONFIG location.
-  const lockfilePath = path.join(getDataDir(), LOCKFILE_NAME);
+  const lockfilePath = getLockfilePath();
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });
   writeFileAtomic(lockfilePath, `${JSON.stringify(entries, null, 2)}\n`);

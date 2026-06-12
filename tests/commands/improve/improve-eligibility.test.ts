@@ -16,10 +16,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmDistillResult } from "../../../src/commands/distill";
-import { akmImprove } from "../../../src/commands/improve";
-import type { AkmReflectResult } from "../../../src/commands/reflect";
-import { saveConfig } from "../../../src/core/config";
+import type { AkmDistillResult } from "../../../src/commands/improve/distill";
+import { akmImprove } from "../../../src/commands/improve/improve";
+import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
+import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
 
@@ -62,6 +62,18 @@ async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
+}
+
+// #553: these pool-delta / #551-gate tests use single-memory sandboxed pools.
+// The default consolidate minPoolSize guard (500) would otherwise short-circuit
+// the consolidation pass before the mtime-delta gate runs. Disable the pool-size
+// guard (minPoolSize: 0) so these tests exercise the gate they pin, not the new
+// guard. (A dedicated suite covers the minPoolSize guard itself.)
+function configWithoutPoolGuard(): import("../../../src/core/config/config").AkmConfig {
+  return {
+    semanticSearchMode: "off",
+    profiles: { improve: { default: { processes: { consolidate: { minPoolSize: 0 } } } } },
+  } as import("../../../src/core/config/config").AkmConfig;
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
@@ -380,6 +392,7 @@ describe("consolidate pool-delta eligibility", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
@@ -409,6 +422,128 @@ describe("consolidate pool-delta eligibility", () => {
 
     await akmImprove({
       scope: "memory",
+      config: configWithoutPoolGuard(),
+      stashDir: stash,
+      minRetrievalCount: 0,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
+    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
+  });
+});
+
+// ── #551: consolidation runs before extract + smarter pool-delta gate ────────
+
+describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
+  // (a) Consolidation now runs BEFORE the session-extract phase. We prove this
+  // structurally: the consolidation decision event (here, the pool-delta skip)
+  // is emitted strictly BEFORE `improve_invoked`, which is emitted AFTER the
+  // extract phase inside the preparation stage. Events are returned in
+  // monotonic insertion order (`ORDER BY id ASC`), so index comparison is
+  // deterministic — no wall-clock dependency.
+  test("consolidation phase is emitted before the extract phase (event order)", async () => {
+    const stash = makeTempDir("akm-551-order-");
+    writeMemory(stash, "settled-mem", "Stable content.");
+    await buildIndex(stash);
+    // Force the pool-delta SKIP path so a consolidation decision event fires
+    // deterministically without an LLM: a far-future last-consolidate ts means
+    // nothing on disk is newer.
+    const farFutureMs = new Date("2099-01-01T00:00:00.000Z").getTime();
+    appendEvent(
+      { eventType: "consolidate_completed", ref: "memory:_consolidation", metadata: { processed: 1 } },
+      { now: () => farFutureMs },
+    );
+
+    await akmImprove({
+      scope: "memory",
+      config: configWithoutPoolGuard(),
+      stashDir: stash,
+      minRetrievalCount: 0,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    const all = readEvents({}).events;
+    // THIS run's consolidation decision = the pool-delta skip event (carries the
+    // reason). The seeded `consolidate_completed` is ignored deliberately.
+    const consolidationIdx = all.findIndex(
+      (e) =>
+        e.eventType === "improve_skipped" &&
+        e.ref === "memory:_consolidation" &&
+        e.metadata?.reason === "consolidation_no_memory_updates",
+    );
+    const improveInvokedIdx = all.findIndex((e) => e.eventType === "improve_invoked");
+    expect(consolidationIdx).toBeGreaterThanOrEqual(0);
+    expect(improveInvokedIdx).toBeGreaterThanOrEqual(0);
+    // Consolidation decision precedes the post-extract `improve_invoked` marker.
+    expect(consolidationIdx).toBeLessThan(improveInvokedIdx);
+  });
+
+  // (b) REGRESSION the issue describes. A memory whose only post-consolidate
+  // mtime bump came from its OWN auto-accept promotion (i.e. promoted by the
+  // immediately-preceding run) must NOT trigger consolidation — it has no
+  // settled merge/contradiction candidates yet. BEFORE the fix the raw
+  // mtime>lastConsolidate check fired and consolidation RAN; AFTER the fix the
+  // file is excluded via its `promoted` event and the gate SKIPS.
+  test("memory whose only delta is its own promotion → gate SKIPS (emits skip event)", async () => {
+    const stash = makeTempDir("akm-551-promoted-skip-");
+    // Last consolidate well in the past.
+    appendEvent(
+      { eventType: "consolidate_completed", ref: "memory:_consolidation", metadata: { processed: 1 } },
+      { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
+    );
+    // Freshly-promoted memory: file mtime is naturally newer than 2020. WITHOUT
+    // the #551 gate this alone makes mtime>lastConsolidate true → consolidation
+    // runs. The `promoted` event below (carrying its assetPath) marks it as a
+    // same-cohort promotion to be excluded.
+    writeMemory(stash, "just-promoted", "Single-source memory, no merge candidates yet.");
+    await buildIndex(stash);
+    const assetPath = path.join(stash, "memories", "just-promoted.md");
+    appendEvent({
+      eventType: "promoted",
+      ref: "memory:just-promoted",
+      metadata: { assetPath, source: "extract", autoAccept: true },
+    });
+
+    await akmImprove({
+      scope: "memory",
+      config: configWithoutPoolGuard(),
+      stashDir: stash,
+      minRetrievalCount: 0,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
+    expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
+  });
+
+  // (c) A genuinely-settled memory from a PRIOR run (no promotion since the last
+  // consolidate — e.g. edited by feedback/manual) still triggers consolidation:
+  // the skip event is NOT emitted. This guards against the gate over-skipping.
+  test("settled prior-run memory (no same-cohort promotion) → consolidation NOT skipped", async () => {
+    const stash = makeTempDir("akm-551-settled-runs-");
+    appendEvent(
+      { eventType: "consolidate_completed", ref: "memory:_consolidation", metadata: { processed: 1 } },
+      { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
+    );
+    // Two memories edited after the last consolidate, with NO `promoted` event
+    // tying their mtime to a same-cohort promotion → real work to do.
+    writeMemory(stash, "edited-a", "Edited by feedback loop.");
+    writeMemory(stash, "edited-b", "Also edited.");
+    await buildIndex(stash);
+
+    await akmImprove({
+      scope: "memory",
+      config: configWithoutPoolGuard(),
       stashDir: stash,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,

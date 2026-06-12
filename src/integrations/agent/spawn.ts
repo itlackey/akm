@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn as runtimeSpawn } from "../../runtime";
 import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
@@ -34,12 +35,19 @@ import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
  * §1a / Pattern A.
  *
  * Note on `unsupported_type`: deterministic type-guard rejection. Reflect
- * refuses to operate on non-markdown asset types (script, env, vault, secret, task);
+ * refuses to operate on non-markdown asset types (script, env, secret, task);
  * the LLM is never even invoked. Previously emitted as `parse_error` and
  * conflated with true LLM failures — see review §1a, "Reflect refused
  * asset type" row (~9% of reflect-failed events). Routed to the
  * `reflect-skipped` action bucket by the improve loop so it does not
- * inflate the failure-rate numerator. */
+ * inflate the failure-rate numerator.
+ *
+ * Note on `no_change`: deterministic noise-gate suppression (#580). The
+ * agent responded fine but the candidate edit is byte-identical to the
+ * current asset (empty diff) or differs only cosmetically (whitespace
+ * reflow, code-fence language hints, YAML scalar re-folding). Not an LLM
+ * fault and not a queue-worthy proposal — routed to the `reflect-skipped`
+ * action bucket like `unsupported_type`. */
 export type AgentFailureReason =
   | "timeout"
   | "spawn_failed"
@@ -50,9 +58,10 @@ export type AgentFailureReason =
   | "llm_content_filter"
   | "llm_invalid_json"
   | "content_policy_reject"
-  | "unsupported_type";
+  | "unsupported_type"
+  | "no_change";
 
-/** Minimum subprocess surface we need. Bun.spawn returns this shape. */
+/** Minimum subprocess surface we need. The runtime spawn returns this shape. */
 export interface SpawnedSubprocess {
   exitCode: number | null;
   exited: Promise<number>;
@@ -65,7 +74,7 @@ export interface SpawnedSubprocess {
 }
 
 /**
- * Function signature compatible with `Bun.spawn`. Tests inject a fake
+ * Function signature compatible with the runtime spawn. Tests inject a fake
  * implementation so the spawn wrapper can be exercised deterministically
  * without poking at real binaries.
  */
@@ -127,7 +136,7 @@ export interface RunAgentOptions {
   stdin?: string;
   /** Process env source. Defaults to `process.env`. Tests inject a fake. */
   envSource?: NodeJS.ProcessEnv;
-  /** Spawn function. Defaults to `Bun.spawn`. Tests inject a fake. */
+  /** Spawn function. Defaults to the runtime spawn. Tests inject a fake. */
   spawn?: SpawnFn;
   /**
    * `setTimeout` shim. Defaults to the global. Tests pass a synchronous
@@ -223,12 +232,10 @@ function pathCandidatesForCurrentPlatform(home: string): string[] {
 
 function resolveSpawnFn(options: RunAgentOptions): SpawnFn {
   if (options.spawn) return options.spawn;
-  // Pull from globalThis so tests that swap it out at module level are honoured.
-  const bun = (globalThis as { Bun?: { spawn: SpawnFn } }).Bun;
-  if (!bun?.spawn) {
-    throw new Error("Bun.spawn is unavailable; pass options.spawn for non-Bun environments.");
-  }
-  return bun.spawn.bind(bun);
+  // Default to the runtime-boundary spawn, which delegates to the native
+  // subprocess API on each runtime. Tests inject `options.spawn` to avoid
+  // poking real binaries.
+  return runtimeSpawn as unknown as SpawnFn;
 }
 
 /**
@@ -290,7 +297,7 @@ async function readStream(
  *
  * Failure modes (see {@link AgentFailureReason}):
  *
- *   • `spawn_failed`  — `Bun.spawn` threw synchronously.
+ *   • `spawn_failed`  — the spawn call threw synchronously.
  *   • `timeout`       — exceeded the resolved timeout.
  *   • `non_zero_exit` — child exited with a non-zero code.
  *   • `parse_error`   — `parseOutput === "json"` and stdout was not JSON.
@@ -360,7 +367,7 @@ export async function runAgent(
   }
 
   // Hard timeout. We prefer SIGTERM, then SIGKILL if SIGTERM is ignored,
-  // but Bun.spawn only exposes a single .kill() — one signal is enough
+  // but the subprocess only exposes a single .kill() — one signal is enough
   // for the structured-failure contract.
   //
   // BUG-M3: only flag `timedOut` when the child has not already exited. A

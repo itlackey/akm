@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
-import type { StashEntry } from "../src/indexer/metadata";
-import { extractCommandParameters, generateMetadataFlat } from "../src/indexer/metadata";
-import { buildSearchText } from "../src/indexer/search-fields";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { extractCommandParameters, generateMetadataFlat } from "../src/indexer/passes/metadata";
+import { buildSearchText } from "../src/indexer/search/search-fields";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 let currentStashDir = "";
@@ -305,7 +305,7 @@ describe("parameter descriptions", () => {
 
 describe("validateStashEntry with parameters", () => {
   test("validateStashEntry preserves valid parameters", async () => {
-    const { validateStashEntry } = await import("../src/indexer/metadata");
+    const { validateStashEntry } = await import("../src/indexer/passes/metadata");
 
     const raw = {
       name: "test-cmd",
@@ -330,7 +330,7 @@ describe("validateStashEntry with parameters", () => {
   });
 
   test("validateStashEntry filters invalid parameter objects", async () => {
-    const { validateStashEntry } = await import("../src/indexer/metadata");
+    const { validateStashEntry } = await import("../src/indexer/passes/metadata");
 
     const raw = {
       name: "test-cmd",

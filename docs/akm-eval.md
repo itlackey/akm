@@ -45,7 +45,7 @@ Three runner types ship in Phases 1 + 2:
 
 ### Retrieval
 
-Shells out to `akm search <query> --format jsonl --detail agent` and
+Shells out to `akm search <query> --format jsonl --shape agent` and
 scores the result set against:
 
 - `mustIncludeRefs` — refs that must appear in the top-K.

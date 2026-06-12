@@ -19,6 +19,20 @@ import type { DetailLevel } from "../context";
  */
 export type TextFormatterHandler = (result: Record<string, unknown>, detail: DetailLevel) => string | null;
 
+/**
+ * A single text-formatter registration: a command name plus its handler.
+ *
+ * Per-command modules EXPORT arrays of these entries (pure data, no top-level
+ * side effect). The central `text.ts` barrel imports those exports and feeds
+ * them to {@link registerTextFormatters} in one deterministic, order-independent
+ * pass. Because the assembly array references each module's named export, a
+ * dropped registration is a COMPILE error, not a silent runtime gap.
+ */
+export interface TextFormatterEntry {
+  command: string;
+  handler: TextFormatterHandler;
+}
+
 const TEXT_FORMATTER_REGISTRY = new Map<string, TextFormatterHandler>();
 
 /**
@@ -33,6 +47,19 @@ const TEXT_FORMATTER_REGISTRY = new Map<string, TextFormatterHandler>();
  */
 export function registerTextFormatter(command: string, handler: TextFormatterHandler): void {
   TEXT_FORMATTER_REGISTRY.set(command, handler);
+}
+
+/**
+ * Register a batch of {@link TextFormatterEntry} definitions in iteration order.
+ *
+ * This is the explicit-assembly entry point used by `text.ts`: the built-in
+ * formatter set is registered by iterating a single explicit list exactly once,
+ * with no reliance on module import order.
+ */
+export function registerTextFormatters(entries: Iterable<TextFormatterEntry>): void {
+  for (const { command, handler } of entries) {
+    TEXT_FORMATTER_REGISTRY.set(command, handler);
+  }
 }
 
 /**

@@ -1,0 +1,4 @@
+schedule: "0 4 * * *"
+command: akm index
+enabled: true
+description: Nightly incremental index refresh

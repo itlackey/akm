@@ -1,0 +1,4 @@
+schedule: "*/15 * * * *"
+command: akm sync
+enabled: true
+description: Sync stash changes to git remote every 15 min

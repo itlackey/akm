@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
-import { saveConfig } from "../src/core/config";
+import { akmSearch } from "../src/commands/read/search";
+import { saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { setQuiet } from "../src/core/warn";
-import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { closeDatabase, openDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { runCliCapture } from "./_helpers/cli";
@@ -60,12 +59,12 @@ async function buildIndex(): Promise<void> {
 }
 
 describe("akm feedback", () => {
-  test("accepts indexed memory and vault refs without surfacing vault values", async () => {
+  test("accepts indexed memory and env refs without surfacing env values", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
     );
-    writeFile(path.join(stashDir, "vaults", "prod.env"), "API_KEY=super-secret-value\nREGION=us-east-1\n");
+    writeFile(path.join(stashDir, "env", "prod.env"), "API_KEY=super-secret-value\nREGION=us-east-1\n");
 
     await buildIndex();
 
@@ -77,15 +76,14 @@ describe("akm feedback", () => {
       signal: "positive",
     });
 
-    const vaultResult = await runCli(["feedback", "vault:prod", "--positive", "--format=json"]);
-    expect(vaultResult.status).toBe(0);
-    expect(parseJsonOutput(vaultResult)).toMatchObject({
+    const envResult = await runCli(["feedback", "env:prod", "--positive", "--format=json"]);
+    expect(envResult.status).toBe(0);
+    expect(parseJsonOutput(envResult)).toMatchObject({
       ok: true,
-      ref: "vault:prod",
+      ref: "env:prod",
       signal: "positive",
     });
-    expect(vaultResult.stdout).not.toContain("super-secret-value");
-    expect(vaultResult.stdout).not.toContain("REGION");
+    expect(envResult.stdout).not.toContain("super-secret-value");
 
     const db = openDatabase(getDbPath());
     try {
@@ -95,10 +93,10 @@ describe("akm feedback", () => {
         )
         .all() as Array<{ entry_ref: string; entry_id: number | null; signal: string }>;
       expect(events).toHaveLength(2);
-      expect(events[0]?.entry_ref).toBe("memory:deployment-notes");
+      expect(events[0]?.entry_ref).toBe("env:prod");
       expect(events[0]?.entry_id).toEqual(expect.any(Number));
       expect(events[0]?.signal).toBe("positive");
-      expect(events[1]?.entry_ref).toBe("vault:prod");
+      expect(events[1]?.entry_ref).toBe("memory:deployment-notes");
       expect(events[1]?.entry_id).toEqual(expect.any(Number));
       expect(events[1]?.signal).toBe("positive");
     } finally {
@@ -135,8 +133,8 @@ describe("akm feedback", () => {
     expect(output.error).toContain("not in the index");
   });
 
-  // ── #284 GAP-HIGH 8: feedback --note metadata round-trip ────────────────
-  test("feedback --note threads metadata into events.jsonl", async () => {
+  // ── #284 GAP-HIGH 8: feedback --reason metadata round-trip ──────────────
+  test("feedback --reason threads metadata into events.jsonl", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
@@ -147,7 +145,7 @@ describe("akm feedback", () => {
       "feedback",
       "memory:deployment-notes",
       "--positive",
-      "--note",
+      "--reason",
       "saved me 30 minutes",
       "--format=json",
     ]);
@@ -167,84 +165,6 @@ describe("akm feedback", () => {
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
     expect(md.reason).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
-  });
-
-  // ── WS5.2: --note deprecation warning (removed 0.9.0) ───────────────────
-  test("feedback --note still works but emits a stderr deprecation warning", async () => {
-    // The harness defaults to quiet=true (tests/_preload.ts); opt into noisy
-    // mode so the stderr deprecation warning is observable.
-    setQuiet(false);
-    writeFile(
-      path.join(stashDir, "memories", "deployment-notes.md"),
-      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
-    );
-    await buildIndex();
-
-    const result = await runCli([
-      "feedback",
-      "memory:deployment-notes",
-      "--positive",
-      "--note",
-      "saved me 30 minutes",
-      "--format=json",
-    ]);
-    // Old spelling still works.
-    expect(result.status).toBe(0);
-    expect(parseJsonOutput(result)).toMatchObject({
-      ok: true,
-      ref: "memory:deployment-notes",
-      signal: "positive",
-      reason: "saved me 30 minutes",
-    });
-    // And warns on stderr (never stdout).
-    expect(result.stderr).toContain("'--note' is deprecated");
-    expect(result.stderr).toContain("use '--reason'");
-    expect(result.stderr).toContain("0.9.0");
-    expect(result.stdout).not.toContain("deprecated");
-    setQuiet(true);
-  });
-
-  test("feedback --reason does not emit the --note deprecation warning", async () => {
-    setQuiet(false);
-    writeFile(
-      path.join(stashDir, "memories", "deployment-notes.md"),
-      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
-    );
-    await buildIndex();
-
-    const result = await runCli([
-      "feedback",
-      "memory:deployment-notes",
-      "--positive",
-      "--reason",
-      "saved me 30 minutes",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("'--note' is deprecated");
-    setQuiet(true);
-  });
-
-  test("feedback --note deprecation warning is suppressed under --quiet", async () => {
-    // The in-process harness does not wire the `--quiet` flag into the warn
-    // singleton, so drive quiet directly (matches save-command.test.ts).
-    setQuiet(true);
-    writeFile(
-      path.join(stashDir, "memories", "deployment-notes.md"),
-      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
-    );
-    await buildIndex();
-
-    const result = await runCli([
-      "feedback",
-      "memory:deployment-notes",
-      "--positive",
-      "--note",
-      "saved me 30 minutes",
-      "--format=json",
-    ]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("'--note' is deprecated");
   });
 
   test("positive feedback affects subsequent ranking after re-indexing", async () => {

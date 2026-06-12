@@ -20,12 +20,16 @@ Built-in asset types are:
 - `workflow`
 - `script`
 - `memory`
-- `vault`
+- `env`
+- `secret`
 - `wiki`
 
-Each type maps to a canonical source directory through `src/core/asset-spec.ts`
+The deprecated `vault` type was removed in 0.9.0 and replaced by `env` (whole
+`.env` files) and `secret` (single-value secret files).
+
+Each type maps to a canonical source directory through `src/core/asset/asset-spec.ts`
 (`skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, `scripts/`,
-`memories/`, `vaults/`, `wikis/`).
+`memories/`, `env/`, `secrets/`, `wikis/`).
 
 ---
 
@@ -126,8 +130,8 @@ Notes:
 - `--source both` keeps registry results in `registryHits` — they are not
   rank-merged with source hits
 
-`akm search` is implemented in `src/commands/search.ts` and queries the
-indexer's local search (`src/indexer/db-search.ts`). Provider fan-out is gone.
+`akm search` is implemented in `src/commands/read/search.ts` and queries the
+indexer's local search (`src/indexer/search/db-search.ts`). Provider fan-out is gone.
 
 ---
 
@@ -135,7 +139,7 @@ indexer's local search (`src/indexer/db-search.ts`). Provider fan-out is gone.
 
 `akm show` queries the local FTS5 index, then reads the file from disk.
 
-Local show flow (`src/commands/show.ts`):
+Local show flow (`src/commands/read/show.ts`):
 
 1. parse `[origin//]type:name`
 2. `lookup(ref)` against the FTS5 index (`src/indexer/indexer.ts`)
@@ -163,9 +167,15 @@ deleteAssetFromSource(source, config, ref)
 The flow:
 
 1. Refuse if the source is not `writable`.
-2. Plain filesystem write to `path.join(source.path, …)`.
-3. For `kind === "git"`, run `git add` + `git commit` (and `git push` when
-   `options.pushOnCommit` is set).
+2. Plain filesystem write to `path.join(source.path, …)` — for **every** kind,
+   with no commit (0.9.0, issue #507).
+
+Git-backed targets are committed in a single batch at the operation boundary via
+`commitWriteTargetBoundary(target, message, { push })`, which delegates to
+`saveGitStash`: `git add -A` (staging `.akm/` + sibling assets as one complete
+commit), a guarded commit, and a push gated on `writable && hasRemote &&
+push !== false`. The old per-asset commit/push path (`options.pushOnCommit`) is
+deprecated and no longer commits per asset.
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
 `filesystem`, `false` for everything else. `writable: true` on `website` or
@@ -234,11 +244,22 @@ carry a stable `code` and a `hint(): string | undefined` method. The CLI
 surfaces hints by calling `error.hint()` directly — there is no regex chain
 parsing error messages.
 
-| Class | Default exit code |
+All three extend a shared abstract base `AkmError` carrying a `kind`
+discriminant (`"config" | "usage" | "not-found"`). The CLI exit-code classifier
+(`classifyExitCode` in `src/cli/shared.ts`) switches exhaustively on `kind`
+(`never`-checked via `assertNever`), so adding a new error class is a
+compile-time error until its exit code is mapped. Any thrown value that is
+**not** an `AkmError` is treated as an unexpected internal failure and maps to
+the distinct INTERNAL exit code **70** (sysexits `EX_SOFTWARE`) — this lets
+scripts tell "akm threw unexpectedly" apart from an ordinary `NotFoundError`
+(exit 1).
+
+| Class / case | Exit code |
 | --- | --- |
-| `ConfigError` | 78 |
-| `UsageError` | 2 |
-| `NotFoundError` | 1 |
+| `ConfigError` (`kind: "config"`) | 78 |
+| `UsageError` (`kind: "usage"`) | 2 |
+| `NotFoundError` (`kind: "not-found"`) | 1 |
+| unclassified / non-`AkmError` (INTERNAL) | 70 |
 
 ---
 
@@ -326,10 +347,11 @@ accidental introduction of in-tree LLM imports under that path.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/cli.ts` | command parsing, output shaping, user-facing help |
-| `src/core/asset-spec.ts` | asset type registry and canonical source directories |
-| `src/core/asset-ref.ts` | asset ref parsing and normalization |
-| `src/core/config.ts` | config loading, validation, env resolution |
+| `src/cli.ts` | composition root (~620 LOC); per-family parsing lives in `commands/<family>/*-cli.ts` |
+| `src/cli/` | citty composition helpers |
+| `src/core/asset/asset-spec.ts` | asset type registry and canonical source directories (re-export shim at `src/core/asset-spec.ts`) |
+| `src/core/asset/asset-ref.ts` | asset ref parsing and normalization (re-export shim at `src/core/asset-ref.ts`) |
+| `src/core/config/config.ts` | config loading, validation, env resolution (re-export shim at `src/core/config.ts`) |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 4 workers) |
@@ -338,17 +360,26 @@ accidental introduction of in-tree LLM imports under that path.
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/source-resolve.ts` | filesystem path resolution for refs |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
-| `src/indexer/walker.ts` | flat directory walker |
-| `src/indexer/matchers.ts` | file classification rules |
-| `src/indexer/file-context.ts` | matcher/renderer pipeline plumbing |
-| `src/indexer/search-fields.ts` | FTS field extraction |
-| `src/indexer/db-search.ts` | local FTS/vector search and reranking |
-| `src/indexer/search-source.ts` | source resolution, cache materialisation, editability |
-| `src/commands/search.ts` | `akm search` orchestration |
-| `src/commands/show.ts` | `akm show` orchestration |
+| `src/indexer/walk/` | walker, matchers, path/file/index/project context — the walk phase |
+| `src/indexer/db/` | `db`, `db-backup`, `graph-db`, `llm-cache` — the persistence phase |
+| `src/indexer/graph/` | graph boost/dedup/extraction — the graph phase |
+| `src/indexer/search/` | `db-search`, ranking, search-fields, search-source, enrichers — the search phase |
+| `src/indexer/passes/` | memory-inference, staleness-detect, metadata — LLM/metadata passes |
+| `src/indexer/usage/` | usage-events, unmigrated-vaults-guard |
+| `src/commands/read/search.ts` | `akm search` orchestration |
+| `src/commands/read/show.ts` | `akm show` orchestration |
+| `src/commands/improve/` | knowledge-evolution slice (improve/consolidate/distill/extract/reflect + `memory/`) |
+| `src/commands/proposal/` | proposal-queue slice (proposal/propose + `validators/` core 3-cycle) |
+| `src/commands/sources/` | source/stash lifecycle command surface |
+| `src/commands/env/` | env/secret command surface |
+| `src/commands/graph/` | graph command surface |
+| `src/commands/tasks/` | scheduled-task command surface |
+| `src/commands/agent/` | contribute/agent command surface |
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
-| `src/output/renderers.ts` | search/show shaping per asset type |
-| `src/workflows/workflow-runs.ts` | workflow run persistence |
+| `src/output/shapes/`, `src/output/text/` | JSON-envelope and text-output registries per command (#490; replaces the old `renderers.ts`) |
+| `src/workflows/authoring/` | workflow authoring + scope-key helpers |
+| `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
+| `src/workflows/runtime/` | run lifecycle: runs, checkin, document-cache, agent-identity |
 | `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |

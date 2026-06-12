@@ -5,13 +5,28 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "./asset-spec";
+import { getAssetTypes, TYPE_DIRS } from "./asset/asset-spec";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export const ASSET_TYPES = [
+/**
+ * The canonical catalog of built-in asset types.
+ *
+ * SINGLE SOURCE OF TRUTH: derived from the {@link ASSET_SPECS} registry in
+ * `asset-spec.ts` rather than hand-maintained here. Before #490/WS7 this was a
+ * hand-written literal array that had DRIFTED from the registry (it omitted
+ * `task`, which the registry has always carried). Deriving from the registry
+ * kills that drift — see `tests/asset-type-union-source.test.ts` for the
+ * intentional-`task`-delta guard.
+ *
+ * Note: `AkmAssetType` stays a static literal union of the BUILT-IN types
+ * (those present at module-eval time). Dynamically `registerAssetType`-d types
+ * are accepted at runtime via {@link isAssetType} but are not part of the
+ * static union — identical to the pre-WS7 contract.
+ */
+export const ASSET_TYPES = Object.freeze([...getAssetTypes()] as [
   "skill",
   "command",
   "agent",
@@ -20,11 +35,12 @@ export const ASSET_TYPES = [
   "script",
   "memory",
   "env",
-  "vault",
   "secret",
   "wiki",
   "lesson",
-] as const;
+  "task",
+  "session",
+]);
 export type AkmAssetType = (typeof ASSET_TYPES)[number];
 export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);
 
@@ -80,6 +96,11 @@ export function isAssetType(type: string): type is AkmAssetType {
  * The temp file is opened with the target `mode` (default 0o600) from the
  * start, so it is never world-readable even briefly.
  *
+ * `content` may be a string or a `Buffer`. Buffer callers (e.g. secrets, where
+ * binary certs and CRLF/LF endings must round-trip byte-exact) get the same
+ * fsync'd temp-file-plus-rename guarantees as string callers — there is a
+ * single atomic-write implementation.
+ *
  * Durability: fsync'd against the May 2026 config-clobber incident (#472).
  * On ext4 (data=ordered) and NVMe-with-TRIM, a power-loss inside the kernel
  * writeback window could leave the renamed file truncated to zero — defeating
@@ -91,11 +112,17 @@ export function isAssetType(type: string): type is AkmAssetType {
  *      support directory fsync; we ignore EINVAL/ENOTSUP so atomic writes
  *      don't fail on exotic mounts.
  */
-export function writeFileAtomic(target: string, content: string, mode?: number): void {
+export function writeFileAtomic(target: string, content: string | Buffer, mode?: number): void {
   const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
   const fd = fs.openSync(tmp, "w", mode ?? 0o600);
   try {
-    fs.writeSync(fd, content);
+    // fs.writeSync has two non-overlapping overloads (Buffer vs string); branch
+    // so each call resolves to a single overload. Both write byte-exact.
+    if (typeof content === "string") {
+      fs.writeSync(fd, content);
+    } else {
+      fs.writeSync(fd, content);
+    }
     try {
       fs.fdatasyncSync(fd);
     } catch {

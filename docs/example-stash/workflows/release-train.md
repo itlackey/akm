@@ -5,13 +5,13 @@ tags:
   - release
   - nested-workflows
   - orchestration
-  - vault
+  - env
 params:
   release_version: "Semver version being released (e.g. `1.4.0`). The workflow validates this against the changelog and tags."
   base_branch: "Branch the release is cut from. Defaults to `main`."
   release_branch: "Optional release branch (e.g. `release/1.4.x`). Defaults to `release/{{ release_version }}` when omitted."
   release_pr_query: "GitHub search query that selects the PRs in scope for this release (e.g. `is:open milestone:1.4.0 label:release-blocker`). The orchestrator iterates this list."
-  deploy_vault: "Vault ref with deploy credentials (e.g. `vault:production`). Loaded only at the shell level, never echoed."
+  deploy_env: "Env ref with deploy credentials (e.g. `env:production`). Loaded only at the shell level, never echoed."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
   knowledge_wiki: "AKM wiki for release notes and retrospectives. Defaults to `engineering`."
   skip_dependency_audit: "Set to `true` to skip the nested dependency audit (e.g. for hotfixes). Defaults to `false`."
@@ -215,7 +215,7 @@ themselves multi-step procedures and do not need a nested workflow.
 3. Load deploy credentials only into the deploy shell:
 
    ```sh
-   akm vault run {{ deploy_vault }} -- ./scripts/deploy.sh {{ release_version }} | tee {{ workspace_dir }}/deploy.log
+   akm env run {{ deploy_env }} -- ./scripts/deploy.sh {{ release_version }} | tee {{ workspace_dir }}/deploy.log
    ```
 
    Verify the deploy health check passes before continuing. If it

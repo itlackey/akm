@@ -18,9 +18,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset-ref";
+import { parseAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError } from "../core/errors";
 import { requireAgentProfile } from "../integrations/agent";
 import { resolveAssetPath } from "../sources/resolve";

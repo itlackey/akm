@@ -13,17 +13,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef } from "../core/asset-ref";
-import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset-spec";
+import { makeAssetRef } from "../core/asset/asset-ref";
+import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset/asset-spec";
+import type { AkmAssetType } from "../core/common";
 import { resolveStashDir } from "../core/common";
-import { type AkmConfig, loadConfig } from "../core/config";
+import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
-import { closeDatabase, getAllEntries, getEntryCount, getMeta, openExistingDatabase } from "./db";
-import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
-import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search-source";
-import { walkStashFlat } from "./walker";
+import { closeDatabase, getAllEntries, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
+import { generateMetadataFlat, loadStashFile, type StashEntry } from "./passes/metadata";
+import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search/search-source";
+import { walkStashFlat } from "./walk/walker";
 
 const MAX_DESCRIPTION_LENGTH = 80;
 
@@ -49,7 +50,7 @@ function toManifestEntry(
   try {
     const canonical = deriveCanonicalAssetNameFromStashRoot(entry.type, stashDir, filePath);
     const refName = canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : entry.name;
-    const ref = makeAssetRef(entry.type, refName, registryId);
+    const ref = makeAssetRef(entry.type as AkmAssetType, refName, registryId);
 
     const result: ManifestEntry = {
       name: entry.name,

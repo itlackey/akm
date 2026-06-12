@@ -76,7 +76,7 @@ Override: set `AKM_STASH_DIR` (or configure `stashDir` in `config.json`).
 
 ### 1. Events Table
 
-An append-only log of every mutating action you perform with AKM. Events are stored locally for self-improvement (the improve loop uses them to surface usage patterns) and for inspection via `akm events`.
+An append-only log of every mutating action you perform with AKM. Events are stored locally for self-improvement (the improve loop uses them to surface usage patterns) and for inspection via `akm log`.
 
 **What is recorded:**
 - `event_type` — what action was taken (see full list below)
@@ -101,7 +101,7 @@ An append-only log of every mutating action you perform with AKM. Events are sto
 | `update` | `akm update [source]` | `ref` |
 | `remember` | `akm remember <text>` | `ref` |
 | `import` | `akm import <file>` | `ref` |
-| `save` | `akm save <ref>` | `ref` |
+| `save` | `akm sync` | `ref` |
 | `feedback` | `akm feedback <ref>` | `signal` (positive/negative) |
 | `search` | `akm search <query>` | `query`, `source`, `signal` |
 | `curate` | `akm curate <prompt>` | `query`, `source` |
@@ -154,16 +154,16 @@ A record of scheduled task runs (from `akm tasks`):
 
 ```sh
 # List recent events
-akm events list
+akm log list
 
 # Stream live events (tail)
-akm events tail
+akm log tail
 
 # Filter by type
-akm events list --type search --limit 20
+akm log list --type search --limit 20
 
 # Filter by asset ref
-akm events list --ref skill:code-review
+akm log list --ref skill:code-review
 ```
 
 ### Inspect proposals

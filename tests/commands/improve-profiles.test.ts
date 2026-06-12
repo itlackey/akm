@@ -4,8 +4,8 @@ import {
   resolveImproveProfile,
   resolveProcessEnabled,
   shouldSkipRef,
-} from "../../src/commands/improve-profiles";
-import type { AkmConfig } from "../../src/core/config";
+} from "../../src/commands/improve/improve-profiles";
+import type { AkmConfig } from "../../src/core/config/config";
 
 const MINIMAL_CONFIG: AkmConfig = {
   semanticSearchMode: "off",
@@ -47,9 +47,9 @@ describe("resolveImproveProfile", () => {
     const profile = resolveImproveProfile("quick", MINIMAL_CONFIG);
     expect(profile.description).toContain("Reflect-only");
     expect(profile.processes?.reflect?.enabled).toBe(true);
-    // 0.8.3: extract is default-ON, so "reflect-only" must disable it explicitly —
-    // otherwise `quick` runs the full session-extract backlog (~40 min) and cron
-    // timeouts SIGTERM it every run.
+    // extract is default-ON, so "reflect-only" must disable it explicitly — else
+    // `quick` runs the full session-extract backlog (~40 min) and cron timeouts
+    // SIGTERM it every run (the 0.8.3 lock-leak trigger, forward-ported).
     expect(profile.processes?.extract?.enabled).toBe(false);
     expect(profile.processes?.distill?.enabled).toBe(false);
     expect(profile.processes?.consolidate?.enabled).toBe(false);
@@ -140,9 +140,9 @@ describe("shouldSkipRef", () => {
     expect(result.reason).toBe("type-filter");
   });
 
-  test("vault type → skip (type-filter)", () => {
+  test("env type → skip (type-filter)", () => {
     const profile = resolveImproveProfile(undefined, MINIMAL_CONFIG);
-    const result = shouldSkipRef("vault:secrets/key", "reflect", profile);
+    const result = shouldSkipRef("env:secrets/key", "reflect", profile);
     expect(result.skip).toBe(true);
     expect(result.reason).toBe("type-filter");
   });

@@ -6,7 +6,7 @@
  * The fallback default agent comes from `defaults.agent`.
  */
 import { describe, expect, test } from "bun:test";
-import type { AkmConfig } from "../../src/core/config";
+import type { AkmConfig } from "../../src/core/config/config";
 
 function mkConfig(over: Partial<AkmConfig> = {}): AkmConfig {
   return { semanticSearchMode: "auto", ...over };

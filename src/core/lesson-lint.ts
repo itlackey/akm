@@ -25,8 +25,8 @@
  */
 
 import fs from "node:fs";
+import { parseFrontmatter } from "./asset/frontmatter";
 import { UsageError } from "./errors";
-import { parseFrontmatter } from "./frontmatter";
 
 /** A single finding produced by `lintLessonContent` / `lintLessonFile`. */
 export interface LessonLintFinding {

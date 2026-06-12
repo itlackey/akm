@@ -13,8 +13,10 @@
  */
 
 import { fetchWithTimeout } from "../core/common";
-import { type LlmConnectionConfig, resolveSecret } from "../core/config";
+import { type LlmConnectionConfig, resolveSecret } from "../core/config/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+import { warnVerbose } from "../core/warn";
+import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
 // to resolve `parseJsonResponse` and `parseEmbeddedJsonResponse` from this module.
@@ -62,9 +64,33 @@ export function redactErrorBody(input: string): string {
 export type LlmCallErrorCode =
   | "rate_limited" // HTTP 429
   | "provider_error" // HTTP 5xx
+  | "provider_html_error" // body is HTML (e.g. LM Studio web UI) instead of JSON
   | "network_error" // fetch failed / timeout
   | "parse_error" // response received but JSON parse failed
   | "timeout"; // request exceeded timeoutMs
+
+/**
+ * Detect a response body that is an HTML document rather than the expected
+ * JSON. LM Studio (and similar local providers) can serve their web UI on
+ * partial-load / startup failures, producing an HTML page where the OpenAI
+ * API contract promises JSON.
+ */
+function isHtmlResponse(body: string): boolean {
+  const lower = body.trimStart().toLowerCase();
+  return lower.startsWith("<!doctype html") || lower.startsWith("<html");
+}
+
+/**
+ * Produce a short plain-text excerpt of an HTML body for inclusion in error
+ * messages: strip tags, collapse whitespace, and truncate.
+ */
+function htmlExcerpt(body: string): string {
+  const text = body
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > ERROR_BODY_MAX_LEN ? `${text.slice(0, ERROR_BODY_MAX_LEN)}…` : text;
+}
 
 export class LlmCallError extends Error {
   constructor(
@@ -85,12 +111,17 @@ export interface ChatMessage {
 }
 
 interface ChatCompletionResponse {
+  /** Model id echoed by the provider; may differ from the requested alias. */
+  model?: string;
   choices: Array<{
     message: {
       content: string;
       reasoning_content?: string; // thinking models route output here
     };
+    finish_reason?: string;
   }>;
+  /** OpenAI-compatible token accounting. Best-effort: providers may omit it. */
+  usage?: RawUsage;
 }
 
 export interface ChatCompletionOptions {
@@ -116,14 +147,134 @@ export interface ChatCompletionOptions {
   responseSchema?: Record<string, unknown>;
   /** Override the config's enableThinking for this call. */
   enableThinking?: boolean;
+  /**
+   * Invoked exactly once when a retryable first failure triggers a single
+   * bounded retry. Callers use this to bump their own `retryAttempts`
+   * telemetry without touching `failureCount`. Fired regardless of whether
+   * the retry ultimately succeeds or fails.
+   */
+  onRetryAttempt?: () => void;
+}
+
+// ── Single bounded retry for transient failures ─────────────────────────────
+
+/** Lower bound of the jittered retry backoff (inclusive), in milliseconds. */
+const RETRY_BACKOFF_MIN_MS = 200;
+/** Upper bound of the jittered retry backoff (exclusive-ish), in milliseconds. */
+const RETRY_BACKOFF_MAX_MS = 800;
+/**
+ * Fraction of the effective timeout budget that, once consumed by the first
+ * attempt, causes the retry to be skipped — there is not enough budget left
+ * for a meaningful second attempt.
+ */
+const RETRY_BUDGET_FRACTION = 0.9;
+
+/**
+ * Sleep for `ms` milliseconds. Extracted as a named helper so tests can stub
+ * the backoff via the internal `sleep` option on {@link chatCompletion} and
+ * avoid real delays.
+ */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Compute a uniform jittered backoff in the [200, 800)ms range. */
+function retryBackoffMs(): number {
+  return RETRY_BACKOFF_MIN_MS + Math.random() * (RETRY_BACKOFF_MAX_MS - RETRY_BACKOFF_MIN_MS);
+}
+
+/**
+ * Detect whether an error message indicates a context-size-exceeded condition.
+ * Mirrors the heuristic in `graph-extract.ts` — retrying a context overflow
+ * cannot shrink the input, so it must not be retried.
+ */
+function looksLikeContextOverflow(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("context") &&
+    (lower.includes("context size") ||
+      lower.includes("context length") ||
+      lower.includes("context_window") ||
+      lower.includes("prompt too long") ||
+      lower.includes("exceeds"))
+  );
+}
+
+/**
+ * Decide whether a first-attempt {@link LlmCallError} is eligible for a single
+ * retry. Retryable: HTTP 5xx (`provider_error` with statusCode >= 500) and
+ * `network_error` whose message looks like a transient connection reset
+ * (ECONNRESET / EPIPE / "fetch failed"). NOT retryable: 4xx, `rate_limited`
+ * (429), `timeout`, `parse_error`, and context-overflow-classified errors.
+ */
+function isRetryable(err: LlmCallError): boolean {
+  if (looksLikeContextOverflow(err.message)) return false;
+  if (err.code === "provider_error") {
+    return typeof err.statusCode === "number" && err.statusCode >= 500;
+  }
+  if (err.code === "network_error") {
+    const lower = err.message.toLowerCase();
+    return lower.includes("econnreset") || lower.includes("epipe") || lower.includes("fetch failed");
+  }
+  return false;
+}
+
+/**
+ * Internal options for {@link chatCompletion} not exposed on the public
+ * {@link ChatCompletionOptions}. Tests inject a fast `sleep` so the retry
+ * backoff does not actually delay the suite.
+ */
+interface ChatCompletionInternalOptions extends ChatCompletionOptions {
+  /** Override the backoff sleep (defaults to the real {@link sleep}). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export async function chatCompletion(
   config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
   messages: ChatMessage[],
-  options?: ChatCompletionOptions,
+  options?: ChatCompletionInternalOptions,
 ): Promise<string> {
-  const timeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+  const effectiveTimeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+
+  const started = Date.now();
+  try {
+    return await chatCompletionAttempt(config, messages, options, effectiveTimeoutMs);
+  } catch (err) {
+    if (!(err instanceof LlmCallError) || !isRetryable(err)) throw err;
+
+    // Timeout-budget guard: if the first attempt already burned most of the
+    // budget, a second attempt cannot complete — skip the retry.
+    const elapsed = Date.now() - started;
+    const remaining = effectiveTimeoutMs - elapsed;
+    if (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || remaining <= 0) {
+      throw err;
+    }
+
+    // Signal the caller so it can bump `retryAttempts` (NOT `failureCount`).
+    options?.onRetryAttempt?.();
+    // Log the first failure at debug (verbose-only) level; the retry outcome is
+    // authoritative.
+    warnVerbose(`[akm] LLM transient failure (${err.code}); retrying once: ${err.message}`);
+
+    const wait = retryBackoffMs();
+    await (options?.sleep ?? sleep)(wait);
+
+    // The retry must not exceed the original budget.
+    return await chatCompletionAttempt(config, messages, options, remaining);
+  }
+}
+
+/**
+ * A single chat-completion attempt: one HTTP request/response cycle with no
+ * retry. {@link chatCompletion} wraps this with a single bounded retry for
+ * transient failures.
+ */
+async function chatCompletionAttempt(
+  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
+  messages: ChatMessage[],
+  options: ChatCompletionOptions | undefined,
+  timeoutMs: number,
+): Promise<string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const resolvedKey = resolveSecret(config.apiKey);
   if (resolvedKey) {
@@ -138,6 +289,11 @@ export async function chatCompletion(
     options?.responseSchema && config.supportsJsonSchema
       ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
       : {};
+
+  // Wall-clock start for per-call usage telemetry (#576). Captured here so the
+  // emitted duration covers the full request/response/parse cycle of a single
+  // attempt, not the retry-wrapping `chatCompletion`.
+  const requestStartedAt = Date.now();
 
   let response: Response;
   try {
@@ -184,6 +340,13 @@ export async function chatCompletion(
     if (status === 429) {
       throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
     }
+    if (status >= 500 && isHtmlResponse(rawBody)) {
+      throw new LlmCallError(
+        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${htmlExcerpt(rawBody)}`,
+        "provider_html_error",
+        status,
+      );
+    }
     if (status >= 500) {
       throw new LlmCallError(
         `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
@@ -194,7 +357,38 @@ export async function chatCompletion(
     throw new LlmCallError(`LLM request failed (${status}) ${config.endpoint}: ${safeBody}`, "provider_error", status);
   }
 
-  const json = (await response.json()) as ChatCompletionResponse;
+  // A 2xx response is still an error if the body is HTML where JSON was
+  // expected (e.g. a provider serving its web UI). Read the raw body first so
+  // we can categorize an HTML page distinctly from a malformed-JSON parse_error.
+  const rawOkBody = await response.text();
+  if (isHtmlResponse(rawOkBody)) {
+    throw new LlmCallError(
+      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${htmlExcerpt(rawOkBody)}`,
+      "provider_html_error",
+      response.status,
+    );
+  }
+  let json: ChatCompletionResponse;
+  try {
+    json = JSON.parse(rawOkBody) as ChatCompletionResponse;
+  } catch {
+    throw new LlmCallError(
+      `LLM response was not valid JSON ${config.endpoint}: ${redactErrorBody(rawOkBody)}`,
+      "parse_error",
+      response.status,
+    );
+  }
+  // Per-call usage telemetry (#576). Best-effort and fully isolated: a missing
+  // or garbled usage block still records duration + model, and a throwing sink
+  // can never fail the call (emitLlmUsage swallows its own errors). The stage
+  // is supplied ambiently by emitLlmUsage; no `stage` param is threaded here.
+  emitLlmUsage({
+    model: typeof json.model === "string" && json.model ? json.model : config.model,
+    durationMs: Date.now() - requestStartedAt,
+    finishReason: typeof json.choices?.[0]?.finish_reason === "string" ? json.choices[0].finish_reason : undefined,
+    ...extractUsageTokens(json.usage),
+  });
+
   const content = (json.choices?.[0]?.message?.content ?? "").trim();
   const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
   return content || reasoning;

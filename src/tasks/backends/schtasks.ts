@@ -40,7 +40,7 @@ import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolveAkmBin";
 import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../schedule";
 import type { TaskDocument } from "../schema";
-import { escapeXml, spawnCommand } from "./exec-utils";
+import { escapeXml, nodeExec, nodeFs } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
 export interface SchtasksExec {
@@ -244,27 +244,18 @@ function quoteArg(s: string): string {
 }
 
 function defaultSchtasksExec(): SchtasksExec {
-  return {
-    run(args: string[]) {
-      return spawnCommand(args);
-    },
-  };
+  return nodeExec();
 }
 
 function defaultSchtasksFs(): SchtasksFs {
   return {
-    writeFile(file, content) {
-      fs.writeFileSync(file, content, { encoding: "utf8" });
-    },
+    ...nodeFs(),
     removeFile(file) {
       try {
         fs.rmSync(file, { force: true });
       } catch {
         /* ignore */
       }
-    },
-    ensureDir(dir) {
-      fs.mkdirSync(dir, { recursive: true });
     },
     tmpdir() {
       return os.tmpdir();

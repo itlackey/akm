@@ -18,7 +18,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
@@ -115,11 +115,11 @@ describe("env: directory traversal rejection", () => {
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects ../../evil via the deprecated vault: prefix too", async () => {
+  test("rejects the removed vault: prefix with a signpost to env:", async () => {
     const stashDir = freshStash();
     const { status, stderr } = await runCli(["env", "path", "vault:../../evil"], stashDir);
     expect(status).not.toBe(0);
-    expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
+    expect(stderr).toMatch(/was removed|env:/i);
   });
 
   test("legitimate env name succeeds", async () => {

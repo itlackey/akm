@@ -138,7 +138,7 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -187,7 +187,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
@@ -254,7 +254,7 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -303,7 +303,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
@@ -375,7 +375,7 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -424,7 +424,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
@@ -478,7 +478,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -532,7 +532,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
@@ -577,7 +577,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -631,7 +631,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
@@ -677,7 +677,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -723,7 +723,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => {
         throw new Error("db locked");
       },
@@ -768,7 +768,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -814,7 +814,7 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
@@ -851,7 +851,7 @@ describe("runSetupWizard", () => {
       note: () => {},
     }));
     let saveCalls = 0;
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -897,7 +897,7 @@ describe("runSetupWizard", () => {
         throw new Error("index should not run");
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
@@ -932,7 +932,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/config", () => ({
+    mock.module("../../src/core/config/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -975,7 +975,7 @@ describe("runSetupWizard", () => {
         throw new Error("index should not run");
       },
     }));
-    mock.module("../../src/indexer/db", () => ({
+    mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,

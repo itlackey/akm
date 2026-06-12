@@ -8,7 +8,7 @@ import {
   listBackups,
   measureDataDirSize,
   resolveRetention,
-} from "../../src/indexer/db-backup";
+} from "../../src/indexer/db/db-backup";
 
 // ── Temp directory management ────────────────────────────────────────────────
 

@@ -2,9 +2,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../../src/commands/search";
-import { saveConfig } from "../../src/core/config";
-import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
+import { akmSearch } from "../../src/commands/read/search";
+import { saveConfig } from "../../src/core/config/config";
+import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
@@ -56,7 +56,7 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
     async fetch() {
       return new Response(JSON.stringify({ data: [{ embedding }] }), {
         status: 200,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Connection: "close" },
       });
     },
   });
@@ -234,7 +234,7 @@ describe("Database search path (FTS scoring)", () => {
         closeDatabase(db);
       }
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 

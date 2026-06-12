@@ -4,8 +4,7 @@ Usage:
 Description:
   List proposal queue entries.
 
-  (`akm proposals` is a deprecated alias for `akm proposal list`; it warns on
-  stderr and is removed in 0.9.0.)
+  (The flat `akm proposals` alias was removed in 0.9.0 — use `akm proposal list`.)
 
 Options:
   --status <status>    Filter by pending, accepted, or rejected

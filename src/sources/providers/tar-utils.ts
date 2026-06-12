@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin } from "../../core/common";
-import type { SourceSpec } from "../../core/config";
+import type { SourceSpec } from "../../core/config/config";
 import { warn } from "../../core/warn";
 
 /**

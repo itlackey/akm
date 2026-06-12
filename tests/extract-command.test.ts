@@ -6,27 +6,27 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmExtract, parseSinceArg } from "../src/commands/extract";
-import { EXTRACT_JSON_SCHEMA } from "../src/commands/extract-prompt";
-import type { AkmConfig } from "../src/core/config";
+import { akmExtract, parseSinceArg } from "../src/commands/improve/extract";
+import { EXTRACT_JSON_SCHEMA } from "../src/commands/improve/extract-prompt";
+import { isValidDescription } from "../src/commands/proposal/validators/proposal-quality-validators";
+import { listProposals } from "../src/commands/proposal/validators/proposals";
+import { parseFrontmatter } from "../src/core/asset/frontmatter";
+import type { AkmConfig } from "../src/core/config/config";
+import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config/config-schema";
 import { UsageError } from "../src/core/errors";
-import { listProposals } from "../src/core/proposals";
+import { detectTruncatedDescription } from "../src/core/text-truncation";
 import type {
   SessionData,
   SessionLogHarness,
   SessionRef,
   SessionSummary,
 } from "../src/integrations/session-logs/types";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
-const savedEnv: Record<string, string | undefined> = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-};
+let storage: IsolatedAkmStorage;
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
@@ -40,15 +40,10 @@ function makeStashDir(): string {
   return stash;
 }
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-extract-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-extract-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-extract-data-");
+  storage = withIsolatedAkmStorage();
 });
 afterEach(() => {
-  for (const [k, v] of Object.entries(savedEnv)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
+  storage.cleanup();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -68,7 +63,11 @@ function configEnabled(stashDir: string): AkmConfig {
           supportsJsonSchema: true,
         },
       },
-      improve: { default: { processes: { extract: { enabled: true } } } },
+      // #561 — these tests assert the distillation chat-call count / schema.
+      // Session indexing (default-on) would add a second chat call per session,
+      // so disable it here; the session-indexing behaviour has dedicated
+      // coverage in tests/session-indexing.test.ts.
+      improve: { default: { processes: { extract: { enabled: true, indexSessions: false } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;
@@ -213,6 +212,31 @@ describe("akmExtract — harness resolution", () => {
     expect(result.ok).toBe(false);
     expect(result.warnings.join(" ")).toMatch(/not-available/);
   });
+
+  // Behaviour fix (#563): resolveHarness now normalizes the requested --type
+  // AND each provider's runtime name through the id-normalization bridge, so
+  // the CANONICAL id "claude" resolves to the provider whose runtime name is
+  // "claude-code". Before the fix only the exact runtime string matched, so
+  // `--type claude` (the id used by agent profiles / config schema) silently
+  // resolved to nothing. The legacy `--type claude-code` (asserted elsewhere)
+  // must keep working too.
+  test("--type claude (canonical id) resolves to the claude-code provider via the bridge", async () => {
+    const stash = makeStashDir();
+    const result = await akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config: configEnabled(stash),
+      // provider.name is the runtime id "claude-code"; canonical "claude" must
+      // still resolve to it. `available:false` lets us confirm resolution
+      // happened (we hit the not-available path, not the no-harness path).
+      harnesses: [makeFakeHarness([], /* available */ false)],
+      chat: async () => "{}",
+    });
+    expect(result.ok).toBe(false);
+    // Resolved to the provider (not-available), NOT a "no available harness" miss.
+    expect(result.warnings.join(" ")).toMatch(/not-available/);
+    expect(result.warnings.join(" ")).not.toMatch(/no available harness/);
+  });
 });
 
 describe("akmExtract — discovery mode", () => {
@@ -327,6 +351,57 @@ describe("akmExtract — candidate → proposal routing", () => {
     expect(lessonProp?.payload.content).toMatch(/session:claude-code:ses_abc/);
   });
 
+  test("repairs a truncated description so the auto-accept validator passes (#556)", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_trunc", Date.now() - 60_000);
+
+    // The LLM produced a description sliced mid-clause (ends with "to"). On the
+    // pre-#556 path this lands as-is and the description-quality validator
+    // rejects it at accept time. The repair pass must complete it first.
+    const truncatedDesc = "Always connect to the corporate VPN before running deploy.sh to";
+    expect(detectTruncatedDescription(truncatedDesc)).not.toBeNull();
+    expect(isValidDescription(truncatedDesc, "lesson:vpn-before-deploy").ok).toBe(false);
+
+    const result = await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_trunc",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeFakeHarness([session])],
+      chat: async () =>
+        JSON.stringify({
+          candidates: [
+            {
+              type: "lesson",
+              name: "vpn-before-deploy",
+              description: truncatedDesc,
+              when_to_use: "When initiating a production deploy from a fresh shell or after a laptop reboot.",
+              body: "Deploy.sh hangs at the 'pushing to stage' step when the VPN is not connected. The error message reports a misleading network failure.",
+              confidence: 0.92,
+              evidence: "agent message at session midpoint, then user correction",
+            },
+          ],
+        }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.candidatesCreated).toBe(1);
+
+    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
+    const prop = pending.find((p) => p.ref === "lesson:vpn-before-deploy");
+    expect(prop).toBeDefined();
+
+    // The persisted content's frontmatter description must now be valid.
+    const fm = parseFrontmatter(prop?.payload.content ?? "").data as Record<string, unknown>;
+    expect(typeof fm.description).toBe("string");
+    expect(detectTruncatedDescription(fm.description as string)).toBeNull();
+    expect(isValidDescription(fm.description, "lesson:vpn-before-deploy").ok).toBe(true);
+
+    // The payload frontmatter mirror must carry the same repaired value.
+    const payloadDesc = (prop?.payload.frontmatter as Record<string, unknown> | undefined)?.description;
+    expect(payloadDesc).toBe(fm.description as string);
+  });
+
   test("dry-run reports candidates without creating proposals", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_dry", Date.now() - 60_000);
@@ -423,6 +498,24 @@ describe("akmExtract — LLM call wiring", () => {
   });
 });
 
+// ── minContentChars config schema (#595) ────────────────────────────────────
+
+describe("minContentChars improve-process config schema", () => {
+  test("accepts 0 (disabled) and positive integers; rejects negatives and floats", () => {
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 0 }).success).toBe(true);
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 500 }).success).toBe(true);
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: -1 }).success).toBe(false);
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 1.5 }).success).toBe(false);
+  });
+
+  test("parses inside a profile's extract process block", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: { extract: { enabled: true, minContentChars: 10 } },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 // ── per-process profile + config support ────────────────────────────────────
 
 describe("akmExtract — profile + config resolution", () => {
@@ -448,7 +541,10 @@ describe("akmExtract — profile + config resolution", () => {
           },
         },
         improve: {
-          default: { processes: { extract: { enabled: true, ...processOverride } } },
+          // #561 — default-off session indexing here so these resolution tests
+          // keep asserting the single distillation chat call. Overridable via
+          // processOverride for any test that wants to exercise it.
+          default: { processes: { extract: { enabled: true, indexSessions: false, ...processOverride } } },
         },
       },
       defaults: { llm: "default" },
@@ -571,6 +667,104 @@ describe("akmExtract — profile + config resolution", () => {
     });
     expect(chatCalls).toBe(1);
     expect(result.sessions).toHaveLength(1);
+  });
+
+  // ── #595/#596 — minContentChars pre-LLM gate ──────────────────────────────
+
+  /** Session whose raw content is exactly the given texts (one user event each). */
+  function sessionWithTexts(id: string, texts: string[]): SessionData {
+    const endedAt = Date.now() - 60_000;
+    return {
+      ref: {
+        harness: "claude-code",
+        sessionId: id,
+        filePath: `/tmp/fake/${id}.jsonl`,
+        startedAt: endedAt - 3600_000,
+        endedAt,
+      },
+      events: texts.map((text, i) => ({
+        harness: "claude-code",
+        text,
+        ts: endedAt - 60_000 * (texts.length - i),
+        sessionId: id,
+        role: "user" as const,
+        filePath: `/tmp/fake/${id}.jsonl`,
+      })),
+      inlineRefs: [],
+    };
+  }
+
+  async function runExtract(
+    session: SessionData,
+    processOverride: Record<string, unknown>,
+  ): Promise<{ result: Awaited<ReturnType<typeof akmExtract>>; chatCalls: number }> {
+    const stash = makeStashDir();
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude-code",
+      sessionId: session.ref.sessionId,
+      stashDir: stash,
+      config: configWithProfile(stash, processOverride),
+      harnesses: [makeFakeHarness([session])],
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    return { result, chatCalls };
+  }
+
+  test("minContentChars skips sub-threshold sessions before the LLM call (skipReason too_short)", async () => {
+    const tiny = sessionWithTexts("ses_tiny", ["short note"]); // 10 raw chars < 500
+    const { result, chatCalls } = await runExtract(tiny, { minContentChars: 500 });
+    expect(chatCalls).toBe(0);
+    expect(result.sessionsProcessed).toBe(0);
+    expect(result.sessionsSkipped).toBe(1);
+    expect(result.sessions[0]?.skipped).toBe(true);
+    expect(result.sessions[0]?.skipReason).toBe("too_short");
+  });
+
+  test("minContentChars processes sessions at/above the threshold", async () => {
+    const exact = sessionWithTexts("ses_exact", ["x".repeat(500)]); // 500 raw chars
+    const { result, chatCalls } = await runExtract(exact, { minContentChars: 500 });
+    expect(chatCalls).toBe(1);
+    expect(result.sessionsProcessed).toBe(1);
+    expect(result.sessionsSkipped).toBe(0);
+  });
+
+  test("gates on RAW pre-filter size, not post-filter output (#596)", async () => {
+    // Every event is noise the pre-filter strips (system reminders), so the
+    // post-filter output is empty — but the RAW session is large, so the gate
+    // must NOT skip it (gating post-filter wrongly skipped 100% of sessions).
+    const noisy = sessionWithTexts(
+      "ses_noisy",
+      Array.from({ length: 5 }, () => `<system-reminder>${"n".repeat(200)}</system-reminder>`),
+    );
+    const { result, chatCalls } = await runExtract(noisy, { minContentChars: 500 });
+    expect(chatCalls).toBe(1);
+    expect(result.sessions[0]?.preFilter.outputCount).toBe(0); // proves the pre-filter stripped everything
+    expect(result.sessions[0]?.skipReason).toBeUndefined();
+  });
+
+  test("default threshold is 10: empty sessions skip, tiny real sessions process", async () => {
+    // No minContentChars in config → in-code default 10.
+    const empty = sessionWithTexts("ses_empty_raw", []);
+    const emptyRun = await runExtract(empty, {});
+    expect(emptyRun.chatCalls).toBe(0);
+    expect(emptyRun.result.sessions[0]?.skipReason).toBe("too_short");
+
+    // 22 raw chars — the analysis floor for candidate-yielding sessions (#597).
+    const tinyReal = sessionWithTexts("ses_22", ["use jwt 24h ttl always"]);
+    const tinyRun = await runExtract(tinyReal, {});
+    expect(tinyRun.chatCalls).toBe(1);
+    expect(tinyRun.result.sessionsProcessed).toBe(1);
+  });
+
+  test("minContentChars: 0 disables the gate entirely", async () => {
+    const empty = sessionWithTexts("ses_empty_gate_off", []);
+    const { result, chatCalls } = await runExtract(empty, { minContentChars: 0 });
+    expect(chatCalls).toBe(1);
+    expect(result.sessionsProcessed).toBe(1);
   });
 
   test("honors maxTotalChars override for the pre-filter budget", async () => {

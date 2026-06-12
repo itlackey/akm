@@ -32,7 +32,7 @@ import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolveAkmBin";
 import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../schedule";
 import type { TaskDocument } from "../schema";
-import { escapeXml, spawnCommand } from "./exec-utils";
+import { escapeXml, nodeExec, nodeFs } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
 export interface LaunchdExec {
@@ -203,9 +203,7 @@ function defaultAgentsDir(): string {
 
 function defaultLaunchdExec(): LaunchdExec {
   return {
-    run(args: string[]) {
-      return spawnCommand(args);
-    },
+    ...nodeExec(),
     uid() {
       const fn = (process as { getuid?: () => number }).getuid;
       return typeof fn === "function" ? fn.call(process) : 0;
@@ -215,14 +213,9 @@ function defaultLaunchdExec(): LaunchdExec {
 
 function defaultLaunchdFs(): LaunchdFs {
   return {
-    writeFile(file, content) {
-      fs.writeFileSync(file, content, { encoding: "utf8" });
-    },
+    ...nodeFs(),
     removeFile(file) {
       fs.rmSync(file, { force: true });
-    },
-    ensureDir(dir) {
-      fs.mkdirSync(dir, { recursive: true });
     },
     list(dir) {
       try {

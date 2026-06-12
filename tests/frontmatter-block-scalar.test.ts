@@ -12,8 +12,8 @@
  * cloned defensive serializer.  These tests pin the corrected behaviour.
  */
 import { describe, expect, it } from "bun:test";
-import { assembleAsset, serializeFrontmatter } from "../src/core/asset-serialize";
-import { parseFrontmatter } from "../src/core/frontmatter";
+import { assembleAsset, serializeFrontmatter } from "../src/core/asset/asset-serialize";
+import { parseFrontmatter } from "../src/core/asset/frontmatter";
 
 describe("parseFrontmatter — |‑block scalar support", () => {
   it("parses a clip block scalar (|) — single trailing newline", () => {

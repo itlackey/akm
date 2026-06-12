@@ -51,14 +51,21 @@
  * @module state-db
  */
 
-import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmImproveResult } from "../commands/improve";
+import type { Proposal } from "../commands/proposal/validators/proposals";
+import { type Database, openDatabase, type SqlValue } from "../storage/database";
+import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import type { EventEnvelope } from "./events";
+import type { AkmImproveResult } from "./improve-types";
+import { classifyImproveAction } from "./improve-types";
 import { getDataDir } from "./paths";
-import type { Proposal } from "./proposals";
 import { error } from "./warn";
+
+// Re-export the boundary Database type so command modules can type their repo
+// parameters against the owner module rather than reaching into the runtime
+// boundary directly.
+export type { Database };
 
 // ── Path helper ──────────────────────────────────────────────────────────────
 
@@ -96,7 +103,9 @@ export function getStateDbPath(): string {
  *   busy_timeout = 30000
  *     When another connection holds a write lock, SQLite retries for up to
  *     30 000 ms before returning SQLITE_BUSY. Without this, the default timeout
- *     is 0 ms — any concurrent writer causes an immediate error.
+ *     is 0 ms — any concurrent writer causes an immediate error. 30 s (#589)
+ *     matches the value used in openDatabase() for index.db; 5 s proved too
+ *     narrow when a post-inference reindex overlapped a parallel event write.
  */
 export function openStateDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getStateDbPath();
@@ -105,7 +114,7 @@ export function openStateDatabase(dbPath?: string): Database {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = new Database(resolvedPath);
+  const db = openDatabase(resolvedPath);
 
   // PRAGMAs must run before any DDL or DML.
   db.exec("PRAGMA journal_mode = WAL");
@@ -118,21 +127,11 @@ export function openStateDatabase(dbPath?: string): Database {
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────
-
-/**
- * A single migration: a stable string `id` and idempotent SQL `up` script.
- *
- * Rules:
- *   - `id` is permanent and must never be reused.
- *   - `up` must be idempotent (use IF NOT EXISTS, INSERT OR IGNORE, etc.).
- *   - `up` must not DROP any table that holds durable (non-regenerable) data.
- *   - `up` must not RENAME or change the type of an existing column.
- *   - To add a column: use `ALTER TABLE … ADD COLUMN … DEFAULT …`.
- */
-interface Migration {
-  id: string;
-  up: string;
-}
+//
+// The runner itself (ensureMigrationsTable + runMigrations) lives in the shared
+// engine at src/storage/engines/sqlite-migrations.ts. This module owns only its
+// own MIGRATIONS array and delegates application to that shared runner. The
+// {@link Migration} interface is imported from there.
 
 /**
  * All migrations in application order. New migrations are APPENDED to this
@@ -212,7 +211,9 @@ const MIGRATIONS: Migration[] = [
       --
       -- Extensible (metadata_json) columns:
       --   metadata_json TEXT      — JSON object for future proposal fields.
-      --                             Current fields stored here: sourceRun, review.
+      --                             Current fields stored here: sourceRun,
+      --                             review, confidence, gateDecision (#577),
+      --                             backupContent.
       --
       -- ADD COLUMN extension points (future migrations):
       --   ALTER TABLE proposals ADD COLUMN source_run TEXT DEFAULT NULL;
@@ -483,46 +484,46 @@ const MIGRATIONS: Migration[] = [
         ON extract_sessions_seen(processed_at);
     `,
   },
-];
 
-/**
- * Create the migrations table if it does not exist. This must be called
- * unconditionally on every open so a fresh database bootstraps correctly.
- */
-function ensureMigrationsTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-}
+  // ── Migration 005 — proposal_fs_imports ─────────────────────────────────────
+  //
+  // One-shot ledger for the legacy filesystem→SQLite proposal import (#578).
+  //
+  // Before 0.9.0 the proposal queue lived as per-uuid JSON directories under
+  // `<stashDir>/.akm/proposals/` and the `proposals` table (created in 001) was
+  // dead weight. 0.9.0 makes the table canonical; the first proposal operation
+  // against a stash imports any legacy `proposal.json` files it finds (INSERT
+  // OR IGNORE, so re-runs never duplicate) and records the stash here so later
+  // invocations skip the directory walk entirely.
+  //
+  // Indexed (query) columns:
+  //   stash_dir    TEXT PK  — absolute stash root the import ran against.
+  //
+  // Non-indexed columns:
+  //   imported_at    TEXT     — ISO-8601 UTC; when the import completed.
+  //   imported_count INTEGER  — rows actually inserted by the import.
+  {
+    id: "005-proposal-fs-imports",
+    up: `
+      CREATE TABLE IF NOT EXISTS proposal_fs_imports (
+        stash_dir      TEXT    PRIMARY KEY,
+        imported_at    TEXT    NOT NULL,
+        imported_count INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
+];
 
 /**
  * Apply every pending migration in a single transaction per migration.
  *
- * Each migration is applied in its own transaction so a failure in migration N
- * does not roll back already-applied migrations 1..N-1. The migration row is
- * inserted AFTER the DDL succeeds, so a crash mid-migration leaves no row and
- * the migration will be retried on next open (all DDL in `up` uses IF NOT
- * EXISTS so the retry is safe).
+ * Delegates to the shared SQLite migration engine; state.db has no
+ * pre-versioning bootstrap step, so no `bootstrap` hook is passed.
  *
  * Called automatically by `openStateDatabase()`.
  */
 export function runMigrations(db: Database): void {
-  ensureMigrationsTable(db);
-
-  const appliedRows = db.prepare("SELECT id FROM schema_migrations").all() as Array<{ id: string }>;
-  const applied = new Set(appliedRows.map((r) => r.id));
-
-  for (const migration of MIGRATIONS) {
-    if (applied.has(migration.id)) continue;
-
-    db.transaction(() => {
-      db.exec(migration.up);
-      db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
-    })();
-  }
+  runSqliteMigrations(db, MIGRATIONS);
 }
 
 // ── TypeScript row types ─────────────────────────────────────────────────────
@@ -575,9 +576,10 @@ export function eventRowToEnvelope(row: EventRow): EventEnvelope {
 /**
  * Raw SQLite row shape for the `proposals` table.
  *
- * Maps to the public {@link Proposal} interface from src/core/proposals.ts.
- * The `sourceRun` and `review` fields are stored in `metadata_json`; callers
- * that need them should `JSON.parse(row.metadata_json)`.
+ * Maps to the public {@link Proposal} interface from src/commands/proposal/validators/proposals.ts.
+ * The `sourceRun`, `review`, `confidence`, `gateDecision`, and `backupContent`
+ * fields are stored in `metadata_json`; callers that need them should
+ * `JSON.parse(row.metadata_json)` (or use {@link proposalRowToProposal}).
  */
 export interface ProposalRow {
   id: string;
@@ -625,6 +627,9 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
       ...(frontmatter !== undefined ? { frontmatter } : {}),
     },
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
+    ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
+    ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
+    ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
   };
 }
 
@@ -637,6 +642,9 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   const metaObj: Record<string, unknown> = {};
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
+  if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
+  if (proposal.gateDecision !== undefined) metaObj.gateDecision = proposal.gateDecision;
+  if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
 
   return {
     id: proposal.id,
@@ -750,7 +758,7 @@ export function readStateEvents(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = db
     .prepare(`SELECT id, event_type, ts, ref, metadata_json FROM events ${where} ORDER BY id ASC`)
-    .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as EventRow[];
+    .all(...(params as SqlValue[])) as EventRow[];
 
   const events = rows.map(eventRowToEnvelope);
   const nextId = events.length > 0 ? events[events.length - 1].id : (options.sinceId ?? 0);
@@ -813,7 +821,10 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 
 /**
  * List proposals, optionally filtered by stashDir, status, and/or ref.
- * Results are sorted by created_at ASC to match the existing listProposals() behaviour.
+ *
+ * Results are ordered by `created_at ASC` (matching the historical
+ * `listProposals()` sort), with `rowid` as a deterministic tiebreak so two
+ * proposals created in the same millisecond list in insertion order.
  */
 export function listStateProposals(
   db: Database,
@@ -838,24 +849,92 @@ export function listStateProposals(
     .prepare(
       `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
               content, frontmatter_json, metadata_json
-       FROM proposals ${where} ORDER BY created_at ASC`,
+       FROM proposals ${where} ORDER BY created_at ASC, rowid ASC`,
     )
-    .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as ProposalRow[];
+    .all(...(params as SqlValue[])) as ProposalRow[];
   return rows.map(proposalRowToProposal);
 }
 
 /**
- * Look up a single proposal by id. Returns undefined when not found.
+ * Look up a single proposal by id, optionally scoped to one stash root.
+ * Returns undefined when not found.
  */
-export function getStateProposal(db: Database, id: string): Proposal | undefined {
-  const row = db
-    .prepare(
-      `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
+export function getStateProposal(db: Database, id: string, stashDir?: string): Proposal | undefined {
+  const sql = `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
               content, frontmatter_json, metadata_json
-       FROM proposals WHERE id = ?`,
-    )
-    .get(id) as ProposalRow | undefined;
+       FROM proposals WHERE id = ?${stashDir ? " AND stash_dir = ?" : ""}`;
+  const row = (stashDir ? db.prepare(sql).get(id, stashDir) : db.prepare(sql).get(id)) as ProposalRow | undefined;
   return row ? proposalRowToProposal(row) : undefined;
+}
+
+/**
+ * Find PENDING proposal ids in one stash whose id starts with `idPrefix`.
+ * Backs the UUID-prefix form of `akm proposal show/accept/... <prefix>` —
+ * prefix resolution is deliberately scoped to the live (pending) queue,
+ * mirroring the historical behaviour of scanning only the live directory.
+ *
+ * `%` / `_` / `\` in the prefix are escaped so the LIKE pattern is literal.
+ */
+export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idPrefix: string): string[] {
+  const escaped = idPrefix.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  const rows = db
+    .prepare(
+      `SELECT id FROM proposals
+       WHERE stash_dir = ? AND status = 'pending' AND id LIKE ? ESCAPE '\\'
+       ORDER BY id ASC`,
+    )
+    .all(stashDir, `${escaped}%`) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Whether the legacy filesystem proposal import has already run for `stashDir`.
+ * See migration 005 (`proposal_fs_imports`).
+ */
+export function hasImportedFsProposals(db: Database, stashDir: string): boolean {
+  // Drivers disagree on the no-row sentinel (bun:sqlite → null,
+  // better-sqlite3 → undefined) — Boolean() covers both.
+  return Boolean(db.prepare("SELECT 1 FROM proposal_fs_imports WHERE stash_dir = ?").get(stashDir));
+}
+
+/**
+ * Record that the legacy filesystem proposal import completed for `stashDir`
+ * so subsequent invocations skip the directory walk. INSERT OR REPLACE keeps
+ * the call idempotent.
+ */
+export function recordFsProposalsImport(db: Database, stashDir: string, importedCount: number): void {
+  db.prepare(
+    "INSERT OR REPLACE INTO proposal_fs_imports (stash_dir, imported_at, imported_count) VALUES (?, ?, ?)",
+  ).run(stashDir, new Date().toISOString(), importedCount);
+}
+
+/**
+ * Insert a proposal row ONLY when the id is not already present (used by the
+ * legacy filesystem import so re-runs never clobber rows that have since been
+ * mutated through the canonical store). Returns true when a row was inserted.
+ */
+export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDir: string): boolean {
+  const v = proposalToRowValues(proposal, stashDir);
+  const result = db
+    .prepare(`
+      INSERT OR IGNORE INTO proposals
+        (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      v.id,
+      v.stash_dir,
+      v.ref,
+      v.status,
+      v.source,
+      v.created_at,
+      v.updated_at,
+      v.content,
+      v.frontmatter_json,
+      v.metadata_json,
+    );
+  const changes = (result as { changes?: number | bigint }).changes ?? 0;
+  return Number(changes) > 0;
 }
 
 // ── task_history table helpers ───────────────────────────────────────────────
@@ -949,7 +1028,58 @@ export function queryTaskHistory(
               target_kind, target_ref, metadata_json
        FROM task_history ${where} ORDER BY started_at DESC`,
     )
-    .all(...(params as import("bun:sqlite").SQLQueryBindings[])) as TaskHistoryRow[];
+    .all(...(params as SqlValue[])) as TaskHistoryRow[];
+}
+
+/**
+ * Slim projection of a `task_history` row used by health interval analysis.
+ */
+export interface TaskIntervalRow {
+  started_at: string;
+  completed_at: string;
+}
+
+/**
+ * Read COMPLETED `akm-improve` task_history runs whose `started_at` falls in
+ * `[since, until)` (or `started_at >= since` when `until` is omitted), ordered
+ * oldest-first by `started_at`. Only rows with a non-null `completed_at` are
+ * returned (in-flight runs are excluded). The `task_id = 'akm-improve'`
+ * predicate is fixed because the only caller (commands/health.ts
+ * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
+ *
+ * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
+ * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
+ * widened window; this helper does not widen.
+ *
+ * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * returning.
+ */
+export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {
+  const sql = until
+    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
+    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
+  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as TaskIntervalRow[];
+}
+
+// ── schema introspection ─────────────────────────────────────────────────────
+
+/**
+ * Return the subset of `names` that exist as TABLEs in this database, ordered
+ * by name. Used by health's state-db-schema check to detect missing required
+ * tables without leaking a `sqlite_master` query into command code.
+ *
+ * The `IN (...)` predicate is built from parameter placeholders so table names
+ * are bound, never interpolated.
+ *
+ * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * returning.
+ */
+export function listExistingTableNames(db: Database, names: readonly string[]): Array<{ name: string }> {
+  if (names.length === 0) return [];
+  const placeholders = names.map(() => "?").join(", ");
+  return db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders}) ORDER BY name`)
+    .all(...(names as SqlValue[])) as Array<{ name: string }>;
 }
 
 // ── events.jsonl import ──────────────────────────────────────────────────────
@@ -1112,25 +1242,23 @@ export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMe
   let errorCount = 0;
 
   for (const action of actions) {
-    switch (action.mode) {
-      case "reflect":
-      case "distill":
-      case "memory-inference":
-      case "graph-extraction":
+    // Bucketing delegated to the shared classifyImproveAction so this aggregate
+    // and the improve_completed event in improve.ts can never disagree, and so a
+    // new union variant is a compile error rather than a silent drop. Note:
+    // `reflect-guard-rejected` now counts as "rejected" (previously this switch
+    // omitted it entirely — a data-integrity miscount). "noop" (memory-prune) is
+    // intentionally counted in none of the three numeric buckets.
+    switch (classifyImproveAction(action.mode)) {
+      case "accepted":
         acceptedCount++;
         break;
-      case "reflect-cooldown":
-      case "reflect-skipped":
-      case "distill-skipped":
+      case "rejected":
         rejectedCount++;
         break;
-      case "reflect-failed":
       case "error":
         errorCount++;
         break;
-      case "memory-prune":
-        // Prune is bookkeeping, not "accepted" content authoring; count
-        // separately as a no-op for the audit aggregate.
+      case "noop":
         break;
     }
     // Legacy: pre-gate action results may carry autoAccepted: true (reflect path).
@@ -1196,6 +1324,42 @@ export function recordImproveRun(
     JSON.stringify(metricsObj),
     JSON.stringify(input.metadata ?? {}),
   );
+}
+
+/**
+ * Slim projection of an `improve_runs` row used by health/audit readers that
+ * only need the windowed summary columns (NOT the full {@link ImproveRunRow}).
+ * Matches the column list of {@link queryImproveRuns} verbatim.
+ */
+export interface ImproveRunSummaryRow {
+  id: string;
+  started_at: string;
+  completed_at: string;
+  ok: number;
+  scope_mode: string;
+  scope_value: string | null;
+  result_json: string;
+}
+
+/**
+ * Read real (non-dry-run) improve_runs rows whose `started_at` falls in the
+ * window `[since, until)`. When `until` is omitted the window is open-ended
+ * (`started_at >= since`). Rows are returned newest-first (`ORDER BY
+ * started_at DESC`).
+ *
+ * Owns the SQL formerly inlined in commands/health.ts (`loadImproveRunRows`).
+ * The `dry_run = 0` filter is first-class so dry-run probes never pollute
+ * productivity audits.
+ *
+ * Connection-lifetime rule (WS5): `.all()` fully materializes the result set
+ * into a plain array before returning — no live cursor escapes the caller's
+ * `openStateDatabase` scope.
+ */
+export function queryImproveRuns(db: Database, since: string, until?: string): ImproveRunSummaryRow[] {
+  const sql = until
+    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
+    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
+  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunSummaryRow[];
 }
 
 /**
@@ -1356,7 +1520,7 @@ export function shouldSkipAlreadyExtractedSession(
 
 /**
  * DDL for the `registry_index_cache` table that lives in the EXISTING index.db
- * (managed by src/indexer/db.ts).
+ * (managed by src/indexer/db/db.ts).
  *
  * Design: uses the same migration-safe ADD COLUMN approach. The table is
  * created with CREATE TABLE IF NOT EXISTS so it is safe to call inside
@@ -1380,7 +1544,7 @@ export function shouldSkipAlreadyExtractedSession(
  *   ALTER TABLE registry_index_cache ADD COLUMN error_message TEXT DEFAULT NULL;
  *
  * To add this table to index.db, call ensureRegistryIndexCacheSchema(db) from
- * within ensureSchema() in src/indexer/db.ts, or add it as a new CREATE TABLE
+ * within ensureSchema() in src/indexer/db/db.ts, or add it as a new CREATE TABLE
  * IF NOT EXISTS block inside the existing ensureSchema() call.
  */
 export const REGISTRY_INDEX_CACHE_DDL = `

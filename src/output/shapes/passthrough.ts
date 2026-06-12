@@ -6,7 +6,7 @@
 // exhaustive (v1 spec §9). Each result object is already shaped at the
 // command boundary; the registry just confirms there's no surprise
 // command name slipping through.
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
 // #484: stamp schemaVersion + shape discriminator on passthrough envelopes so
 // third-party consumers can pin a schema version and dispatch on shape uniformly.
@@ -33,6 +33,8 @@ const PASSTHROUGH_COMMANDS = [
   "env-create",
   "env-export",
   "env-remove",
+  "env-set",
+  "env-unset",
   "feedback",
   "graph-entities",
   "graph-entity",
@@ -71,6 +73,7 @@ const PASSTHROUGH_COMMANDS = [
   "tasks-doctor",
   "tasks-enable",
   "tasks-history",
+  "tasks-init",
   "tasks-list",
   "tasks-remove",
   "tasks-run",
@@ -78,9 +81,6 @@ const PASSTHROUGH_COMMANDS = [
   "tasks-sync",
   "update",
   "upgrade",
-  "vault-create",
-  "vault-set",
-  "vault-unset",
   "wiki-create",
   "wiki-ingest",
   "wiki-lint",
@@ -91,6 +91,7 @@ const PASSTHROUGH_COMMANDS = [
   "wiki-show",
   "wiki-stash",
   "workflow-complete",
+  "workflow-complete-rejected",
   "workflow-create",
   "workflow-list",
   "workflow-next",
@@ -100,6 +101,7 @@ const PASSTHROUGH_COMMANDS = [
   "workflow-validate",
 ] as const;
 
-for (const command of PASSTHROUGH_COMMANDS) {
-  registerOutputShape(command, makeStampHandler(command));
-}
+export const passthroughShapes: OutputShapeEntry[] = PASSTHROUGH_COMMANDS.map((command) => ({
+  command,
+  handler: makeStampHandler(command),
+}));

@@ -50,7 +50,7 @@
  *    would (UsageError → 2, ConfigError → 78, others → 1).
  *
  * State note: back-to-back in-process runs in a SINGLE test would otherwise
- * share `cachedConfig` (a module-level singleton in `src/core/config.ts`) and
+ * share `cachedConfig` (a module-level singleton in `src/core/config/config.ts`) and
  * the output-mode singleton. `runCliCapture` calls `resetConfigCache()` and
  * `resetOutputMode()` before each run so every invocation re-reads config from
  * the (sandboxed) environment, exactly as a fresh subprocess would. The
@@ -61,10 +61,35 @@
 import { renderUsage, runCommand } from "citty";
 import { main } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
-import { normalizeShowArgv } from "../../src/commands/show";
-import { loadConfig, resetConfigCache } from "../../src/core/config";
-import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
+import { normalizeShowArgv } from "../../src/commands/read/show";
+import { loadConfig, resetConfigCache } from "../../src/core/config/config";
+import { AkmError } from "../../src/core/errors";
+import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { resetLocalEmbedder } from "../../src/llm/embedder";
+import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
+
+/**
+ * Reset every module-level process singleton the CLI caches, so an in-process
+ * run re-reads its state from the (sandboxed) environment — matching
+ * fresh-subprocess semantics. This is a SUPERSET of the historical
+ * config+output-mode reset: it additionally clears the graph-boost cache, the
+ * local embedder, the embedding cache, and the warn-module quiet/verbose/log-file
+ * state. Every call is to a verified-exported, no-argument, idempotent reset, so
+ * invoking them here (and possibly again in `tests/_preload.ts`) is safe and makes
+ * isolation order-independent.
+ */
+export function resetAllProcessState(): void {
+  resetConfigCache();
+  resetOutputMode();
+  resetGraphBoostCache();
+  resetLocalEmbedder();
+  clearEmbeddingCache();
+  resetQuiet();
+  resetVerbose();
+  clearLogFile();
+}
 
 export interface CliResult {
   code: number;
@@ -74,14 +99,20 @@ export interface CliResult {
 
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
+const EXIT_INTERNAL = 70;
 const EXIT_CONFIG = 78;
 
 /** Mirror of `classifyExitCode` in src/cli/shared.ts for errors that escape. */
 function classifyExitCode(error: unknown): number {
-  if (error instanceof UsageError) return EXIT_USAGE;
-  if (error instanceof ConfigError) return EXIT_CONFIG;
-  if (error instanceof NotFoundError) return EXIT_GENERAL;
-  return EXIT_GENERAL;
+  if (!(error instanceof AkmError)) return EXIT_INTERNAL;
+  switch (error.kind) {
+    case "usage":
+      return EXIT_USAGE;
+    case "config":
+      return EXIT_CONFIG;
+    case "not-found":
+      return EXIT_GENERAL;
+  }
 }
 
 /** Sentinel thrown by the temporary `process.exit` shim to unwind the stack. */
@@ -103,8 +134,7 @@ const joinParts = (parts: unknown[]): string => parts.map((p) => (typeof p === "
 export async function runCliCapture(args: string[]): Promise<CliResult> {
   // Reset module-level singletons so this run re-reads the (sandboxed) env,
   // matching fresh-subprocess semantics even for back-to-back calls in one test.
-  resetConfigCache();
-  resetOutputMode();
+  resetAllProcessState();
 
   // Resolve everything that requires an `await` BEFORE patching the output
   // sinks, so the patched console.log isn't relied on across an await boundary

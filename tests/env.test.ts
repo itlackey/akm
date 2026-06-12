@@ -3,10 +3,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, createEnv, injectIntoEnv, listKeys, loadEnv } from "../src/commands/env";
+import { buildShellExportScript, createEnv, injectIntoEnv, listKeys, loadEnv } from "../src/commands/env/env";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
@@ -319,7 +319,7 @@ describe("env indexer safety", () => {
 
       // 5. CRITICAL: the secret value is not in entries.search_text
       type Row = { search_text: string | null; entry_json: string };
-      const rows = db.query("SELECT search_text, entry_json FROM entries WHERE entry_type = ?").all("env") as Row[];
+      const rows = db.prepare("SELECT search_text, entry_json FROM entries WHERE entry_type = ?").all("env") as Row[];
       expect(rows.length).toBe(1);
       expect(rows[0].search_text ?? "").not.toContain(SECRET_VALUE);
       expect(rows[0].entry_json).not.toContain(SECRET_VALUE);
@@ -327,7 +327,7 @@ describe("env indexer safety", () => {
       // 6. CRITICAL: the secret value cannot be retrieved via FTS5 search
       type FtsRow = { c: number };
       const ftsHit = db
-        .query("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
+        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
         .get("correct") as FtsRow;
       expect(ftsHit.c).toBe(0);
     } finally {
@@ -346,7 +346,7 @@ describe("env indexer safety", () => {
     try {
       type FtsRow = { c: number };
       const hit = db
-        .query("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
+        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
         .get("STRIPE_API_KEY") as FtsRow;
       expect(hit.c).toBe(1);
     } finally {
@@ -558,48 +558,29 @@ describe("env remove", () => {
   });
 });
 
-describe("vault deprecation shim", () => {
-  test("vault list warns to stderr and delegates to env-list shape", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
+describe("vault removed in 0.9.0", () => {
+  test("the `akm vault` verb no longer exists", async () => {
+    const stashDir = makeTempDir("akm-vault-removed-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
 
     const result = await runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: stashDir });
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("deprecated");
-    const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed.envs).toEqual([expect.objectContaining({ ref: "env:prod", keys: ["API_KEY"] })]);
+    // citty exits non-zero for an unknown top-level command.
+    expect(result.status).not.toBe(0);
   });
 
-  test("vault set hard-errors with a signpost (no silent write)", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
-    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
-    const result = await runCli(["vault", "set", "prod", "API_KEY", "newvalue"], { AKM_STASH_DIR: stashDir });
-
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("was removed");
-    expect(result.stderr).toContain("akm secret set");
-  });
-
-  test("vault unset hard-errors with a signpost", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
-    const result = await runCli(["vault", "unset", "prod", "API_KEY"], { AKM_STASH_DIR: stashDir });
-
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("was removed");
-  });
-
-  test("legacy vault:<name> ref still resolves through env export", async () => {
-    const stashDir = makeTempDir("akm-vault-shim-");
-    // A stash that has NOT migrated yet — only vaults/ exists.
+  test("a `vault:` ref is an unknown-type error pointing at env", async () => {
+    const stashDir = makeTempDir("akm-vault-removed-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
     const outFile = path.join(stashDir, "out.sh");
 
     const result = await runCli(["env", "export", "vault:prod", "--out", outFile], { AKM_STASH_DIR: stashDir });
 
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(outFile, "utf8")).toContain("export API_KEY='secret'");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("was removed");
+    expect(result.stderr).toContain("env:");
+    expect(fs.existsSync(outFile)).toBe(false);
   });
 });

@@ -26,7 +26,7 @@
  * lives in the config tree — that mapping is private to this module.
  */
 
-import type { AkmConfig } from "../core/config";
+import type { AkmConfig } from "../core/config/config";
 
 /** Locked v1 feature keys, kept for backward-compat at the call-site API level. */
 export type LlmFeatureKey =

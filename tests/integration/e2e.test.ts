@@ -19,12 +19,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../../src/commands/search";
-import { akmShowUnified as akmShow } from "../../src/commands/show";
-import { loadConfig, saveConfig } from "../../src/core/config";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../../src/indexer/db";
+import { akmSearch } from "../../src/commands/read/search";
+import { akmShowUnified as akmShow } from "../../src/commands/read/show";
+import { loadConfig, saveConfig } from "../../src/core/config/config";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
-import { loadStashFile } from "../../src/indexer/metadata";
+import { loadStashFile } from "../../src/indexer/passes/metadata";
 import type { SearchHit, SourceSearchHit } from "../../src/sources/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1038,7 +1038,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   });
 
-  test("cli: wiki remove --force hides preserved raw-only leftovers from wiki list", async () => {
+  test("cli: wiki remove -y hides preserved raw-only leftovers from wiki list", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-wiki-remove-");
     const rawSource = path.join(stashDir, "source.md");
     process.env.AKM_STASH_DIR = stashDir;
@@ -1065,11 +1065,9 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(showResult.exitCode).not.toBe(0);
       expect(showResult.stderr).toContain("Wiki not found: my-notes");
 
-      // --force still works as a deprecated skip-prompt alias for -y, but warns on stderr.
-      const cleanupResult = runCli("wiki", "remove", "my-notes", "--force", "--with-sources", "--format", "json");
+      // Remove the preserved raw/ leftover with -y --with-sources.
+      const cleanupResult = runCli("wiki", "remove", "my-notes", "-y", "--with-sources", "--format", "json");
       expect(cleanupResult.exitCode).toBe(0);
-      expect(cleanupResult.stderr).toContain("'--force' is deprecated");
-      expect(cleanupResult.stderr).toContain("-y/--yes");
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -1244,9 +1242,17 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
 
 describe("Scenario: upgrade and update --force (no network)", () => {
   let savedStashDir: string | undefined;
+  let isolatedConfigDir: string;
 
   beforeEach(() => {
     savedStashDir = process.env.AKM_STASH_DIR;
+    // The CLI-help assertions below spawn `akm` as a subprocess. Without an
+    // explicit config override the child resolves config from the real
+    // `~/.config/akm`, so a developer's local config (e.g. a key a later
+    // release dropped) makes `akm --help` print a validation error instead of
+    // help. Point the child at an empty isolated dir so these tests assert the
+    // CLI's own output, not the host's config state.
+    isolatedConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-help-"));
   });
 
   afterEach(() => {
@@ -1255,10 +1261,20 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     } else {
       process.env.AKM_STASH_DIR = savedStashDir;
     }
+    fs.rmSync(isolatedConfigDir, { recursive: true, force: true });
   });
 
+  // Spawn the CLI with a hermetic config dir so help output never depends on
+  // the developer's real `~/.config/akm`.
+  const spawnHelpCli = (args: string[]) =>
+    spawnSync("bun", [CLI, ...args], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: { ...process.env, AKM_CONFIG_DIR: isolatedConfigDir },
+    });
+
   test("upgrade --check returns version info (mocked fetch)", async () => {
-    const { checkForUpdate } = await import("../../src/commands/self-update");
+    const { checkForUpdate } = await import("../../src/commands/sources/self-update");
     const result = await withMockedFetch(
       () => Response.json({ tag_name: "v0.0.14" }),
       () => checkForUpdate("0.0.13"),
@@ -1270,7 +1286,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("performUpgrade detects non-binary install and returns guidance", async () => {
-    const { performUpgrade } = await import("../../src/commands/self-update");
+    const { performUpgrade } = await import("../../src/commands/sources/self-update");
     const result = await performUpgrade({
       currentVersion: "0.0.13",
       latestVersion: "0.0.14",
@@ -1283,10 +1299,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm update --help shows --force flag", async () => {
-    const result = spawnSync("bun", [CLI, "update", "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["update", "--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("--force");
     expect(output).toContain("Force fresh download");
@@ -1308,20 +1321,14 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm upgrade --help shows --check and --force flags", async () => {
-    const result = spawnSync("bun", [CLI, "upgrade", "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["upgrade", "--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("--check");
     expect(output).toContain("--force");
   });
 
   test("cli: akm help migrate prints migration guidance for a release", async () => {
-    const result = spawnSync("bun", [CLI, "help", "migrate", "0.5.0"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["help", "migrate", "0.5.0"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(result.status).toBe(0);
     expect(output).toContain("Migration notes for akm v0.5.0");
@@ -1329,10 +1336,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm help migrate with no version fails structurally even with --format json", async () => {
-    const result = spawnSync("bun", [CLI, "help", "migrate", "--format", "json"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["help", "migrate", "--format", "json"]);
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { code: string; error: string };
     expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
@@ -1340,10 +1344,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("cli: akm --help lists the help command", async () => {
-    const result = spawnSync("bun", [CLI, "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("help");
     expect(output).toContain("focused help topics");
@@ -1353,10 +1354,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     // The setup subcommand should advertise its purpose so operators can
     // see what the wizard configures (embeddings, LLM, registries, sources,
     // agent profiles) without running the interactive flow.
-    const result = spawnSync("bun", [CLI, "setup", "--help"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnHelpCli(["setup", "--help"]);
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("Interactive configuration wizard");
     expect(output).toContain("embeddings");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { shouldAddAsWebsiteUrl } from "../src/commands/source-add";
+import { shouldAddAsWebsiteUrl } from "../src/commands/sources/source-add";
 
 describe("shouldAddAsWebsiteUrl", () => {
   test("treats docs-style URLs as website sources", () => {

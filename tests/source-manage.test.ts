@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { addStash, listStashes, removeStash } from "../src/commands/source-manage";
-import { loadConfig, saveConfig } from "../src/core/config";
+import { addStash, listStashes, removeStash } from "../src/commands/sources/source-manage";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const fixtureDirs: string[] = [];

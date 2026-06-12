@@ -9,7 +9,6 @@
  *      `utility_scores` rows (CREATE TABLE IF NOT EXISTS pattern).
  */
 
-import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -21,10 +20,11 @@ import {
   openDatabase,
   type ScopedUtilityRow,
   type UtilityScoreRow,
-} from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
-import type { RankedEntryInput } from "../src/indexer/ranking";
-import { applyUtilityContributors, type UtilityRankingContext } from "../src/indexer/ranking-contributors";
+} from "../src/indexer/db/db";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { RankedEntryInput } from "../src/indexer/search/ranking";
+import { applyUtilityContributors, type UtilityRankingContext } from "../src/indexer/search/ranking-contributors";
+import type { Database } from "../src/storage/database";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

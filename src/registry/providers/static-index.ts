@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/common";
-import type { RegistryConfigEntry } from "../../core/config";
+import type { RegistryConfigEntry } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
-import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
+import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
 import { asString } from "../../integrations/github";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
@@ -171,56 +171,26 @@ registerProvider("static-index", (config) => new StaticIndexProvider(config));
 
 // ── Index loading with cache ────────────────────────────────────────────────
 
-async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | null> {
-  // ── Step 1: Try DB cache (index.db) ─────────────────────────────────────
+/**
+ * RAII-style lifecycle helper for the registry cache DB. Opens the DB (treating
+ * a failed open exactly like the legacy fall-through: the bun-test isolation
+ * guard is re-thrown, any other failure yields `db = undefined`), runs `fn`,
+ * and guarantees the DB is closed in a `finally` after `fn` has fully settled
+ * (the await is required: the callbacks are async, and closing before they
+ * settle would tear the DB down mid-write).
+ */
+async function withRegistryCacheDb<T>(fn: (db: ReturnType<typeof openDatabase> | undefined) => Promise<T>): Promise<T> {
   let db: ReturnType<typeof openDatabase> | undefined;
-  let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
   try {
     db = openDatabase();
-    dbCacheResult = getRegistryIndexCache(db, entry.url, CACHE_TTL_MS);
   } catch (err) {
-    // Never mask the bun-test isolation guard as "DB unavailable" — see
-    // rethrowIfTestIsolationError in src/core/errors.ts. Without this, a
-    // leaky test silently gets a cold cache instead of the loud
-    // TEST_ISOLATION_MISSING failure the guard intends.
+    // Never mask the bun-test isolation guard as "DB unavailable".
     rethrowIfTestIsolationError(err);
-    // index.db not available yet (pre-migration install or test env) — fall through
+    db = undefined;
   }
-
-  if (dbCacheResult) {
-    const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
-    if (index) {
-      if (db) closeDatabase(db);
-      return index;
-    }
-  }
-
-  // ── Step 2: Fetch fresh index from remote ────────────────────────────────
   try {
-    const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000 });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    // Cap at 50 MB — registry indexes can grow large but unbounded
-    // responses from a compromised server would OOM us.
-    const data = await jsonWithByteCap<unknown>(response, 50 * 1024 * 1024);
-    const index = parseRegistryIndex(data);
-    if (index) {
-      // Write to DB cache (primary)
-      if (db) {
-        try {
-          const etag = response.headers.get("etag") ?? undefined;
-          const lastModified = response.headers.get("last-modified") ?? undefined;
-          upsertRegistryIndexCache(db, entry.url, JSON.stringify(index), { etag, lastModified });
-        } catch {
-          /* best-effort */
-        }
-        closeDatabase(db);
-      }
-      return index;
-    }
-    throw new Error("Invalid registry index format");
-  } catch (err) {
+    return await fn(db);
+  } finally {
     if (db) {
       try {
         closeDatabase(db);
@@ -228,13 +198,66 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
         /* ignore */
       }
     }
-    // Fetch failed — use stale DB cache if available
+  }
+}
+
+async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | null> {
+  return withRegistryCacheDb(async (db) => {
+    // ── Step 1: Try DB cache (index.db) ─────────────────────────────────────
+    let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
+    try {
+      if (db) {
+        dbCacheResult = getRegistryIndexCache(db, entry.url, CACHE_TTL_MS);
+      }
+    } catch (err) {
+      // Never mask the bun-test isolation guard as "DB unavailable" — see
+      // rethrowIfTestIsolationError in src/core/errors.ts. Without this, a
+      // leaky test silently gets a cold cache instead of the loud
+      // TEST_ISOLATION_MISSING failure the guard intends.
+      rethrowIfTestIsolationError(err);
+      // index.db read failed (pre-migration install or test env) — fall through
+    }
+
     if (dbCacheResult) {
       const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
-      if (index) return index;
+      if (index) {
+        return index;
+      }
     }
-    throw err;
-  }
+
+    // ── Step 2: Fetch fresh index from remote ────────────────────────────────
+    try {
+      const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000 });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      // Cap at 50 MB — registry indexes can grow large but unbounded
+      // responses from a compromised server would OOM us.
+      const data = await jsonWithByteCap<unknown>(response, 50 * 1024 * 1024);
+      const index = parseRegistryIndex(data);
+      if (index) {
+        // Write to DB cache (primary)
+        if (db) {
+          try {
+            const etag = response.headers.get("etag") ?? undefined;
+            const lastModified = response.headers.get("last-modified") ?? undefined;
+            upsertRegistryIndexCache(db, entry.url, JSON.stringify(index), { etag, lastModified });
+          } catch {
+            /* best-effort */
+          }
+        }
+        return index;
+      }
+      throw new Error("Invalid registry index format");
+    } catch (err) {
+      // Fetch failed — use stale DB cache if available
+      if (dbCacheResult) {
+        const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
+        if (index) return index;
+      }
+      throw err;
+    }
+  });
 }
 
 export function isCacheExpired(mtimeMs: number): boolean {

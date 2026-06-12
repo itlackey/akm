@@ -9,9 +9,9 @@ import {
   getAllRenderers,
   getRenderer,
   runMatchers,
-} from "../src/indexer/file-context";
-import { directoryMatcher, smartMdMatcher } from "../src/indexer/matchers";
-import { walkStashFlat } from "../src/indexer/walker";
+} from "../src/indexer/walk/file-context";
+import { directoryMatcher, smartMdMatcher } from "../src/indexer/walk/matchers";
+import { walkStashFlat } from "../src/indexer/walk/walker";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
 
@@ -572,9 +572,9 @@ describe("Renderer", () => {
       "memory-md",
       "script-source",
       "secret-file",
+      "session-md", // #561
       "skill-md",
       "task-yaml",
-      "vault-env",
       "wiki-md",
       "workflow-md",
     ]);

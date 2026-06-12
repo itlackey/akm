@@ -15,7 +15,7 @@ export interface SourceSearchHit {
   path: string;
   ref: string;
   origin?: string | null;
-  /** Vault-only: key names surfaced in search results (no values). */
+  /** Env-only: key names surfaced in search results (no values). */
   keys?: string[];
   /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean;
@@ -118,6 +118,8 @@ export interface WorkflowRunStepState extends WorkflowStepDefinition {
   status: WorkflowRunStepStatus;
   notes?: string;
   evidence?: Record<string, unknown>;
+  /** Summary of work done, captured on completion (#506). */
+  summary?: string;
   completedAt?: string | null;
 }
 
@@ -133,6 +135,10 @@ export interface WorkflowRunSummary {
   updatedAt: string;
   completedAt?: string | null;
   params?: Record<string, unknown>;
+  /** Agent harness that started the run (e.g. "claude-code", "opencode"), if known. */
+  agentHarness?: string | null;
+  /** Platform-native session id that owns the run, if known. */
+  agentSessionId?: string | null;
 }
 
 export interface AddResponse {
@@ -319,12 +325,12 @@ export interface ShowResponse {
   /** Actionable guidance when editable is false (omitted when editable) */
   editHint?: string;
   /**
-   * Vault-only: list of KEY names defined in the vault (no values).
-   * Populated by the `vault-env` renderer; never set for any other type.
+   * Env-only: list of KEY names defined in the env file (no values).
+   * Populated by the `env-file` renderer; never set for any other type.
    */
   keys?: string[];
   /**
-   * Vault-only: start-of-line `#` comment lines from the vault file (with the
+   * Env-only: start-of-line `#` comment lines from the env file (with the
    * leading `#` stripped). Inline/trailing comments are deliberately omitted.
    */
   comments?: string[];

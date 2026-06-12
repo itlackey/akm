@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { EmbeddingConnectionConfig } from "../src/core/config";
+import type { EmbeddingConnectionConfig } from "../src/core/config/config";
 import { setQuiet } from "../src/core/warn";
 import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/llm/embedder";
 
@@ -36,7 +36,7 @@ function createMockEmbeddingServer(
     port: 0,
     async fetch(request) {
       if (statusCode !== 200) {
-        return new Response("error", { status: statusCode });
+        return new Response("error", { status: statusCode, headers: { Connection: "close" } });
       }
       const body = (await request.json()) as Record<string, unknown>;
       onRequest?.(body);
@@ -46,7 +46,7 @@ function createMockEmbeddingServer(
           model: "test",
           usage: { prompt_tokens: 5, total_tokens: 5 },
         }),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { "Content-Type": "application/json", Connection: "close" } },
       );
     },
   });
@@ -67,7 +67,7 @@ describe("remote embed", () => {
       expect(result[1]).toBeCloseTo(0.6 / Math.sqrt(1.1), 5);
       expect(result[2]).toBeCloseTo(0.7 / Math.sqrt(1.1), 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -83,7 +83,7 @@ describe("remote embed", () => {
             model: "test",
             usage: { prompt_tokens: 5, total_tokens: 5 },
           }),
-          { headers: { "Content-Type": "application/json" } },
+          { headers: { "Content-Type": "application/json", Connection: "close" } },
         );
       },
     });
@@ -96,7 +96,7 @@ describe("remote embed", () => {
       await embed("hello world", config);
       expect(requestedPath).toBe("/v1/embeddings");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -118,7 +118,7 @@ describe("remote embed", () => {
         dimensions: 384,
       });
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -128,7 +128,7 @@ describe("remote embed", () => {
       const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" };
       await expect(embed("hello", config)).rejects.toThrow("Embedding request failed (500)");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -139,7 +139,7 @@ describe("remote embed", () => {
       const available = await isEmbeddingAvailable(config);
       expect(available).toBe(true);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -165,7 +165,7 @@ describe("remote embed", () => {
       expect(result[0]).toBeCloseTo(0.6, 5);
       expect(result[1]).toBeCloseTo(0.8, 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -180,7 +180,7 @@ describe("remote embed", () => {
           index: i,
         }));
         return new Response(JSON.stringify({ data, model: "test", usage: { prompt_tokens: 10, total_tokens: 10 } }), {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", Connection: "close" },
         });
       },
     });
@@ -196,7 +196,7 @@ describe("remote embed", () => {
         expect(norm).toBeCloseTo(1.0, 5);
       }
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -211,7 +211,7 @@ describe("remote embed", () => {
           { embedding: [1, 0], index: 0 }, // first input
         ];
         return new Response(JSON.stringify({ data, model: "test", usage: { prompt_tokens: 10, total_tokens: 10 } }), {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", Connection: "close" },
         });
       },
     });
@@ -229,7 +229,7 @@ describe("remote embed", () => {
       expect(results[1][0]).toBeCloseTo(0.0, 5); // second result is [0, 1]
       expect(results[1][1]).toBeCloseTo(1.0, 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -248,7 +248,7 @@ describe("remote embed", () => {
             model: "test",
             usage: { prompt_tokens: 10, total_tokens: 10 },
           }),
-          { headers: { "Content-Type": "application/json" } },
+          { headers: { "Content-Type": "application/json", Connection: "close" } },
         );
       },
     });
@@ -260,7 +260,7 @@ describe("remote embed", () => {
       await embedBatch(["hello", "world"], config);
       expect(requestedPath).toBe("/v1/embeddings");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -269,7 +269,7 @@ describe("remote embed", () => {
       port: 0,
       fetch() {
         return new Response(JSON.stringify({ data: [] }), {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", Connection: "close" },
         });
       },
     });
@@ -283,7 +283,7 @@ describe("remote embed", () => {
         `Unexpected embedding batch response: expected 1 embeddings, got 0. Check that your endpoint includes the full embeddings path (for example "http://localhost:${port}/v1/embeddings", not just "http://localhost:${port}/v1").`,
       );
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 });

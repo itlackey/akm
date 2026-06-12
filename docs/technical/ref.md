@@ -41,7 +41,7 @@ name      := [^\x00/\\:]+
 - `command:release`
 - `agent:reviewer`
 - `memory:deployment-notes`
-- `vault:prod`
+- `env:prod`
 - `wiki:research/index`
 - `team//script:deploy.sh`
 - `npm:@scope/pkg//script:deploy.sh`

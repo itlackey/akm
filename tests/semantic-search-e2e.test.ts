@@ -12,19 +12,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmConfig } from "../src/core/config";
-import { resetConfigCache, saveConfig } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
 import {
   closeDatabase,
   EMBEDDING_DIM,
+  getEmbeddableEntryCount,
   getEmbeddingCount,
   getEntryCount,
   getMeta,
   openDatabase,
-} from "../src/indexer/db";
-import { searchLocal } from "../src/indexer/db-search";
+} from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
+import { searchLocal } from "../src/indexer/search/db-search";
 import { clearEmbeddingCache } from "../src/llm/embedder";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
@@ -253,6 +254,17 @@ echo "Database migration finished successfully."
     }),
   );
 
+  // 6. Legacy vaults/ directory — the `vault` asset type was removed in 0.9.0
+  //    and the indexer unconditionally SKIPS `vaults/` (see
+  //    src/indexer/passes/metadata.ts shouldIndexFile). We seed it here to pin
+  //    that behaviour: nothing under vaults/ is indexed, so it does NOT
+  //    contribute any entries, and the embeddable count therefore equals the
+  //    full entry count (#502's getEmbeddableEntryCount is now an alias for
+  //    getEntryCount because no entry type is excluded any more).
+  const vaultsDir = path.join(stashDir, "vaults");
+  fs.mkdirSync(vaultsDir, { recursive: true });
+  fs.writeFileSync(path.join(vaultsDir, "prod.env"), "API_TOKEN=placeholder-not-a-real-secret\nDB_PASSWORD=example\n");
+
   return stashDir;
 }
 
@@ -307,6 +319,16 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBeGreaterThan(0);
     expect(result.verification.semanticSearchEnabled).toBeTruthy();
+
+    // #502: verification tracks the embeddable entry count (getEmbeddableEntryCount).
+    // The `vault` asset type was removed in 0.9.0, so no entry type is excluded
+    // from embeddings any more — embeddable count == full entry count — and the
+    // index verifies ok and lands in a ready status.
+    expect(result.verification.ok).toBe(true);
+    expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
+    // Every indexed entry is embeddable, so the verification entry count equals
+    // the embedding count.
+    expect(result.verification.entryCount).toBe(result.verification.embeddingCount);
   }, 120_000); // 2 minute timeout for model download on first run
 
   // Restore env vars before each test in case the degradation describe
@@ -332,15 +354,21 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       // Verify hasEmbeddings flag is set
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
 
-      // Verify embedding count matches entry count
+      // Verify embedding count matches the embeddable entry count. The `vault`
+      // asset type was removed in 0.9.0 and the indexer SKIPS `vaults/` entirely
+      // (the fixture's vaults/prod.env contributes nothing). No entry type is
+      // excluded from embeddings any more, so getEmbeddableEntryCount (#502) is
+      // now an alias for getEntryCount: all 5 indexed assets are embeddable.
       const entryCount = getEntryCount(db);
+      const embeddableCount = getEmbeddableEntryCount(db);
       const embeddingCount = getEmbeddingCount(db);
-      expect(entryCount).toBeGreaterThanOrEqual(5);
-      expect(embeddingCount).toBe(entryCount);
+      expect(entryCount).toBe(5); // 5 assets; vaults/ is not indexed
+      expect(embeddableCount).toBe(entryCount); // no entry type is excluded
+      expect(embeddingCount).toBe(embeddableCount); // every embeddable entry embedded
 
       // Verify each embedding has the correct dimension (384 for bge-small-en-v1.5)
       const rows = db.prepare("SELECT id, embedding FROM embeddings").all() as Array<{ id: number; embedding: Buffer }>;
-      expect(rows.length).toBe(entryCount);
+      expect(rows.length).toBe(embeddableCount);
 
       for (const row of rows) {
         const f32 = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);

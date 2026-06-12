@@ -338,7 +338,7 @@ Record whether an asset helped.
 
 ```sh
 akm feedback workflow:ship-release --positive
-akm feedback skill:legacy-deploy --negative --note "Outdated after platform migration"
+akm feedback skill:legacy-deploy --negative --reason "Outdated after platform migration"
 ```
 
 Real-world use: over time, assets that consistently help rise in ranking and stale ones become easier to spot.

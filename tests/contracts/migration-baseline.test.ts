@@ -21,7 +21,10 @@ describe("docs/migration/v1.md — pre-release migration baseline", () => {
     expect(doc).toContain("Proposal queue");
   });
 
-  test("describes the proposal queue as durable filesystem state under .akm/proposals/", () => {
+  test("describes the proposal queue as the state.db `proposals` table with a legacy import", () => {
+    expect(doc).toContain("`proposals` table in `state.db`");
+    // The legacy pre-0.9.0 filesystem layout must stay documented so operators
+    // know what the one-shot import consumed.
     expect(doc).toContain("<stashRoot>/.akm/proposals/");
     expect(doc).toContain("proposal.json");
   });

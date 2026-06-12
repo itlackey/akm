@@ -15,6 +15,10 @@
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
 
+// The OpenCode SDK runner moved to its harness directory in #564
+// (`harnesses/opencode-sdk/`). Re-exported here so existing `agent/index`
+// import sites keep working.
+export { runAgentSdk } from "../harnesses/opencode-sdk";
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
 export { getCommandBuilder } from "./builders";
 export type {
@@ -57,7 +61,6 @@ export {
   parseAgentProposalPayload,
   stripJsonFences,
 } from "./prompts";
-export { runAgentSdk } from "./sdk-runner";
 export type {
   AgentFailureReason,
   AgentRunResult,

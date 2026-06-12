@@ -5,12 +5,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig } from "../../core/config";
-import { loadConfig } from "../../core/config";
-import { parseFrontmatter } from "../../core/frontmatter";
-import { resolveSourceEntries } from "../../indexer/search-source";
-import { checkVaultForDangerousKeys } from "./env-key-rules";
+import type { AkmConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { checkEnvForDangerousKeys } from "./env-key-rules";
 import { getLinterForType } from "./registry";
 import type { LintIssue } from "./types";
 
@@ -180,26 +180,20 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
   }
 
   // ── Env dangerous-key pass ─────────────────────────────────────────────────
-  // Scan every `.env` file under <stashRoot>/env/ (and the deprecated
-  // <stashRoot>/vaults/) across all stash roots for keys that are known to
-  // enable process-execution hijacking. Warn-only — findings go into `flagged`,
-  // never `fixed`.
+  // Scan every `.env` file under <stashRoot>/env/ across all stash roots for
+  // keys that are known to enable process-execution hijacking. Warn-only —
+  // findings go into `flagged`, never `fixed`.
   const envRoots = [stashRoot, ...extraStashRoots];
   for (const root of envRoots) {
-    for (const [subdir, prefix] of [
-      ["env", "env"],
-      ["vaults", "vault"],
-    ] as const) {
-      const dir = path.join(root, subdir);
-      if (!fs.existsSync(dir)) continue;
-      for (const envPath of collectEnvFiles(dir)) {
-        const baseName = path.basename(envPath, ".env");
-        // "default" (or empty) maps to ".env" → <prefix>:default
-        const ref = baseName === "" ? `${prefix}:default` : `${prefix}:${baseName}`;
-        const relPath = path.relative(root, envPath);
-        for (const issue of checkVaultForDangerousKeys(envPath, relPath, ref)) {
-          flagged.push(issue);
-        }
+    const dir = path.join(root, "env");
+    if (!fs.existsSync(dir)) continue;
+    for (const envPath of collectEnvFiles(dir)) {
+      const baseName = path.basename(envPath, ".env");
+      // "default" (or empty) maps to ".env" → env:default
+      const ref = baseName === "" ? "env:default" : `env:${baseName}`;
+      const relPath = path.relative(root, envPath);
+      for (const issue of checkEnvForDangerousKeys(envPath, relPath, ref)) {
+        flagged.push(issue);
       }
     }
   }

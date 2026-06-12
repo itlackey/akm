@@ -38,18 +38,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset-spec";
+import { assertNever } from "../../core/assert";
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
-import { parseFrontmatter } from "../../core/frontmatter";
-import { listProposals, type Proposal } from "../../core/proposals";
 import { info, warn } from "../../core/warn";
 import { type AgentRunResult, runAgent } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { runOpencodeSdk } from "../../integrations/agent/sdk-runner";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
-import { akmProposalAccept, akmProposalReject } from "../proposal";
+import { akmProposalAccept, akmProposalReject } from "./proposal";
+import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./validators/proposals";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,6 +81,23 @@ export interface DrainPolicy {
 }
 
 export type DrainDeferReason = "mid-band" | "possible-dup";
+
+/**
+ * Gate-decision context the engine stamps onto each proposal it adjudicates
+ * (#577). Captures the reason token plus the thresholds that were in effect, so
+ * `akm proposal show` can later reconstruct a comparison like "210 > 200".
+ */
+export interface DrainGateContext {
+  reason: string;
+  /**
+   * The value this gate measured and compared against the threshold (the
+   * proposed content's line count for `max-diff-lines`, the non-empty body-line
+   * count for `min-content-lines`), so `akm proposal show` can render a full
+   * comparison like "210 > 200" rather than only the bound (#577).
+   */
+  measured?: number;
+  thresholds?: { maxDiffLines?: number; minContentLines?: number };
+}
 
 export interface DrainOptions {
   stashDir: string;
@@ -186,15 +204,15 @@ export function classifyProposal(
   policy: DrainPolicy,
   maxDiffLines?: number,
 ):
-  | { verdict: "accept" }
-  | { verdict: "reject"; reason: string }
-  | { verdict: "defer"; reason: DrainDeferReason }
+  | { verdict: "accept"; gate: DrainGateContext }
+  | { verdict: "reject"; reason: string; gate: DrainGateContext }
+  | { verdict: "defer"; reason: DrainDeferReason; gate: DrainGateContext }
   | null {
   const content = proposal.payload.content ?? "";
 
   // Empty / near-empty diffs reject first (the reject-empty floor).
   if (policy.rejectEmpty && isEmptyDiff(proposal)) {
-    return { verdict: "reject", reason: "empty diff" };
+    return { verdict: "reject", reason: "empty diff", gate: { reason: "empty-diff" } };
   }
 
   const rule = policy.accept.find((r) => r.generator === proposal.source);
@@ -207,17 +225,26 @@ export function classifyProposal(
       maxDiffLines ?? Number.POSITIVE_INFINITY,
     );
     if (lines > effectiveMax) {
-      return { verdict: "defer", reason: "mid-band" };
+      return {
+        verdict: "defer",
+        reason: "mid-band",
+        gate: { reason: "max-diff-lines", measured: lines, thresholds: { maxDiffLines: effectiveMax } },
+      };
     }
     if (rule.minContentLines !== undefined && body < rule.minContentLines) {
       // Too little content to confidently auto-accept — leave for judgment.
-      return { verdict: "defer", reason: "mid-band" };
+      return {
+        verdict: "defer",
+        reason: "mid-band",
+        gate: { reason: "min-content-lines", measured: body, thresholds: { minContentLines: rule.minContentLines } },
+      };
     }
-    return { verdict: "accept" };
+    return { verdict: "accept", gate: { reason: "policy-accept" } };
   }
 
   if (policy.defer.includes(proposal.source)) {
-    return { verdict: "defer", reason: deferReasonForSource(proposal.source) };
+    const reason = deferReasonForSource(proposal.source);
+    return { verdict: "defer", reason, gate: { reason } };
   }
 
   // No matching rule — leave pending, untouched.
@@ -375,6 +402,10 @@ async function dispatchJudgment(
       raw = stdout;
       break;
     }
+    default:
+      // Exhaustiveness arm (H1): a 4th RunnerSpec kind becomes a compile error
+      // here instead of leaving `raw` undefined at runtime.
+      return assertNever(runner);
   }
   return parseJudgmentVerdict(raw);
 }
@@ -542,10 +573,33 @@ export async function drainProposals(
   // First, classify every proposal deterministically.
   const acceptIds: string[] = [];
   const rejectTargets: Array<{ id: string; reason: string }> = [];
+  const gateLabel = `triage:${opts.policy.name}`;
+  // Items deferred purely because they need a judge (no threshold-based reason)
+  // — these are re-stamped `no-judge-configured` when no runner resolves them.
+  const needsJudge = new Set<string>();
 
   for (const proposal of pending) {
     const decision = classifyProposal(proposal, opts.policy, opts.maxDiffLines);
     if (decision === null) continue;
+    // #577: stamp the gate's verdict onto the proposal so `akm proposal show`
+    // can explain WHY it landed here. A dry-run performs zero writes, so it
+    // records nothing.
+    const outcome =
+      decision.verdict === "accept" ? "auto-accepted" : decision.verdict === "reject" ? "auto-rejected" : "deferred";
+    stampGateDecision(opts, proposal.id, {
+      outcome,
+      reason: decision.gate.reason,
+      ...(decision.gate.measured !== undefined ? { measured: decision.gate.measured } : {}),
+      ...(decision.gate.thresholds ? { thresholds: decision.gate.thresholds } : {}),
+      gate: gateLabel,
+    });
+    // A defer with no threshold (mid-band / possible-dup from the defer list) is
+    // pending only because it needs adjudication — re-stampable to
+    // `no-judge-configured`. A band-based defer keeps its specific reason.
+    if (decision.verdict === "defer" && !decision.gate.thresholds) {
+      needsJudge.add(proposal.id);
+    }
+
     if (decision.verdict === "accept") {
       acceptIds.push(proposal.id);
     } else if (decision.verdict === "reject") {
@@ -633,15 +687,50 @@ export async function drainProposals(
         `[triage] accept ceiling reached in judgment tier: ${tier.skippedByCap.length} judged-accept items skipped by cap (maxAccepts=${opts.maxAccepts})`,
       );
     }
+    // #577: re-stamp the gate decision for items the judgment tier resolved so
+    // `akm proposal show` reflects the judge's verdict, not the earlier
+    // deterministic defer.
+    for (const id of tier.promoted) {
+      stampGateDecision(opts, id, { outcome: "auto-accepted", reason: "judgment-accept", gate: gateLabel });
+    }
+    for (const id of tier.rejected) {
+      stampGateDecision(opts, id, { outcome: "auto-rejected", reason: "judgment-reject", gate: gateLabel });
+    }
     // Replace the deferred list with only the items the judgment tier could NOT
     // resolve (verdict "defer", parse failure, or runner error). Staged
     // queue-mode accepts are RESOLVED and tracked in result.staged instead.
     result.deferred = tier.stillDeferred;
+  } else if (result.deferred.length > 0) {
+    // #577: no judgment runner configured — items deferred *because they need a
+    // judge* (mid-band / possible-dup, no threshold reason) stay pending solely
+    // for lack of one. Re-stamp those as `no-judge-configured` so the operator
+    // sees a per-proposal reason instead of inferring it from the run-level
+    // triage_deferred aggregate. Band-deferred items keep their specific reason
+    // (e.g. `max-diff-lines`), which is more actionable than "no judge".
+    for (const item of result.deferred) {
+      if (needsJudge.has(item.id)) {
+        stampGateDecision(opts, item.id, { outcome: "deferred", reason: "no-judge-configured", gate: gateLabel });
+      }
+    }
   }
 
   emitDrainEvents(opts, result);
 
   return result;
+}
+
+/**
+ * Persist a gate decision onto a proposal, honouring the dry-run contract
+ * (a dry run performs zero writes, so it records nothing) and never letting a
+ * persistence failure abort the drain (#577). Best-effort by design.
+ */
+function stampGateDecision(opts: DrainOptions, id: string, decision: Omit<ProposalGateDecision, "decidedAt">): void {
+  if (opts.dryRun) return;
+  try {
+    recordGateDecision(opts.stashDir, id, decision);
+  } catch (err) {
+    warn(`[triage] failed to record gate decision for ${id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

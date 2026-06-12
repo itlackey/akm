@@ -2,6 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
+import path from "node:path";
+import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
+import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
+import { concurrentMap } from "../core/concurrent";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
+import { getDbPath } from "../core/paths";
+import { isVerbose, warn, warnVerbose } from "../core/warn";
+import { resolveIndexPassLLM } from "../llm/index-passes";
 /**
  * M-4 / #395 — Index Consistency Architecture Decision Record
  *
@@ -31,17 +40,8 @@
  *
  * See docs/technical/index-consistency-adr.md for the full analysis.
  */
-import type { Database } from "bun:sqlite";
-import fs from "node:fs";
-import path from "node:path";
-import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
-import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
-import { concurrentMap } from "../core/concurrent";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
-import { getDbPath } from "../core/paths";
-import { isVerbose, warn, warnVerbose } from "../core/warn";
-import { resolveIndexPassLLM } from "../llm/index-passes";
-import { takeWorkflowDocument } from "../workflows/document-cache";
+import type { Database } from "../storage/database";
+import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import {
   clearStaleCacheEntries,
   closeDatabase,
@@ -51,6 +51,7 @@ import {
   deleteEntriesByStashDir,
   deleteIndexDirStatesByStashDir,
   getAllEntriesForEmbedding,
+  getEmbeddableEntryCount,
   getEmbeddingCount,
   getEntriesByDir,
   getEntryCount,
@@ -68,9 +69,8 @@ import {
   upsertUtilityScore,
   upsertWorkflowDocument,
   warnIfVecMissing,
-} from "./db";
-import { deleteStoredGraph } from "./graph-db";
-import type { IndexRunContext } from "./index-context";
+} from "./db/db";
+import { deleteStoredGraph } from "./db/graph-db";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
@@ -81,18 +81,19 @@ import {
   type StashEntry,
   type StashFile,
   shouldIndexStashFile,
-} from "./metadata";
-import { buildSearchText } from "./search-fields";
-import type { SearchSource } from "./search-source";
+} from "./passes/metadata";
+import { buildSearchText } from "./search/search-fields";
+import type { SearchSource } from "./search/search-source";
 import {
   classifySemanticFailure,
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
   type SemanticSearchRuntimeStatus,
   writeSemanticStatus,
-} from "./semantic-status";
-import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage-events";
-import { walkStashFlat } from "./walker";
+} from "./search/semantic-status";
+import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage/usage-events";
+import type { IndexRunContext } from "./walk/index-context";
+import { walkStashFlat } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -367,7 +368,8 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   warnIfVecMissing(db);
 
   const totalEntries = getEntryCount(db);
-  const verification = verifyIndexState(db, config, totalEntries, embeddingResult);
+  const semanticEntryCount = getEmbeddableEntryCount(db);
+  const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
 
   if (config.semanticSearchMode === "off") {
     clearSemanticStatus();
@@ -440,12 +442,19 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const dryRun = options?.dryRun === true;
 
   // Load config and resolve all stash sources
-  const { loadConfig } = await import("../core/config.js");
+  const { loadConfig } = await import("../core/config/config.js");
   const config = loadConfig();
+
+  // One-time, read-only guard: warn if the writable stash still holds an
+  // un-migrated `vaults/` directory. In 0.9.0 the indexer skips `vaults/`
+  // entirely, so an unmigrated vault's `.env` data would silently never be
+  // indexed. Non-destructive — only stats, never reads/writes/deletes.
+  const { warnOnUnmigratedVaults } = await import("./usage/unmigrated-vaults-guard.js");
+  warnOnUnmigratedVaults(stashDir);
 
   // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
-  const { ensureSourceCaches, resolveSourceEntries } = await import("./search-source.js");
+  const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
   await ensureSourceCaches(config, { force: full });
   const allSourceEntries = resolveSourceEntries(stashDir, config);
   const allSourceDirs = allSourceEntries.map((s) => s.path);
@@ -1081,7 +1090,7 @@ function inferZeroRowReason(
 
 async function enhanceDirsWithLlm(
   db: Database,
-  config: import("../core/config").AkmConfig,
+  config: import("../core/config/config").AkmConfig,
   dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
@@ -1390,7 +1399,7 @@ async function generateEmbeddingsForDb(
 
 interface EmbeddingGenerationResult {
   success: boolean;
-  reason?: import("./semantic-status").SemanticSearchReason;
+  reason?: import("./search/semantic-status").SemanticSearchReason;
   message?: string;
 }
 
@@ -1421,7 +1430,9 @@ function buildIndexSummaryMessage(options: {
   return `Starting ${options.mode} index (${options.sourcesCount} ${stashSourceLabel}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
 }
 
-function getEmbeddingProvider(embedding?: import("../core/config").EmbeddingConnectionConfig): "local" | "remote" {
+function getEmbeddingProvider(
+  embedding?: import("../core/config/config").EmbeddingConnectionConfig,
+): "local" | "remote" {
   return isHttpUrl(embedding?.endpoint) ? "remote" : "local";
 }
 
@@ -1437,14 +1448,14 @@ function getSemanticSearchLabel(
 function verifyIndexState(
   db: Database,
   config: AkmConfig,
-  totalEntries: number,
+  embeddableEntries: number,
   embeddingResult: EmbeddingGenerationResult,
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
   const vecAvailable = isVecAvailable(db);
   const embeddingProvider = getEmbeddingProvider(config.embedding);
 
-  if (totalEntries === 0) {
+  if (embeddableEntries === 0) {
     return {
       ok: true,
       message: "Index ready. No assets were found yet.",
@@ -1452,7 +1463,7 @@ function verifyIndexState(
       semanticSearchMode: config.semanticSearchMode,
       semanticStatus: config.semanticSearchMode === "off" ? "disabled" : "pending",
       embeddingProvider,
-      entryCount: totalEntries,
+      entryCount: embeddableEntries,
       embeddingCount,
       vecAvailable,
     };
@@ -1466,21 +1477,21 @@ function verifyIndexState(
       semanticSearchMode: config.semanticSearchMode,
       semanticStatus: "disabled",
       embeddingProvider,
-      entryCount: totalEntries,
+      entryCount: embeddableEntries,
       embeddingCount,
       vecAvailable,
     };
   }
 
-  if (embeddingCount >= totalEntries) {
+  if (embeddingCount >= embeddableEntries) {
     return {
       ok: true,
-      message: `Semantic search ready (${embeddingCount}/${totalEntries} embeddings, ${vecAvailable ? "sqlite-vec active" : "JS fallback active"}).`,
+      message: `Semantic search ready (${embeddingCount}/${embeddableEntries} embeddings, ${vecAvailable ? "sqlite-vec active" : "JS fallback active"}).`,
       semanticSearchEnabled: true,
       semanticSearchMode: config.semanticSearchMode,
       semanticStatus: vecAvailable ? "ready-vec" : "ready-js",
       embeddingProvider,
-      entryCount: totalEntries,
+      entryCount: embeddableEntries,
       embeddingCount,
       vecAvailable,
     };
@@ -1490,7 +1501,7 @@ function verifyIndexState(
     ok: false,
     message:
       embeddingResult.message ??
-      `Semantic search verification failed (${embeddingCount}/${totalEntries} embeddings available).`,
+      `Semantic search verification failed (${embeddingCount}/${embeddableEntries} embeddings available).`,
     guidance:
       embeddingProvider === "remote"
         ? "Check your embedding endpoint and credentials, then retry `akm index --full --verbose`."
@@ -1499,7 +1510,7 @@ function verifyIndexState(
     semanticSearchMode: config.semanticSearchMode,
     semanticStatus: "blocked",
     embeddingProvider,
-    entryCount: totalEntries,
+    entryCount: embeddableEntries,
     embeddingCount,
     vecAvailable,
   };
@@ -1551,7 +1562,7 @@ async function enhanceStashWithLlm(
   onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" }) => void,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
-  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db.js");
+  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db/db.js");
 
   const results = await concurrentMap(
     stash.entries,
@@ -1708,7 +1719,7 @@ function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): Stash
 
 // ── lookup ─────────────────────────────────────────────────────────────────
 
-import type { AssetRef } from "../core/asset-ref";
+import type { AssetRef } from "../core/asset/asset-ref";
 
 export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */
@@ -1742,8 +1753,8 @@ export interface IndexEntry {
  * `NotFoundError` with their own messaging.
  */
 export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
-  const { loadConfig } = await import("../core/config.js");
-  const { resolveSourceEntries } = await import("./search-source.js");
+  const { loadConfig } = await import("../core/config/config.js");
+  const { resolveSourceEntries } = await import("./search/search-source.js");
   const config = loadConfig();
   const sources = resolveSourceEntries(undefined, config);
   if (sources.length === 0) return null;

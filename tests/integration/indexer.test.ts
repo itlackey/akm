@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EmbeddingConnectionConfig } from "../../src/core/config";
-import { saveConfig } from "../../src/core/config";
+import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
+import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { setQuiet } from "../../src/core/warn";
 import {
@@ -14,9 +14,9 @@ import {
   getIndexDirState,
   getMeta,
   openDatabase,
-} from "../../src/indexer/db";
+} from "../../src/indexer/db/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
-import { buildSearchText } from "../../src/indexer/search-fields";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
 import * as embedderModule from "../../src/llm/embedder";
 
 let testConfigDir = "";
@@ -344,7 +344,7 @@ test("akmIndex includes wiki raw files but excludes infrastructure files for wik
 
   const origStash = process.env.AKM_STASH_DIR;
   try {
-    const { saveConfig } = await import("../../src/core/config");
+    const { saveConfig } = await import("../../src/core/config/config");
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
@@ -642,7 +642,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     const stashDir = tmpStash();
     writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-    const { saveConfig } = await import("../../src/core/config");
+    const { saveConfig } = await import("../../src/core/config/config");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "auto",
@@ -805,8 +805,8 @@ test("akmIndex does not run slow passes", async () => {
     defaults: { llm: "default" },
   });
 
-  const memoryInfer = await import("../../src/indexer/memory-inference");
-  const graphExtract = await import("../../src/indexer/graph-extraction");
+  const memoryInfer = await import("../../src/indexer/passes/memory-inference");
+  const graphExtract = await import("../../src/indexer/graph/graph-extraction");
   const memorySpy = spyOn(memoryInfer, "runMemoryInferencePass").mockResolvedValue({
     considered: 0,
     splitParents: 0,
@@ -815,7 +815,9 @@ test("akmIndex does not run slow passes", async () => {
     skippedChildExists: 0,
     skippedAborted: 0,
     unaccounted: 0,
+    htmlErrorCount: 0,
     cacheHits: 0,
+    retryAttempts: 0,
   });
   const graphSpy = spyOn(graphExtract, "runGraphExtractionPass").mockResolvedValue({
     considered: 0,
@@ -1203,7 +1205,7 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-  const { saveConfig } = await import("../../src/core/config");
+  const { saveConfig } = await import("../../src/core/config/config");
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "auto",
@@ -1327,7 +1329,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   const secondStash = primaryStash;
 
   // Write a config that includes the same directory twice via stashes
-  const { saveConfig } = await import("../../src/core/config");
+  const { saveConfig } = await import("../../src/core/config/config");
   process.env.AKM_STASH_DIR = primaryStash;
   saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: secondStash }] });
 
@@ -1355,7 +1357,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
   const stash1 = sharedDir;
   const stash2 = sharedDir;
 
-  const { saveConfig } = await import("../../src/core/config");
+  const { saveConfig } = await import("../../src/core/config/config");
   process.env.AKM_STASH_DIR = stash1;
   saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: stash2 }] });
 
@@ -1631,8 +1633,8 @@ test("akmIndex removes graph rows when a stash source is no longer configured", 
   await akmIndex({ stashDir: primaryStash, full: true });
 
   // Seed graph rows for the secondary stash directly into the database.
-  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../../src/indexer/graph-db");
-  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph-extraction");
+  const { replaceStoredGraph, loadStoredGraphMeta } = await import("../../src/indexer/db/graph-db");
+  const { GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph/graph-extraction");
   const seedDb = openDatabase();
   try {
     replaceStoredGraph(seedDb, {

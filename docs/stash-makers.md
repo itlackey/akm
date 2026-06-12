@@ -19,7 +19,7 @@ my-stash/
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
   agents/         # .md files with model, tools, or toolPolicy frontmatter
   knowledge/      # .md reference documents
-  env/            # .env environment files (mode-0600; vaults/ is the deprecated alias)
+  env/            # .env environment files (mode-0600)
   workflows/      # .md step-by-step workflow documents
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
   lessons/        # .md distilled feedback lessons
@@ -448,14 +448,13 @@ stashes.
 You can mount multiple directories. They are searched in the order listed,
 after the working stash.
 
-## Vault Security
+## Env Security
 
-> **`vault` is deprecated (use `env`).** The guidance below applies equally to
-> `env/` files; `vault`/`vaults/` are the deprecated aliases, removed in 0.9.0.
-> See the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md).
+> The `vault` asset type was removed in 0.9.0; `env` replaces it. See the
+> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md).
 
-If your stash includes env files under `env/` (or legacy `vaults/`), be aware of
-how `akm` handles them during install.
+If your stash includes env files under `env/`, be aware of how `akm` handles
+them during install.
 
 **Dangerous key detection.** `akm add` and `akm lint` scan env files for
 environment variable names that can be used to hijack process execution when

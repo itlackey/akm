@@ -4,13 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stripJsonComments } from "../core/config";
-import { unifiedDiff, withConfigLock, writeConfigAtomic } from "../core/config-io";
-import { migrateConfigShape } from "../core/config-migration";
+import { stripJsonComments } from "../core/config/config";
+import { unifiedDiff, withConfigLock, writeConfigAtomic } from "../core/config/config-io";
+import { migrateConfigShape } from "../core/config/config-migration";
 import { getCacheDir, getConfigPath } from "../core/paths";
 import { warn } from "../core/warn";
 
-export { migrateConfigShape } from "../core/config-migration";
+export { migrateConfigShape } from "../core/config/config-migration";
 
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
 

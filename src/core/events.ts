@@ -26,8 +26,8 @@
  * - `ts` is ISO-8601 (UTC, millisecond precision).
  */
 
-import type { Database } from "bun:sqlite";
 import path from "node:path";
+import type { Database } from "../storage/database";
 import { rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
 import { insertEvent, openStateDatabase, readStateEvents } from "./state-db";
@@ -80,6 +80,8 @@ export type EventType =
   | "proposal_creation_rejected"
   /** Emitted by the improve loop after each per-asset reflect call — carries `ok`, `durationMs`, `reason`. */
   | "improve_reflect_outcome"
+  /** Per-call LLM usage telemetry (#576) — carries `{stage?, model?, durationMs, *Tokens?, finishReason?}`. */
+  | "llm_usage"
   | string;
 
 export interface AppendEventInput {
@@ -240,7 +242,7 @@ export interface ReadEventsResult {
 export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext): ReadEventsResult {
   const dbPath = resolveDbPath(ctx);
 
-  let db: import("bun:sqlite").Database | undefined;
+  let db: import("../storage/database").Database | undefined;
   try {
     db = openStateDatabase(dbPath);
   } catch (err) {

@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmDistillResult } from "../../src/commands/distill";
-import { akmImprove } from "../../src/commands/improve";
-import type { AkmReflectResult } from "../../src/commands/reflect";
-import { saveConfig } from "../../src/core/config";
+import type { AkmDistillResult } from "../../src/commands/improve/distill";
+import { akmImprove } from "../../src/commands/improve/improve";
+import type { AkmReflectResult } from "../../src/commands/improve/reflect";
+import type { Proposal } from "../../src/commands/proposal/validators/proposals";
+import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
-import type { Proposal } from "../../src/core/proposals";
 import { akmIndex } from "../../src/indexer/indexer";
 
 const tempDirs: string[] = [];
@@ -344,7 +344,9 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 
 describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)", () => {
   test("detectAndWriteContradictions is a no-op when no LLM is configured", async () => {
-    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
     const stashDir = makeTempDir("akm-m1-no-llm-");
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
     writeMemory(stashDir, "auth-tips.derived2", { inferred: true, source: "memory:auth-tips" }, "VPN is optional.");
@@ -362,7 +364,9 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
   });
 
   test("detectAndWriteContradictions writes contradictedBy edges when LLM judges true", async () => {
-    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
     const stashDir = makeTempDir("akm-m1-detect-");
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
     writeMemory(
@@ -404,7 +408,9 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
   });
 
   test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {
-    const { detectAndWriteContradictions } = await import("../../src/core/memory-contradiction-detect");
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
     const stashDir = makeTempDir("akm-m1-no-contradiction-");
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Use VPN for prod.");
     writeMemory(
@@ -439,8 +445,8 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
 
 describe("M-3: schema-repair routes through proposal queue (#387)", () => {
   test("runSchemaRepairPass queues a proposal instead of writing directly to disk", async () => {
-    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
-    const { listProposals } = await import("../../src/core/proposals");
+    const { runSchemaRepairPass } = await import("../../src/commands/sources/schema-repair");
+    const { listProposals } = await import("../../src/commands/proposal/validators/proposals");
 
     const stashDir = makeTempDir("akm-m3-schema-repair-");
     const memFile = path.join(stashDir, "memories", "auth-guide.md");
@@ -476,7 +482,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
   });
 
   test("runSchemaRepairPass falls back to direct write when stashDir is absent", async () => {
-    const { runSchemaRepairPass } = await import("../../src/commands/schema-repair");
+    const { runSchemaRepairPass } = await import("../../src/commands/sources/schema-repair");
 
     const stashDir = makeTempDir("akm-m3-fallback-");
     const memFile = path.join(stashDir, "memories", "auth2.md");
@@ -536,7 +542,7 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
           density: 0,
         },
         warnings: [],
-      } satisfies import("../../src/indexer/graph-extraction").GraphExtractionResult;
+      } satisfies import("../../src/indexer/graph/graph-extraction").GraphExtractionResult;
     };
 
     // Run with consolidation enabled to trigger the D9 reindex path
@@ -717,7 +723,7 @@ describe("new 0.8.0 improve metrics", () => {
   });
 
   test("orphansPurged increments for pending proposals targeting refs absent from disk", async () => {
-    const { createProposal } = await import("../../src/core/proposals");
+    const { createProposal } = await import("../../src/commands/proposal/validators/proposals");
     const stashDir = makeTempDir("akm-m8-orphan-");
     // Write one real memory so improve has something to process.
     writeMemory(stashDir, "real-asset", { description: "Real memory" }, "Real content.");
@@ -759,7 +765,9 @@ describe("new 0.8.0 improve metrics", () => {
   // ── Phase 6A — Confidence-driven auto-accept ──────────────────────────────
 
   test("auto-accept promotes a high-confidence reflect proposal when threshold met", async () => {
-    const { createProposal, getProposal, isProposalSkipped } = await import("../../src/core/proposals");
+    const { createProposal, getProposal, isProposalSkipped } = await import(
+      "../../src/commands/proposal/validators/proposals"
+    );
     const stashDir = makeTempDir("akm-6a-auto-accept-");
     writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);
@@ -831,7 +839,9 @@ describe("new 0.8.0 improve metrics", () => {
   });
 
   test("auto-accept skips proposals below the threshold (left pending)", async () => {
-    const { createProposal, getProposal, isProposalSkipped } = await import("../../src/core/proposals");
+    const { createProposal, getProposal, isProposalSkipped } = await import(
+      "../../src/commands/proposal/validators/proposals"
+    );
     const stashDir = makeTempDir("akm-6a-below-threshold-");
     writeMemory(stashDir, "target-low", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);
@@ -879,7 +889,7 @@ describe("new 0.8.0 improve metrics", () => {
     });
 
     // Find the proposal directly on disk; status must remain pending.
-    const { listProposals } = await import("../../src/core/proposals");
+    const { listProposals } = await import("../../src/commands/proposal/validators/proposals");
     const pending = listProposals(stashDir, { status: "pending", ref: "memory:target-low" });
     expect(pending.length).toBe(1);
     expect(pending[0]?.confidence).toBe(0.3);
@@ -898,7 +908,7 @@ describe("new 0.8.0 improve metrics", () => {
   // ── Phase 6B — proposalsExpired propagates through the improve result ─────
 
   test("proposalsExpired surfaces in the result when stale proposals exist", async () => {
-    const { createProposal, isProposalSkipped } = await import("../../src/core/proposals");
+    const { createProposal, isProposalSkipped } = await import("../../src/commands/proposal/validators/proposals");
     const stashDir = makeTempDir("akm-6b-expired-");
     writeMemory(stashDir, "live-asset", { description: "Live memory" }, "Live body.");
     await buildIndex(stashDir);

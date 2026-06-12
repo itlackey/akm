@@ -24,11 +24,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
-import type { AkmConfig } from "../src/core/config";
-import { resetConfigCache, saveConfig } from "../src/core/config";
+import { akmSearch } from "../src/commands/read/search";
+import type { AkmConfig } from "../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, openExistingDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import {
+  closeDatabase,
+  openDatabase,
+  openExistingDatabase,
+  rebuildFts,
+  setMeta,
+  upsertEntry,
+} from "../src/indexer/db/db";
+import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/db/graph-db";
 import {
   computeGraphBoost,
   GRAPH_CONFIDENCE_MODE,
@@ -40,11 +48,10 @@ import {
   listRelatedPathsForFile,
   loadGraphBoostContext,
   resetGraphBoostCache,
-} from "../src/indexer/graph-boost";
-import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
-import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph-extraction";
-import type { StashEntry } from "../src/indexer/metadata";
-import { buildSearchText } from "../src/indexer/search-fields";
+} from "../src/indexer/graph/graph-boost";
+import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph/graph-extraction";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import { buildSearchText } from "../src/indexer/search/search-fields";
 import {
   type Cleanup,
   sandboxStashDir,

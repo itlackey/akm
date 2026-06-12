@@ -89,7 +89,6 @@ describe("completions command", () => {
       "remember",
       "import",
       "clone",
-      "save",
       "feedback",
       "registry",
       "config",
@@ -129,7 +128,7 @@ describe("completions command", () => {
   test("contains flag value completions for --type", () => {
     expect(script).toContain("--type)");
     expect(script).toContain(
-      "skill command agent knowledge workflow script memory env vault secret wiki lesson task any",
+      "skill command agent knowledge workflow script memory env secret wiki lesson task session any",
     );
   });
 

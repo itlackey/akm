@@ -9,7 +9,7 @@
 // surfaces immediately.
 
 import { describe, expect, test } from "bun:test";
-import { ASSET_SPECS, getAssetTypes, resolveAssetPathFromName, TYPE_DIRS } from "../src/core/asset-spec";
+import { ASSET_SPECS, getAssetTypes, resolveAssetPathFromName, TYPE_DIRS } from "../src/core/asset/asset-spec";
 
 describe("asset-spec registry exhaustiveness", () => {
   test("ASSET_SPECS and TYPE_DIRS expose the same key set", () => {

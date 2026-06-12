@@ -17,9 +17,20 @@
  *   - `parseConfigValue` returns a Partial<AkmConfig> so it can be merged with
  *     the runtime config object via `mergeConfigValue`.
  */
-import { type AkmConfig, DEFAULT_CONFIG, getSources } from "../core/config";
-import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config-walker";
+import { hasSubcommand } from "../cli/parse-args";
+import { defineJsonCommand, output } from "../cli/shared";
+import { resolveStashDir } from "../core/common";
+import {
+  type AkmConfig,
+  DEFAULT_CONFIG,
+  getSources,
+  loadConfig,
+  loadUserConfig,
+  saveConfig,
+} from "../core/config/config";
+import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { UsageError } from "../core/errors";
+import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
 
 // ── Legacy `llm.*` → `profiles.llm.<default>.*` aliasing ────────────────────
 
@@ -161,3 +172,244 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
 }
 
 export { unknownKeyHint };
+
+// ── `akm config` command surface ────────────────────────────────────────────
+// Extracted verbatim from src/cli.ts (WS6). The `main.subCommands.config` key
+// and every config subcommand's args/output shape are byte-identical. The
+// `skills.sh` toggle helpers and the `CONFIG_SUBCOMMAND_SET` routing constant
+// are used ONLY by this command, so they move with the cluster. Leaf handlers
+// whose body is a plain `runWithJsonErrors(() => { … })` are migrated to
+// `defineJsonCommand`, which emits the same JSON envelope (stdout/stderr/
+// exit-code) as the inline form.
+
+const SKILLS_SH_NAME = "skills.sh";
+const SKILLS_SH_URL = "https://skills.sh";
+const SKILLS_SH_PROVIDER = "skills-sh";
+
+function normalizeToggleTarget(target: string): "skills.sh" {
+  const normalized = target.trim().toLowerCase();
+  if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
+  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh`);
+}
+
+function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
+  const config = loadUserConfig();
+  const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
+  const idx = registries.findIndex(
+    (registry) =>
+      registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
+  );
+
+  if (idx >= 0) {
+    const existing = registries[idx];
+    const wasEnabled = existing.enabled !== false;
+    existing.enabled = enabled;
+    saveConfig({ ...config, registries });
+    return { changed: wasEnabled !== enabled, component: SKILLS_SH_NAME, enabled };
+  }
+
+  if (!enabled) {
+    // Materialize the skills.sh registry explicitly if absent.
+    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: false });
+    saveConfig({ ...config, registries });
+    return { changed: true, component: SKILLS_SH_NAME, enabled: false };
+  }
+
+  registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: true });
+  saveConfig({ ...config, registries });
+  return { changed: true, component: SKILLS_SH_NAME, enabled: true };
+}
+
+function toggleComponent(
+  targetRaw: string,
+  enabled: boolean,
+): { changed: boolean; component: string; enabled: boolean } {
+  const target = normalizeToggleTarget(targetRaw);
+  if (target === "skills.sh") return toggleSkillsShRegistry(enabled);
+  // normalizeToggleTarget throws for any unsupported target; this is unreachable.
+  throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
+}
+
+export const configCommand = defineJsonCommand({
+  meta: { name: "config", description: "Show and manage configuration" },
+  args: {
+    list: { type: "boolean", description: "List current configuration", default: false },
+  },
+  subCommands: {
+    path: defineJsonCommand({
+      meta: { name: "path", description: "Show paths to config, stash, cache, and index" },
+      args: {
+        all: { type: "boolean", description: "Show all paths (config, stash, cache, index)", default: false },
+      },
+      run({ args }) {
+        const configPath = getConfigPath();
+        if (args.all) {
+          let stashDir: string;
+          try {
+            stashDir = resolveStashDir({ readOnly: true });
+          } catch {
+            stashDir = `${getDefaultStashDir()} (not initialized)`;
+          }
+          const cacheDir = getCacheDir();
+          const result = {
+            config: configPath,
+            stash: stashDir,
+            cache: cacheDir,
+            index: getDbPath(),
+          };
+          output("config", result);
+        } else {
+          console.log(configPath);
+        }
+      },
+    }),
+    list: defineJsonCommand({
+      meta: { name: "list", description: "List current configuration" },
+      run() {
+        output("config", listConfig(loadConfig()));
+      },
+    }),
+    show: defineJsonCommand({
+      meta: { name: "show", description: "Alias for `akm config list` — list current configuration" },
+      run() {
+        output("config", listConfig(loadConfig()));
+      },
+    }),
+    get: defineJsonCommand({
+      meta: { name: "get", description: "Get a configuration value by key" },
+      args: {
+        key: { type: "positional", required: true, description: "Config key (for example: embedding, stashDir)" },
+      },
+      run({ args }) {
+        output("config", getConfigValue(loadConfig(), args.key));
+      },
+    }),
+    set: defineJsonCommand({
+      meta: { name: "set", description: "Set a configuration value by key" },
+      args: {
+        key: { type: "positional", required: true, description: "Config key (for example: embedding, llm)" },
+        value: { type: "positional", required: true, description: "Config value" },
+        // #463: stable machine-friendly entry point for plugins / hooks.
+        // `--silent` suppresses the config dump on stdout so hook-driven
+        // writes don't pollute their host's output stream.
+        silent: {
+          type: "boolean",
+          description:
+            "Suppress the post-write config dump on stdout. Use from hooks and CI scripts; the write still happens and errors still print.",
+          default: false,
+        },
+        // #463: explicit layer flag for forward-compat. User layer is the only
+        // settable layer today; the flag exists so plugin authors can encode
+        // intent and the surface stays stable if project-layer writes return.
+        layer: {
+          type: "string",
+          description: "Config layer to write to. Currently only `user` is supported.",
+          default: "user",
+        },
+      },
+      run({ args }) {
+        if (args.layer && args.layer !== "user") {
+          throw new UsageError(
+            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        // Use loadConfig (not loadUserConfig) so the project-config
+        // deprecation warning fires consistently with `akm config get`
+        // (#457). Effective merged shape is identical post-0.8.0.
+        const updated = setConfigValue(loadConfig(), args.key, args.value);
+        saveConfig(updated);
+        if (!args.silent) {
+          output("config", listConfig(updated));
+        }
+      },
+    }),
+    unset: defineJsonCommand({
+      meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/llm section" },
+      args: {
+        key: { type: "positional", required: true, description: "Config key to unset" },
+        silent: {
+          type: "boolean",
+          description: "Suppress the post-write config dump on stdout.",
+          default: false,
+        },
+        layer: {
+          type: "string",
+          description: "Config layer to write to. Currently only `user` is supported.",
+          default: "user",
+        },
+      },
+      run({ args }) {
+        if (args.layer && args.layer !== "user") {
+          throw new UsageError(
+            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        const updated = unsetConfigValue(loadConfig(), args.key);
+        saveConfig(updated);
+        if (!args.silent) {
+          output("config", listConfig(updated));
+        }
+      },
+    }),
+    validate: defineJsonCommand({
+      meta: {
+        name: "validate",
+        description: "Validate the on-disk config file against the schema. Exits non-zero on errors.",
+      },
+      async run() {
+        const { runConfigValidate } = await import("../cli/config-validate.js");
+        await runConfigValidate();
+      },
+    }),
+    migrate: defineJsonCommand({
+      meta: {
+        name: "migrate",
+        description: "Migrate the config file to the current schema version. Use --dry-run to preview without writing.",
+      },
+      args: {
+        "dry-run": { type: "boolean", description: "Preview the migration result without writing.", default: false },
+        "print-diff": {
+          type: "boolean",
+          description: "Print a unified diff of old vs new config alongside the migration output.",
+          default: false,
+        },
+      },
+      async run({ args }) {
+        const { runConfigMigrate } = await import("../cli/config-migrate.js");
+        await runConfigMigrate({ dryRun: Boolean(args["dry-run"]), printDiff: Boolean(args["print-diff"]) });
+      },
+    }),
+    enable: defineJsonCommand({
+      meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
+      args: {
+        target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
+      },
+      run({ args }) {
+        const result = toggleComponent(args.target, true);
+        output("enable", result);
+      },
+    }),
+    disable: defineJsonCommand({
+      meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
+      args: {
+        target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
+      },
+      run({ args }) {
+        const result = toggleComponent(args.target, false);
+        output("disable", result);
+      },
+    }),
+  },
+  run({ args }) {
+    if (hasSubcommand(args, CONFIG_SUBCOMMAND_SET)) return;
+    if (args.list) {
+      output("config", listConfig(loadConfig()));
+      return;
+    }
+    output("config", listConfig(loadConfig()));
+  },
+});
+
+const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);

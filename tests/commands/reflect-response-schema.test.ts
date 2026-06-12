@@ -22,7 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { LlmConnectionConfig } from "../../src/core/config";
+import type { LlmConnectionConfig } from "../../src/core/config/config";
 import { parseAgentProposalPayload } from "../../src/integrations/agent/prompts";
 
 // ── Module-level chatCompletion spy ─────────────────────────────────────────
@@ -57,7 +57,7 @@ mock.module("../../src/llm/client", () => ({
 }));
 
 // Import AFTER mock.module so reflect / runReflectViaLlm pick up the stub.
-const reflectModule = await import("../../src/commands/reflect");
+const reflectModule = await import("../../src/commands/improve/reflect");
 const { akmReflect, runReflectViaLlm, REFLECT_JSON_SCHEMA } = reflectModule;
 
 // ── Scaffolding ─────────────────────────────────────────────────────────────

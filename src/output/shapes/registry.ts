@@ -22,6 +22,20 @@ import type { DetailLevel, ShapeMode } from "../context";
  */
 export type OutputShapeHandler = (result: unknown, detail: DetailLevel, shape: ShapeMode) => unknown;
 
+/**
+ * A single output-shape registration: a command name plus its handler.
+ *
+ * Per-command modules EXPORT arrays of these entries (pure data, no top-level
+ * side effect). The central `shapes.ts` barrel imports those exports and feeds
+ * them to {@link registerOutputShapes} in one deterministic, order-independent
+ * pass. Because the assembly array references each module's named export, a
+ * dropped registration is a COMPILE error, not a silent runtime gap.
+ */
+export interface OutputShapeEntry {
+  command: string;
+  handler: OutputShapeHandler;
+}
+
 const OUTPUT_SHAPE_REGISTRY = new Map<string, OutputShapeHandler>();
 
 /**
@@ -36,6 +50,19 @@ const OUTPUT_SHAPE_REGISTRY = new Map<string, OutputShapeHandler>();
  */
 export function registerOutputShape(command: string, handler: OutputShapeHandler): void {
   OUTPUT_SHAPE_REGISTRY.set(command, handler);
+}
+
+/**
+ * Register a batch of {@link OutputShapeEntry} definitions in iteration order.
+ *
+ * This is the explicit-assembly entry point used by `shapes.ts`: the built-in
+ * shape set is registered by iterating a single explicit list exactly once,
+ * with no reliance on module import order.
+ */
+export function registerOutputShapes(entries: Iterable<OutputShapeEntry>): void {
+  for (const { command, handler } of entries) {
+    OUTPUT_SHAPE_REGISTRY.set(command, handler);
+  }
 }
 
 /**

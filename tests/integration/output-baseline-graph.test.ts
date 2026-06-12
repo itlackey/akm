@@ -297,11 +297,11 @@ describe("output baseline", () => {
     );
     const server = http.createServer((req, res) => {
       if (req.url === "/index.json") {
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
         res.end(fs.readFileSync(path.join(registryDir, "index.json"), "utf8"));
         return;
       }
-      res.writeHead(404);
+      res.writeHead(404, { Connection: "close" });
       res.end("not found");
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));

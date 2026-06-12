@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Regression suite for #484 — schemaVersion + shape discriminator on
-// passthrough envelopes (clone, workflow-*, vault-*, etc.). Third-party
+// passthrough envelopes (clone, workflow-*, env-*, etc.). Third-party
 // consumers parsing `akm --format=json` output rely on these fields to
 // pin a schema version and dispatch on the response shape.
 //
@@ -37,24 +37,21 @@ describe("passthrough envelope stamping (#484)", () => {
     expect(shaped.schemaVersion).toBe(1);
   });
 
-  it("adds schemaVersion + shape to vault-list", () => {
-    const result = { vaults: [{ name: "v1", path: "/should/be/stripped" }] };
-    const shaped = shapeForCommand("vault-list", result, "normal") as Record<string, unknown>;
-    expect(shaped.shape).toBe("vault-list");
+  it("adds schemaVersion + shape to env-list", () => {
+    const result = { envs: [{ name: "v1", path: "/should/be/stripped" }] };
+    const shaped = shapeForCommand("env-list", result, "normal") as Record<string, unknown>;
+    expect(shaped.shape).toBe("env-list");
     expect(shaped.schemaVersion).toBe(1);
-    // The existing vault-list shaper strips `path` — verify that contract
-    // still holds with the new envelope stamp.
-    const vaults = shaped.vaults as Array<Record<string, unknown>>;
-    expect(vaults[0]).not.toHaveProperty("path");
-    expect(vaults[0].name).toBe("v1");
+    // The env-list shaper strips `path` — verify that contract still holds
+    // with the envelope stamp.
+    const envs = shaped.envs as Array<Record<string, unknown>>;
+    expect(envs[0]).not.toHaveProperty("path");
+    expect(envs[0].name).toBe("v1");
   });
 
-  it("adds schemaVersion + shape to vault-create / vault-set (passthrough)", () => {
-    const created = shapeForCommand("vault-create", { ref: "vault:x", created: true }, "normal") as Record<
-      string,
-      unknown
-    >;
-    expect(created.shape).toBe("vault-create");
+  it("adds schemaVersion + shape to env-create (passthrough)", () => {
+    const created = shapeForCommand("env-create", { ref: "env:x", created: true }, "normal") as Record<string, unknown>;
+    expect(created.shape).toBe("env-create");
     expect(created.schemaVersion).toBe(1);
   });
 

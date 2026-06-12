@@ -312,7 +312,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `update` | `akm update` | `target`, `all`, `processed` |
 | `remember` | `akm remember` | `path`, `force`, `tagCount`, `enriched`, `auto`, `scope` |
 | `import` | `akm import` | `source`, `path`, `force` |
-| `save` | `akm save` | `name`, `message`, `ok` |
+| `save` | `akm sync` | `name`, `message`, `ok` |
 | `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
 | `promoted` | `akm proposal accept` | `proposalId`, `source`, `assetPath` |
 | `rejected` | `akm proposal reject` | `proposalId`, `source`, `reason` |
@@ -346,7 +346,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `akm improve` (reflect pass) | `feedback` per ref | Builds agent prompt context (last 10 per-ref / 20 global) |
 | `akm show` | `show` per ref | Loop detection: warns at 3+ repeated shows |
 | `akm history` | `promoted`, `rejected` | Unified lifecycle trail |
-| `akm events` | user-supplied | Direct inspection / tail |
+| `akm log` | user-supplied | Direct inspection / tail |
 
 ---
 

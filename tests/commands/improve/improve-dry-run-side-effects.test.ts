@@ -25,8 +25,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmImprove } from "../../../src/commands/improve";
-import { saveConfig } from "../../../src/core/config";
+import { akmImprove } from "../../../src/commands/improve/improve";
+import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 
 const TIMEOUT_MS = 15_000;

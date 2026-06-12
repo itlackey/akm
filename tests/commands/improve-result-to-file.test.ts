@@ -18,12 +18,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmImproveResult } from "../../src/commands/improve";
+import type { AkmImproveResult } from "../../src/commands/improve/improve";
 import {
   buildImproveRunId,
   relativeImproveResultPath,
   writeImproveResultFile,
-} from "../../src/commands/improve-result-file";
+} from "../../src/commands/improve/improve-result-file";
 import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataHome } from "../_helpers/sandbox";
 
 // The pure-function tests (buildImproveRunId, relativeImproveResultPath,

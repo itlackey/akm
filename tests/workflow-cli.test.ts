@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resetConfigCache } from "../src/core/config";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { resetConfigCache } from "../src/core/config/config";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { parseWorkflow } from "../src/workflows/parser";
 import { runCliCapture } from "./_helpers/cli";
@@ -275,6 +275,8 @@ describe("workflow CLI", async () => {
         "validate",
         "--notes",
         "Inputs verified",
+        "--summary",
+        "Release notes reviewed and version matches tag.",
         "--evidence",
         '{"checkedBy":"copilot"}',
       ],
@@ -309,7 +311,14 @@ describe("workflow CLI", async () => {
     expect(listJson.runs).toHaveLength(1);
     expect(listJson.runs[0]?.workflowRef).toBe("workflow:release");
 
-    expect((await runCli(["workflow", "complete", startJson.run.id, "--step", "deploy"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startJson.run.id, "--step", "deploy", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
 
     const afterComplete = await runCli(["workflow", "status", startJson.run.id], env);
     const finalStatus = JSON.parse(afterComplete.stdout) as { run: { status: string; currentStepId?: string | null } };
@@ -386,9 +395,19 @@ describe("workflow CLI", async () => {
     expect(wrongStep.status).toBe(2);
     expect(JSON.parse(wrongStep.stderr).error).toContain("is not the current step");
 
-    expect((await runCli(["workflow", "complete", startJson.run.id, "--step", "validate"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startJson.run.id, "--step", "validate", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
 
-    const repeated = await runCli(["workflow", "complete", startJson.run.id, "--step", "validate"], env);
+    const repeated = await runCli(
+      ["workflow", "complete", startJson.run.id, "--step", "validate", "--summary", "Work completed and verified."],
+      env,
+    );
     expect(repeated.status).toBe(2);
     expect(JSON.parse(repeated.stderr).error).toContain("already completed");
 
@@ -413,7 +432,14 @@ describe("workflow CLI", async () => {
     expect(started.status).toBe(0);
     const startJson = JSON.parse(started.stdout) as { run: { id: string } };
 
-    expect((await runCli(["workflow", "complete", startJson.run.id, "--step", "validate"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startJson.run.id, "--step", "validate", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
     expect(
       (await runCli(["workflow", "complete", startJson.run.id, "--step", "deploy", "--state", "blocked"], env)).status,
     ).toBe(0);
@@ -559,8 +585,22 @@ describe("workflow CLI — qa fixes", async () => {
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "first"], env)).status).toBe(0);
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "second"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "first", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "second", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
 
     const resumed = await runCli(["workflow", "resume", startRun.id], env);
     expect(resumed.status).toBe(2);
@@ -603,7 +643,19 @@ describe("workflow CLI — qa fixes", async () => {
       expect((await runCli(["workflow", "resume", startRun.id], env)).status).toBe(0);
 
       const reclassified = await runCli(
-        ["workflow", "complete", startRun.id, "--step", "first", "--state", newState, "--notes", "resolved"],
+        [
+          "workflow",
+          "complete",
+          startRun.id,
+          "--step",
+          "first",
+          "--state",
+          newState,
+          "--notes",
+          "resolved",
+          "--summary",
+          "Resolved.",
+        ],
         env,
       );
       expect(reclassified.status).toBe(0);
@@ -623,7 +675,14 @@ describe("workflow CLI — qa fixes", async () => {
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "first"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "first", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
     expect(
       (await runCli(["workflow", "complete", startRun.id, "--step", "second", "--state", "blocked"], env)).status,
     ).toBe(0);
@@ -669,8 +728,22 @@ describe("workflow list --active includes blocked", async () => {
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "first"], env)).status).toBe(0);
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "second"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "first", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "second", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
 
     const listed = await runCli(["workflow", "list", "--active"], env);
     expect(listed.status).toBe(0);
@@ -691,8 +764,22 @@ describe("workflow next — completed run signals done", async () => {
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "first"], env)).status).toBe(0);
-    expect((await runCli(["workflow", "complete", startRun.id, "--step", "second"], env)).status).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "first", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
+    expect(
+      (
+        await runCli(
+          ["workflow", "complete", startRun.id, "--step", "second", "--summary", "Work completed and verified."],
+          env,
+        )
+      ).status,
+    ).toBe(0);
 
     const next = await runCli(["workflow", "next", startRun.id], env);
     expect(next.status).toBe(0);
@@ -886,14 +973,18 @@ describe("workflow create — name validation", async () => {
     expect(json.ref).toBe("workflow:my-workflow");
   });
 
-  test("hierarchical name with forward slash is accepted", async () => {
-    // Slashes are allowed for hierarchical naming (e.g. release/ship)
+  test("hierarchical placement uses --path; a slash in the name positional is rejected", async () => {
     const env = createWorkflowEnv();
 
-    const result = await runCli(["workflow", "create", "release/ship"], env);
-    expect(result.status).toBe(0);
-    const json = JSON.parse(result.stdout) as { ref: string };
-    expect(json.ref).toBe("workflow:release/ship");
+    // --path provides the subdirectory under workflows/; the name stays flat.
+    const ok = await runCli(["workflow", "create", "ship", "--path", "release"], env);
+    expect(ok.status).toBe(0);
+    expect((JSON.parse(ok.stdout) as { ref: string }).ref).toBe("workflow:release/ship");
+
+    // A '/' in the name positional is rejected and points at --path.
+    const bad = await runCli(["workflow", "create", "release/ship"], env);
+    expect(bad.status).toBe(2);
+    expect((JSON.parse(bad.stderr) as { error: string }).error).toMatch(/--path/);
   });
 
   test("name validation error message mentions slashes", async () => {
@@ -959,7 +1050,10 @@ describe("workflow complete --state default", async () => {
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
     // No --state flag → should default to 'completed'
-    const completed = await runCli(["workflow", "complete", startRun.id, "--step", "first"], env);
+    const completed = await runCli(
+      ["workflow", "complete", startRun.id, "--step", "first", "--summary", "Work completed and verified."],
+      env,
+    );
     expect(completed.status).toBe(0);
     const json = JSON.parse(completed.stdout) as { workflow: { steps: Array<{ id: string; status: string }> } };
     const step = json.workflow.steps.find((s) => s.id === "first");

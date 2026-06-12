@@ -22,16 +22,13 @@ These flags are accepted by all commands:
 | --- | --- | --- | --- |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level |
-| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** (was `--detail summary\|agent`) |
-| `--for-agent` | boolean | `false` | **Deprecated alias** for `--shape=agent` (removed in 0.9.0). Prefer `--shape=agent` |
+| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
 `--detail` controls **how much** is returned (`brief|normal|full`); `--shape`
 controls the **projection** (`human` for people, `agent` for a token-lean
-action view, `summary` for capability discovery). The legacy spellings
-`--detail summary`, `--detail agent`, and `--for-agent` are deprecated aliases
-that warn on stderr and map to `--shape` (removed in 0.9.0).
+action view, `summary` for capability discovery).
 
 ### `--format jsonl`
 
@@ -39,16 +36,12 @@ Outputs one JSON object per line. For `search` and `registry search`, each hit
 is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--shape=agent` (was `--detail=agent` / `--for-agent`)
+### `--shape=agent`
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 - **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`, `comments`
-
-Prefer `--shape=agent` going forward. The `--detail=agent` and `--for-agent`
-spellings are kept as deprecated aliases that warn on stderr (removed in
-0.9.0).
 
 ### `--shape summary`
 
@@ -58,10 +51,6 @@ than a silent fallback. It returns a compact view suitable for capability
 discovery:
 
 - **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
-
-The legacy `--detail summary` spelling is a deprecated alias for `--shape
-summary` (removed in 0.9.0); like `--shape summary`, it is accepted only on
-`akm show` and is rejected elsewhere.
 
 ## Exit Codes and Error Envelope
 
@@ -398,7 +387,7 @@ detail level (and per `--shape`) is authoritative in `src/output/shapes.ts`
 | `normal` | adds `description`, `score`, optional `warnings`, optional `quality` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, stash metadata) | full hit object |
 | `--shape summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
-| `--shape agent` (was `--detail agent` / `--for-agent`) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+| `--shape agent` | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
 The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
 surface an optional `warnings: string[]` field on hits when a provider has
@@ -482,7 +471,7 @@ cannot accidentally read out-of-scope content.
 The default `show` JSON includes the asset body when applicable. Use
 `--detail brief` for a reduced metadata-first view without
 `content`/`template`/`prompt`; `--detail full` adds verbose metadata such as
-`schemaVersion`, `path`, `editable`, and `editHint`; `--detail summary`
+`schemaVersion`, `path`, `editable`, and `editHint`; `--shape summary`
 returns a compact view with only `type`, `name`, `description`, `tags`,
 `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, and
 `comments`.
@@ -498,7 +487,7 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
-| env | `keys`, `comments` (vault: deprecated alias) |
+| env | `keys`, `comments` (key names + comments only — values never returned) |
 | lesson | `content` plus `when_to_use` surfaced from frontmatter |
 
 Assets from non-writable sources (git clones, npm packages, websites) return
@@ -692,8 +681,8 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 
 #### Dangerous env key audit
 
-When `akm add` installs a stash that contains env files (`env/`, or legacy
-`vaults/`), it scans every file for environment variable names that can be used
+When `akm add` installs a stash that contains env files (`env/`), it scans every
+file for environment variable names that can be used
 for process-execution hijacking. The flagged key names are: `LD_PRELOAD`,
 `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `DYLD_INSERT_LIBRARIES`,
 `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`, `BASH_ENV`, `ENV`,
@@ -714,7 +703,7 @@ akm add github:owner/repo-with-sensitive-env
 akm add github:owner/repo-with-sensitive-env --allow-insecure
 ```
 
-Stash publishers: see the [Stash Maker's Guide](stash-makers.md#vault-security)
+Stash publishers: see the [Stash Maker's Guide](stash-makers.md#env-security)
 for guidance on env files that legitimately need these keys.
 
 #### Website sources
@@ -853,10 +842,8 @@ running `akm setup` first.
 Stage and commit local changes in a git-backed stash. If the stash has a
 remote configured and is marked `writable: true`, the commit is also pushed.
 
-> **Renamed in 0.8.0.** `akm save` is the deprecated spelling — it still works
-> and delegates to `akm sync`, but prints a stderr deprecation warning and is
-> removed in 0.9.0. `sync` connotes the commit+push behaviour better than
-> `save`.
+> **Renamed in 0.8.0; the `akm save` alias was removed in 0.9.0.** Use `akm
+> sync` — it connotes the commit+push behaviour better than `save`.
 
 ```sh
 akm sync                            # Sync primary stash (auto timestamp message)
@@ -1041,15 +1028,15 @@ assets to rank higher in search results over time.
 akm feedback script:deploy.sh --positive
 akm feedback agent:reviewer --negative
 akm feedback memory:deployment-notes --positive
-akm feedback vault:prod --positive
-akm feedback skill:code-review --positive --note "Worked perfectly for PR reviews"
+akm feedback env:prod --positive
+akm feedback skill:code-review --positive --reason "Worked perfectly for PR reviews"
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--positive` | Record positive feedback (use when an asset was helpful) |
 | `--negative` | Record negative feedback (use when an asset was not useful) |
-| `--note` | Optional text note to attach to the feedback event |
+| `--reason` | Optional text reason to attach to the feedback event (required for negative feedback by default) |
 | `--applied-to <ref>` | Credit a `lesson:<name>` that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). Silently ignored on non-lesson targets. |
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
@@ -1114,7 +1101,7 @@ akm history --format text                      # Human-readable trail
 | --- | --- |
 | `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
 | `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
-| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). `--source` is a deprecated alias (removed 0.9.0). |
+| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). |
 | `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
 
 Output envelope (JSON):
@@ -1150,30 +1137,28 @@ If the stash has never been indexed, the `usage_events` schema is created
 on demand and the command returns an empty `entries` array rather than
 erroring.
 
-### events (alias: `log`)
+### log
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends
-an event row to `<dataDir>/state.db`; `akm events list` reads it and
-`akm events tail` follows it via polling.
+an event row to `<dataDir>/state.db`; `akm log list` reads it and
+`akm log tail` follows it via polling.
 
-> **Alias:** `akm log` resolves to this same command in 0.8 (`akm log list`,
-> `akm log tail`). In 0.9.0 `log` becomes the primary spelling and `events`
-> becomes the deprecated alias.
+> **Renamed in 0.9.0.** `log` is the primary spelling; the old `akm events`
+> command was removed (it was a `log` alias during the 0.8 window).
 
 ```sh
-akm events list                                   # All events, oldest first
-akm log list                                      # Same — `log` is an alias for `events`
-akm events list --type feedback                   # Filter by event type
-akm events list --ref skill:deploy                # Filter by asset ref
-akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
-akm events list --since '@offset:12345'           # Resume from a row-id cursor
-akm events tail --max-events 10                   # Follow until 10 events
-akm events tail --format jsonl                    # Stream as JSONL
+akm log list                                      # All events, oldest first
+akm log list --type feedback                      # Filter by event type
+akm log list --ref skill:deploy                   # Filter by asset ref
+akm log list --since 2026-04-01T00:00:00Z         # ISO timestamp
+akm log list --since '@offset:12345'              # Resume from a row-id cursor
+akm log tail --max-events 10                      # Follow until 10 events
+akm log tail --format jsonl                       # Stream as JSONL
 ```
 
-**`history` vs `events`/`log` — which one do I want?**
+**`history` vs `log` — which one do I want?**
 
-| | `akm history` | `akm events` / `akm log` |
+| | `akm history` | `akm log` |
 | --- | --- | --- |
 | Scope | Per-asset (or stash-wide) state changes | Raw stash-wide mutation stream |
 | Backing store | `usage_events` table (built by the indexer) | `state.db` append-only events |
@@ -1183,7 +1168,7 @@ akm events tail --format jsonl                    # Stream as JSONL
 | Typical use | Audit a specific asset; debug utility-score shifts | Tail the live mutation bus; drive cooperating processes |
 
 In short: reach for `history` when you care about *an asset's lifecycle*, and
-for `events`/`log` when you care about *the raw, resumable mutation stream*.
+for `log` when you care about *the raw, resumable mutation stream*.
 
 | Flag | Description |
 | --- | --- |
@@ -1367,12 +1352,23 @@ and `export` are the supported value-use paths.
 akm env list
 akm env create prod                          # creates env/prod.env (mode 0600)
 akm env create prod --from-file ./.env        # ingest an existing .env
+akm env create prod --path staging            # creates env/staging/prod.env
+echo "https://db" | akm env set env:prod DATABASE_URL   # set one key (value via stdin)
+akm env set env:prod API_TOKEN --from-env CI_TOKEN      # set from an env var (not argv)
+akm env unset env:prod DEBUG OLD_FLAG          # remove one or more keys
 $EDITOR "$(akm env path env:prod --quiet)"    # edit the file directly
 akm env run env:prod -- npm test              # run a command with the whole file injected
 akm env run env:prod -- $SHELL                # interactive shell with the env loaded
 akm env run env:prod --only DATABASE_URL -- ./migrate   # inject just one var
-akm env remove env:prod --yes
+akm env remove env:prod --yes                 # remove the whole env file
 ```
+
+`env set`/`env unset` do a minimal, comment-preserving edit and use `dotenv`
+as the round-trip oracle — a value is only written if `dotenv.parse` reads it
+back exactly, and the whole edit is re-verified so no other key is disturbed.
+Set-values are read from stdin (default), `--from-env <VAR>`, or `--from-file
+<path>` — never from argv — and are never echoed. `env unset <ref> <KEY...>`
+removes keys; `env remove <ref>` removes the whole file.
 
 Subcommands:
 
@@ -1468,27 +1464,13 @@ generated file can never execute it. `export` **never prints values to stdout**
 > For most uses prefer `akm env run` (no file, no cleanup). `export` exists for
 > the case where a tool must `source` a file or you need a generated env script.
 
-### vault (deprecated)
+### vault (removed)
 
-> **Deprecated in 0.8.0, removed in 0.9.0 — use [`env`](#env).** The `akm vault`
-> verb now prints a stderr deprecation warning and delegates `list` / `path` /
-> `export` / `run` / `create` to the `env` handlers. `vault set` and
-> `vault unset` are hard-errors (akm no longer manages individual entries — edit
-> the `.env` directly, or use [`akm secret`](#secret) for a single value), as is
-> the removed single-key `vault run <ref>/KEY` form. Existing `vault:` refs
-> still resolve, and `akm-migrate-storage` copies `vaults/` → `env/` (see the
-> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
-
-### vault (deprecated)
-
-> **Deprecated in 0.8.0, removed in 0.9.0 — use [`env`](#env).** The `akm vault`
-> verb now prints a stderr deprecation warning and delegates `list` / `path` /
-> `export` / `run` / `create` to the `env` handlers. `vault set` and
-> `vault unset` are hard-errors (akm no longer manages individual entries — edit
-> the `.env` directly, or use [`akm secret`](#secret) for a single value), as is
-> the removed single-key `vault run <ref>/KEY` form. Existing `vault:` refs
-> still resolve, and `akm migrate` copies `vaults/` → `env/` (see the
-> [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
+> **Removed in 0.9.0 — use [`env`](#env) or [`secret`](#secret).** The `akm vault`
+> verb no longer exists, and parsing a `vault:` ref is now an unknown-type error
+> that points at `env:` (whole `.env` config) and `secret:` (a single value).
+> `akm-migrate-storage` still copies a legacy `vaults/` directory to `env/` for
+> upgraders (see the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
 
 ### secret
 
@@ -1575,7 +1557,7 @@ known process-hijacking names (`LD_PRELOAD`, `PATH`, etc.) are rejected.
 #### Sensitive marker
 
 A sibling `<name>.sensitive` marker file excludes a secret from `secret list`
-**and** from indexing entirely (parallel to vaults). The secret remains usable
+**and** from indexing entirely (parallel to env files). The secret remains usable
 via `secret path` / `secret run`.
 
 ### wiki
@@ -1602,8 +1584,8 @@ akm wiki search research "attention"
 akm wiki lint research
 akm wiki ingest research               # dispatches defaults.agent to run the ingest workflow
 akm wiki ingest research --profile claude --model sonnet  # explicit overrides
-akm wiki remove research --force       # preserves raw/ by default
-akm wiki remove research --force --with-sources
+akm wiki remove research -y            # preserves raw/ by default
+akm wiki remove research -y --with-sources
 ```
 
 Subcommands:
@@ -1614,7 +1596,7 @@ Subcommands:
 | `register <name> <path-or-repo>` | Register an existing directory or repo as a first-class wiki without copying it |
 | `list` | List wikis with page and raw counts plus last-modified timestamps |
 | `show <name>` | Path, description (from `schema.md`), counts, and the last 3 `log.md` entries |
-| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Requires `--force`. External wikis are unregistered without deleting source files |
+| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Prompts before deleting; pass `-y`/`--yes` to skip the prompt (required in non-interactive shells). External wikis are unregistered without deleting source files |
 | `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
 | `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
@@ -1866,9 +1848,8 @@ Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 behaves as `akm proposal list`.
 
 The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
-`akm reject`, `akm diff`, and `akm revert` remain as **deprecated aliases** that
-warn on stderr and delegate to the `proposal <verb>` forms. They are removed in
-0.9.0.
+`akm reject`, `akm diff`, and `akm revert` were **removed in 0.9.0**. Use the
+`akm proposal <verb>` forms.
 
 #### proposal list
 
@@ -1915,9 +1896,8 @@ akm proposal accept --generator reflect -y    # Bulk-accept by generator (requir
 ```
 
 Bulk-accept all pending proposals from one generator with `--generator <name>`
-(e.g. `reflect`, `distill`) and no positional id. `--source` is a deprecated
-alias for `--generator` (removed 0.9.0). Bulk accept requires `-y`/`--yes` in
-non-interactive shells.
+(e.g. `reflect`, `distill`) and no positional id. Bulk accept requires
+`-y`/`--yes` in non-interactive shells.
 
 #### proposal reject
 
@@ -1932,8 +1912,7 @@ akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by ge
 ```
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
-and no positional id. `--source` is a deprecated alias for `--generator`
-(removed 0.9.0). Bulk reject requires `-y`/`--yes` in non-interactive shells.
+and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
 
 #### proposal revert
 
@@ -1976,14 +1955,13 @@ akm proposal diff <id> --target team-stash
 `proposal accept` runs full validation before promoting. `proposal reject`
 requires `--reason`.
 
-### feedback (`--reason` extension)
+### feedback (`--reason`)
 
 **Status: Available since 0.8.0.**
-Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
-and gains an optional `--reason <slug>` flag whose value is forwarded into
-feedback metadata and consumed by improve/distill proposal prompts.
-Backwards compatible: scripts without `--reason`
-behave exactly as today.
+`akm feedback` accepts an optional `--reason <text>` flag whose value is
+forwarded into feedback metadata and consumed by improve/distill proposal
+prompts. Scripts without `--reason` behave as before (though negative feedback
+requires a reason by default).
 
 ### tasks
 
@@ -2016,4 +1994,4 @@ in the task YAML itself.
 
 `akm tasks run` is what cron / launchd / schtasks invoke at the scheduled
 time — `tasks_invoked` and `tasks_completed` events land in `state.db` so
-runs are auditable via `akm events`.
+runs are auditable via `akm log`.

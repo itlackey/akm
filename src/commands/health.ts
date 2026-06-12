@@ -2,20 +2,27 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "bun:sqlite";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
+import { buildTaskRunId, getLoggedRunIds, openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
-import { openStateDatabase, queryTaskHistory, type TaskHistoryRow } from "../core/state-db";
+import {
+  type ImproveRunSummaryRow,
+  listExistingTableNames,
+  openStateDatabase,
+  queryCompletedTaskIntervals,
+  queryImproveRuns,
+  queryTaskHistory,
+  type TaskHistoryRow,
+} from "../core/state-db";
 import { parseSinceToIso } from "../core/time";
-import { readSemanticStatus } from "../indexer/semantic-status";
-import type { AgentProfile } from "../integrations/agent";
-import { detectAgentCliProfiles, requireAgentProfile } from "../integrations/agent";
+import { readSemanticStatus } from "../indexer/search/semantic-status";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
+import { LLM_USAGE_EVENT } from "../llm/usage-persist";
+import type { Database } from "../storage/database";
+import { HEALTH_CHECKS, type HealthCheckContext } from "./health/checks";
 
 export interface HealthCheckResult {
   name: string;
@@ -32,6 +39,37 @@ export interface HealthMetrics {
   stuckActiveRuns: number;
   logBackingRate: number;
   probeRoundTripMs: number | null;
+  /**
+   * Per-stage LLM usage aggregates (#576), derived from `llm_usage` events in
+   * the window. Replaces the prior GPU-time proxy: real token + wall-time
+   * accounting attributed to the pipeline stage that made each call. `stages`
+   * is keyed by stage name (`"reflect"`, `"memory-inference"`, …); calls made
+   * outside any stage scope land under the `unattributed` key.
+   */
+  llmUsage: LlmUsageAggregate;
+}
+
+/** Aggregated LLM usage over a window: a total plus a per-stage breakdown. */
+export interface LlmUsageAggregate {
+  /** Number of `llm_usage` events (== number of LLM calls) in the window. */
+  calls: number;
+  totalDurationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
+  byStage: Record<string, LlmUsageStageAggregate>;
+}
+
+/** LLM usage totals for one pipeline stage. */
+export interface LlmUsageStageAggregate {
+  calls: number;
+  totalDurationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
 }
 
 export interface ImproveHealthMetrics {
@@ -73,7 +111,8 @@ export interface ImproveHealthMetrics {
        * `actions[].result.reason` for `mode === "reflect-skipped"` entries.
        * Mirrors {@link distill.deferredByReason} (commit `d1273d0`). Values
        * observed today: `type-filter`, `raw-wiki`, `process-disabled`,
-       * `unsupported_type`, `derived-memory-reflect-skipped`. Totals here
+       * `unsupported_type`, `no_change` (#580 noise gate),
+       * `derived-memory-reflect-skipped`. Totals here
        * should match `skipped`. Pre-2026-05-26 this was discarded by the
        * rollup — the 18/18 reflect-skipped runs in `release/0.8.0` could not
        * be tuned because no operator could see WHY they were skipped. See
@@ -253,6 +292,8 @@ export interface ImproveHealthMetrics {
      * collapses toward zero just because the cache absorbs most candidates.
      */
     cacheHits: number;
+    /** Single bounded retries triggered for transient LLM failures during inference. */
+    retryAttempts: number;
     /** `considered - cacheHits - skippedAborted` — the number of parents that actually hit the LLM. Budget-abort items return {aborted:true} with no LLM call; excluding them from the denominator prevents budget-exhaustion from appearing as a quality regression. */
     freshAttempts: number;
     splitParents: number;
@@ -278,6 +319,13 @@ export interface ImproveHealthMetrics {
      * attempts past the counter taxonomy.
      */
     unaccounted: number;
+    /**
+     * Parents whose LLM call returned an HTML body (e.g. LM Studio serving its
+     * web UI) instead of JSON. Surfaced distinctly from `skippedNoFacts` so a
+     * provider-load failure is observable rather than masked as an empty-result
+     * skip. Sourced from the `memoryInference` envelope's `htmlErrorCount`.
+     */
+    htmlErrorCount: number;
     /**
      * Count of envelopes that contributed to the yield denominator. A run
      * is yield-eligible iff its `memoryInference` envelope has a
@@ -323,6 +371,16 @@ export interface ImproveHealthMetrics {
     cacheHitRate: number;
     truncations: number;
     failures: number;
+    /**
+     * Asset extractions where the provider returned an HTML body (e.g. LM
+     * Studio serving its web UI) instead of JSON. Tracked distinctly from
+     * `failures` so a provider-load failure is observable rather than folded
+     * into the generic failure count. Sourced from the graph-extraction
+     * telemetry's `htmlErrorCount`.
+     */
+    htmlErrors: number;
+    /** Single bounded retries triggered for transient LLM failures during extraction. */
+    retryAttempts: number;
     durationMs: number;
   };
   /**
@@ -443,6 +501,26 @@ export interface AkmHealthOptions {
   windowCompare?: string;
   windows?: WindowSpec[];
   getExecutionLogCandidatesFn?: (sinceDays?: number) => SessionLogEntry[];
+  /**
+   * Clock seam for the health read path. Defaults to `Date.now`. Tests may pin
+   * this to a fixed epoch so staleness/window math is deterministic. Purely
+   * additive — when omitted, behaviour is identical to calling `Date.now()`.
+   */
+  now?: () => number;
+  /**
+   * C2 (#499): explicit state.db path override. Defaults to
+   * `getStateDbPathInDataDir()` (the `XDG_DATA_HOME`-derived path). Tests pass a
+   * path from their isolated storage root so the entire health read is pinned to
+   * one file and never re-reads `process.env` — immune to a parallel test file
+   * mutating `XDG_DATA_HOME` across an await boundary and redirecting this read
+   * to a foreign/just-deleted DB. Purely additive: omitted ⇒ identical to before.
+   */
+  stateDbPath?: string;
+  /**
+   * Explicit logs.db path override (#579). Defaults to `getLogsDbPath()`.
+   * Same test-isolation rationale as {@link stateDbPath}.
+   */
+  logsDbPath?: string;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -544,6 +622,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       ran: false,
       considered: 0,
       cacheHits: 0,
+      retryAttempts: 0,
       freshAttempts: 0,
       splitParents: 0,
       written: 0,
@@ -551,6 +630,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
       yieldEligibleRuns: 0,
       yieldEligibleConsidered: 0,
       yieldEligibleWritten: 0,
@@ -568,6 +648,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       cacheHitRate: 0,
       truncations: 0,
       failures: 0,
+      htmlErrors: 0,
+      retryAttempts: 0,
       durationMs: 0,
     },
     sessionExtraction: {
@@ -774,16 +856,22 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     metrics.consolidation.mergedSecondaries += toFiniteNumber(consolidation.mergedSecondaries);
     metrics.consolidation.failedChunkMemories += toFiniteNumber(consolidation.failedChunkMemories);
     // Structured emitter (new on this branch): consolidate.ts now pushes
-    // `{op, ref, reason}` entries to `skipReasons` for every deterministic
-    // post-LLM rejection. Pre-fix envelopes have neither field, so be
-    // defensive.
+    // per-ref grouped `{ref, skips: [{op, reason}]}` entries to `skipReasons`
+    // for every deterministic post-LLM rejection. Each ref appears once but
+    // may carry multiple skips; aggregate every reason. Pre-fix envelopes have
+    // neither field, so be defensive.
     const skipReasons = consolidation.skipReasons;
     if (Array.isArray(skipReasons)) {
       for (const entry of skipReasons) {
         if (!entry || typeof entry !== "object") continue;
-        const reason = (entry as Record<string, unknown>).reason;
-        if (typeof reason !== "string" || !reason.trim()) continue;
-        metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
+        const skips = (entry as Record<string, unknown>).skips;
+        if (!Array.isArray(skips)) continue;
+        for (const skip of skips) {
+          if (!skip || typeof skip !== "object") continue;
+          const reason = (skip as Record<string, unknown>).reason;
+          if (typeof reason !== "string" || !reason.trim()) continue;
+          metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
+        }
       }
     }
   }
@@ -794,12 +882,14 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     const writtenFacts = toFiniteNumber(memoryInference.writtenFacts);
     metrics.memoryInference.considered += considered;
     metrics.memoryInference.cacheHits += toFiniteNumber(memoryInference.cacheHits);
+    metrics.memoryInference.retryAttempts += toFiniteNumber(memoryInference.retryAttempts);
     metrics.memoryInference.splitParents += toFiniteNumber(memoryInference.splitParents);
     metrics.memoryInference.written += writtenFacts;
     metrics.memoryInference.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
     metrics.memoryInference.skippedChildExists += toFiniteNumber(memoryInference.skippedChildExists);
     metrics.memoryInference.skippedAborted += toFiniteNumber(memoryInference.skippedAborted);
     metrics.memoryInference.unaccounted += toFiniteNumber(memoryInference.unaccounted);
+    metrics.memoryInference.htmlErrorCount += toFiniteNumber(memoryInference.htmlErrorCount);
     // Yield-rate gating: pre-cache-feature envelopes lack the `cacheHits`
     // field entirely. Treating their `considered` as freshAttempts (since
     // cacheHits=0) is mathematically tempting but operationally wrong —
@@ -827,6 +917,8 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
       metrics.graphExtraction.cacheMisses += toFiniteNumber(telemetry.cacheMisses);
       metrics.graphExtraction.truncations += toFiniteNumber(telemetry.truncationCount);
       metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
+      metrics.graphExtraction.htmlErrors += toFiniteNumber(telemetry.htmlErrorCount);
+      metrics.graphExtraction.retryAttempts += toFiniteNumber(telemetry.retryAttempts);
     }
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
@@ -965,6 +1057,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.memoryInference.skippedChildExists += src.memoryInference.skippedChildExists;
   dst.memoryInference.skippedAborted += src.memoryInference.skippedAborted;
   dst.memoryInference.unaccounted += src.memoryInference.unaccounted;
+  dst.memoryInference.htmlErrorCount += src.memoryInference.htmlErrorCount;
   dst.memoryInference.yieldEligibleRuns += src.memoryInference.yieldEligibleRuns;
   dst.memoryInference.yieldEligibleConsidered += src.memoryInference.yieldEligibleConsidered;
   dst.memoryInference.yieldEligibleWritten += src.memoryInference.yieldEligibleWritten;
@@ -976,6 +1069,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.graphExtraction.cacheMisses += src.graphExtraction.cacheMisses;
   dst.graphExtraction.truncations += src.graphExtraction.truncations;
   dst.graphExtraction.failures += src.graphExtraction.failures;
+  dst.graphExtraction.htmlErrors += src.graphExtraction.htmlErrors;
   dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
   dst.sessionExtraction.sessionsScanned += src.sessionExtraction.sessionsScanned;
   dst.sessionExtraction.sessionsExtracted += src.sessionExtraction.sessionsExtracted;
@@ -985,22 +1079,9 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.sessionExtraction.durationMs += src.sessionExtraction.durationMs;
 }
 
-interface ImproveRunRow {
-  id: string;
-  started_at: string;
-  completed_at: string;
-  ok: number;
-  scope_mode: string;
-  scope_value: string | null;
-  result_json: string;
-}
-
-function loadImproveRunRows(db: Database, since: string, until?: string): ImproveRunRow[] {
-  const sql = until
-    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
-    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
-  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunRow[];
-}
+// The improve_runs read lives in the owner module (core/state-db.ts) so this
+// command file holds no raw SQL. `ImproveRunRow` aliases the owner's row shape.
+type ImproveRunRow = ImproveRunSummaryRow;
 
 function summarizeImproveRuns(
   db: Database,
@@ -1008,7 +1089,7 @@ function summarizeImproveRuns(
   until?: string,
 ): { metrics: ImproveHealthMetrics; runCount: number } {
   const accum = createUnknownImproveMetrics();
-  const rows = loadImproveRunRows(db, since, until);
+  const rows = queryImproveRuns(db, since, until);
 
   // Per-phase wall-time samples. Each entry is one envelope's durationMs for
   // that phase. Phases that did not run on a given envelope are simply
@@ -1142,15 +1223,7 @@ function loadTaskIntervals(db: Database, since: string, until?: string): TaskRun
   const widenedSince = new Date(sinceMs - 5 * 60 * 1000).toISOString();
   const widenedUntil = Number.isFinite(untilMs) ? new Date(untilMs + 5 * 60 * 1000).toISOString() : undefined;
 
-  const sql = widenedUntil
-    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
-    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
-  const rows = (
-    widenedUntil ? db.prepare(sql).all(widenedSince, widenedUntil) : db.prepare(sql).all(widenedSince)
-  ) as Array<{
-    started_at: string;
-    completed_at: string;
-  }>;
+  const rows = queryCompletedTaskIntervals(db, widenedSince, widenedUntil);
 
   const intervals: TaskRunInterval[] = [];
   for (const row of rows) {
@@ -1185,18 +1258,26 @@ function findContainingTaskInterval(timestampMs: number, intervals: TaskRunInter
 }
 
 function buildPerRunSummaries(db: Database, since: string, until?: string): ImproveRunSummary[] {
-  const rows = loadImproveRunRows(db, since, until);
+  const rows = queryImproveRuns(db, since, until);
   const taskIntervals = loadTaskIntervals(db, since, until);
   const summaries: ImproveRunSummary[] = [];
   for (const row of rows) {
     const startMs = new Date(row.started_at).getTime();
     const endMs = new Date(row.completed_at).getTime();
-    // Prefer the task_history interval (which has distinct start/end timestamps).
-    // Fall back to the improve_runs row's own delta (usually 0 because
-    // recordImproveRun writes started_at == completed_at == end-of-run timestamp).
-    const fallbackWallMs = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : 0;
-    const interval = Number.isFinite(startMs) ? findContainingTaskInterval(startMs, taskIntervals) : undefined;
-    const wallTimeMs = interval?.durationMs ?? fallbackWallMs;
+    // Prefer the improve_runs row's own (completed_at - started_at) delta:
+    // recordImproveRun now persists distinct start/end timestamps, so the
+    // row's own delta is the authoritative per-run wall time even for
+    // manually-invoked `akm improve` runs with no enclosing task_history.
+    // Only fall back to the task_history containing-interval join for legacy/
+    // backfill rows where started_at == completed_at (row delta is 0).
+    const hasRowDelta = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
+    let wallTimeMs: number;
+    if (hasRowDelta) {
+      wallTimeMs = endMs - startMs;
+    } else {
+      const interval = Number.isFinite(startMs) ? findContainingTaskInterval(startMs, taskIntervals) : undefined;
+      wallTimeMs = interval?.durationMs ?? 0;
+    }
     summaries.push(projectImproveRunSummary(row, wallTimeMs));
   }
   return summaries;
@@ -1259,114 +1340,11 @@ function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: 
   return { ok: true, durationMs };
 }
 
-function runAgentProbe(): HealthCheckResult {
-  const config = loadConfig();
-
-  // v2: check profiles.agent first
-  if (config.profiles?.agent) {
-    const defaultName = config.defaults?.agent;
-    const profileCount = Object.keys(config.profiles.agent).length;
-    if (profileCount === 0) {
-      return {
-        name: "agent-profile",
-        kind: "deterministic",
-        status: "unknown",
-        confidence: "high",
-        message: "No agent profiles configured in profiles.agent.",
-      };
-    }
-    const profileName = defaultName ?? Object.keys(config.profiles.agent)[0];
-    const profile = config.profiles.agent[profileName];
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "pass",
-      confidence: "high",
-      message: `v2 agent profile "${profileName}" configured (platform: ${profile?.platform ?? "unknown"}).`,
-      evidence: { profile: profileName, platform: profile?.platform, profileCount },
-    };
-  }
-
-  if (!config.profiles?.agent && !config.defaults?.agent) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "unknown",
-      confidence: "high",
-      message: "No agent config present.",
-    };
-  }
-
-  let profile: AgentProfile;
-  try {
-    profile = requireAgentProfile(config);
-  } catch (error) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "high",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-  if (profile.sdkMode === true) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: profile.model ? "pass" : "warn",
-      confidence: "high",
-      message: profile.model
-        ? `SDK mode profile "${profile.name}" is configured.`
-        : `SDK mode profile "${profile.name}" has no explicit model.`,
-      evidence: { profile: profile.name, sdkMode: true, model: profile.model ?? null },
-    };
-  }
-
-  const detections = detectAgentCliProfiles(config);
-  const detection = detections.find((entry) => entry.name === profile.name);
-  if (!detection?.available) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "fail",
-      confidence: "high",
-      message: `Default agent profile "${profile.name}" is not available on PATH.`,
-      evidence: { profile: profile.name, bin: profile.bin },
-    };
-  }
-
-  const version = spawnSync(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
-  if ((version.status ?? 1) !== 0) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "medium",
-      message: `Agent binary "${profile.bin}" was found but \`--version\` failed.`,
-      evidence: {
-        profile: profile.name,
-        bin: profile.bin,
-        exitCode: version.status ?? null,
-        stderr: (version.stderr ?? "").trim(),
-      },
-    };
-  }
-
-  return {
-    name: "agent-profile",
-    kind: "deterministic",
-    status: "pass",
-    confidence: "high",
-    message: `Agent profile "${profile.name}" is available.`,
-    evidence: { profile: profile.name, bin: profile.bin, version: (version.stdout ?? "").trim() },
-  };
-}
-
 /**
  * Parse a `--window-compare <duration>` shorthand into two adjacent windows
  * (current, prior). Duration syntax matches {@link parseHealthSince}.
  */
-function resolveWindowCompare(duration: string): WindowSpec[] {
+function resolveWindowCompare(duration: string, now: () => number = () => Date.now()): WindowSpec[] {
   const trimmed = duration.trim();
   const durationMatch = trimmed.match(/^(\d+)([dhm])$/i);
   if (!durationMatch) {
@@ -1379,10 +1357,10 @@ function resolveWindowCompare(duration: string): WindowSpec[] {
   }
   const multiplier = unit === "h" ? 60 * 60 * 1000 : unit === "m" ? 60 * 1000 : 24 * 60 * 60 * 1000;
   const ms = amount * multiplier;
-  const now = Date.now();
-  const currentSince = new Date(now - ms).toISOString();
-  const currentUntil = new Date(now).toISOString();
-  const priorSince = new Date(now - 2 * ms).toISOString();
+  const nowMs = now();
+  const currentSince = new Date(nowMs - ms).toISOString();
+  const currentUntil = new Date(nowMs).toISOString();
+  const priorSince = new Date(nowMs - 2 * ms).toISOString();
   const priorUntil = currentSince;
   return [
     { name: "current", since: currentSince, until: currentUntil },
@@ -1434,8 +1412,10 @@ const INTERESTING_DELTA_PATHS = [
   "improve.memoryInference.written",
   "improve.memoryInference.yieldRate",
   "improve.memoryInference.skippedNoFacts",
+  "improve.memoryInference.htmlErrorCount",
   "improve.graphExtraction.cacheHitRate",
   "improve.graphExtraction.failures",
+  "improve.graphExtraction.htmlErrors",
   "improve.sessionExtraction.sessionsScanned",
   "improve.sessionExtraction.proposalsCreated",
   "improve.autoAccept.promoted",
@@ -1477,18 +1457,111 @@ interface WindowMetricsBundle {
   runs: number;
 }
 
-function buildWindowMetrics(db: Database, stateDbPath: string, since: string, until: string): WindowMetricsBundle {
+/**
+ * Partition task_history rows into "should have a log" (non-null log_path) and
+ * "log is actually backed". A run counts as backed when logs.db holds rows for
+ * its run_id (#579 — the DB is the primary record); rows written before logs.db
+ * existed fall back to the transitional on-disk file check. `logsDb` may be
+ * undefined when logs.db could not be opened — then only the file check runs.
+ */
+function partitionLogBackedRows(
+  taskRows: TaskHistoryRow[],
+  logsDb: Database | undefined,
+): { withLogs: TaskHistoryRow[]; backed: TaskHistoryRow[] } {
+  const withLogs = taskRows.filter((row) => row.log_path !== null);
+  const loggedRunIds = logsDb
+    ? getLoggedRunIds(
+        logsDb,
+        withLogs.map((row) => buildTaskRunId(row.task_id, row.started_at)),
+      )
+    : new Set<string>();
+  const backed = withLogs.filter(
+    (row) =>
+      loggedRunIds.has(buildTaskRunId(row.task_id, row.started_at)) ||
+      (row.log_path !== null && fs.existsSync(row.log_path)),
+  );
+  return { withLogs, backed };
+}
+
+/** Stage key used for `llm_usage` events recorded outside any stage scope. */
+const UNATTRIBUTED_STAGE = "unattributed";
+
+function emptyLlmUsageStageAggregate(): LlmUsageStageAggregate {
+  return {
+    calls: 0,
+    totalDurationMs: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    reasoningTokens: 0,
+  };
+}
+
+function emptyLlmUsageAggregate(): LlmUsageAggregate {
+  return { ...emptyLlmUsageStageAggregate(), byStage: {} };
+}
+
+/**
+ * Aggregate `llm_usage` events (#576) into a window total plus a per-stage
+ * breakdown of call count, wall-time, and token usage. Token fields absent from
+ * a best-effort record contribute 0. Calls with no `stage` land under
+ * {@link UNATTRIBUTED_STAGE}.
+ */
+function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"]): LlmUsageAggregate {
+  const aggregate = emptyLlmUsageAggregate();
+  for (const event of events) {
+    const meta = event.metadata ?? {};
+    const stageKey = typeof meta.stage === "string" && meta.stage ? meta.stage : UNATTRIBUTED_STAGE;
+    let stage = aggregate.byStage[stageKey];
+    if (!stage) {
+      stage = emptyLlmUsageStageAggregate();
+      aggregate.byStage[stageKey] = stage;
+    }
+
+    const durationMs = toFiniteNumber(meta.durationMs);
+    const promptTokens = toFiniteNumber(meta.promptTokens);
+    const completionTokens = toFiniteNumber(meta.completionTokens);
+    const totalTokens = toFiniteNumber(meta.totalTokens);
+    const reasoningTokens = toFiniteNumber(meta.reasoningTokens);
+
+    for (const target of [aggregate, stage]) {
+      target.calls += 1;
+      target.totalDurationMs += durationMs;
+      target.promptTokens += promptTokens;
+      target.completionTokens += completionTokens;
+      target.totalTokens += totalTokens;
+      target.reasoningTokens += reasoningTokens;
+    }
+  }
+  return aggregate;
+}
+
+function readLlmUsageAggregate(stateDbPath: string, since: string, until?: string): LlmUsageAggregate {
+  const events = readEvents({ since, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events.filter((event) => {
+    if (until === undefined) return true;
+    return new Date(event.ts ?? since).getTime() < new Date(until).getTime();
+  });
+  return summarizeLlmUsage(events);
+}
+
+function buildWindowMetrics(
+  db: Database,
+  stateDbPath: string,
+  since: string,
+  until: string,
+  now: () => number = () => Date.now(),
+  logsDb?: Database,
+): WindowMetricsBundle {
   const taskRows = queryTaskHistory(db, { since }).filter((row) => {
     const startMs = new Date(row.started_at).getTime();
     const untilMs = new Date(until).getTime();
     return !Number.isFinite(untilMs) || startMs < untilMs;
   });
-  const taskRowsWithLogs = taskRows.filter((row) => row.log_path !== null);
-  const existingLogRows = taskRowsWithLogs.filter((row) => row.log_path && fs.existsSync(row.log_path));
+  const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = taskRows.filter((row) => row.status === "active");
   const stuckActiveRuns = activeRows.filter(
-    (row) => Date.now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
+    (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
   ).length;
   const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
   const promptFailures = promptRows.filter((row) => {
@@ -1529,6 +1602,7 @@ function buildWindowMetrics(db: Database, stateDbPath: string, since: string, un
     stuckActiveRuns,
     logBackingRate: roundRate(logBackingRate),
     probeRoundTripMs: null,
+    llmUsage: readLlmUsageAggregate(stateDbPath, since, until),
   };
 
   return { improve: improveSummary, metrics, runs: runCount };
@@ -1557,8 +1631,9 @@ function validateAkmHealthOptions(options: AkmHealthOptions): void {
 
 export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   validateAkmHealthOptions(options);
+  const now = options.now ?? (() => Date.now());
   const since = parseHealthSince(options.since);
-  const stateDbPath = getStateDbPathInDataDir();
+  const stateDbPath = options.stateDbPath ?? getStateDbPathInDataDir();
   const hardChecks: HealthCheckResult[] = [];
   const advisories: HealthCheckResult[] = [];
   const getExecutionLogCandidatesFn = options.getExecutionLogCandidatesFn ?? getExecutionLogCandidates;
@@ -1573,44 +1648,30 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     );
   }
 
+  // logs.db backs the log-backing metric (#579). Best-effort: when it cannot
+  // be opened, partitionLogBackedRows falls back to the on-disk file check, so
+  // health never hard-fails on a missing/locked logs database.
+  let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
   try {
-    const tables = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('events', 'task_history', 'proposals', 'schema_migrations') ORDER BY name",
-      )
-      .all() as Array<{ name: string }>;
+    logsDb = openLogsDatabase(options.logsDbPath);
+  } catch {
+    logsDb = undefined;
+  }
+
+  try {
+    const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
     const tableNames = tables.map((row) => row.name).sort();
     const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
     const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
-    hardChecks.push({
-      name: "state-db-schema",
-      kind: "deterministic",
-      status: missingTables.length === 0 ? "pass" : "fail",
-      confidence: "high",
-      message:
-        missingTables.length === 0
-          ? "state.db opened and required tables are present."
-          : `state.db is missing required tables: ${missingTables.join(", ")}`,
-      evidence: { path: stateDbPath, tables: tableNames },
-    });
 
     const probe = probeStateDbRoundTrip(stateDbPath);
-    hardChecks.push({
-      name: "state-db-round-trip",
-      kind: "deterministic",
-      status: probe.ok ? "pass" : "fail",
-      confidence: "high",
-      message: probe.ok ? "state.db append/read round-trip succeeded." : `state.db round-trip failed: ${probe.error}`,
-      evidence: { path: stateDbPath, durationMs: probe.durationMs },
-    });
 
     const taskRows = queryTaskHistory(db, { since });
-    const taskRowsWithLogs = taskRows.filter((row) => row.log_path !== null);
-    const existingLogRows = taskRowsWithLogs.filter((row) => row.log_path && fs.existsSync(row.log_path));
+    const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
     const failedTaskRows = taskRows.filter((row) => row.status === "failed");
     const activeRows = taskRows.filter((row) => row.status === "active");
     const stuckActiveRuns = activeRows.filter(
-      (row) => Date.now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
+      (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
     ).length;
     const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
     const promptFailures = promptRows.filter((row) => {
@@ -1621,56 +1682,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
     const agentFailureRate = promptRows.length === 0 ? 0 : promptFailures.length / promptRows.length;
 
-    hardChecks.push({
-      name: "task-history-read",
-      kind: "deterministic",
-      status: "pass",
-      confidence: "high",
-      message: `Read ${taskRows.length} task-history row(s) since ${since}.`,
-      evidence: { rows: taskRows.length, since },
-    });
-    hardChecks.push({
-      name: "task-log-backing",
-      kind: "deterministic",
-      status: logBackingRate === 1 ? "pass" : "fail",
-      confidence: "high",
-      message:
-        logBackingRate === 1
-          ? "Every task_history log_path resolved on disk."
-          : `${taskRowsWithLogs.length - existingLogRows.length} task log(s) referenced in task_history are missing.`,
-      evidence: { totalWithLogs: taskRowsWithLogs.length, existingLogs: existingLogRows.length },
-    });
-    hardChecks.push({
-      name: "active-runs",
-      kind: "deterministic",
-      status: stuckActiveRuns === 0 ? "pass" : "warn",
-      confidence: "high",
-      message:
-        stuckActiveRuns === 0
-          ? "No active task runs exceeded the stale threshold."
-          : `${stuckActiveRuns} active task run(s) are older than ${Math.round(ACTIVE_RUN_WARN_MS / 60000)} minutes.`,
-      evidence: { stuckActiveRuns },
-    });
-
-    hardChecks.push(runAgentProbe());
-
     const semanticStatus = readSemanticStatus();
-    advisories.push({
-      name: "semantic-search-runtime",
-      kind: "deterministic",
-      status:
-        !semanticStatus ||
-        semanticStatus.status === "pending" ||
-        semanticStatus.status === "ready-js" ||
-        semanticStatus.status === "ready-vec"
-          ? "pass"
-          : "warn",
-      confidence: "medium",
-      message: semanticStatus
-        ? `Semantic search status: ${semanticStatus.status}`
-        : "No semantic-search runtime status recorded yet.",
-      evidence: semanticStatus ? { ...semanticStatus } : undefined,
-    });
 
     const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
     const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
@@ -1688,7 +1700,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
-      const sinceDays = Math.max(0, Math.ceil((Date.now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
+      const sinceDays = Math.max(0, Math.ceil((now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
       sessionLogEntries = getExecutionLogCandidatesFn(sinceDays).map((entry) => ({
         topic: entry.topic,
         frequency: entry.frequency,
@@ -1699,62 +1711,31 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       sessionLogEntries = [];
     }
 
-    // session-log-failures: demoted to informational — the ERROR_PATTERNS regex
-    // scans pre-LLM session text and produces false positives on diagnostic
-    // conversation. It does not gate the real extraction pipeline (akmExtract).
-    // Never triggers warn; kept for backward-compat visibility only.
-    advisories.push({
-      name: "session-log-failures",
-      kind: "heuristic",
-      status: "pass",
-      confidence: "low",
-      message:
-        sessionLogEntries.length === 0
-          ? "No repeated external session-log failure patterns were detected."
-          : `${sessionLogEntries.length} raw session-log keyword match(es) detected (pre-LLM, informational only).`,
-      evidence: { candidates: sessionLogEntries.slice(0, 5) },
-    });
-
-    const sx = improveSummary.sessionExtraction;
-    const sxWarnReasons: string[] = [];
-    if (sx.warnings > 0) sxWarnReasons.push(`${sx.warnings} harness error(s)`);
-    if (sx.ran && sx.sessionsScanned >= 5 && sx.proposalsCreated === 0)
-      sxWarnReasons.push("no proposals generated across scanned sessions");
-    advisories.push({
-      name: "session-extraction",
-      kind: "heuristic",
-      status: sxWarnReasons.length > 0 ? "warn" : "pass",
-      confidence: sx.ran ? "medium" : "low",
-      message: sx.ran
-        ? sxWarnReasons.length > 0
-          ? `Session extraction degraded: ${sxWarnReasons.join("; ")}.`
-          : `Session extraction healthy: ${sx.sessionsScanned} scanned, ${sx.sessionsExtracted} extracted, ${sx.proposalsCreated} proposal(s) created.`
-        : "Session extraction not active (feature disabled or no harness available).",
-      evidence: {
-        ran: sx.ran,
-        sessionsScanned: sx.sessionsScanned,
-        sessionsExtracted: sx.sessionsExtracted,
-        sessionsSkipped: sx.sessionsSkipped,
-        proposalsCreated: sx.proposalsCreated,
-        warnings: sx.warnings,
-        durationMs: sx.durationMs,
-      },
-    });
-
-    const aa = improveSummary.autoAccept;
-    advisories.push({
-      name: "auto-accept-validation",
-      kind: "heuristic",
-      status: aa.validationFailed > 0 ? "warn" : "pass",
-      confidence: aa.promoted + aa.validationFailed > 0 ? "high" : "low",
-      message:
-        aa.validationFailed > 0
-          ? `${aa.validationFailed} proposal(s) passed confidence threshold but failed auto-accept validation (truncated description, invalid frontmatter, etc.) — they remain in the queue for manual review.`
-          : aa.promoted > 0
-            ? `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
-            : "Auto-accept gate did not run (disabled or no proposals above threshold).",
-      evidence: { promoted: aa.promoted, validationFailed: aa.validationFailed },
-    });
+    // Run the ordered health-check registry. Each check projects the shared
+    // context computed above into one HealthCheckResult; `channel` routes it to
+    // hardChecks or advisories. Declaration order in HEALTH_CHECKS is the
+    // emission order — see src/commands/health/checks.ts.
+    const checkContext: HealthCheckContext = {
+      stateDbPath,
+      since,
+      tableNames,
+      missingTables,
+      probe,
+      taskRowCount: taskRows.length,
+      taskRowsWithLogsCount: taskRowsWithLogs.length,
+      existingLogRowsCount: existingLogRows.length,
+      logBackingRate,
+      stuckActiveRuns,
+      semanticStatus,
+      sessionLogEntries,
+      sessionExtraction: improveSummary.sessionExtraction,
+      autoAccept: improveSummary.autoAccept,
+    };
+    for (const check of HEALTH_CHECKS) {
+      const result = check.run(checkContext);
+      if (check.channel === "hard") hardChecks.push(result);
+      else advisories.push(result);
+    }
 
     const metrics: HealthMetrics = {
       taskFailRate: roundRate(taskFailRate),
@@ -1762,6 +1743,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       stuckActiveRuns,
       logBackingRate: roundRate(logBackingRate),
       probeRoundTripMs: probe.durationMs,
+      llmUsage: readLlmUsageAggregate(stateDbPath, since),
     };
 
     const hardFailure = hardChecks.some((check) => check.status === "fail");
@@ -1773,7 +1755,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     // ── Window-compare mode (Phase 3) ─────────────────────────────────────
     let windowSpecs: WindowSpec[] | undefined;
     if (options.windowCompare) {
-      windowSpecs = resolveWindowCompare(options.windowCompare);
+      windowSpecs = resolveWindowCompare(options.windowCompare, now);
     } else if (options.windows && options.windows.length > 0) {
       windowSpecs = options.windows;
     }
@@ -1787,8 +1769,8 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     if (windowSpecs && db) {
       windowResults = windowSpecs.map((spec) => {
         const winSince = parseHealthSince(spec.since);
-        const winUntil = spec.until ? parseHealthSince(spec.until) : new Date().toISOString();
-        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil);
+        const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
+        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil, now, logsDb);
         return {
           name: spec.name,
           since: winSince,
@@ -1839,6 +1821,13 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     };
   } finally {
     db.close();
+    if (logsDb) {
+      try {
+        logsDb.close();
+      } catch {
+        // best-effort
+      }
+    }
   }
 }
 

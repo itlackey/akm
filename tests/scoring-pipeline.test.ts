@@ -9,10 +9,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../src/commands/search";
-import { saveConfig } from "../src/core/config";
-import { buildDbHit, buildWhyMatched } from "../src/indexer/db-search";
+import { akmSearch } from "../src/commands/read/search";
+import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
+import { buildDbHit, buildWhyMatched } from "../src/indexer/search/db-search";
 import type { SourceSearchHit } from "../src/sources/types";
 import {
   type Cleanup,

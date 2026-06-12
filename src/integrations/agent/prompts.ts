@@ -27,7 +27,7 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
-import { TYPE_DIRS } from "../../core/asset-spec";
+import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 
 /** Agent-returned proposal payload (after JSON parse). */
@@ -66,8 +66,6 @@ const TYPE_HINTS: Record<string, string> = {
     "workflow assets are markdown describing a multi-step process. Include `# <Title>` and ordered `## Step N` sections.",
   script: "script assets are executable text files. Include a shebang and minimal usage comment.",
   env: "env assets are `.env` files holding a group of related CONFIGURATION for an app/service (KEY=VALUE pairs, `#` comments) — URLs, flags, and any credentials it needs. Values may or may not be sensitive; all are protected (key names discoverable, values stay on disk). Inject with `akm env run env:<name> -- <cmd>` (the safe path — values never reach stdout/your context); do NOT run `akm env export` and read its output, as that prints values. For a single sensitive value used on its own for authentication (token, key, cert) use a `secret` instead. Never echo values back to the user.",
-  vault:
-    "vault assets are DEPRECATED (use env). They store environment variables (KEY=VALUE pairs); comments use `#`. Never echo secret values back to the user.",
   wiki: "wiki assets are markdown reference pages with `# Title` and structured headings.",
 };
 

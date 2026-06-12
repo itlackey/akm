@@ -16,11 +16,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AkmConfig, LlmConnectionConfig } from "../src/core/config";
-import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
-import { loadStoredGraphSnapshot } from "../src/indexer/graph-db";
-import type { GraphExtractionResult } from "../src/indexer/graph-extraction";
-import { buildSearchText } from "../src/indexer/search-fields";
+import type { AkmConfig, LlmConnectionConfig } from "../src/core/config/config";
+import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
+import { loadStoredGraphSnapshot } from "../src/indexer/db/graph-db";
+import type { GraphExtractionResult } from "../src/indexer/graph/graph-extraction";
+import { buildSearchText } from "../src/indexer/search/search-fields";
 import type { GraphExtraction } from "../src/llm/graph-extract";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ const llmServer = Bun.serve({
   },
 });
 
-const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
+const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph/graph-extraction");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -213,12 +213,11 @@ describe("runGraphExtractionPass — batch path", () => {
         }
       | undefined;
     try {
-      const result = await runGraphExtractionPass(
-        makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
-        sources(),
-        undefined,
+      const result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
+        sources: sources(),
         db,
-      );
+      });
 
       // extractGraphFromBodies was called exactly once with all 3 bodies.
       expect(batchCallCount).toBe(1);
@@ -269,12 +268,11 @@ describe("runGraphExtractionPass — batch path", () => {
     const db = openDatabase(path.join(tmpStash, "graph-default.db"));
     let result: GraphExtractionResult;
     try {
-      result = await runGraphExtractionPass(
-        makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
-        sources(),
-        undefined,
+      result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
+        sources: sources(),
         db,
-      );
+      });
     } finally {
       closeDatabase(db);
     }
@@ -305,12 +303,11 @@ describe("runGraphExtractionPass — batch path", () => {
     const db = openDatabase(path.join(tmpStash, "graph-chunked.db"));
     let result: GraphExtractionResult;
     try {
-      result = await runGraphExtractionPass(
-        makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
-        sources(),
-        undefined,
+      result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
+        sources: sources(),
         db,
-      );
+      });
     } finally {
       closeDatabase(db);
     }
@@ -341,12 +338,11 @@ describe("runGraphExtractionPass — batch path", () => {
 
     const db = openDatabase(path.join(tmpStash, "graph-adaptive.db"));
     try {
-      const result = await runGraphExtractionPass(
-        makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
-        sources(),
-        undefined,
+      const result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
+        sources: sources(),
         db,
-      );
+      });
 
       expect(result.considered).toBe(3);
       expect(result.extracted).toBe(3);
@@ -366,12 +362,11 @@ describe("runGraphExtractionPass — batch path", () => {
 
     const db = openDatabase(path.join(tmpStash, "graph-disable-batching.db"));
     try {
-      const result = await runGraphExtractionPass(
-        makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
-        sources(),
-        undefined,
+      const result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
+        sources: sources(),
         db,
-      );
+      });
 
       expect(result.considered).toBe(6);
       expect(result.extracted).toBe(6);
@@ -412,12 +407,11 @@ describe("runGraphExtractionPass — batch path", () => {
 
     const db = openDatabase(path.join(tmpStash, "graph-consistency.db"));
     try {
-      const result = await runGraphExtractionPass(
-        makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
-        sources(),
-        undefined,
+      const result = await runGraphExtractionPass({
+        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
+        sources: sources(),
         db,
-      );
+      });
 
       expect(result.considered).toBe(1);
       expect(result.extracted).toBe(1);

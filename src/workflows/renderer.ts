@@ -11,14 +11,14 @@
  * and into search hints for the indexer.
  */
 
-import { makeAssetRef } from "../core/asset-ref";
+import { makeAssetRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
-import type { AssetRenderer, RenderContext } from "../indexer/file-context";
-import type { StashEntry } from "../indexer/metadata";
-import { registerMetadataContributor } from "../indexer/metadata-contributors";
+import type { StashEntry } from "../indexer/passes/metadata";
+import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
+import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
 import type { ShowResponse } from "../sources/types";
-import { cacheWorkflowDocument } from "./document-cache";
 import { parseWorkflow } from "./parser";
+import { cacheWorkflowDocument } from "./runtime/document-cache";
 import type { WorkflowDocument } from "./schema";
 
 function shellQuote(value: string): string {

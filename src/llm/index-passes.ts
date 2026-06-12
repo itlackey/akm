@@ -31,8 +31,8 @@
  * name. They do not read connection fields directly.
  */
 
-import type { AkmConfig, IndexPassConfig, LlmConnectionConfig } from "../core/config";
-import { getDefaultLlmConfig, getIndexPassConfig } from "../core/config";
+import type { AkmConfig, IndexPassConfig, LlmConnectionConfig } from "../core/config/config";
+import { getDefaultLlmConfig, getIndexPassConfig } from "../core/config/config";
 
 /**
  * Map a pass name (as used by callers — "memory", "graph", etc.) to the

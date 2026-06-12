@@ -55,7 +55,21 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
   }
   if (detail === "normal") {
-    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
+    // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
+    // so they are projected at `normal` for `akm proposal list/show` — both are
+    // optional and absent on legacy proposals.
+    return pickFields(entry, [
+      "id",
+      "ref",
+      "status",
+      "source",
+      "sourceRun",
+      "createdAt",
+      "updatedAt",
+      "confidence",
+      "gateDecision",
+      "review",
+    ]);
   }
   // full: project everything including the payload.
   return pickFields(entry, [
@@ -66,6 +80,8 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "sourceRun",
     "createdAt",
     "updatedAt",
+    "confidence",
+    "gateDecision",
     "payload",
     "review",
   ]);
@@ -350,7 +366,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
 
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
-  // needing --detail full or --for-agent (REC-03).
+  // needing --detail full or --shape agent (REC-03).
   if (detail === "brief") return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
@@ -461,9 +477,7 @@ export function shapeShowOutput(
     "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).
-    // Exception: vault assets omit path to avoid leaking absolute disk paths
-    // into structured JSON output (security fix M3).
-    ...(result.type === "vault" ? [] : ["path"]),
+    "path",
     "editable",
   ]);
 

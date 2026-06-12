@@ -26,7 +26,7 @@
  *   FP and bypass with `--allow-insecure` after review.
  */
 
-import { listKeys } from "../env";
+import { listKeys } from "../env/env";
 import type { LintIssue } from "./types";
 
 // ── Dangerous key set ─────────────────────────────────────────────────────────

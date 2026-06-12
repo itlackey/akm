@@ -593,16 +593,21 @@ before the string is handed to `saveGitStash` (which still sanitizes it to a
 single line). Unknown tokens pass through verbatim, so templates are
 forward-compatible and a literal brace is harmless.
 
-Supported tokens (the "free" set — derived from data already on the run result):
+Supported tokens. The "free" set is derived from data already on the run
+result; the remaining tokens required extra plumbing (capturing the triage
+pre-pass `DrainResult` and threading the CLI-minted `runId` onto the result):
 
-| token | value |
-|-------|-------|
-| `{timestamp}` | `YYYY-MM-DD HH:MM:SS` (UTC) |
-| `{date}` | `YYYY-MM-DD` (UTC) |
-| `{time}` | `HH:MM:SS` (UTC) |
-| `{scope}` | scope value (a ref/type) or the scope mode (`all`) |
-| `{refs}` | number of planned refs processed this run |
-| `{accepted}` | proposals auto-accepted by the confidence gate |
+| token | value | source |
+|-------|-------|--------|
+| `{timestamp}` | `YYYY-MM-DD HH:MM:SS` (UTC) | free |
+| `{date}` | `YYYY-MM-DD` (UTC) | free |
+| `{time}` | `HH:MM:SS` (UTC) | free |
+| `{scope}` | scope value (a ref/type) or the scope mode (`all`) | free |
+| `{refs}` | number of planned refs processed this run | free |
+| `{accepted}` | proposals auto-accepted by the confidence gate | free |
+| `{triage_promoted}` | proposals promoted by the triage pre-pass (`0` if triage did not run) | extra plumbing (`result.triage`) |
+| `{triage_rejected}` | proposals rejected by the triage pre-pass (`0` if triage did not run) | extra plumbing (`result.triage`) |
+| `{runId}` | this run's id (empty string when absent) | extra plumbing (`result.runId`) |
 
 Example:
 

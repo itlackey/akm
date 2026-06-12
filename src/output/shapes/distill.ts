@@ -8,6 +8,11 @@
 // everything for downstream automation.
 
 import { shapeDistillOutput } from "./helpers";
-import { registerOutputShape } from "./registry";
+import type { OutputShapeEntry } from "./registry";
 
-registerOutputShape("distill", (result, detail) => shapeDistillOutput(result as Record<string, unknown>, detail));
+export const distillShapes: OutputShapeEntry[] = [
+  {
+    command: "distill",
+    handler: (result, detail) => shapeDistillOutput(result as Record<string, unknown>, detail),
+  },
+];

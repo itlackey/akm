@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listEntries } from "../../../src/commands/env";
+import { listEntries } from "../../../src/commands/env/env";
 import { buildMemoryFrontmatter } from "../../../src/commands/remember";
 import { shapeSearchHit, shapeShowOutput } from "../../../src/output/shapes";
 
@@ -199,7 +199,7 @@ describe("vault listEntries — entries shape (#35)", () => {
 
 describe("assembleInfo — sourceProviders populated from stashDir (#2)", () => {
   test("sourceProviders includes stashDir when sources[] is empty", () => {
-    const { assembleInfo } = require("../../../src/commands/info");
+    const { assembleInfo } = require("../../../src/commands/sources/info");
     // We can't easily override loadConfig, but we can verify the function shape.
     // The actual integration is tested via the info-command.test.ts suite.
     // This is a unit-level smoke test that the function signature is stable.

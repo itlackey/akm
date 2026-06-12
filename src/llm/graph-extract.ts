@@ -24,9 +24,9 @@
 
 import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" with { type: "text" };
 import { toErrorMessage } from "../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { warn, warnVerbose } from "../core/warn";
-import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
+import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 
 /**
@@ -62,16 +62,23 @@ const USER_PROMPT_PREFIX = userPromptTemplate
 /**
  * Detect whether an error message indicates a context size exceeded condition.
  * Covers common patterns from OpenAI-compatible APIs (LM Studio, Ollama, etc).
+ *
+ * Requires BOTH a context keyword AND token-count/overflow evidence so that
+ * model prose merely mentioning "context size" / "context length" (e.g. gemma
+ * narrating about a document) does not get misclassified as a provider
+ * context-limit error (#496).
  */
-function isContextSizeError(message: string): boolean {
+export function isContextSizeError(message: string): boolean {
   const lower = message.toLowerCase();
-  return (
-    lower.includes("context size") ||
-    lower.includes("context length") ||
-    lower.includes("context_window") ||
-    lower.includes("prompt too long") ||
-    (lower.includes("exceeds") && lower.includes("context"))
-  );
+  const contextKw = /context (size|length|window)|prompt too long|exceeds.*context/.test(lower);
+  if (!contextKw) {
+    return false;
+  }
+  const evidence =
+    /\b\d+\s*(token|tokens|tk)\b/.test(lower) ||
+    /max(imum)?\s+(context|token|input)/.test(lower) ||
+    /exceeded|over.*limit|too.*long/.test(lower);
+  return evidence;
 }
 
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
@@ -116,6 +123,8 @@ export interface GraphBatchState {
 export interface GraphRuntimeTelemetry {
   truncationCount?: number;
   failureCount?: number;
+  htmlErrorCount?: number;
+  retryAttempts?: number;
   filteredGenericEntities?: number;
   filteredInvalidRelations?: number;
   filteredLowConfidenceRelations?: number;
@@ -650,6 +659,7 @@ export async function extractGraphFromBodies(
             temperature: 0.1,
             timeoutMs: llmConfig.timeoutMs,
             signal,
+            onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
           },
         );
         if (!raw) return null;
@@ -837,7 +847,12 @@ export async function extractGraphFromBody(
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: userPrompt },
           ],
-          { temperature: 0.1, timeoutMs: llmConfig.timeoutMs, signal },
+          {
+            temperature: 0.1,
+            timeoutMs: llmConfig.timeoutMs,
+            signal,
+            onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
+          },
         );
         if (!raw) return empty();
         const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
@@ -866,6 +881,12 @@ export async function extractGraphFromBody(
               `Consider increasing llm.contextLength in config.json.`,
           );
           return empty("context_limit", "failed");
+        } else if (err instanceof LlmCallError && err.code === "provider_html_error") {
+          bumpTelemetry(options.telemetry, "htmlErrorCount");
+          warn(
+            `graph extraction: provider returned HTML instead of JSON for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}: ${errMsg}`,
+          );
+          return empty("llm_error", "failed");
         } else {
           bumpTelemetry(options.telemetry, "failureCount");
           warn(
@@ -884,4 +905,4 @@ export async function extractGraphFromBody(
 }
 
 // deduplicateGraph moved to src/indexer/graph-dedup.ts (pure utility, no LLM calls).
-export { deduplicateGraph } from "../indexer/graph-dedup";
+export { deduplicateGraph } from "../indexer/graph/graph-dedup";

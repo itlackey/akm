@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type AssetRef, makeAssetRef, parseAssetRef } from "../src/core/asset-ref";
+import { type AssetRef, makeAssetRef, parseAssetRef, refToString } from "../src/core/asset/asset-ref";
 import { type AkmAssetType, ASSET_TYPES } from "../src/core/common";
 
 // ── makeAssetRef ────────────────────────────────────────────────────────────
@@ -74,6 +74,41 @@ describe("makeAssetRef", () => {
 
   test("rejects Windows drive path", () => {
     expect(() => makeAssetRef("script", "C:\\foo")).toThrow("Windows drive");
+  });
+});
+
+// ── refToString ─────────────────────────────────────────────────────────────
+
+describe("refToString", () => {
+  test("serializes a plain ref", () => {
+    expect(refToString({ type: "script", name: "deploy.sh", origin: undefined })).toBe("script:deploy.sh");
+  });
+
+  test("serializes a ref with origin", () => {
+    expect(refToString({ type: "skill", name: "review", origin: "local" })).toBe("local//skill:review");
+  });
+
+  test("serializes a ref with a registry origin", () => {
+    expect(refToString({ type: "script", name: "deploy.sh", origin: "npm:@scope/pkg" })).toBe(
+      "npm:@scope/pkg//script:deploy.sh",
+    );
+  });
+
+  test("matches makeAssetRef for the same components", () => {
+    const ref: AssetRef = { type: "command", name: "do/thing", origin: "owner/repo" };
+    expect(refToString(ref)).toBe(makeAssetRef(ref.type, ref.name, ref.origin));
+  });
+
+  test("refToString(parseAssetRef(s)) round-trips", () => {
+    for (const s of [
+      "script:deploy.sh",
+      "local//skill:review",
+      "npm:@corp/db-tools//script:db/migrate/run.sh",
+      "github:owner/repo#v1.2//script:lint.sh",
+      "agent:architect.md",
+    ]) {
+      expect(refToString(parseAssetRef(s))).toBe(s);
+    }
   });
 });
 

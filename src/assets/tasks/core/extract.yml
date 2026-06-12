@@ -1,0 +1,4 @@
+schedule: "*/30 * * * *"
+command: akm extract
+enabled: true
+description: Extract insights from session files every 30 min

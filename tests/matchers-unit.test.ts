@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { FileContext } from "../src/indexer/file-context";
+import type { FileContext } from "../src/indexer/walk/file-context";
 import {
   directoryMatcher,
   extensionMatcher,
   parentDirHintMatcher,
   smartMdMatcher,
   wikiMatcher,
-} from "../src/indexer/matchers";
+} from "../src/indexer/walk/matchers";
 
 /**
  * Build a synthetic FileContext for matcher unit tests. The matchers
@@ -98,9 +98,13 @@ describe("directoryMatcher", () => {
     expect(directoryMatcher(ctx({ relPath: "memories/foo.md" }))?.type).toBe("memory");
   });
 
-  test("vaults/.env classifies as vault", () => {
-    expect(directoryMatcher(ctx({ relPath: "vaults/.env" }))?.type).toBe("vault");
-    expect(directoryMatcher(ctx({ relPath: "vaults/staging.env" }))?.type).toBe("vault");
+  test("env/.env classifies as env", () => {
+    expect(directoryMatcher(ctx({ relPath: "env/.env" }))?.type).toBe("env");
+    expect(directoryMatcher(ctx({ relPath: "env/staging.env" }))?.type).toBe("env");
+  });
+
+  test("vaults/.env no longer classifies (vault type removed)", () => {
+    expect(directoryMatcher(ctx({ relPath: "vaults/.env" }))).toBeNull();
   });
 
   test("unmatched directories return null", () => {

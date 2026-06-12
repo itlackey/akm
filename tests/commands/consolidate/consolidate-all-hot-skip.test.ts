@@ -18,29 +18,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { akmConsolidate } from "../../../src/commands/consolidate";
-import type { AkmConfig } from "../../../src/core/config";
-import {
-  type Cleanup,
-  sandboxStashDir,
-  sandboxXdgCacheHome,
-  sandboxXdgConfigHome,
-  sandboxXdgDataHome,
-  sandboxXdgStateHome,
-} from "../../_helpers/sandbox";
+import { akmConsolidate } from "../../../src/commands/improve/consolidate";
+import type { AkmConfig } from "../../../src/core/config/config";
+import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let cleanup: Cleanup;
 let stashDir: string;
 
 beforeEach(() => {
-  const stash = sandboxStashDir();
-  stashDir = stash.dir;
-  let c = stash.cleanup;
-  c = sandboxXdgConfigHome(c).cleanup;
-  c = sandboxXdgDataHome(c).cleanup;
-  c = sandboxXdgCacheHome(c).cleanup;
-  c = sandboxXdgStateHome(c).cleanup;
-  cleanup = c;
+  const storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
+  cleanup = storage.cleanup;
 });
 
 afterEach(() => cleanup());

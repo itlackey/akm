@@ -1,49 +1,81 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { akmHealth, parseHealthSince } from "../src/commands/health";
-import type { AkmImproveResult } from "../src/commands/improve";
+import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { appendEvent } from "../src/core/events";
+import { buildTaskRunId, insertTaskLogLines, openLogsDatabase } from "../src/core/logs-db";
 import { openStateDatabase, recordImproveRun, upsertTaskHistory } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
 import { runCliCapture } from "./_helpers/cli";
+import {
+  type Cleanup,
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  sandboxHome,
+  withIsolatedAkmStorage,
+} from "./_helpers/sandbox";
 
 function fixtureResult(partial: Record<string, unknown>): AkmImproveResult {
   return partial as unknown as AkmImproveResult;
 }
 
-const savedEnv = {
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
-
-const tempDirs: string[] = [];
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+// C2 (#499): route every test in this file through the sanctioned
+// sandbox helpers instead of the previous raw temp-dir creation + direct
+// `process.env.XDG_*` pokes. Each test owns a single isolated temp root
+// (stash/data/cache/config/state) whose env vars are snapshotted and restored
+// atomically by one `cleanup()`. This removes the file from the test-isolation
+// linter's grandfather allowlist (shrinking the ratchet) and eliminates the
+// parallel-load env race where this file's `beforeEach` could redirect a
+// sibling's in-flight DB open to a just-created/deleted dir.
+let storage: IsolatedAkmStorage;
+let cleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-health-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-");
-  process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-");
+  storage = withIsolatedAkmStorage();
+  cleanup = storage.cleanup;
 });
 
 afterEach(() => {
-  for (const [key, value] of Object.entries(savedEnv)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  cleanup();
+  cleanup = () => {};
 });
+
+/**
+ * Scratch temp dir for tests that need an on-disk directory unrelated to the
+ * XDG/stash layout (e.g. a log directory). Built on the sandbox helper so no
+ * raw temp-dir minting lives in this test file; cleanup is chained onto the
+ * per-test `cleanup` so the dir is removed in `afterEach`.
+ */
+function makeTempDir(_prefix: string): string {
+  const { dir, cleanup: rm } = makeSandboxDir("akm-health-scratch");
+  const prev = cleanup;
+  cleanup = () => {
+    rm();
+    prev();
+  };
+  return dir;
+}
+
+/**
+ * Re-isolate storage for tests that previously re-pinned every XDG_* (and
+ * HOME) by hand — the in-process CLI exit-code tests and the --group-by run
+ * tests. Replaces the per-test root installed by `beforeEach` with a fresh one
+ * that also sandboxes HOME (the CLI path reads it). The new combined cleanup
+ * supersedes the current one and is run in `afterEach`.
+ */
+function reisolateWithHome(): IsolatedAkmStorage {
+  // Drop the beforeEach-installed root first so we don't leak it.
+  cleanup();
+  const fresh = withIsolatedAkmStorage();
+  const home = sandboxHome();
+  storage = fresh;
+  cleanup = () => {
+    home.cleanup();
+    fresh.cleanup();
+  };
+  return fresh;
+}
 
 describe("parseHealthSince", () => {
   test("accepts duration shorthand", () => {
@@ -307,6 +339,97 @@ describe("akmHealth", () => {
 
     // Schema bumped.
     expect(result.schemaVersion).toBe(2);
+  });
+
+  test("manual run row with distinct started_at<completed_at and no task_history yields wallTime from the row delta (#499)", () => {
+    const start = new Date(Date.now() - 60_000).toISOString();
+    const end = new Date(Date.now() - 45_000).toISOString(); // 15s row delta
+    const db = openStateDatabase();
+    try {
+      // No task_history interval — this is a manually-invoked `akm improve`.
+      recordImproveRun(db, {
+        id: "run-manual",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [{ ref: "memory:m" }],
+          actions: [{ ref: "memory:m", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    // wallTime comes from the row's own (completed_at - started_at) delta (15s),
+    // NOT from any task_history join (there is none).
+    expect(result.improve.wallTime.count).toBe(1);
+    expect(result.improve.wallTime.minMs).toBe(15_000);
+    expect(result.improve.wallTime.maxMs).toBe(15_000);
+  });
+
+  test("legacy row with started_at==completed_at falls back to containing task_history interval duration (#499)", () => {
+    const taskStart = new Date(Date.now() - 60_000).toISOString();
+    const taskEnd = new Date(Date.now() - 38_000).toISOString(); // 22s interval
+    // Legacy/backfill row: started_at == completed_at, falling inside the task interval.
+    const stamp = new Date(Date.now() - 50_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "akm-improve",
+        status: "completed",
+        started_at: taskStart,
+        completed_at: taskEnd,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      recordImproveRun(db, {
+        id: "run-legacy",
+        startedAt: stamp,
+        completedAt: stamp,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [{ ref: "memory:l" }],
+          actions: [{ ref: "memory:l", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    // Row delta is 0, so wallTime is sourced from the containing task interval (22s).
+    expect(result.improve.wallTime.count).toBe(1);
+    expect(result.improve.wallTime.minMs).toBe(22_000);
+    expect(result.improve.wallTime.maxMs).toBe(22_000);
   });
 
   test("reflect content-policy guard hits are counted separately from failed (Pattern A)", () => {
@@ -579,12 +702,19 @@ describe("akmHealth", () => {
             totalChunks: 3,
             judgedNoAction: 78,
             skipReasons: [
-              { op: "promote", ref: "memory:a", reason: "dedup_pending_proposal" },
-              { op: "promote", ref: "memory:b", reason: "dedup_pending_proposal" },
-              { op: "delete", ref: "memory:c", reason: "captureMode_hot_refused" },
-              { op: "delete", ref: "memory:d", reason: "captureMode_hot_refused" },
-              { op: "merge", ref: "memory:e", reason: "merge_missing_description" },
-              { op: "merge", ref: "memory:f", reason: "merge_sanitization_failed" },
+              { ref: "memory:a", skips: [{ op: "promote", reason: "dedup_pending_proposal" }] },
+              { ref: "memory:b", skips: [{ op: "promote", reason: "dedup_pending_proposal" }] },
+              { ref: "memory:c", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
+              { ref: "memory:d", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
+              // Multi-reason ref: one entry whose skips[] carries two ops.
+              // Health must aggregate BOTH reasons (today it counted one/ref).
+              {
+                ref: "memory:e",
+                skips: [
+                  { op: "merge", reason: "merge_missing_description" },
+                  { op: "merge", reason: "merge_sanitization_failed" },
+                ],
+              },
             ],
             warnings: [],
             durationMs: 37771,
@@ -688,6 +818,101 @@ describe("akmHealth", () => {
     expect(result.hardChecks.some((check) => check.name === "task-log-backing" && check.status === "fail")).toBe(true);
   });
 
+  test("log backing is answered by logs.db rows, not the on-disk file (#579)", () => {
+    // The run's log_path points at a file that does NOT exist — under the old
+    // fs.existsSync-only check this run was unbacked. With #579, the presence
+    // of task_logs rows in logs.db for the run id makes it backed.
+    const startedAt = new Date().toISOString();
+    const logDir = makeTempDir("akm-health-dblogs-");
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "db-logged",
+        status: "completed",
+        started_at: startedAt,
+        completed_at: startedAt,
+        failed_at: null,
+        log_path: path.join(logDir, "missing.log"),
+        target_kind: "prompt",
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 10, detail: { exitCode: 0 }, profile: "opencode" }),
+      });
+    } finally {
+      db.close();
+    }
+    const logsDb = openLogsDatabase();
+    try {
+      insertTaskLogLines(logsDb, {
+        taskId: "db-logged",
+        runId: buildTaskRunId("db-logged", startedAt),
+        ts: startedAt,
+        lines: [{ line: "captured in logs.db" }],
+      });
+    } finally {
+      logsDb.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+
+    expect(result.metrics.logBackingRate).toBe(1);
+    expect(result.hardChecks.some((check) => check.name === "task-log-backing" && check.status === "pass")).toBe(true);
+  });
+
+  test("now clock seam pins active-run staleness deterministically", () => {
+    // An active row whose started_at is anchored to real now so it falls inside
+    // the (un-seamed) `since` query window, while the pinned read clock drives
+    // the ACTIVE_RUN_WARN_MS (15min) staleness comparison deterministically.
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "active-task",
+        status: "active",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: "prompt",
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 0, profile: "opencode" }),
+      });
+    } finally {
+      db.close();
+    }
+
+    // Pin the read clock 5 minutes after start (< 15min warn threshold). With
+    // the real wall-clock this row would already read as stuck; the pinned
+    // clock proves the seam — not Date.now() — drives the staleness comparison.
+    const result = akmHealth({ since: "30d", now: () => startedAtMs + 5 * 60 * 1000 });
+    expect(result.metrics.stuckActiveRuns).toBe(0);
+  });
+
+  test("omitting now defaults to real wall-clock (additive seam)", () => {
+    // A row started ~20min before real now must read as stuck without passing
+    // `now`, proving the default path is identical to calling Date.now().
+    const startedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "active-task-default",
+        status: "active",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: "prompt",
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 0, profile: "opencode" }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "30d" });
+    expect(result.metrics.stuckActiveRuns).toBe(1);
+  });
+
   test("passes requested since window through to session log candidates", () => {
     const seen: number[] = [];
     const getExecutionLogCandidatesFn = (sinceDays = 7): SessionLogEntry[] => {
@@ -778,8 +1003,8 @@ describe("akmHealth", () => {
 
 // ── Folded from tests/health-command-window.test.ts ──────────────────────────
 describe("health — window comparison", () => {
-  // ── Phase 2: --detail per-run ──────────────────────────────────────────────
-  describe("akm health --detail per-run", () => {
+  // ── Phase 2: --group-by run ────────────────────────────────────────────────
+  describe("akm health --group-by run", () => {
     function seedTwoRuns(): { startA: string; endA: string; startB: string; endB: string } {
       const startA = new Date(Date.now() - 60_000).toISOString();
       const endA = new Date(Date.now() - 30_000).toISOString();
@@ -865,7 +1090,7 @@ describe("health — window comparison", () => {
       expect(result.runs).toBeUndefined();
     });
 
-    test("--detail per-run returns runs[] with the right shape", () => {
+    test("--group-by run returns runs[] with the right shape", () => {
       seedTwoRuns();
       const result = akmHealth({ since: "7d", groupBy: "run" });
       expect(result.runs).toBeDefined();
@@ -875,7 +1100,7 @@ describe("health — window comparison", () => {
       expect(ids).toContain("run-b");
     });
 
-    test("--detail per-run rows are ordered newest first", () => {
+    test("--group-by run rows are ordered newest first", () => {
       const { startA, startB } = seedTwoRuns();
       expect(new Date(startB).getTime()).toBeGreaterThan(new Date(startA).getTime());
       const result = akmHealth({ since: "7d", groupBy: "run" });
@@ -1358,16 +1583,13 @@ describe("health — distill skipReasons", () => {
 //
 // Migrated from spawnSync("bun", [cli, ...]) to the in-process harness. The
 // harness reads state.db from the XDG_* dirs in process.env at call time
-// (state-db opens fresh per call), so the per-test dirs are pinned onto
-// process.env (over the fresh dirs the beforeEach already installs) before both
-// the seeding and the in-process run. afterEach restores the saved env.
+// (state-db opens fresh per call). `reisolateWithHome()` installs a fresh
+// isolated storage root (plus a sandboxed HOME the CLI path reads) over the one
+// the beforeEach already installed, before both the seeding and the in-process
+// run; its combined cleanup restores all env in afterEach.
 describe("akm health CLI exit code", () => {
   test("exits 0 when health passes (no failing checks)", async () => {
-    process.env.HOME = makeTempDir("akm-health-home-cli-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-health-cache-cli-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-cli-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-cli-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-cli-");
+    reisolateWithHome();
 
     const { stdout, code } = await runCliCapture(["health", "--format", "json"]);
     // stdout must be valid JSON regardless of exit code so monitors can parse.
@@ -1377,11 +1599,7 @@ describe("akm health CLI exit code", () => {
   });
 
   test("exits non-zero (1) when status is 'fail' due to missing task log", async () => {
-    process.env.HOME = makeTempDir("akm-health-home-cli-fail-");
-    process.env.XDG_CACHE_HOME = makeTempDir("akm-health-cache-cli-fail-");
-    process.env.XDG_CONFIG_HOME = makeTempDir("akm-health-config-cli-fail-");
-    process.env.XDG_DATA_HOME = makeTempDir("akm-health-data-cli-fail-");
-    process.env.XDG_STATE_HOME = makeTempDir("akm-health-state-cli-fail-");
+    reisolateWithHome();
 
     // Seed state.db with a task_history row that references a log_path that
     // does NOT exist on disk. That forces the deterministic `task-log-backing`
@@ -1414,12 +1632,8 @@ describe("akm health CLI exit code", () => {
 
 // ── WS2: --group-by run (replaces --detail per-run) ──────────────────────────
 describe("akm health --group-by run", () => {
-  function pinHealthEnv(label: string): void {
-    process.env.HOME = makeTempDir(`akm-health-home-${label}-`);
-    process.env.XDG_CACHE_HOME = makeTempDir(`akm-health-cache-${label}-`);
-    process.env.XDG_CONFIG_HOME = makeTempDir(`akm-health-config-${label}-`);
-    process.env.XDG_DATA_HOME = makeTempDir(`akm-health-data-${label}-`);
-    process.env.XDG_STATE_HOME = makeTempDir(`akm-health-state-${label}-`);
+  function pinHealthEnv(_label: string): void {
+    reisolateWithHome();
   }
 
   test("--group-by run emits a runs[] section", async () => {
@@ -1459,46 +1673,5 @@ describe("akm health --group-by run", () => {
     const parsed = JSON.parse(stdout);
     expect(Array.isArray(parsed.runs)).toBe(true);
     expect(parsed.runs.length).toBe(1);
-  });
-
-  test("legacy --detail per-run still works and warns on stderr", async () => {
-    pinHealthEnv("gbcompat");
-    const { stdout, stderr } = await runCliCapture([
-      "health",
-      "--since",
-      "7d",
-      "--detail",
-      "per-run",
-      "--format",
-      "json",
-    ]);
-    JSON.parse(stdout); // valid JSON envelope
-    expect(stderr).toContain("'--detail per-run' is deprecated");
-    expect(stderr).toContain("--group-by run");
-  });
-
-  test("legacy --detail per-run warning is suppressed under --quiet", async () => {
-    pinHealthEnv("gbquiet");
-    const { stderr } = await runCliCapture([
-      "health",
-      "--since",
-      "7d",
-      "--detail",
-      "per-run",
-      "--quiet",
-      "--format",
-      "json",
-    ]);
-    expect(stderr).not.toContain("deprecated");
-  });
-
-  test("--detail with a non-per-run value is rejected for health", async () => {
-    pinHealthEnv("gbreject");
-    const { stderr, code } = await runCliCapture(["health", "--since", "7d", "--detail", "brief", "--format", "json"]);
-    expect(code).toBe(2);
-    // The error envelope is emitted to stderr (stdout stays clean for pipelines).
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
   });
 });

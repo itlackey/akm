@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Database as AkmDatabase } from "../../src/storage/database";
 import { closeWorkflowDatabase, openWorkflowDatabase, runMigrations } from "../../src/workflows/db";
 
 /**
@@ -20,6 +21,8 @@ import { closeWorkflowDatabase, openWorkflowDatabase, runMigrations } from "../.
  */
 
 const SCOPE_KEY_MIGRATION_ID = "001-add-scope-key";
+const AGENT_IDENTITY_MIGRATION_ID = "002-add-agent-identity";
+const CHECKIN_SUMMARY_MIGRATION_ID = "003-checkin-and-step-summary";
 
 let tmpDir = "";
 let dbPath = "";
@@ -37,7 +40,7 @@ afterEach(() => {
   }
 });
 
-function listAppliedMigrations(db: Database): string[] {
+function listAppliedMigrations(db: AkmDatabase): string[] {
   return (
     db.prepare("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{
       id: string;
@@ -45,8 +48,8 @@ function listAppliedMigrations(db: Database): string[] {
   ).map((r) => r.id);
 }
 
-function hasColumn(db: Database, table: string, column: string): boolean {
-  const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+function hasColumn(db: AkmDatabase, table: string, column: string): boolean {
+  const rows = db.prepare<{ name: string }>(`PRAGMA table_info(${table})`).all();
   return rows.some((r) => r.name === column);
 }
 
@@ -63,9 +66,17 @@ describe("workflow.db migrations", () => {
       // scope_key column was created
       expect(hasColumn(db, "workflow_runs", "scope_key")).toBe(true);
 
-      // Exactly one migration recorded
+      // agent identity columns were created (migration 002, #501)
+      expect(hasColumn(db, "workflow_runs", "agent_harness")).toBe(true);
+      expect(hasColumn(db, "workflow_runs", "agent_session_id")).toBe(true);
+
+      // check-in + step summary columns were created (migration 003, #506)
+      expect(hasColumn(db, "workflow_runs", "checkin_armed_at")).toBe(true);
+      expect(hasColumn(db, "workflow_run_steps", "summary")).toBe(true);
+
+      // All three migrations recorded, in order
       const applied = listAppliedMigrations(db);
-      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID]);
+      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
     } finally {
       closeWorkflowDatabase(db);
     }
@@ -136,7 +147,7 @@ describe("workflow.db migrations", () => {
     const db = openWorkflowDatabase(dbPath);
     try {
       const applied = listAppliedMigrations(db);
-      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID]);
+      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
 
       // The legacy row must still be there with its scope_key intact.
       const row = db.prepare("SELECT id, scope_key FROM workflow_runs WHERE id = 'legacy-run-1'").get() as
@@ -156,13 +167,13 @@ describe("workflow.db migrations", () => {
     const db2 = openWorkflowDatabase(dbPath);
     try {
       const applied = listAppliedMigrations(db2);
-      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID]);
+      expect(applied).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
 
       // Explicit re-run on the same connection is also a no-op.
       runMigrations(db2);
       runMigrations(db2);
       const afterReRun = listAppliedMigrations(db2);
-      expect(afterReRun).toEqual([SCOPE_KEY_MIGRATION_ID]);
+      expect(afterReRun).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
     } finally {
       closeWorkflowDatabase(db2);
     }
@@ -173,7 +184,7 @@ describe("workflow.db migrations", () => {
     const db = openWorkflowDatabase(dbPath);
     try {
       const before = listAppliedMigrations(db);
-      expect(before).toEqual([SCOPE_KEY_MIGRATION_ID]);
+      expect(before).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
 
       // Manually simulate a faulty migration body running through the same
       // transaction pattern used by runMigrations(). The body fails on the
@@ -187,7 +198,7 @@ describe("workflow.db migrations", () => {
       expect(() => apply()).toThrow();
 
       const after = listAppliedMigrations(db);
-      expect(after).toEqual([SCOPE_KEY_MIGRATION_ID]);
+      expect(after).toEqual([SCOPE_KEY_MIGRATION_ID, AGENT_IDENTITY_MIGRATION_ID, CHECKIN_SUMMARY_MIGRATION_ID]);
       // The DDL inside the failed transaction must also have been rolled back.
       const stillExists = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='faulty_test_table'")

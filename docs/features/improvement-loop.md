@@ -15,8 +15,8 @@ rank higher and underperformers surface less often.
 ```sh
 akm feedback skill:code-review --positive
 akm feedback agent:reviewer --negative
-akm feedback workflow:ship-release --positive --note "Worked end-to-end on 0.8.0"
-akm feedback skill:planner --negative --note "Doesn't account for merge conflicts"
+akm feedback workflow:ship-release --positive --reason "Worked end-to-end on 0.8.0"
+akm feedback skill:planner --negative --reason "Doesn't account for merge conflicts"
 
 # With a structured reason slug (0.8.0+, consumed by improve/distill prompts):
 akm feedback skill:planner --negative --reason "incomplete-edge-cases"
@@ -29,14 +29,14 @@ the current local index.
 
 ```sh
 akm feedback skill:deploy --negative \
-  --note "Skips the dry-run step; caused prod incident 2026-05-10" \
+  --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
   --reason "missing-safeguard"
 ```
 
-## akm history / akm events
+## akm history / akm log
 
 `akm history` gives a durable, per-asset audit trail of state changes — searches,
-shows, and feedback events. `akm events` gives the realtime append-only stream
+shows, and feedback events. `akm log` gives the realtime append-only stream
 that every mutating CLI verb writes to.
 
 ```sh
@@ -47,20 +47,20 @@ akm history --since 2026-05-01T00:00:00Z
 akm history --format text                       # Human-readable
 
 # Realtime event stream
-akm events list                                 # All events
-akm events list --type feedback                 # Filter by event type
-akm events list --ref skill:deploy
-akm events tail --format jsonl                  # Follow new events live
-akm events tail --max-events 20
+akm log list                                    # All events
+akm log list --type feedback                    # Filter by event type
+akm log list --ref skill:deploy
+akm log tail --format jsonl                     # Follow new events live
+akm log tail --max-events 20
 ```
 
-`akm events tail` supports `--since '@offset:<id>'` cursors so you can resume
+`akm log tail` supports `--since '@offset:<id>'` cursors so you can resume
 from exactly where you left off across process boundaries without duplicates.
 
 **Example: see what was used in the last week**
 
 ```sh
-akm events list --since 7d --type select --format text
+akm log list --since 7d --type select --format text
 ```
 
 ## akm improve

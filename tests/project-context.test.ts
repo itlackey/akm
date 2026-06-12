@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
-import { resolveProjectContext } from "../src/indexer/project-context";
+import { resolveProjectContext } from "../src/indexer/walk/project-context";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

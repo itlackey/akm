@@ -2,7 +2,6 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal";
 import {
   classifyProposal,
   type DrainOptions,
@@ -11,8 +10,14 @@ import {
   type JudgmentSeams,
 } from "../src/commands/proposal/drain";
 import { CONSERVATIVE, MANUAL, PERSONAL_STASH, resolveDrainPolicy } from "../src/commands/proposal/drain-policies";
+import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal/proposal";
+import {
+  createProposal,
+  isProposalSkipped,
+  listProposals,
+  type Proposal,
+} from "../src/commands/proposal/validators/proposals";
 import type { EventsContext } from "../src/core/events";
-import { createProposal, isProposalSkipped, listProposals, type Proposal } from "../src/core/proposals";
 import type { AgentRunResult } from "../src/integrations/agent";
 import type { RunnerSpec } from "../src/integrations/agent/runner";
 

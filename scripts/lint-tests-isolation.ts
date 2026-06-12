@@ -199,13 +199,12 @@ const ALLOWED_FILES = new Set<string>([
   "tests/distill.test.ts",
   "tests/graph-extraction-batch.test.ts",
   "tests/graph-extraction.test.ts",
-  "tests/health-command.test.ts",
+  // tests/health-command.test.ts — migrated to withIsolatedAkmStorage (C2/#499).
   "tests/commands/improve/improve-dry-run-side-effects.test.ts",
   "tests/commands/improve/improve-no-hang.test.ts",
   "tests/index-clean.test.ts",
   "tests/lessons-coverage.test.ts",
   "tests/llm-enrichment-cache.test.ts",
-  "tests/proposals.test.ts",
   "tests/commands/reflect/reflect-completed-on-failure.test.ts",
   "tests/commands/reflect/reflect-pipeline-fixes.test.ts",
   "tests/registry-cli.test.ts",
@@ -214,8 +213,6 @@ const ALLOWED_FILES = new Set<string>([
   "tests/setup-tmp-stash-guard.test.ts",
   "tests/source-qa-fixes.test.ts",
   "tests/source-source.test.ts",
-  "tests/state-db-events-purge.test.ts",
-  "tests/state-db/improve-runs.test.ts",
   "tests/tasks-legacy-md-warning.test.ts",
   "tests/test-isolation-no-swallow.test.ts",
 
@@ -224,13 +221,32 @@ const ALLOWED_FILES = new Set<string>([
   // migration is deferred to a follow-up PR.
   "tests/commands/improve-memory-misc.test.ts",
   "tests/commands/improve-planner-profile-prefilter.test.ts",
-  "tests/commands/health-distill-skipped-by-reason.test.ts",
-  "tests/extract-command.test.ts",
-  "tests/extract-session-tracking.test.ts",
-  "tests/health-command-window.test.ts",
   "tests/commands/improve/improve-eligibility.test.ts",
   "tests/integration/indexer.test.ts",
 ]);
+
+// ── Shrink-only ratchet ──────────────────────────────────────────────────────
+
+/**
+ * The combined grandfather allowlist (Rule-1 `ALLOWED_FILES` + Rule-2
+ * `ENV_ASSIGN_ALLOWED`) is a SHRINK-ONLY ratchet: as files migrate onto the
+ * `withIsolatedAkmStorage` composite they are removed from these sets and this
+ * baseline is lowered to match. The meta-test in
+ * `tests/lint-isolation-ratchet.test.ts` asserts the live combined size never
+ * exceeds this baseline — so the allowlist can only ever get smaller. If you
+ * remove entries, LOWER this number in the same change; never raise it.
+ *
+ * KPI (WS4): drive this from ~73 toward ~5.
+ */
+export const ALLOWLIST_RATCHET_BASELINE = 64;
+
+/** Live size of the combined grandfather allowlist (both rule sets). */
+export function combinedAllowlistSize(): number {
+  return ALLOWED_FILES.size + ENV_ASSIGN_ALLOWED.size;
+}
+
+// Expose the sets so the ratchet meta-test can assert against them directly.
+export { ALLOWED_FILES, ENV_ASSIGN_ALLOWED };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -252,7 +268,7 @@ function collectTestFiles(dir: string): string[] {
   return results;
 }
 
-type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion";
+type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion" | "raw-akm-mkdtemp";
 
 interface Violation {
   file: string;
@@ -285,7 +301,11 @@ function findEnvAssignments(src: string): Array<{ envVar: string; line: number }
 
 /** True when the file routes env mutation through a sanctioned restoring wrapper. */
 function usesSanctionedWrapper(src: string): boolean {
-  return /\bwithEnv\s*\(/.test(src) || /\bsandbox(StashDir|Xdg\w+|Home)\s*\(/.test(src);
+  return (
+    /\bwithEnv\s*\(/.test(src) ||
+    /\bsandbox(StashDir|Xdg\w+|Home)\s*\(/.test(src) ||
+    /\bwithIsolatedAkmStorage\s*\(/.test(src)
+  );
 }
 
 function lintFile(filePath: string): Violation[] {
@@ -304,6 +324,29 @@ function lintFile(filePath: string): Violation[] {
       const lines = src.split("\n");
       const lineNum = lines.findIndex((l) => l.includes("mkdtempSync")) + 1;
       violations.push({ file: rel, rule: "mkdtemp-env", detail: `env vars: ${foundVars.join(", ")}`, line: lineNum, envVars: foundVars });
+    }
+  }
+
+  // ── Rule 4: raw mkdtempSync("…akm-test…") outside tests/_helpers/ ───────────
+  // The only sanctioned place to mint an AKM-named temp root is the sandbox
+  // helper module. A raw `mkdtempSync(..."akm-test"...)` elsewhere bypasses the
+  // single-temp-root / single-cleanup discipline of withIsolatedAkmStorage and
+  // is exactly the leak shape the preload tripwire guards against — block it at
+  // lint time. Generic mkdtempSync (no `akm-test` prefix) is still allowed.
+  if (!rel.startsWith("tests/_helpers/")) {
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\s*(\/\/|\*)/.test(l)) continue;
+      // mkdtempSync(...) whose call arguments contain an "akm-test" literal.
+      if (/mkdtempSync\s*\([^)]*akm-test[^)]*\)/.test(l)) {
+        violations.push({
+          file: rel,
+          rule: "raw-akm-mkdtemp",
+          detail: `raw mkdtempSync("…akm-test…") — mint AKM temp roots via withIsolatedAkmStorage()/sandbox helpers in tests/_helpers/`,
+          line: i + 1,
+        });
+      }
     }
   }
 
@@ -361,49 +404,57 @@ function lintFile(filePath: string): Violation[] {
   return violations;
 }
 
+// ── Programmatic API ─────────────────────────────────────────────────────────
+
+/** Lint every test file and return all violations (used by the ratchet meta-test). */
+export function lintAllTestFiles(): Violation[] {
+  const testsDir = path.join(repoRoot, "tests");
+  const out: Violation[] = [];
+  for (const f of collectTestFiles(testsDir)) out.push(...lintFile(f));
+  return out;
+}
+
+export { lintFile, collectTestFiles };
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
-const showFixHints = args.includes("--fix-hints");
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const showFixHints = args.includes("--fix-hints");
 
-const testsDir = path.join(repoRoot, "tests");
-const allTestFiles = collectTestFiles(testsDir);
+  const violations = lintAllTestFiles();
 
-const violations: Violation[] = [];
-
-for (const f of allTestFiles) {
-  violations.push(...lintFile(f));
-}
-
-if (violations.length === 0) {
-  console.log("lint-tests-isolation: OK — no isolation / determinism violations found");
-  process.exit(0);
-}
-
-const RULE_LABEL: Record<Rule, string> = {
-  "mkdtemp-env": "raw mkdtempSync + AKM env var",
-  "unguarded-env": "unguarded AKM/XDG/HOME env assignment",
-  "elapsed-assertion": "wall-clock elapsed-time assertion",
-};
-
-console.error(`lint-tests-isolation: ${violations.length} violation(s) found\n`);
-for (const v of violations) {
-  console.error(`  ${v.file}:${v.line}  [${RULE_LABEL[v.rule]}]`);
-  console.error(`    ${v.detail}`);
-  if (showFixHints && v.envVars && (v.rule === "mkdtemp-env" || v.rule === "unguarded-env")) {
-    const importPath = v.file.startsWith("tests/") ? "../_helpers/sandbox" : "./_helpers/sandbox";
-    const helpers = v.envVars.map((e) => {
-      if (e === "AKM_STASH_DIR") return "sandboxStashDir";
-      if (e === "XDG_CONFIG_HOME") return "sandboxXdgConfigHome";
-      if (e === "XDG_DATA_HOME") return "sandboxXdgDataHome";
-      if (e === "XDG_CACHE_HOME") return "sandboxXdgCacheHome";
-      if (e === "HOME") return "sandboxHome";
-      return "withEnv";
-    });
-    const unique = [...new Set(helpers)];
-    console.error(`    hint: import { ${unique.join(", ")} } from "${importPath}";`);
+  if (violations.length === 0) {
+    console.log("lint-tests-isolation: OK — no isolation / determinism violations found");
+    process.exit(0);
   }
-  console.error("");
-}
 
-process.exit(1);
+  const RULE_LABEL: Record<Rule, string> = {
+    "mkdtemp-env": "raw mkdtempSync + AKM env var",
+    "unguarded-env": "unguarded AKM/XDG/HOME env assignment",
+    "elapsed-assertion": "wall-clock elapsed-time assertion",
+    "raw-akm-mkdtemp": "raw mkdtempSync(…akm-test…) outside tests/_helpers/",
+  };
+
+  console.error(`lint-tests-isolation: ${violations.length} violation(s) found\n`);
+  for (const v of violations) {
+    console.error(`  ${v.file}:${v.line}  [${RULE_LABEL[v.rule]}]`);
+    console.error(`    ${v.detail}`);
+    if (showFixHints && v.envVars && (v.rule === "mkdtemp-env" || v.rule === "unguarded-env")) {
+      const importPath = v.file.startsWith("tests/") ? "../_helpers/sandbox" : "./_helpers/sandbox";
+      const helpers = v.envVars.map((e) => {
+        if (e === "AKM_STASH_DIR") return "sandboxStashDir";
+        if (e === "XDG_CONFIG_HOME") return "sandboxXdgConfigHome";
+        if (e === "XDG_DATA_HOME") return "sandboxXdgDataHome";
+        if (e === "XDG_CACHE_HOME") return "sandboxXdgCacheHome";
+        if (e === "HOME") return "sandboxHome";
+        return "withEnv";
+      });
+      const unique = [...new Set(helpers)];
+      console.error(`    hint: import { ${unique.join(", ")} } from "${importPath}";`);
+    }
+    console.error("");
+  }
+
+  process.exit(1);
+}

@@ -45,9 +45,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resetConfigCache } from "../src/core/config";
+import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 
 /**
@@ -75,6 +75,8 @@ const HARNESSED: readonly string[] = [
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
   "AKM_EMBED_API_KEY",
+  // ECharts delivery toggle read by the html health report builder.
+  "AKM_ECHARTS",
   // Registry overrides used by registry-providers tests.
   "AKM_REGISTRY_URL",
   "AKM_NPM_REGISTRY",

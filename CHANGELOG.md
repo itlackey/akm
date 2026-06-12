@@ -4,6 +4,343 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.9.0-beta.3] - 2026-06-12
+
+Stabilization batch closing the remaining 0.9.0 milestone: DB-locking and
+improve-pipeline perf backports, extract/reflect gate fixes, SQLite-first
+proposal and log storage, `--format html` output, and per-stage LLM telemetry.
+
+### Added
+
+- **`--format html` output with per-command templates** (#582). `akm health
+  --format html` renders the full interactive health report (ECharts inlined by
+  default, or via CDN with `AKM_ECHARTS=cdn`); every other command falls back to
+  a dark-mode default template that pretty-prints its JSON. A global `--output
+  <path>` flag writes the rendered HTML to a file instead of stdout. Token
+  replacement only — no template engine. The standalone health-report skill is
+  now folded into core.
+- **Per-stage LLM telemetry** (#576). Every `chatCompletion` call now records
+  tokens (prompt/completion/total/reasoning), wall-time, model, and
+  finish_reason as an `llm_usage` event, attributed to the pipeline stage via an
+  ambient `AsyncLocalStorage` context (`withLlmStage`) set once per phase — no
+  `stage` parameter threaded through call sites. `akm health` exposes per-stage
+  token and time aggregates. Telemetry is best-effort and can never fail a run;
+  capture is forward-only.
+- **Per-proposal gate decision + confidence** (#577). When a proposal passes
+  through the auto-accept/triage gate, its outcome (`auto-accepted` /
+  `deferred` / `auto-rejected`), reason, confidence, measured value, and the
+  thresholds in effect are persisted on the proposal (in the SQLite metadata).
+  `akm proposal show`/`list` surface them with reconstructable comparisons
+  (e.g. `0.72 < 0.90`), so tooling can explain *why* each proposal is pending
+  instead of relying on a run-level aggregate. Forward-only; legacy proposals
+  render `unknown`.
+
+### Fixed
+
+- **`SQLITE_BUSY` / "database is locked" under concurrent runs** (#584, #585,
+  #589). `busy_timeout` raised from 5 s to 30 s on every SQLite open path
+  (index.db and state.db); the improve maintenance pass now closes its index.db
+  handle before each reindex (which opens its own writer to the same WAL file);
+  and the post-loop purge reuses the long-lived events connection instead of
+  opening a second state.db writer. Together these eliminate all observed
+  lock failures from overlapping cron improve runs. (Backports of 0.8.8.)
+- **Extract gate ignored the active profile's `extract.enabled: false`** (#593,
+  #594). The session-extraction gate hardcoded the `default` profile, so a
+  non-default profile (e.g. a quick pass) ran extract anyway — 300–600 s of
+  redundant work per run when a dedicated extract task also exists. The gate
+  now resolves `extract` against the active improve profile. (Backport of
+  0.8.11.)
+- **Memory inference burned LLM calls on already-derived parents** (#588). The
+  primary pass now checks for the `<parent>.derived.md` child on disk *before*
+  the LLM/cache call, and opportunistically marks the parent processed so it
+  never re-pends. Previously ~55 % of the inference budget was spent
+  rediscovering children that already existed.
+- **Reflect no longer queues empty-diff or cosmetic-only proposals** (#580).
+  A deterministic, LLM-free noise gate diffs each candidate against the current
+  asset; byte-identical edits are dropped and changes that are pure formatting
+  (whitespace reflow, hard-wrap changes, code-fence language hints, YAML scalar
+  re-folding) are suppressed, each recorded via summary events so suppression
+  rates are visible in `akm health`.
+
+### Added
+
+- **`minContentChars` pre-LLM extract gate** (#595, #596). Sessions whose raw
+  size is below `profiles.improve.<name>.processes.extract.minContentChars`
+  (default 10 — only truly empty sessions/journal files) skip the extract LLM
+  call entirely. Gates on raw input size, not post-noise-filter size.
+  (Backports of 0.8.12–0.8.14.)
+- **Structured logs database** (#579). Task and run log lines now land in a
+  dedicated `logs.db` (WAL, 30 s busy_timeout) keyed by task, run, stream, and
+  time, with retention/purge wired into the existing purge pass and `ATTACH`
+  support for joining log lines to `state.db` rows (e.g. a failed
+  `task_history` row to its log output). The scattered-log audit and per-source
+  keep/move/drop decisions are documented in `docs/technical/logs-audit.md`.
+
+### Changed
+
+- **Proposals are now stored canonically in SQLite** (#578). The previously
+  bypassed `proposals` table in state.db is the single source of truth; all
+  proposal commands (`list`/`show`/`diff`/`accept`/`reject`/`revert`/`drain`),
+  the improve auto-accept gate, and health metrics read and write it through
+  one storage layer. Pending file-based proposals are imported on first read;
+  `akm proposal *` UX is unchanged. Design and migration notes live in
+  `docs/technical/proposal-storage.md`.
+- **Improve planning no longer does per-ref DB lookups or per-ref skip events**
+  (#591, #592). Eligible refs carry a pre-resolved `filePath`, removing a
+  serial async lookup per ref (~500 s on 9 k-ref stashes), and the
+  profile-filtered skip loop emits one summary event with a count instead of
+  thousands of rows. (Backports of 0.8.9–0.8.10.)
+
+## [0.9.0-beta.2] - 2026-06-09
+
+### Fixed
+
+- **Consolidation starved merge recall; the memory pool grew unbounded.** Commit
+  `633ece41` made the `incrementalSince` narrowing unconditional, so every
+  consolidation run only judged memories changed since the last run plus their
+  immediate vector-neighbors. Stale-but-unmerged duplicate clusters were never
+  re-examined, so the eligible pool grew monotonically and never shrank, and
+  contradiction detection (which rides on the consolidation pass) went dark.
+  Consolidation only runs on the nightly default-profile pass (`quick`/`frequent`
+  disable it), so a full-pool sweep is correct and affordable; the override is
+  removed. `lastConsolidateTs` still gates whether the pass runs. (Forward-port
+  of the 0.8.5 fix.)
+- **`akm tasks sync` ignored schedule changes** — forward-ported from 0.8.4.
+  Sync classified any task already present in the OS scheduler as "unchanged"
+  without comparing its installed entry, so editing a task's `schedule:` in the
+  `.yml` never reached the crontab; the same gap affected `tasks enable`/`disable`
+  (toggled the comment, re-enabling a stale schedule). Sync now compares the
+  backend's installed signature against the signature the current definition
+  renders to and reinstalls on drift (new `updated[]` field); `enable`/`disable`
+  reinstall from the current `.yml`. The cron backend gains `expectedSignature()`
+  and a per-entry signature on `list()`; other backends fall back to an
+  idempotent reinstall.
+
+### Added
+
+- **`akm improve --skip-if-locked`** — forward-ported from 0.8.4. When another
+  improve run already holds the lock, the run logs and exits 0 with a no-op
+  result (`skipped.reason: "lock-held"`) instead of failing with the "already
+  running" config error (exit 78). Intended for high-frequency scheduled runs
+  (e.g. an every-30-min `quick` pass) that overlap a longer run. Default off.
+
+### Removed
+
+- **`akm config edit`** — the interactive menu-based editor was removed. A
+  prompt-driven drill-down was clunkier than just editing the file. Edit the
+  config directly (the path is shown by `akm config path`), use
+  `akm config set/get/unset` for scripted changes, and `akm config validate` to
+  check it.
+
+## [0.9.0-beta.1] - 2026-06-08
+
+### Fixed
+
+- **`improve.lock` leaked on signal death (cron timeout)** — forward-ported from
+  0.8.3. The improve SIGTERM/SIGINT/SIGHUP handler calls `process.exit()`, which
+  skips `finally` blocks, so the `finally` releasing `improve.lock` never ran and
+  every timed-out cron run leaked the lock. It is now released from a
+  `process.on("exit", …)` handler registered at acquire time, via a new
+  ownership-checked `releaseLockIfOwned(path, pid)`.
+- **`quick` profile was not quick** — forward-ported from 0.8.3. It did not
+  disable the default-ON session-`extract` process, so a `quick` run processed
+  the entire session backlog (~40 min). `quick` now sets
+  `processes.extract.enabled: false`.
+- **`akm-eval` smoke suite adapted to the 0.9.0 CLI** (CI/tooling only). The
+  eval harness called `akm search --detail agent`, but 0.9.0 moved the
+  agent/summary projections to `--shape`; it now uses `--shape agent`.
+  Additionally, the improve-run history readers (`listRecentImproveRunIds` /
+  `resolveImproveRunId`) treated a missing `state.db` as an error rather than
+  "no runs", which broke the read-only smoke + replay-determinism gates on a
+  fresh checkout; a missing `state.db` is now handled as an empty history.
+
+## [0.9.0-beta.0] - 2026-06-08
+
+### Added
+
+- **Cross-runtime: akm now runs on Node.js (≥ 20) in addition to Bun** (#560,
+  #465). A two-file runtime boundary (`src/storage/database.ts` owns SQLite via
+  `bun:sqlite` on Bun / `better-sqlite3` on Node; `src/runtime.ts` owns every
+  `Bun.*` API) contains all runtime-specific code, enforced by a lint guard so it
+  cannot leak back out. A CI `node-smoke` matrix runs the built CLI under Node
+  20 and 22. **Minimum Node is 20** — the prompts dependency (`@clack/core`) uses
+  `node:util.styleText`, added in Node 20.12; Node 18 is EOL and unsupported.
+  Bun remains the primary/default runtime.
+- **`session` asset type — agent sessions are now searchable** (#561). The
+  `extract` pass, after distilling memory proposals from a session, additionally
+  writes the session itself as a first-class `session` asset
+  (`sessions/<harness>/<id>.md`) with an LLM-generated `## Summary` /
+  `## Key topics` body plus `harness` / `session_id` / `started_at` / `ended_at`
+  / `project` / `log_path` / `access` frontmatter. Sessions become discoverable
+  via `akm search --type session` and `akm curate`, and the `access` + `log_path`
+  fields tell any agent how to open the raw session log. The behaviour is
+  ADDITIVE, FAIL-OPEN, and config-gated via
+  `profiles.improve.default.processes.extract.indexSessions` (default on when an
+  LLM is configured; set `false` for byte-identical legacy extract behaviour) and
+  `…extract.minSessionDuration` (default 5 minutes). Session assets are not
+  graph-extracted. No new LLM call is made when no provider is configured.
+
+- **`akm env set` / `akm env unset` — single-key `.env` management.** `akm env
+  set <ref> <KEY>` sets/updates one key (value from stdin by default, or
+  `--from-env <VAR>` / `--from-file <path>` — never argv, never echoed); `akm env
+  unset <ref> <KEY...>` removes one or more keys. Both do a minimal edit that
+  preserves existing comments and key order, and use `dotenv` as the
+  serialisation oracle: a value is only written if `dotenv.parse` reads it back
+  exactly, and the whole edit is re-verified so no sibling key is disturbed. This
+  reintroduces key-level management (the deprecated `vault set`/`vault unset`
+  pointed here); `akm env remove` still removes the whole file.
+
+- **`--path` for subdirectory asset creation** (#503) — a consistent `--path
+  <relative-dir>` flag across the asset-creating command surface: `akm remember`,
+  `akm import`, `akm propose`, `akm workflow create`, `akm env create`, and
+  `akm secret set`. `--path` is a directory applied rooted at the asset's type
+  directory (e.g. `akm remember "buy milk" --path personal --name grocery-list`
+  → `memories/personal/grocery-list.md`; `akm workflow create ship --path
+  release` → `workflows/release/ship.md`). The filename/name still comes from the
+  `--name`/name positional (or, for `remember`/`import`, the content/source slug).
+  The explicit name is now a **flat** name everywhere: a `/` in it is rejected
+  with guidance to use `--path`. System-derived names (e.g. a URL-path-derived
+  knowledge name from `akm import <url>`) may still nest. Shared semantics live in
+  `src/core/asset-create.ts`. (Replaces #503's earlier nested-`--name` approach.)
+- **Workflow runs record agent harness + session identity** — `akm workflow start`
+  now persists the agent harness (e.g. `claude-code`, `opencode`) and the
+  platform-native session id that owns each run. Identity is resolved best-effort
+  from the environment (`AKM_AGENT_HARNESS` / `AKM_SESSION_ID`, falling back to the
+  harness-native session env var) or can be passed explicitly to `startWorkflowRun`.
+  Stored via additive migration `002-add-agent-identity` and surfaced on
+  `WorkflowRunSummary.agentHarness` / `.agentSessionId`. This is the first concrete,
+  scoped slice toward workflow session monitoring (#501).
+- **Workflow agent check-in + step-summary validation** (#506) — workflow runs now
+  use a file-signal / command-loop check-in model (no resident background thread, per
+  the ADR in `docs/technical/workflow-agent-checkin-adr.md`). `akm workflow start`
+  arms a durable check-in timestamp; `akm workflow complete --summary` now **requires**
+  a per-step summary and runs it through an LLM completion-criteria validation gate —
+  on failure the step stays pending and structured corrective feedback is returned
+  (`workflow-complete-rejected`). A pure `evaluateCheckin` surfaces a strong `continue`
+  directive through `getNextWorkflowStep` when an active run looks stalled. Migration
+  `002` adds `agent_harness`, `agent_session_id`, `checkin_armed_at` on
+  `workflow_runs` and `summary` on `workflow_run_steps`.
+- **Default improve profiles + scheduled task set** (#552) — three new bundled
+  profiles in `src/assets/profiles/` — `frequent` (extract + inference; distill /
+  consolidate excluded), `consolidate` (consolidation-only), and `catchup` (manual
+  recovery: consolidate + triage drain) — alongside the existing `default` / `quick` /
+  `thorough` / `memory-focus` / `graph-refresh`. `akm setup` and the new `akm tasks
+  init` register a multi-cadence task set **idempotently**: `akm-improve-frequent`
+  (60 min), `akm-improve-consolidate` (4 h), `akm-improve-nightly` (`thorough`, daily
+  2 am, server-gated), `akm-improve-catchup` (registered but unscheduled), and
+  `akm-graph-refresh-weekly` (Sun 3 am). Registration is CI-aware (skips when
+  `CI=true`) and asks a single "Is this a server install?" prompt to gate the nightly
+  task (default yes on Linux-without-battery, no on macOS/laptop).
+
+### Design notes
+
+- **#501 narrowed; superseded by #506 for the monitoring design.** Issue #501
+  ("Add background thread for workflow command session monitoring and agent
+  prompting") was an epic. Per #506's stated preference to avoid always-on
+  background threads/daemons, the background-thread requirement is **not**
+  implemented here. #501 is narrowed to the one tractable, prerequisite sub-feature
+  — persisting harness + session identity on each workflow run — which any future
+  monitor needs regardless of design. The session-monitoring/agent-steering loop is
+  deferred to #506 and requires a separately approved design.
+
+### Changed
+
+- **`improve`: consolidation runs before extract + smarter pool-delta gate**
+  (#551). The consolidation phase now runs **before** the session-extract pass
+  in the improve pipeline. Extract auto-accept writes new memory `.md` files on
+  every run, which previously made the consolidation pool-delta gate
+  (`memoryUpdatedAfterLastConsolidate`) fire unconditionally — consolidation
+  never skipped and wastefully re-judged freshly-promoted single-source
+  memories with no merge/contradiction candidates yet. Running consolidation
+  first means it only ever sees memories from **prior** runs; current-run
+  extract promotions are not on disk yet. The pool-delta gate is additionally
+  narrowed: a memory whose only mtime bump since the last consolidate came from
+  its **own** auto-accept promotion (tracked via the `promoted` event's
+  `assetPath`) is excluded from the "work to do" check, so adjacent-run
+  promotions get a full improve cycle to settle before consolidation considers
+  them. When the gate now correctly skips, the existing
+  `improve_skipped` / `consolidation_no_memory_updates` event is emitted so
+  health reflects it. No event-shape changes; emitted-event order changes only
+  because consolidation moved earlier.
+
+- **Unified git commit model — single batch-at-boundary commit** (#507). Writing
+  or deleting an asset on a git-backed source no longer commits (and optionally
+  pushes) **per asset**. `writeAssetToSource` / `deleteAssetFromSource` now
+  perform a plain filesystem write/unlink for every kind, and git-backed targets
+  are committed **once** at the operation boundary (`akm remember --target`,
+  proposal accept/revert, consolidate) as a single complete commit — `git add -A`
+  stages `.akm/` state + sibling assets together — pushed under the same
+  `writable + remote` gate as `akm save`/`akm sync`. This removes the noisy,
+  incomplete per-asset commits (~25 per improve run) and leaves no dirty
+  working-tree residue.
+
+- **`improve/consolidate`: `minPoolSize` guard** (#553). Consolidation now skips
+  itself when the eligible memory pool is below `processes.consolidate.minPoolSize`
+  (default **500**), emitting a `consolidation_skipped` event with
+  `reason: pool_below_min_size` and making **zero** LLM calls — so the always-enabled
+  consolidate task self-activates only once a stash is large enough to have real
+  merge/contradiction candidates. `minPoolSize: 0` disables the guard. The skip
+  surfaces in `akm health` improve output. The bundled `consolidate` profile sets
+  `500`, `catchup` sets `0`.
+
+- **`improve/extract`: `minNewSessions` gate** (#554). The extract phase now counts
+  in-window, not-yet-seen candidate sessions **before** any LLM call and skips the
+  pass (emitting `extract_skipped` / `reason: below_min_new_sessions`, visible in
+  `akm health`) when the count is below `processes.extract.minNewSessions`. The
+  in-code default is **0 (disabled)**, so existing profiles keep always-run behaviour;
+  only the new `frequent` profile opts in with `3`. This removes the ~22% of improve
+  runs that previously ran the full `ensureIndex` + extract pipeline for zero new
+  sessions.
+
+### Deprecated
+
+- **`options.pushOnCommit`** (#507). The per-asset push-on-commit knob is retired.
+  Existing configs still parse — its push intent is mapped onto the batch push
+  gate and a one-time deprecation warning is emitted when the option is
+  encountered. Remove it and rely on `writable: true` + a configured remote.
+
+### Fixed
+
+- **Memory inference re-queued `hot` parents forever** (#550). `markParentProcessed`
+  was only called when a derived child was newly written; when the child already
+  existed (`written = 0`), the parent never got `inferenceProcessed: true` and was
+  re-queued on every `akm improve` run (~37 wasted LLM calls/run on one production
+  stash). The child-exists path now marks the parent done (a genuine write failure
+  still leaves it unmarked for retry), while `skippedChildExists` accounting is
+  unchanged.
+- **Auto-accept rejected truncated LLM descriptions** (#556). ~9.3% of proposals
+  failed auto-accept validation because the LLM cut the description mid-clause (ending
+  in `to`/`for`/`and`/a comma/etc.) or lost a YAML continuation line. A deterministic
+  post-generation repair pass (`repairTruncatedDescription` in
+  `src/core/text-truncation.ts`) now trims the truncated fragment to the last complete
+  clause or swaps in the first complete sentence from the body — never fabricating
+  text — wired into the extract and distill proposal-write paths before validation.
+  Already-valid descriptions pass through byte-identical. (Plus a one-line prompt
+  tightening requiring a complete sentence.)
+- **Semantic index verification stuck on stashes with vault entries** (#502).
+  Verification compared the stored embedding count against the *full* entry count, but
+  the embedding phase intentionally excludes vault rows — so any index with vault
+  entries reported `embeddingCount < totalEntries` forever and stayed in
+  semantic-blocked / verification-failed state. A new `getEmbeddableEntryCount`
+  (`entry_type != 'vault'`) now feeds the zero-entry short-circuit, the readiness gate,
+  the "Semantic search ready (X/Y)" message, and the persisted `entryCount`; a
+  genuinely missing embedding on an embeddable entry still reports `ok:false`.
+
+### Internal
+
+- **#490 architecture refactor.** Decomposed `src/cli.ts` from **4,589 → 620 LOC**
+  across 16 per-family command modules under `src/commands/*-cli.ts` (adopting a
+  `defineJsonCommand` factory for byte-identical JSON envelopes); converted `akm
+  health` checks to an ordered `HealthCheck` registry; and turned the
+  `migrate-storage` bin's 54 hand-rolled `recordStep` sites into a `MigrationStep`
+  registry with 3 recursive copy helpers unified into one `copyTree`. Shipped as
+  serialized local merges with a zero-behaviour-change contract (byte-identical CLI
+  surface + JSON envelopes), each gated and reviewed; the secret-migrating
+  `migrate-storage` change is pinned by a sha256 + file-mode fixture-stash
+  differential test.
+
 ## [0.8.14] - 2026-06-11
 
 ### Fixed
@@ -105,7 +442,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   timestamps are lexicographically less than `"30m"` (`'2' < '3'`) and `"24h"`
   (`"20" < "24"`), so `isChanged()` always returned `false` and the candidate
   pool was silently emptied rather than filtered to the window. The fix adds
-`parseSinceToIso()`, which resolves human duration strings to absolute ISO
+  `parseSinceToIso()`, which resolves human duration strings to absolute ISO
   timestamps before comparison. Values that already look like ISO timestamps
   are passed through unchanged.
 

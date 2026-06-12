@@ -13,8 +13,8 @@
  */
 import { describe, expect, it } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
-import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset-serialize";
-import { parseFrontmatter } from "../../src/core/frontmatter";
+import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset/asset-serialize";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 
 describe("serializeFrontmatter — canonical YAML for the frontmatter block", () => {
   it("returns yaml.stringify output with the trailing newline trimmed", () => {
@@ -285,6 +285,52 @@ describe("assembleAssetFromString — shared fence/body template, BYO serializer
     const oldInline = `---\n${fmStr}\n---\n\n${cleanedBody.trimStart()}`;
     const refactored = assembleAssetFromString(fmStr, cleanedBody);
     expect(refactored).toBe(`${oldInline}\n`); // helper adds the canonical trailing \n
+  });
+});
+
+/**
+ * WS8 (#490) regression: the 5 residual `yamlStringify(fm).trimEnd()` sites
+ * that bypassed serializeFrontmatter (extract.ts:193, consolidate.ts:999 /
+ * 1956 / 2285 / 2669) were swapped to `serializeFrontmatter(fm)`. Since
+ * `serializeFrontmatter`'s body literally IS `yamlStringify(fm).trimEnd()`,
+ * the swap is byte-identical for ANY input — pin that here so the equivalence
+ * is provable, not asserted.
+ */
+describe("WS8 regression — residual yamlStringify(fm).trimEnd() sites → serializeFrontmatter", () => {
+  const cases: Array<{ label: string; fm: Record<string, unknown> }> = [
+    { label: "extract.ts:193 (extracted candidate fm)", fm: { description: "x", sources: ["session:claude:abc"] } },
+    {
+      label: "consolidate.ts:999 (archiveMemory supersede fm)",
+      fm: { description: "y", superseded_at: "2026-06-06T00:00:00.000Z", superseded_reason: "merged" },
+    },
+    {
+      label: "consolidate.ts:1956 (mergedBodyFm)",
+      fm: { description: "merged", tags: ["a", "b"], updated: "2026-06-06" },
+    },
+    { label: "consolidate.ts:2285 (re-serialised cleaned fm)", fm: { description: "cleaned", id: "lesson/foo" } },
+    {
+      label: "consolidate.ts:2669 (repaired merged fm)",
+      fm: { description: "repaired", when_to_use: "always", updated: "2026-06-06" },
+    },
+  ];
+  for (const { label, fm } of cases) {
+    it(`byte-identical: ${label}`, () => {
+      expect(serializeFrontmatter(fm)).toBe(yamlStringify(fm).trimEnd());
+    });
+  }
+
+  it("consolidate.ts:2669 keeps its single-newline-separator template (NOT assembleAssetFromString)", () => {
+    // This site intentionally emits `---\n${fm}\n---\n${body}` (one \n after the
+    // closing fence, no body normalization) — NOT the canonical `\n\n` shape.
+    // The serializer is unified but the template literal is preserved verbatim,
+    // because assembleAssetFromString would change the bytes (extra trailing \n,
+    // leading-\n strip). Pin the divergence so a future "finish the dedup" pass
+    // does not silently alter output.
+    const repairedYaml = serializeFrontmatter({ description: "x" });
+    const bodyPart = "\nbody without trailing newline";
+    const out = `---\n${repairedYaml}\n---\n${bodyPart}`;
+    expect(out).not.toBe(assembleAssetFromString(repairedYaml, bodyPart));
+    expect(out).toBe("---\ndescription: x\n---\n\nbody without trailing newline");
   });
 });
 

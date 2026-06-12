@@ -13,10 +13,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../src/commands/secret";
+import { setSecret } from "../src/commands/env/secret";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
@@ -81,7 +81,9 @@ describe("secret indexer safety", () => {
 
       // 3. CRITICAL: the value is not in search_text or entry_json.
       type Row = { search_text: string | null; entry_json: string };
-      const rows = db.query("SELECT search_text, entry_json FROM entries WHERE entry_type = ?").all("secret") as Row[];
+      const rows = db
+        .prepare("SELECT search_text, entry_json FROM entries WHERE entry_type = ?")
+        .all("secret") as Row[];
       expect(rows.length).toBe(1);
       expect(rows[0].search_text ?? "").not.toContain(SECRET_VALUE);
       expect(rows[0].entry_json).not.toContain(SECRET_VALUE);
@@ -89,7 +91,7 @@ describe("secret indexer safety", () => {
       // 4. CRITICAL: the value cannot be retrieved via FTS5 search.
       type FtsRow = { c: number };
       const ftsHit = db
-        .query("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
+        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
         .get("correct") as FtsRow;
       expect(ftsHit.c).toBe(0);
     } finally {
@@ -106,7 +108,7 @@ describe("secret indexer safety", () => {
     try {
       type FtsRow = { c: number };
       const byName = db
-        .query("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
+        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
         .get("stripe") as FtsRow;
       expect(byName.c).toBe(1);
     } finally {

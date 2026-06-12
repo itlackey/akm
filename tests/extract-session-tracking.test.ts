@@ -5,9 +5,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { akmExtract } from "../src/commands/extract";
-import type { AkmConfig } from "../src/core/config";
+import { akmExtract } from "../src/commands/improve/extract";
+import type { AkmConfig } from "../src/core/config/config";
 import {
   getExtractedSession,
   getExtractedSessionsMap,
@@ -21,14 +20,10 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../src/integrations/session-logs/types";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
-const savedEnv: Record<string, string | undefined> = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-};
+let storage: IsolatedAkmStorage;
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
@@ -40,15 +35,10 @@ function makeStashDir(): string {
   return stash;
 }
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-extract-track-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-extract-track-config-");
-  process.env.XDG_DATA_HOME = makeTempDir("akm-extract-track-data-");
+  storage = withIsolatedAkmStorage();
 });
 afterEach(() => {
-  for (const [k, v] of Object.entries(savedEnv)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
+  storage.cleanup();
   for (const d of tempDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -62,7 +52,9 @@ function configEnabled(stashDir: string): AkmConfig {
       llm: {
         default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test", supportsJsonSchema: true },
       },
-      improve: { default: { processes: { extract: { enabled: true } } } },
+      // #561 — disable session indexing so chat-call assertions count only the
+      // distillation call (session indexing has dedicated coverage elsewhere).
+      improve: { default: { processes: { extract: { enabled: true, indexSessions: false } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;

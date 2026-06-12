@@ -1,8 +1,8 @@
 # Concepts
 
 `akm` is a package manager for AI agent capabilities. It organizes scripts,
-skills, commands, agents, knowledge documents, vaults, workflows, wikis, and
-memories into a searchable library that any AI coding assistant can use.
+skills, commands, agents, knowledge documents, env files, secrets, workflows,
+wikis, and memories into a searchable library that any AI coding assistant can use.
 
 ## Mental Model
 
@@ -33,8 +33,8 @@ The user never picks the kind. `akm add` infers it from the input shape.
    about yet. The official registry ships by default; add third-party
    registries with `akm registry add`.
 3. **Assets** are the individual capabilities an agent discovers and uses:
-   scripts, skills, commands, agents, knowledge documents, vaults,
-   workflows, wikis, and memories.
+   scripts, skills, commands, agents, knowledge documents, env files,
+   secrets, workflows, wikis, and memories.
 
 Your **working stash** (`~/akm`) is created by `akm setup` — it's the
 primary directory for your personal, editable assets, and is registered as
@@ -66,8 +66,7 @@ directory name. A `.sh` file is a script whether it lives in `scripts/`,
 
 That said, using these directory names as an opt-in convention improves
 indexing confidence. Env files are the current exception: `.env` env assets are
-only discovered under `env/` paths (and the deprecated `vaults/` path until a
-stash migrates).
+only discovered under `env/` paths.
 
 ```text
 my-stash/
@@ -96,7 +95,7 @@ There are eleven asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
-| **env** | A `.env` file of related **configuration** for an app/service | Key names and comments, never values. Holds a group of related settings (URLs, flags, and any credentials it needs); values may or may not be sensitive but are always protected. Key names are intentionally discoverable — they appear in `env list`, search results, and agent context by design. Inject via `akm env run <ref> -- <cmd>` (the agent-safe path). (`vault` is the deprecated alias, removed in 0.9.0.) |
+| **env** | A `.env` file of related **configuration** for an app/service | Key names and comments, never values. Holds a group of related settings (URLs, flags, and any credentials it needs); values may or may not be sensitive but are always protected. Key names are intentionally discoverable — they appear in `env list`, search results, and agent context by design. Inject via `akm env run <ref> -- <cmd>` (the agent-safe path). |
 | **secret** | A single sensitive value for **authentication** (token, key, cert) | Name only — the entire file is the value and never appears in output. Use for one credential used on its own; for a group of related config use `env`. Access via `akm secret path` / `akm secret run` |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |

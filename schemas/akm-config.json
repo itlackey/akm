@@ -172,6 +172,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -198,14 +202,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -297,6 +312,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -323,14 +342,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -422,6 +452,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -448,14 +482,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -547,6 +592,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -573,14 +622,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -672,6 +732,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -698,14 +762,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -797,6 +872,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -823,14 +902,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -922,6 +1012,10 @@
                           "minLength": 1
                         }
                       },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -948,14 +1042,25 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
                       },
-                      "incrementalSince": {
-                        "type": "string",
-                        "minLength": 1
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -1470,6 +1575,26 @@
         }
       },
       "additionalProperties": false
+    },
+    "setup": {
+      "type": "object",
+      "properties": {
+        "taskSchedules": {
+          "type": "object",
+          "properties": {
+            "improve": {
+              "type": "string",
+              "minLength": 1
+            },
+            "index": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -1644,6 +1769,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1670,14 +1799,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -1769,6 +1909,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1795,14 +1939,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -1894,6 +2049,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -1920,14 +2079,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2019,6 +2189,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2045,14 +2219,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2144,6 +2329,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2170,14 +2359,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2269,6 +2469,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2295,14 +2499,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2394,6 +2609,10 @@
                               "minLength": 1
                             }
                           },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2420,14 +2639,25 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
                           },
-                          "incrementalSince": {
-                            "type": "string",
-                            "minLength": 1
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2942,6 +3172,26 @@
             }
           },
           "additionalProperties": false
+        },
+        "setup": {
+          "type": "object",
+          "properties": {
+            "taskSchedules": {
+              "type": "object",
+              "properties": {
+                "improve": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "index": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -3098,6 +3348,10 @@
             "minLength": 1
           }
         },
+        "minPoolSize": {
+          "type": "integer",
+          "minimum": 0
+        },
         "qualityGate": {
           "type": "object",
           "properties": {
@@ -3124,14 +3378,25 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "minContentChars": {
+          "type": "integer",
+          "minimum": 0
+        },
         "maxChunkSize": {
           "type": "integer",
           "minimum": 1,
           "maximum": 50
         },
-        "incrementalSince": {
-          "type": "string",
-          "minLength": 1
+        "minNewSessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indexSessions": {
+          "type": "boolean"
+        },
+        "minSessionDuration": {
+          "type": "number",
+          "minimum": 0
         },
         "applyMode": {
           "type": "string",
@@ -3233,6 +3498,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3259,14 +3528,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -3358,6 +3638,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3384,14 +3668,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -3483,6 +3778,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3509,14 +3808,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -3608,6 +3918,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3634,14 +3948,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -3733,6 +4058,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3759,14 +4088,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -3858,6 +4198,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -3884,14 +4228,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -3983,6 +4338,10 @@
                     "minLength": 1
                   }
                 },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -4009,14 +4368,25 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
                 },
-                "incrementalSince": {
-                  "type": "string",
-                  "minLength": 1
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
                 },
                 "applyMode": {
                   "type": "string",

@@ -16,9 +16,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
 import { getCacheDir } from "../core/paths";
-import { generateMetadataFlat, loadStashFile, type StashEntry } from "../indexer/metadata";
-import { walkStashFlat } from "../indexer/walker";
+import { generateMetadataFlat, loadStashFile, type StashEntry } from "../indexer/passes/metadata";
+import { walkStashFlat } from "../indexer/walk/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
+import { writeResponseToFile } from "../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../sources/include";
 import { detectStashRoot } from "../sources/providers/provider-utils";
 import { extractTarGzSecure } from "../sources/providers/tar-utils";
@@ -294,7 +295,7 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
     if (!response.ok) {
       throw new Error(`Failed to fetch archive (${response.status}) from ${url}`);
     }
-    await Bun.write(archivePath, response);
+    await writeResponseToFile(archivePath, response);
 
     // Reuse the secure extraction from registry-install which validates entries,
     // uses --no-same-owner, strips components, and runs a post-extraction scan.

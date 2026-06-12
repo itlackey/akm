@@ -16,9 +16,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmReflect } from "../../../src/commands/reflect";
+import { akmReflect } from "../../../src/commands/improve/reflect";
+import { listProposals } from "../../../src/commands/proposal/validators/proposals";
 import { readEvents } from "../../../src/core/events";
-import { listProposals } from "../../../src/core/proposals";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
 

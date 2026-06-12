@@ -16,10 +16,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmShowUnified } from "../../src/commands/show";
-import { parseAssetRef } from "../../src/core/asset-ref";
-import { resetConfigCache, saveConfig } from "../../src/core/config";
-import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
+import { akmShowUnified } from "../../src/commands/read/show";
+import { parseAssetRef } from "../../src/core/asset/asset-ref";
+import { resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
 import "../../src/sources/providers/index";
 import {
@@ -52,7 +52,7 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
     async fetch() {
       return new Response(JSON.stringify({ data: [{ embedding }] }), {
         status: 200,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Connection: "close" },
       });
     },
   });
@@ -169,7 +169,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
         closeDatabase(db);
       }
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 

@@ -49,7 +49,7 @@ describe("releaseLockIfOwned", () => {
   });
 });
 
-describe("lock release on process.exit (0.8.3 SIGTERM-leak regression, #improve.lock)", () => {
+describe("lock release on process.exit (SIGTERM-leak regression, #improve.lock)", () => {
   let dir: string;
   let cleanup: Cleanup;
   beforeEach(() => {

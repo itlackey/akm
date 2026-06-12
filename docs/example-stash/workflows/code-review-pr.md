@@ -175,10 +175,10 @@ thread.
    missed something important, signal that with `akm feedback`:
 
    ```sh
-   akm feedback {{ reviewer_persona }} --positive --note "Caught an
+   akm feedback {{ reviewer_persona }} --positive --reason "Caught an
    auth-bypass pattern I would have missed."
    # or
-   akm feedback {{ reviewer_persona }} --negative --note "Missed an
+   akm feedback {{ reviewer_persona }} --negative --reason "Missed an
    obvious test gap; rubric needs a coverage step."
    ```
 

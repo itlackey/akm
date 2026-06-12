@@ -15,7 +15,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
-import { akmInit, type InitResponse } from "../commands/init";
+import { akmInit, type InitResponse } from "../commands/sources/init";
+import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../commands/tasks/default-tasks";
+import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../commands/tasks/tasks";
 import { isHttpUrl } from "../core/common";
 import type {
   AkmConfig,
@@ -24,29 +26,43 @@ import type {
   OutputConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
-} from "../core/config";
+} from "../core/config/config";
 import {
   DEFAULT_CONFIG,
   getDefaultLlmConfig,
   getEffectiveRegistries,
   loadUserConfig,
   saveConfig,
-} from "../core/config";
-import { backupExistingConfig } from "../core/config-io";
-import { ConfigError } from "../core/errors";
+} from "../core/config/config";
+import { backupExistingConfig } from "../core/config/config-io";
+import { ConfigError, UsageError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
+import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db/db";
 import { akmIndex } from "../indexer/indexer";
 import {
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
-} from "../indexer/semantic-status";
+} from "../indexer/search/semantic-status";
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
+import { defaultProfileName, v1ProfilePlatform } from "../integrations/harnesses";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
-import { detectAgentPlatforms, detectLMStudio, detectOllama, type LMStudioDetectionResult } from "./detect";
+import { getDirname, spawn } from "../runtime";
+import { saveGitStash } from "../sources/providers/git";
+import { backendNameForPlatform } from "../tasks/backends";
+import { type EmbeddedTask, listEmbeddedTasks } from "../tasks/embedded";
+import { parseSchedule } from "../tasks/schedule";
+import {
+  type DetectedEnvironment,
+  detectAgentPlatforms,
+  detectEnvironment,
+  detectLMStudio,
+  detectOllama,
+  type LMStudioDetectionResult,
+  renderDetectionSummary,
+} from "./detect";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 import { loadSetupStashes } from "./registry-stash-loader";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
@@ -186,11 +202,28 @@ function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape | unde
   }
   const v2Profiles: NonNullable<AkmConfig["profiles"]>["agent"] = { ...(config.profiles?.agent ?? {}) };
   for (const [name, profile] of Object.entries(agent.profiles ?? {})) {
-    const platform: "opencode" | "claude" | "opencode-sdk" = profile.sdkMode
-      ? "opencode-sdk"
-      : name.toLowerCase().includes("claude")
-        ? "claude"
-        : "opencode";
+    // #566: resolve the platform via the harness registry instead of the old
+    // `name.includes("claude") ? "claude" : "opencode"` heuristic, which
+    // silently mapped Cursor/Copilot/any new harness to "opencode". An explicit
+    // sdkMode flag still wins; otherwise we ask the registry. A name the
+    // registry does not recognize is surfaced (warn) rather than silently
+    // misclassified, then kept as a best-effort "opencode" profile so the user
+    // does not lose a profile they explicitly configured.
+    let platform: "opencode" | "claude" | "opencode-sdk";
+    if (profile.sdkMode) {
+      platform = "opencode-sdk";
+    } else {
+      const resolved = v1ProfilePlatform(name) as "opencode" | "claude" | "opencode-sdk" | undefined;
+      if (resolved) {
+        platform = resolved;
+      } else {
+        warn(
+          `[akm setup] Agent profile "${name}" did not match any known harness; ` +
+            `defaulting its platform to "opencode". Set its platform explicitly in config if this is wrong.`,
+        );
+        platform = "opencode";
+      }
+    }
     v2Profiles[name] = {
       platform,
       ...(profile.bin ? { bin: profile.bin } : {}),
@@ -488,8 +521,8 @@ async function prepareSemanticSearchAssets(
       const spin = p.spinner();
       spin.start("Installing @huggingface/transformers...");
       try {
-        const pkgRoot = path.resolve(import.meta.dir, "../..");
-        const proc = Bun.spawn(["bun", "add", "@huggingface/transformers"], {
+        const pkgRoot = path.resolve(getDirname(import.meta.url), "../..");
+        const proc = spawn(["bun", "add", "@huggingface/transformers"], {
           cwd: pkgRoot,
           stdout: "pipe",
           stderr: "pipe",
@@ -1843,6 +1876,188 @@ export function stepAgentCliDetection(
 // ── Main Wizard ─────────────────────────────────────────────────────────────
 
 /**
+ * Normalise a task id the same way `akm tasks` does (strip a trailing `.yml`
+ * / `.md` suffix, trim) so the wizard can match embedded template ids against
+ * the ids reported by `akmTasksList()`.
+ */
+function normaliseTaskIdForMatch(raw: string): string {
+  return raw.trim().replace(/\.(yml|md)$/, "");
+}
+
+/**
+ * Interactive-only setup step: enable/disable embedded core tasks.
+ *
+ * Presents a multi-select of the bundled core task templates pre-checked
+ * against the user's currently-enabled tasks. On confirm:
+ *   - newly-checked & absent  → copy template (with edited schedule) into the
+ *     primary stash via `akmTasksAdd`, then `akmTasksSync`, then `akm sync`
+ *     (a no-op for non-git stashes).
+ *   - newly-checked & present-but-disabled → `akmTasksSetEnabled(id, true)`.
+ *   - previously-enabled & now unchecked    → `akmTasksSetEnabled(id, false)`
+ *     (keeps the stash file, removes the scheduler entry).
+ *   - unchanged → no action.
+ *
+ * Exported for testing. Not registered as `nonInteractive`, so `akm init` /
+ * `--yes` never reach it.
+ *
+ * The task primitives + git-sync helper are injected via `deps` (defaulting
+ * to the real implementations) so tests can supply fakes without
+ * `mock.module`-ing the shared `commands/tasks` / `sources/providers/git`
+ * modules — which would leak into unrelated test files (Bun's `mock.module`
+ * is process-global and not reverted by `mock.restore()`).
+ */
+/**
+ * Setup sub-step (issue #552): idempotently register the default improve task
+ * set. Asks a single "Is this a server install?" question (defaulting per
+ * platform) to decide whether the nightly sweep is enabled, then delegates to
+ * {@link registerDefaultTasks}, which is CI-aware and never duplicates an
+ * existing task. Skipped entirely under CI (the registration helper short-
+ * circuits, and we never even prompt).
+ *
+ * Exported for testing.
+ */
+export async function stepDefaultImproveTasks(
+  register: typeof registerDefaultTasks = registerDefaultTasks,
+): Promise<void> {
+  // CI: register nothing and don't prompt.
+  if (isCiEnvironment()) {
+    p.log.info("CI detected — skipping default improve task registration.");
+    return;
+  }
+
+  const platformDefault = detectServerDefault();
+  const serverInstall = await prompt(() =>
+    p.confirm({
+      message: "Is this a server install? (enables the nightly quality sweep at 2am)",
+      initialValue: platformDefault,
+    }),
+  );
+
+  const result = await register({ serverInstall: serverInstall === true });
+  if (result.skipped) return;
+  const total = result.created.length + result.existing.length;
+  p.log.success(
+    `Default improve tasks registered (${result.created.length} new, ${result.existing.length} already present, ${total} total).`,
+  );
+}
+
+export interface ScheduledTasksDeps {
+  list: typeof akmTasksList;
+  add: typeof akmTasksAdd;
+  setEnabled: typeof akmTasksSetEnabled;
+  sync: typeof akmTasksSync;
+  gitSync: typeof saveGitStash;
+}
+
+const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
+  list: akmTasksList,
+  add: akmTasksAdd,
+  setEnabled: akmTasksSetEnabled,
+  sync: akmTasksSync,
+  gitSync: saveGitStash,
+};
+
+export async function stepScheduledTasks(deps: ScheduledTasksDeps = DEFAULT_SCHEDULED_TASKS_DEPS): Promise<void> {
+  const embedded = listEmbeddedTasks();
+  if (embedded.length === 0) return;
+
+  // Snapshot current state so we can diff against the user's selection.
+  let installed: Awaited<ReturnType<typeof akmTasksList>>["tasks"] = [];
+  try {
+    installed = (await deps.list()).tasks;
+  } catch {
+    // A missing/empty tasks dir is fine — treat as nothing installed.
+    installed = [];
+  }
+  const byId = new Map<string, (typeof installed)[number]>();
+  for (const t of installed) byId.set(normaliseTaskIdForMatch(t.id), t);
+
+  // Pre-check tasks that are installed AND enabled.
+  const preChecked = embedded.filter((e) => byId.get(e.id)?.enabled === true).map((e) => e.id);
+
+  const stateLabel = (e: EmbeddedTask): string => {
+    const cur = byId.get(e.id);
+    if (!cur) return "not installed";
+    return cur.enabled ? "enabled" : "disabled";
+  };
+
+  const selected = await prompt(() =>
+    p.multiselect({
+      message: "Enable scheduled core tasks? (space to toggle, enter to confirm)",
+      required: false,
+      initialValues: preChecked,
+      options: embedded.map((e) => ({
+        value: e.id,
+        label: e.label,
+        hint: `${e.description} — ${e.schedule} [${stateLabel(e)}]`,
+      })),
+    }),
+  );
+
+  const selectedSet = new Set(selected as string[]);
+
+  // Resolve per-task schedule edits for newly-checked, not-yet-installed tasks.
+  const scheduleFor = new Map<string, string>();
+  for (const e of embedded) {
+    const cur = byId.get(e.id);
+    if (selectedSet.has(e.id) && !cur) {
+      const edited = await prompt(() =>
+        p.text({
+          message: `Schedule for ${e.label}?`,
+          initialValue: e.schedule,
+          validate(value) {
+            const candidate = (value ?? "").trim() || e.schedule;
+            try {
+              parseSchedule(candidate, backendNameForPlatform());
+            } catch (err) {
+              return err instanceof Error ? err.message : "Invalid schedule.";
+            }
+            return undefined;
+          },
+        }),
+      );
+      const sched = ((edited as string) ?? "").trim() || e.schedule;
+      scheduleFor.set(e.id, sched);
+    }
+  }
+
+  let syncNeeded = false;
+  for (const e of embedded) {
+    const cur = byId.get(e.id);
+    const checked = selectedSet.has(e.id);
+    if (checked && !cur) {
+      // New task: copy template into the primary stash + install scheduler entry.
+      const schedule = scheduleFor.get(e.id) ?? e.schedule;
+      await deps.add({
+        id: e.id,
+        schedule,
+        command: e.command,
+        description: e.description,
+      });
+      syncNeeded = true;
+    } else if (checked && cur && !cur.enabled) {
+      // Present but disabled → re-enable.
+      await deps.setEnabled(e.id, true);
+    } else if (!checked && cur?.enabled) {
+      // Previously enabled, now unchecked → disable (keep the stash file).
+      await deps.setEnabled(e.id, false);
+    }
+    // No state change → no action.
+  }
+
+  if (syncNeeded) {
+    // Reconcile scheduler entries with on-disk YAML, then commit the new file
+    // to git (a no-op for non-git stashes).
+    await deps.sync();
+    try {
+      deps.gitSync(undefined, "akm setup: enable scheduled tasks");
+    } catch {
+      // Non-fatal — the task is installed regardless of git sync outcome.
+    }
+  }
+}
+
+/**
  * Build the canonical list of `SetupStep`s for the interactive wizard.
  * Exposed (and exported) so tests and `akm init` can compose subsets.
  *
@@ -1854,6 +2069,7 @@ export function buildSetupSteps(options: {
   online: boolean;
   semanticSearchOutcome: { mode: "off" | "auto"; prepareAssets: boolean };
   preferredStashDir?: string;
+  detection?: DetectedEnvironment;
 }): {
   steps: SetupStep[];
   /** Latest semantic-search choice; populated by the semantic-search step. */
@@ -1865,8 +2081,9 @@ export function buildSetupSteps(options: {
   let ollamaEndpoint: string | undefined;
   let ollamaChatModels: string[] | undefined;
   let lmStudioResult: LMStudioDetectionResult | undefined;
-  // Harness configs detected once and shared with the LLM step.
-  const harnessConfigs = detectHarnessConfigs();
+  // Harness configs detected once and shared with the LLM step. Reuse the
+  // aggregate detection's harness configs when available so we detect once.
+  const harnessConfigs = options.detection?.harnessConfigs ?? detectHarnessConfigs();
 
   const steps: SetupStep[] = [
     {
@@ -1969,6 +2186,16 @@ export function buildSetupSteps(options: {
         ctx.apply({ output });
       },
     },
+    {
+      id: "scheduled-tasks",
+      label: "Scheduled Tasks",
+      // Interactive-only: `akm init` / `--yes` skip this step so headless
+      // runs never enable a scheduled task (see issue #512).
+      async run() {
+        await stepDefaultImproveTasks();
+        await stepScheduledTasks();
+      },
+    },
   ];
 
   return { steps, outcome };
@@ -2003,11 +2230,32 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
     );
   }
 
+  // Aggregate environment detection — run once before any prompt and surface
+  // a summary so the user sees what was auto-detected. NAMES only, never
+  // API key values.
+  const detection = await detectEnvironment({ existingStashDir: current.stashDir });
+  p.note(renderDetectionSummary(detection), "Detected environment");
+
+  // Interactive entry point for `--reset-recommended`: offer to apply the
+  // opinionated, detection-derived defaults and skip the step-by-step wizard.
+  const useRecommended = await prompt(() =>
+    p.confirm({
+      message: "Apply recommended defaults from the detected environment (merged into your existing config)?",
+      initialValue: false,
+    }),
+  );
+  if (useRecommended) {
+    const result = await runResetRecommended({ dir: opts?.dir, noInit: opts?.noInit });
+    p.outro(`Recommended configuration saved to ${result.configPath}`);
+    return;
+  }
+
   const ctx = createSetupContext(current, { nonInteractive: false });
   const { steps, outcome } = buildSetupSteps({
     online,
     semanticSearchOutcome: { mode: current.semanticSearchMode, prepareAssets: false },
     preferredStashDir: resolvedStashDir,
+    detection,
   });
 
   // Wrap each step with a `p.log.step()` header so the wizard UI is
@@ -2075,10 +2323,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 
   // Save config
   const cfgPath1 = getConfigPath();
-  if (fs.existsSync(cfgPath1)) {
-    backupExistingConfig(cfgPath1);
-    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
-  }
+  backupAndAnnounce(cfgPath1);
   saveConfig(newConfig);
 
   if (semanticSearchMode.mode === "off") {
@@ -2170,6 +2415,20 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 // ── Non-interactive / scripting entry points ─────────────────────────────────
 
 /**
+ * Back up an existing config file and print the real, timestamped backup
+ * location (not a generic display string). On a fresh install where there is
+ * nothing to back up, print a "nothing to back up" notice instead.
+ */
+function backupAndAnnounce(configPath: string): void {
+  const result = backupExistingConfig(configPath);
+  if (result) {
+    p.log.info(`Config backed up to ${result.timestamped}`);
+  } else {
+    p.log.info("No existing config to back up.");
+  }
+}
+
+/**
  * Run setup in non-interactive mode, applying all defaults.
  * Safe to call from CI or scripts. Idempotent — re-running produces the same result.
  */
@@ -2202,20 +2461,46 @@ export async function runSetupWithDefaults(opts: {
   // Ensure stashDir is set
   if (!ctx.config.stashDir) ctx.apply({ stashDir });
 
+  // Aggregate environment detection — apply detected values directly.
+  const env = await detectEnvironment({ existingStashDir: ctx.config.stashDir });
+
+  // Apply a detected LLM (live local server) when the config has none yet.
+  if (!getDefaultLlmConfig(ctx.config)) {
+    const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);
+    if (liveLocal?.defaultModel) {
+      const llm: LlmConnectionConfig = {
+        provider: "local",
+        endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1`,
+        model: liveLocal.defaultModel,
+      };
+      // A required field being unresolvable must fail loudly rather than write
+      // a broken config (--yes acceptance criterion).
+      if (!llm.endpoint?.trim() || !llm.model?.trim()) {
+        throw new UsageError(
+          "Detected a local LLM server but could not resolve a required field (endpoint/model). Re-run `akm setup` interactively.",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      ctx.apply(applyLegacyLlm(ctx.config, llm));
+    }
+  }
+
   // Auto-detect agent CLI if not already configured
   if (!ctx.config.defaults?.agent) {
-    const detected = detectAgentCliProfiles(undefined);
-    const defaultProfile = pickDefaultAgentProfile(detected, undefined);
+    let defaultProfile: string | undefined;
+    if (env.harness !== "none") {
+      defaultProfile = env.harness;
+    } else {
+      const detected = detectAgentCliProfiles(undefined);
+      defaultProfile = pickDefaultAgentProfile(detected, undefined);
+    }
     if (defaultProfile) {
       ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
     }
   }
 
   const cfgPath2 = getConfigPath();
-  if (fs.existsSync(cfgPath2)) {
-    backupExistingConfig(cfgPath2);
-    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
-  }
+  backupAndAnnounce(cfgPath2);
   saveConfig(ctx.config);
 
   return {
@@ -2229,6 +2514,161 @@ export async function runSetupWithDefaults(opts: {
 }
 
 /**
+ * Recursively merge `incoming` into `base`: plain objects merge key-by-key,
+ * while arrays and scalars replace wholesale. A partial input therefore only
+ * updates the keys it carries and never drops sibling subkeys (e.g. a file
+ * containing `{ output: { format: "text" } }` leaves `output.detail` intact).
+ *
+ * `base` is treated as immutable — a fresh object graph is returned.
+ */
+function deepMergeConfig<T>(base: T, incoming: unknown): T {
+  if (!isPlainObject(incoming)) return incoming as T;
+  const baseObj = isPlainObject(base) ? (base as Record<string, unknown>) : {};
+  const out: Record<string, unknown> = { ...baseObj };
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value === undefined) continue;
+    if (isPlainObject(value) && isPlainObject(baseObj[key])) {
+      out[key] = deepMergeConfig(baseObj[key], value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as T;
+}
+
+/** True for non-null, non-array plain objects. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Run ONLY environment detection and return the typed result. Performs no
+ * config writes and shows no prompts. Backs `akm setup --detect-only`.
+ *
+ * SAFETY: The returned object carries env var NAMES only — never any API key
+ * value.
+ */
+export async function runDetectOnly(): Promise<DetectedEnvironment> {
+  const current = loadUserConfig();
+  return detectEnvironment({ existingStashDir: current.stashDir });
+}
+
+/**
+ * Derive opinionated defaults from a detection result.
+ *
+ * - Best harness → agent default (when a profile maps to it).
+ * - Fastest live local model, else the first detected cloud key's provider.
+ * - `nomic-embed-text` embeddings when a local LLM is live.
+ * - improve task `0 2 * * *`, index task `0 4 * * *`.
+ *
+ * Returns a partial `AkmConfig`-shaped object plus a legacy `llm` block, ready
+ * to merge. Never includes an API key value.
+ */
+export function deriveRecommendedConfig(env: DetectedEnvironment): {
+  llm?: LlmConnectionConfig;
+  embedding?: EmbeddingConnectionConfig;
+  agentDefault?: string;
+  taskSchedules?: { improve?: string; index?: string };
+} {
+  const result: ReturnType<typeof deriveRecommendedConfig> = {};
+
+  // Best harness → agent default. #566: derive the default profile name from
+  // the harness registry instead of a hardcoded if-chain, so a newly added
+  // dispatch-capable harness gets a usable headless default (its canonical id)
+  // automatically. "none" / unknown ids resolve to undefined (no default).
+  const agentDefault = defaultProfileName(env.harness);
+  if (agentDefault) result.agentDefault = agentDefault;
+
+  // LLM: prefer a live local server, else a detected cloud provider key.
+  const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);
+  if (liveLocal?.defaultModel) {
+    result.llm = {
+      provider: "local",
+      endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1`,
+      model: liveLocal.defaultModel,
+    };
+    // Local LLM live → use a local embedding model.
+    result.embedding = { provider: "ollama", model: "nomic-embed-text", endpoint: `${liveLocal.baseUrl}/v1` };
+  } else {
+    // Map a detected cloud API-key provider to an llm endpoint. NAMES only —
+    // the value lives in the env var the user already set; we never read it.
+    const cloud = env.providers.find((pr) => pr.kind === "apiKey");
+    if (cloud) {
+      const endpoint = cloudEndpointForProvider(cloud.provider);
+      const model = cloudDefaultModelForProvider(cloud.provider);
+      if (endpoint && model) {
+        result.llm = { provider: cloud.provider, endpoint, model };
+      }
+    }
+  }
+
+  result.taskSchedules = { improve: "0 2 * * *", index: "0 4 * * *" };
+
+  return result;
+}
+
+function cloudEndpointForProvider(provider: string): string | undefined {
+  switch (provider) {
+    case "anthropic":
+      return "https://api.anthropic.com/v1";
+    case "openai":
+      return "https://api.openai.com/v1";
+    case "gemini":
+      return "https://generativelanguage.googleapis.com/v1beta/openai";
+    case "groq":
+      return "https://api.groq.com/openai/v1";
+    default:
+      return undefined;
+  }
+}
+
+function cloudDefaultModelForProvider(provider: string): string | undefined {
+  switch (provider) {
+    case "anthropic":
+      return "claude-sonnet-4-5";
+    case "openai":
+      return "gpt-4o-mini";
+    case "gemini":
+      return "gemini-1.5-flash";
+    case "groq":
+      return "llama-3.3-70b-versatile";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * `akm setup --reset-recommended`: merge opinionated, detection-derived
+ * defaults into the existing config WITHOUT removing pre-existing custom keys.
+ * Uses the same merge path as {@link runSetupFromConfig} so custom keys survive
+ * (follows #511 semantics).
+ */
+export async function runResetRecommended(opts: {
+  dir?: string;
+  noInit?: boolean;
+  probe?: boolean;
+}): Promise<SetupSummary> {
+  const current = loadUserConfig();
+  const env = await detectEnvironment({ existingStashDir: current.stashDir });
+  const recommended = deriveRecommendedConfig(env);
+
+  const incoming: Partial<AkmConfig> & { llm?: LlmConnectionConfig; agent?: LegacyAgentBlockShape } = {};
+  if (recommended.llm) incoming.llm = recommended.llm;
+  if (recommended.embedding) incoming.embedding = recommended.embedding;
+  if (recommended.agentDefault) incoming.agent = { default: recommended.agentDefault };
+  if (recommended.taskSchedules) {
+    (incoming as Record<string, unknown>).setup = { taskSchedules: recommended.taskSchedules };
+  }
+
+  return runSetupFromConfig({
+    configJson: JSON.stringify(incoming),
+    dir: opts.dir,
+    noInit: opts.noInit,
+    probe: opts.probe,
+  });
+}
+
+/**
  * Apply a JSON config blob non-interactively, merging it with the current config.
  * Validates required sub-fields and strips unknown/restricted keys.
  */
@@ -2237,6 +2677,12 @@ export async function runSetupFromConfig(opts: {
   dir?: string;
   noInit?: boolean;
   probe?: boolean;
+  /**
+   * When true (`--yes --file`), fill any keys still missing after the deep
+   * merge with non-interactive defaults — without overwriting values the file
+   * or existing config already supplied.
+   */
+  applyDefaults?: boolean;
 }): Promise<SetupSummary> {
   // Phase 1: Parse JSON
   type IncomingShape = Partial<AkmConfig> & {
@@ -2260,6 +2706,7 @@ export async function runSetupFromConfig(opts: {
     "output",
     "profiles",
     "defaults",
+    "setup",
   ]);
   for (const key of Object.keys(incoming)) {
     if (!ALLOWED_KEYS.has(key)) {
@@ -2292,11 +2739,15 @@ export async function runSetupFromConfig(opts: {
   applyStashIsolationToEnv(stashDir, stashDirExplicit);
 
   let merged: AkmConfig = { ...current, stashDir };
-  // Apply non-llm/agent keys directly.
-  const mergedRec = merged as unknown as Record<string, unknown>;
+  // Deep-merge non-llm/agent keys: nested objects merge key-by-key so a
+  // partial `--file` only updates the keys it carries and never drops sibling
+  // subkeys (e.g. output.detail survives an output.format-only file). Arrays
+  // and scalars replace wholesale.
   for (const key of Object.keys(incoming)) {
     if (key === "llm" || key === "agent") continue;
-    mergedRec[key] = (incoming as Record<string, unknown>)[key];
+    const incomingVal = (incoming as Record<string, unknown>)[key];
+    const mergedRec = merged as unknown as Record<string, unknown>;
+    mergedRec[key] = deepMergeConfig(mergedRec[key], incomingVal);
   }
   // Translate legacy llm/agent inputs into the new shape.
   if (incoming.llm) {
@@ -2304,6 +2755,29 @@ export async function runSetupFromConfig(opts: {
   }
   if (incoming.agent) {
     merged = { ...merged, ...applyLegacyAgent(merged, incoming.agent) };
+  }
+
+  // With `--yes`, fill keys still missing after the merge with non-interactive
+  // defaults. Steps start from `merged` and their nonInteractive path only
+  // populates absent values, so nothing the file or existing config supplied
+  // is overwritten.
+  if (opts.applyDefaults) {
+    const ctx = createSetupContext(merged, { nonInteractive: true });
+    const { steps } = buildSetupSteps({
+      online: false,
+      semanticSearchOutcome: { mode: merged.semanticSearchMode, prepareAssets: false },
+      preferredStashDir: stashDir,
+    });
+    await runSetupSteps(steps, ctx);
+    if (!ctx.config.stashDir) ctx.apply({ stashDir });
+    if (!ctx.config.defaults?.agent) {
+      const detected = detectAgentCliProfiles(undefined);
+      const defaultProfile = pickDefaultAgentProfile(detected, undefined);
+      if (defaultProfile) {
+        ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
+      }
+    }
+    merged = ctx.config;
   }
 
   // Bootstrap directory structure
@@ -2332,10 +2806,7 @@ export async function runSetupFromConfig(opts: {
   }
 
   const cfgPath3 = getConfigPath();
-  if (fs.existsSync(cfgPath3)) {
-    backupExistingConfig(cfgPath3);
-    p.log.info(`Config backed up to ~/.cache/akm/config-backups/`);
-  }
+  backupAndAnnounce(cfgPath3);
   saveConfig(merged);
 
   return {

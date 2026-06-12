@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { resetGraphBoostCache } from "../src/indexer/graph-boost";
+import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
@@ -150,6 +150,57 @@ describe("env run", () => {
     expect(stderr.trim()).toBe("");
   });
 
+  test("substitutes ${secret:NAME} tokens with the sibling secret value", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "secrets", "my_api_token"), "s3cr3t", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secret:my_api_token}\n", "utf8");
+
+    const { stdout, status } = spawnCli(["env", "run", "env:prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
+      AKM_STASH_DIR: stashDir,
+    });
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("Bearer s3cr3t");
+  });
+
+  test("substitutes multiple tokens embedded in a value and leaves ${HOME} untouched", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "secrets", "a"), "AAA", "utf8");
+    fs.writeFileSync(path.join(stashDir, "secrets", "b"), "BBB", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "PAIR=${secret:a}:${secret:b}\nKEEP=${HOME}\n", "utf8");
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env:prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$PAIR" "$KEEP"'],
+      { AKM_STASH_DIR: stashDir },
+    );
+
+    expect(status).toBe(0);
+    // PAIR fully substituted; KEEP left as the literal token (no secret named HOME).
+    expect(stdout.trim()).toBe("AAA:BBB|${HOME}");
+  });
+
+  test("exits non-zero and injects nothing when a referenced secret is missing", async () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secret:absent}\n", "utf8");
+
+    const { stdout, stderr, status } = await runCli(["env", "run", "env:prod", "--", "true"], {
+      AKM_STASH_DIR: stashDir,
+    });
+
+    expect(status).not.toBe(0);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain("secret:absent");
+    expect(parsed.error).toContain("env:prod");
+    // No value content leaked to stdout.
+    expect(stdout.trim()).toBe("");
+  });
+
   test("rejects the removed single-key `<ref>/KEY` form with a signpost to secrets", async () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
@@ -229,20 +280,17 @@ describe("env run", () => {
   });
 });
 
-describe("vault run (deprecated shim)", () => {
+describe("vault run (removed in 0.9.0)", () => {
   // KEPT AS A SUBPROCESS: child-process stdout boundary, same as env run.
-  test("warns to stderr and still injects the whole env file", () => {
+  test("the `akm vault` verb no longer exists", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=bar\nBAR=baz\n", "utf8");
 
-    const { stdout, stderr, status } = spawnCli(
-      ["vault", "run", "vault:prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'],
-      { AKM_STASH_DIR: stashDir },
-    );
+    const { status } = spawnCli(["vault", "run", "vault:prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'], {
+      AKM_STASH_DIR: stashDir,
+    });
 
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe("bar baz");
-    expect(stderr).toContain("deprecated");
+    expect(status).not.toBe(0);
   });
 });

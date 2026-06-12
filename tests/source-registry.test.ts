@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmListSources, akmRemove, akmUpdate } from "../src/commands/installed-stashes";
-import { loadConfig, saveConfig } from "../src/core/config";
+import { akmListSources, akmRemove, akmUpdate } from "../src/commands/sources/installed-stashes";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 import { createWiki } from "../src/wiki/wiki";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 

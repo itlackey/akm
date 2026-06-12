@@ -19,19 +19,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmImprove } from "../../../src/commands/improve";
+import { akmImprove } from "../../../src/commands/improve/improve";
 import type { DrainResult } from "../../../src/commands/proposal/drain";
-import type { AkmConfig } from "../../../src/core/config";
-import { saveConfig } from "../../../src/core/config";
+import type { AkmConfig } from "../../../src/core/config/config";
+import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
-import type { Cleanup } from "../../_helpers/sandbox";
-import {
-  sandboxStashDir,
-  sandboxXdgCacheHome,
-  sandboxXdgConfigHome,
-  sandboxXdgDataHome,
-  sandboxXdgStateHome,
-} from "../../_helpers/sandbox";
+import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
 
@@ -74,14 +67,9 @@ function emptyDrainResult(): DrainResult {
 }
 
 beforeEach(() => {
-  let chain: Cleanup = () => {};
-  chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxXdgConfigHome(chain).cleanup;
-  chain = sandboxXdgDataHome(chain).cleanup;
-  chain = sandboxXdgStateHome(chain).cleanup;
-  const stash = sandboxStashDir(chain);
-  stashDir = stash.dir;
-  cleanup = stash.cleanup;
+  const storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
+  cleanup = storage.cleanup;
   saveConfig({ semanticSearchMode: "off" });
 });
 

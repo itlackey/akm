@@ -6,7 +6,7 @@ import {
   EXTRACT_JSON_SCHEMA,
   type ExtractPayload,
   parseExtractPayload,
-} from "../src/commands/extract-prompt";
+} from "../src/commands/improve/extract-prompt";
 import type { SessionData } from "../src/integrations/session-logs/types";
 
 function sampleData(overrides: Partial<SessionData> = {}): SessionData {

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { buildTaskRunId, openLogsDatabase, queryTaskLogs, type TaskLogRow } from "../src/core/logs-db";
 import type { AgentRunResult } from "../src/integrations/agent";
 import { resolveAkmInvocation } from "../src/tasks/resolveAkmBin";
 import { exitCodeForStatus, readTaskHistory, runTask } from "../src/tasks/runner";
@@ -73,6 +74,16 @@ function writeTask(id: string, body: string): void {
   fs.writeFileSync(path.join(tasksDir, `${id}.yml`), body, "utf8");
 }
 
+/** Read this run's logs.db rows (the runner writes them via persistRunLog). */
+function readRunLogRows(taskId: string): TaskLogRow[] {
+  const db = openLogsDatabase();
+  try {
+    return queryTaskLogs(db, { taskId });
+  } finally {
+    db.close();
+  }
+}
+
 describe("runTask — workflow target", () => {
   test("dispatches to startWorkflowRun and writes log + history to state.db", async () => {
     writeTask("wf", ['schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
@@ -115,6 +126,45 @@ describe("runTask — workflow target", () => {
     expect(rows[0].id).toBe("wf");
     expect(rows[0].status).toBe("completed");
   });
+
+  // M4: mapWorkflowStatus is now an exhaustive switch over WorkflowRunStatus
+  // with an assertNever default (no silent `default: "completed"`). Lock in the
+  // exact output for every runtime status so the explicit mapping provably
+  // reproduces the previous behaviour for all known statuses.
+  const STATUS_CASES = [
+    { wf: "completed", expected: "completed" },
+    { wf: "blocked", expected: "blocked" },
+    { wf: "failed", expected: "failed" },
+    { wf: "active", expected: "active" },
+  ] as const;
+  for (const { wf, expected } of STATUS_CASES) {
+    test(`maps workflow run status "${wf}" → task status "${expected}"`, async () => {
+      writeTask("map", ['schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
+      const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => ({
+        run: {
+          id: "run-map",
+          workflowRef: ref,
+          workflowTitle: "Noop",
+          status: wf,
+          params,
+          createdAt: "2025-01-01T00:00:00Z",
+          updatedAt: "2025-01-01T00:00:00Z",
+          completedAt: null,
+          currentStepId: null,
+        },
+        workflow: { ref, title: "Noop", steps: [] },
+      });
+
+      const result = await runTask("map", {
+        stashDir,
+        logDir,
+        startWorkflowRunImpl: fakeWf as never,
+        now: () => new Date("2025-01-01T00:00:00Z"),
+      });
+
+      expect(result.status).toBe(expected);
+    });
+  }
 });
 
 describe("runTask — prompt target", () => {
@@ -151,6 +201,24 @@ describe("runTask — prompt target", () => {
     const rows = readTaskHistory({ id: "prompt" });
     expect(rows).toHaveLength(1);
     expect(rows[0].target).toEqual({ kind: "prompt", profile: "opencode" });
+
+    // #579: the same run is queryable from logs.db by task_id AND run_id,
+    // with the captured agent stdout stored as stream='stdout' rows.
+    const logRows = readRunLogRows("prompt");
+    expect(logRows.length).toBeGreaterThan(0);
+    const runId = buildTaskRunId("prompt", result.startedAt);
+    expect(logRows.every((row) => row.run_id === runId)).toBe(true);
+    const stdoutRows = logRows.filter((row) => row.stream === "stdout" && row.level === "info");
+    expect(stdoutRows.map((row) => row.line)).toContain("agent received: say hello");
+    // ...and no stray "--- agent stdout ---" file markers leak into the DB.
+    expect(logRows.some((row) => row.line.startsWith("---"))).toBe(false);
+
+    const db = openLogsDatabase();
+    try {
+      expect(queryTaskLogs(db, { runId })).toHaveLength(logRows.length);
+    } finally {
+      db.close();
+    }
   });
 
   test("agent failure surfaces as failed status with reason", async () => {
@@ -181,6 +249,13 @@ describe("runTask — prompt target", () => {
     expect(result.status).toBe("failed");
     expect(result.detail?.reason).toBe("non_zero_exit");
     expect(exitCodeForStatus(result.status)).toBe(1);
+
+    // #579: failure diagnostics land in logs.db with level='error', and the
+    // captured agent stderr is recorded as stream='stderr'.
+    const logRows = readRunLogRows("fail");
+    const errorRows = logRows.filter((row) => row.level === "error");
+    expect(errorRows.some((row) => row.line.includes("non_zero_exit"))).toBe(true);
+    expect(errorRows.filter((row) => row.stream === "stderr").map((row) => row.line)).toContain("boom");
   });
 });
 
@@ -201,6 +276,12 @@ describe("runTask — disabled tasks no-op", () => {
     expect(called).toBe(false);
     expect(result.status).toBe("disabled");
     expect(exitCodeForStatus(result.status)).toBe(0);
+
+    // #579: even a skipped run leaves a queryable trace in logs.db.
+    const logRows = readRunLogRows("off");
+    expect(logRows).toHaveLength(1);
+    expect(logRows[0].line).toContain("disabled");
+    expect(logRows[0].run_id).toBe(buildTaskRunId("off", result.startedAt));
   });
 });
 

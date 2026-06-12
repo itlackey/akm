@@ -13,10 +13,10 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/core/config";
-import { buildFileContext } from "../src/indexer/file-context";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
-import { wikiMatcher } from "../src/indexer/matchers";
+import { buildFileContext } from "../src/indexer/walk/file-context";
+import { wikiMatcher } from "../src/indexer/walk/matchers";
 import {
   buildIngestWorkflow,
   createWiki,
@@ -375,7 +375,7 @@ describe("wikiMatcher", () => {
     const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
     fs.mkdirSync(wikiDir, { recursive: true });
     const abs = writePage(wikiDir, "SKILL.md", "# not actually a skill\n");
-    const { runMatchers } = await import("../src/indexer/file-context");
+    const { runMatchers } = await import("../src/indexer/walk/file-context");
     const ctx = buildFileContext(stash, abs);
     const result = await runMatchers(ctx);
     expect(result?.type).toBe("wiki");
@@ -443,7 +443,7 @@ describe("stashRaw", () => {
     writeConfig(configDir, { semanticSearchMode: "off" });
 
     const server = http.createServer((_req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", Connection: "close" });
       res.end(
         "<html><head><title>Attention</title></head><body><h1>Attention</h1><p>Paper abstract.</p></body></html>",
       );

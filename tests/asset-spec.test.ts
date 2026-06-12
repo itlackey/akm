@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset-registry";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset/asset-registry";
 import {
   ASSET_SPECS,
   deregisterAssetType,
@@ -11,7 +11,7 @@ import {
   resolveAssetPathFromName,
   SCRIPT_EXTENSIONS,
   TYPE_DIRS,
-} from "../src/core/asset-spec";
+} from "../src/core/asset/asset-spec";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -40,11 +40,12 @@ describe("getAssetTypes", () => {
     expect(types).toContain("script");
     expect(types).toContain("memory");
     expect(types).toContain("env");
-    expect(types).toContain("vault");
     expect(types).toContain("secret");
     expect(types).toContain("wiki");
     expect(types).toContain("lesson");
     expect(types).toContain("task");
+    expect(types).toContain("session"); // #561
+    expect(types).not.toContain("vault");
     expect(types).toHaveLength(13);
   });
 });
@@ -58,8 +59,9 @@ describe("TYPE_DIRS", () => {
     expect(TYPE_DIRS.workflow).toBe("workflows");
     expect(TYPE_DIRS.script).toBe("scripts");
     expect(TYPE_DIRS.memory).toBe("memories");
-    expect(TYPE_DIRS.vault).toBe("vaults");
+    expect(TYPE_DIRS.env).toBe("env");
     expect(TYPE_DIRS.lesson).toBe("lessons");
+    expect(TYPE_DIRS.vault).toBeUndefined();
   });
 });
 
@@ -171,24 +173,24 @@ describe("deriveCanonicalAssetName", () => {
     expect(deriveCanonicalAssetName("script", root, file)).toBe("utils/cleanup.py");
   });
 
-  test("vault: top-level <name>.env → <name>", () => {
-    const root = "/stash/vaults";
-    expect(deriveCanonicalAssetName("vault", root, path.join(root, "prod.env"))).toBe("prod");
+  test("env: top-level <name>.env → <name>", () => {
+    const root = "/stash/env";
+    expect(deriveCanonicalAssetName("env", root, path.join(root, "prod.env"))).toBe("prod");
   });
 
-  test("vault: top-level `.env` → `default`", () => {
-    const root = "/stash/vaults";
-    expect(deriveCanonicalAssetName("vault", root, path.join(root, ".env"))).toBe("default");
+  test("env: top-level `.env` → `default`", () => {
+    const root = "/stash/env";
+    expect(deriveCanonicalAssetName("env", root, path.join(root, ".env"))).toBe("default");
   });
 
-  test("vault: nested <dir>/<name>.env → <dir>/<name>", () => {
-    const root = "/stash/vaults";
-    expect(deriveCanonicalAssetName("vault", root, path.join(root, "team", "prod.env"))).toBe("team/prod");
+  test("env: nested <dir>/<name>.env → <dir>/<name>", () => {
+    const root = "/stash/env";
+    expect(deriveCanonicalAssetName("env", root, path.join(root, "team", "prod.env"))).toBe("team/prod");
   });
 
-  test("vault: nested <dir>/.env → <dir>/default", () => {
-    const root = "/stash/vaults";
-    expect(deriveCanonicalAssetName("vault", root, path.join(root, "team", ".env"))).toBe("team/default");
+  test("env: nested <dir>/.env → <dir>/default", () => {
+    const root = "/stash/env";
+    expect(deriveCanonicalAssetName("env", root, path.join(root, "team", ".env"))).toBe("team/default");
   });
 });
 

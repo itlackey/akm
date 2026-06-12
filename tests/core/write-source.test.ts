@@ -5,12 +5,15 @@
  *
  *   - writable refusal (default-resolution + explicit `writable: false`)
  *   - plain filesystem write
- *   - git commit on success
- *   - git commit + push when `pushOnCommit` is set
- *   - git delete (commits the deletion)
+ *   - git write/delete leaves the file on disk with NO per-write commit (0.9.0)
+ *   - the single batch-at-boundary commit (issue #507) produces exactly one
+ *     complete commit + clean tree, pushes per the writable+remote+push gate,
+ *     and is a no-op for filesystem targets
+ *   - deprecated `pushOnCommit` maps onto the batch push gate
  *   - rejection of `writable: true` on website / npm at config load
  *   - rejection of unsupported `kind` reaching the helper
  *   - resolveWriteTarget precedence (explicit → defaultWriteTarget → stashDir)
+ *   - commit-message sanitization (issue #270) via the boundary commit
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -19,11 +22,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { SourceConfigEntry } from "../../src/core/config";
+import type { SourceConfigEntry } from "../../src/core/config/config";
 import { ConfigError, UsageError } from "../../src/core/errors";
 import {
   assertWritableAllowedForKind,
+  commitWriteTargetBoundary,
   deleteAssetFromSource,
+  formatRefForMessage,
+  type ResolvedWriteTarget,
   resolveWritable,
   resolveWriteTarget,
   sanitizeCommitMessage,
@@ -200,72 +206,154 @@ describe("writeAssetToSource — filesystem", () => {
   });
 });
 
-// ── writeAssetToSource — git ────────────────────────────────────────────────
+// ── writeAssetToSource — git (0.9.0 batch-at-boundary, issue #507) ───────────
 
-describe("writeAssetToSource — git", () => {
-  test("performs a git commit after writing", async () => {
+function gitTarget(workDir: string, opts?: { writable?: boolean; pushOnCommit?: boolean }): ResolvedWriteTarget {
+  const config: SourceConfigEntry = {
+    type: "git",
+    name: "team",
+    writable: opts?.writable ?? true,
+    ...(opts?.pushOnCommit !== undefined ? { options: { pushOnCommit: opts.pushOnCommit } } : {}),
+  };
+  return { source: { kind: "git", name: "team", path: workDir }, config };
+}
+
+describe("writeAssetToSource — git (no per-write commit)", () => {
+  test("git write leaves the file on disk with NO per-write commit", async () => {
     const { workDir } = initBareGitRepo();
-    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
-    const config: SourceConfigEntry = { type: "git", writable: true };
+    const target = gitTarget(workDir);
 
-    await writeAssetToSource(source, config, { type: "memory", name: "alpha" }, "body");
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "alpha" }, "body");
 
+    // The file is written...
+    expect(fs.existsSync(path.join(workDir, "memories", "alpha.md"))).toBe(true);
+    // ...but no commit ran: HEAD is still the seed, and the working tree is dirty.
+    const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim()).toBe("seed");
+    const status = spawnSync("git", ["-C", workDir, "status", "--porcelain"], { encoding: "utf8" });
+    expect(status.stdout.trim()).not.toBe("");
+  });
+
+  test("the boundary commit produces exactly one complete commit and a clean tree", async () => {
+    const { workDir } = initBareGitRepo();
+    const target = gitTarget(workDir);
+
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "alpha" }, "body");
+    commitWriteTargetBoundary(target, "Update memory:alpha");
+
+    // Exactly one new commit on top of the seed.
+    const count = spawnSync("git", ["-C", workDir, "rev-list", "--count", "HEAD"], { encoding: "utf8" });
+    expect(count.stdout.trim()).toBe("2");
     const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
     expect(log.stdout.trim()).toBe("Update memory:alpha");
-    // Working tree should be clean post-commit.
+    // No dirty residue: the boundary commit staged the asset (add -A).
     const status = spawnSync("git", ["-C", workDir, "status", "--porcelain"], { encoding: "utf8" });
     expect(status.stdout.trim()).toBe("");
   });
 
-  test("pushes when pushOnCommit option is set", async () => {
+  test("multiple writes collapse into ONE boundary commit (batch-at-boundary)", async () => {
+    const { workDir } = initBareGitRepo();
+    const target = gitTarget(workDir);
+
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "one" }, "a");
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "two" }, "b");
+    await deleteAssetFromSource(target.source, target.config, { type: "memory", name: "one" });
+    commitWriteTargetBoundary(target, "Batch update");
+
+    // Only one commit was produced for the whole batch.
+    const count = spawnSync("git", ["-C", workDir, "rev-list", "--count", "HEAD"], { encoding: "utf8" });
+    expect(count.stdout.trim()).toBe("2");
+    // The surviving asset is tracked; the deleted one is gone; tree is clean.
+    expect(fs.existsSync(path.join(workDir, "memories", "two.md"))).toBe(true);
+    expect(fs.existsSync(path.join(workDir, "memories", "one.md"))).toBe(false);
+    const status = spawnSync("git", ["-C", workDir, "status", "--porcelain"], { encoding: "utf8" });
+    expect(status.stdout.trim()).toBe("");
+  });
+
+  test("boundary commit pushes when target is writable with a remote", async () => {
     const { remoteDir, workDir } = initBareGitRepo();
-    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
-    const config: SourceConfigEntry = {
-      type: "git",
-      writable: true,
-      options: { pushOnCommit: true },
-    };
+    const target = gitTarget(workDir, { writable: true });
 
-    await writeAssetToSource(source, config, { type: "memory", name: "pushed" }, "body");
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "pushed" }, "body");
+    commitWriteTargetBoundary(target, "Update memory:pushed");
 
-    // Confirm the commit landed on the bare remote.
     const remoteLog = spawnSync("git", ["--git-dir", remoteDir, "log", "--format=%s", "-1", "main"], {
       encoding: "utf8",
     });
     expect(remoteLog.stdout.trim()).toBe("Update memory:pushed");
   });
 
-  test("does not push when pushOnCommit is absent", async () => {
+  test("boundary commit does not push when push is disabled", async () => {
     const { remoteDir, workDir } = initBareGitRepo();
-    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
-    const config: SourceConfigEntry = { type: "git", writable: true };
+    const target = gitTarget(workDir, { writable: true });
 
-    await writeAssetToSource(source, config, { type: "memory", name: "local-only" }, "body");
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "local-only" }, "body");
+    commitWriteTargetBoundary(target, "Update memory:local-only", { push: false });
+
+    // Commit landed locally...
+    const localLog = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(localLog.stdout.trim()).toBe("Update memory:local-only");
+    // ...but the remote still only has the seed commit.
+    const remoteLog = spawnSync("git", ["--git-dir", remoteDir, "log", "--format=%s", "-1", "main"], {
+      encoding: "utf8",
+    });
+    expect(remoteLog.stdout.trim()).toBe("seed");
+  });
+
+  test("deprecated pushOnCommit maps onto the batch push gate (still pushes)", async () => {
+    const { remoteDir, workDir } = initBareGitRepo();
+    const target = gitTarget(workDir, { writable: true, pushOnCommit: true });
+
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "legacy" }, "body");
+    commitWriteTargetBoundary(target, "Update memory:legacy");
 
     const remoteLog = spawnSync("git", ["--git-dir", remoteDir, "log", "--format=%s", "-1", "main"], {
       encoding: "utf8",
     });
-    // Remote still only has the seed commit.
-    expect(remoteLog.stdout.trim()).toBe("seed");
+    expect(remoteLog.stdout.trim()).toBe("Update memory:legacy");
+  });
+
+  test("commitWriteTargetBoundary is a no-op for filesystem targets", async () => {
+    const { workDir } = initBareGitRepo();
+    const fsTarget: ResolvedWriteTarget = {
+      source: { kind: "filesystem", name: "fs", path: workDir },
+      config: { type: "filesystem", name: "fs", writable: true },
+    };
+
+    await writeAssetToSource(fsTarget.source, fsTarget.config, { type: "memory", name: "x" }, "body");
+    commitWriteTargetBoundary(fsTarget, "should be ignored");
+
+    // No commit ran (HEAD still seed) even though workDir is a git repo —
+    // filesystem targets never commit at this boundary.
+    const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim()).toBe("seed");
   });
 });
 
 // ── deleteAssetFromSource ───────────────────────────────────────────────────
 
 describe("deleteAssetFromSource", () => {
-  test("removes the asset and commits the removal on git sources", async () => {
+  test("git delete removes the file with no per-write commit; boundary commits the removal", async () => {
     const { workDir } = initBareGitRepo();
-    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
-    const config: SourceConfigEntry = { type: "git", writable: true };
+    const target = gitTarget(workDir);
 
-    await writeAssetToSource(source, config, { type: "memory", name: "doomed" }, "body");
+    // Seed an asset and commit it as a boundary so we start from a clean tree.
+    await writeAssetToSource(target.source, target.config, { type: "memory", name: "doomed" }, "body");
+    commitWriteTargetBoundary(target, "Add memory:doomed");
     expect(fs.existsSync(path.join(workDir, "memories", "doomed.md"))).toBe(true);
 
-    await deleteAssetFromSource(source, config, { type: "memory", name: "doomed" });
+    // Delete leaves the file gone but does NOT commit on its own.
+    await deleteAssetFromSource(target.source, target.config, { type: "memory", name: "doomed" });
     expect(fs.existsSync(path.join(workDir, "memories", "doomed.md"))).toBe(false);
+    let log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim()).toBe("Add memory:doomed");
 
-    const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    // Boundary commits the removal as one commit; tree clean afterwards.
+    commitWriteTargetBoundary(target, "Remove memory:doomed");
+    log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
     expect(log.stdout.trim()).toBe("Remove memory:doomed");
+    const status = spawnSync("git", ["-C", workDir, "status", "--porcelain"], { encoding: "utf8" });
+    expect(status.stdout.trim()).toBe("");
   });
 
   test("filesystem delete is a plain unlink (no commit)", async () => {
@@ -447,16 +535,17 @@ describe("sanitizeCommitMessage", () => {
 
 // ── git commit message sanitization end-to-end (issue #270) ─────────────────
 
-describe("writeAssetToSource — commit message sanitization (issue #270)", () => {
+describe("commit message sanitization (issue #270, via boundary commit)", () => {
   test("ref.origin with embedded newline does not produce multi-line commit", async () => {
     const { workDir } = initBareGitRepo();
-    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
-    const config: SourceConfigEntry = { type: "git", writable: true };
+    const target = gitTarget(workDir);
 
     // Newline-laden origin: an attacker who controls a config entry could
     // otherwise smuggle trailers into the commit subject.
     const malignOrigin = "team\n\nCo-Authored-By: attacker <evil@example>";
-    await writeAssetToSource(source, config, { type: "memory", name: "alpha", origin: malignOrigin }, "body");
+    const ref = { type: "memory" as const, name: "alpha", origin: malignOrigin };
+    await writeAssetToSource(target.source, target.config, ref, "body");
+    commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
 
     const fullLog = spawnSync("git", ["-C", workDir, "log", "--format=%B%x00", "-1"], { encoding: "utf8" });
     // Trim the NUL terminator we used as a record separator. The remaining
@@ -472,13 +561,14 @@ describe("writeAssetToSource — commit message sanitization (issue #270)", () =
 
   test("ref.origin with NUL byte is sanitized (commit succeeds)", async () => {
     const { workDir } = initBareGitRepo();
-    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
-    const config: SourceConfigEntry = { type: "git", writable: true };
+    const target = gitTarget(workDir);
 
     // A NUL byte in argv would make git reject the commit outright. We strip
     // it so the commit succeeds with the rest of the origin intact.
     const malignOrigin = "team\x00hidden";
-    await writeAssetToSource(source, config, { type: "memory", name: "beta", origin: malignOrigin }, "body");
+    const ref = { type: "memory" as const, name: "beta", origin: malignOrigin };
+    await writeAssetToSource(target.source, target.config, ref, "body");
+    commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
 
     const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
     expect(log.stdout.includes("\x00")).toBe(false);

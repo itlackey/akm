@@ -145,12 +145,21 @@ describe("capture commands", () => {
     expect(json.error).toContain("Memory content is required");
   });
 
-  test("remember rejects names with parent-directory traversal", async () => {
+  test("remember rejects a `/` in --name (flat names only; traversal blocked)", async () => {
     const { result } = await runCli(["remember", "Sensitive note", "--name", "../../etc/passwd"]);
     expect(result.status).toBe(2);
 
+    // `--name` is a flat name now; any `/` (including traversal) is rejected
+    // and the user is pointed at `--path` for subdirectories.
     const json = JSON.parse(result.stderr) as { error: string };
-    expect(json.error).toContain("relative path without '.' or '..' segments");
+    expect(json.error).toContain("--path");
+  });
+
+  test("remember rejects parent-directory traversal in --path", async () => {
+    const { result } = await runCli(["remember", "Sensitive note", "--path", "../../etc", "--name", "passwd"]);
+    expect(result.status).toBe(2);
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("relative directory without '.' or '..' segments");
   });
 
   test("import stores a knowledge document using the source filename by default", async () => {

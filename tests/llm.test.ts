@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../src/core/config";
-import type { StashEntry } from "../src/indexer/metadata";
+import type { LlmConnectionConfig } from "../src/core/config/config";
+import type { StashEntry } from "../src/indexer/passes/metadata";
 import { enhanceMetadata } from "../src/llm/metadata-enhance";
 
 // These tests verify the LLM module's response parsing logic.
@@ -22,7 +22,7 @@ function createMockServer(
         }),
         {
           status: statusCode,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", Connection: "close" },
         },
       );
     },
@@ -34,7 +34,7 @@ function createErrorServer(statusCode: number, body = "error"): { url: string; s
   const server = Bun.serve({
     port: 0,
     fetch() {
-      return new Response(body, { status: statusCode });
+      return new Response(body, { status: statusCode, headers: { Connection: "close" } });
     },
   });
   return { url: `http://localhost:${server.port}`, server };
@@ -57,7 +57,7 @@ describe("enhanceMetadata", () => {
       expect(result.searchHints).toHaveLength(3);
       expect(result.tags).toContain("docker");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -72,7 +72,7 @@ describe("enhanceMetadata", () => {
       expect(result.description).toBe("test desc");
       expect(result.searchHints).toEqual(["do thing"]);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -84,7 +84,7 @@ describe("enhanceMetadata", () => {
       const result = await enhanceMetadata(config, entry);
       expect(result).toEqual({});
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -95,7 +95,7 @@ describe("enhanceMetadata", () => {
       const entry: StashEntry = { name: "test", type: "script" };
       await expect(enhanceMetadata(config, entry)).rejects.toThrow("LLM provider error (500)");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -119,7 +119,7 @@ describe("enhanceMetadata", () => {
         max_tokens: 256,
       });
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -135,7 +135,7 @@ describe("enhanceMetadata", () => {
       const result = await enhanceMetadata(config, entry);
       expect(result.searchHints?.length).toBeLessThanOrEqual(8);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -153,7 +153,7 @@ describe("enhanceMetadata", () => {
       expect(result.searchHints).toEqual(["valid", "also valid"]);
       expect(result.tags).toEqual(["good", "fine"]);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 });

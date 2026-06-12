@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeShowArgv } from "../../src/commands/show";
+import { normalizeShowArgv } from "../../src/commands/read/show";
 
 // Regression: normalizeShowArgv splits global flags from positional view-mode
 // args and rebuilds argv. The global-flag allowlist must preserve the 0.8
@@ -33,10 +33,5 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
       "Auth",
       "--verbose",
     ]);
-  });
-
-  test("the deprecated --for-agent alias still survives too", () => {
-    const out = normalizeShowArgv([...base, "toc", "--for-agent"]);
-    expect(out).toContain("--for-agent");
   });
 });

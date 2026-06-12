@@ -92,9 +92,9 @@ import {
   expect as expectHappy,
   test as testHappy,
 } from "bun:test";
-import { akmDistill } from "../../../src/commands/distill";
-import type { AkmConfig } from "../../../src/core/config";
-import { listProposals } from "../../../src/core/proposals";
+import { akmDistill } from "../../../src/commands/improve/distill";
+import { listProposals } from "../../../src/commands/proposal/validators/proposals";
+import type { AkmConfig } from "../../../src/core/config/config";
 
 const happyTempDirs: string[] = [];
 

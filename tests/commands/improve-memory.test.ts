@@ -2,17 +2,17 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmDistillResult } from "../../src/commands/distill";
-import { akmImprove } from "../../src/commands/improve";
-import type { AkmReflectResult } from "../../src/commands/reflect";
-import { akmSearch } from "../../src/commands/search";
-import { saveConfig } from "../../src/core/config";
+import type { AkmDistillResult } from "../../src/commands/improve/distill";
+import { akmImprove } from "../../src/commands/improve/improve";
+import type { AkmReflectResult } from "../../src/commands/improve/reflect";
+import type { Proposal } from "../../src/commands/proposal/validators/proposals";
+import { akmSearch } from "../../src/commands/read/search";
+import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
-import type { Proposal } from "../../src/core/proposals";
 import { setQuiet } from "../../src/core/warn";
-import type { GraphExtractionResult } from "../../src/indexer/graph-extraction";
+import type { GraphExtractionResult } from "../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { MemoryInferenceResult } from "../../src/indexer/memory-inference";
+import type { MemoryInferenceResult } from "../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
 
 const tempDirs: string[] = [];
@@ -1131,7 +1131,7 @@ describe("akm improve memory cleanup", () => {
           proposalKind: "lesson",
         } satisfies AkmDistillResult;
       },
-      memoryInferenceFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
+      memoryInferenceFn: async ({ options }) => {
         inferredRefs.push([...(options?.candidateRefs ?? new Set<string>())].sort());
         return {
           considered: 1,
@@ -1141,7 +1141,9 @@ describe("akm improve memory cleanup", () => {
           skippedChildExists: 0,
           skippedAborted: 0,
           unaccounted: 0,
+          htmlErrorCount: 0,
           cacheHits: 0,
+          retryAttempts: 0,
         } satisfies MemoryInferenceResult;
       },
       graphExtractionFn: async () => {
@@ -1178,7 +1180,9 @@ describe("akm improve memory cleanup", () => {
       skippedChildExists: 0,
       skippedAborted: 0,
       unaccounted: 0,
+      htmlErrorCount: 0,
       cacheHits: 0,
+      retryAttempts: 0,
     });
     expect(result.graphExtraction?.written).toBe(true);
   });
@@ -1227,10 +1231,12 @@ describe("akm improve memory cleanup", () => {
           skippedChildExists: 0,
           skippedAborted: 0,
           unaccounted: 0,
+          htmlErrorCount: 0,
           cacheHits: 0,
+          retryAttempts: 0,
         } satisfies MemoryInferenceResult;
       },
-      graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
+      graphExtractionFn: async ({ options }) => {
         callOrder.push("graphExtraction");
         // Phase 1 perf fix: improve now passes candidatePaths filtered to refs
         // actually touched this run (here: memory:vpn). The set must include
@@ -1295,7 +1301,7 @@ describe("akm improve memory cleanup", () => {
           proposalRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
           proposalKind: "lesson",
         }),
-        graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, onProgress) => {
+        graphExtractionFn: async ({ onProgress }) => {
           onProgress?.({
             processed: 1,
             total: 3,
@@ -1388,7 +1394,9 @@ describe("akm improve memory cleanup", () => {
         skippedChildExists: 0,
         skippedAborted: 0,
         unaccounted: 0,
+        htmlErrorCount: 0,
         cacheHits: 0,
+        retryAttempts: 0,
       }),
       graphExtractionFn: async () => ({
         considered: 1,
@@ -1460,7 +1468,9 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           profiles: {
             llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
+            improve: {
+              default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
+            },
           },
           defaults: { llm: "default" },
         },
@@ -1483,7 +1493,9 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           profiles: {
             llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
+            improve: {
+              default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
+            },
           },
           defaults: { llm: "default" },
         },
@@ -1526,7 +1538,9 @@ describe("akm improve memory cleanup", () => {
         semanticSearchMode: "off",
         profiles: {
           llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: { default: { processes: { consolidate: { enabled: true }, extract: { enabled: false } } } },
+          improve: {
+            default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
+          },
         },
         defaults: { llm: "default" },
       },

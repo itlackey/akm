@@ -44,12 +44,12 @@ akm search "docker" --source both --detail full
 | `--detail` | `agent` gives `ref` + score without the full payload — use this from agents |
 
 The `ref` field (e.g. `script:deploy.sh`) is only present at `--detail full`
-or `--detail agent`. Pass that ref directly to `akm show`.
+or `--shape agent`. Pass that ref directly to `akm show`.
 
 **Example: find a deploy script**
 
 ```sh
-akm search "deploy" --type script --detail agent
+akm search "deploy" --type script --shape agent
 # → [{"type":"script","name":"deploy.sh","ref":"script:deploy.sh","score":0.87,...}]
 ```
 
@@ -94,7 +94,7 @@ akm show knowledge:api-guide lines 10 30
 ```
 
 The ref format is `type:name` (or `origin//type:name` for assets from a
-specific source). Get refs from `akm search --detail agent` or `akm curate`.
+specific source). Get refs from `akm search --shape agent` or `akm curate`.
 
 **Example: curate assets before starting a task, then load the best one**
 

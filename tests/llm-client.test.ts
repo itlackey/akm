@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import type { LlmConnectionConfig } from "../src/core/config";
+import type { LlmConnectionConfig } from "../src/core/config/config";
 import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse, redactErrorBody } from "../src/llm/client";
 
 // ── redactErrorBody ─────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ function createErrorServer(statusCode: number, body: string): { url: string; ser
   const server = Bun.serve({
     port: 0,
     fetch() {
-      return new Response(body, { status: statusCode });
+      return new Response(body, { status: statusCode, headers: { Connection: "close" } });
     },
   });
   return { url: `http://localhost:${server.port}`, server };
@@ -79,7 +79,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("sk-proj-LEAKYKEYABCDEF12345");
       expect(caught?.message).toContain("[REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -99,7 +99,7 @@ describe("chatCompletion error redaction", () => {
       // Status + URL prefix should remain; the body portion is truncated.
       expect((caught?.message ?? "").length).toBeLessThan(huge.length);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -117,7 +117,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("abcXYZsupersecret999");
       expect(caught?.message).toContain("Bearer [REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -209,6 +209,363 @@ describe("chatCompletion error redaction", () => {
       globalThis.fetch = originalFetch;
       jest.useRealTimers();
     }
+  });
+});
+
+// ── HTML / non-JSON response categorization (#497) ──────────────────────────
+
+function createResponseServer(
+  statusCode: number,
+  body: string,
+  contentType = "text/html",
+): { url: string; server: ReturnType<typeof Bun.serve> } {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(body, { status: statusCode, headers: { "Content-Type": contentType, Connection: "close" } });
+    },
+  });
+  return { url: `http://localhost:${server.port}`, server };
+}
+
+const LM_STUDIO_HTML =
+  '<!DOCTYPE html>\n<html lang="en"><head><title>LM Studio</title></head>' +
+  '<body><div id="app">Loading…</div></body></html>';
+
+describe("chatCompletion HTML response categorization", () => {
+  async function callExpectingError(config: LlmConnectionConfig): Promise<LlmCallError> {
+    let caught: unknown;
+    try {
+      await chatCompletion(config, [{ role: "user", content: "hi" }]);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(LlmCallError);
+    return caught as LlmCallError;
+  }
+
+  test("HTML 500 body produces provider_html_error (not provider_error)", async () => {
+    const { url, server } = createResponseServer(500, LM_STUDIO_HTML);
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_html_error");
+      expect(err.statusCode).toBe(500);
+      expect(err.message).toContain("(500)");
+      expect(err.message).toContain(url);
+      // Excerpt should be plain text (tags stripped).
+      expect(err.message).not.toContain("<html");
+      expect(err.message).toContain("LM Studio");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("HTML 502 body also produces provider_html_error", async () => {
+    const { url, server } = createResponseServer(502, LM_STUDIO_HTML);
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_html_error");
+      expect(err.statusCode).toBe(502);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("JSON 500 body still produces the generic provider_error path", async () => {
+    const { url, server } = createResponseServer(500, '{"error":"upstream exploded"}', "application/json");
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_error");
+      expect(err.statusCode).toBe(500);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("non-error HTML 200 (where JSON expected) surfaces provider_html_error, not a raw SyntaxError", async () => {
+    const { url, server } = createResponseServer(200, LM_STUDIO_HTML);
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("provider_html_error");
+      expect(err.statusCode).toBe(200);
+      expect(err.message).not.toContain("<html");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("malformed (non-HTML) JSON 200 still maps to parse_error", async () => {
+    const { url, server } = createResponseServer(200, "this is not json {", "application/json");
+    try {
+      const err = await callExpectingError({ endpoint: url, model: "test-model" });
+      expect(err.code).toBe("parse_error");
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+// ── chatCompletion single bounded retry ─────────────────────────────────────
+
+/**
+ * Build a `globalThis.fetch` stub that yields the queued responses/errors in
+ * order. Each entry is either a `Response` or a function producing one (so a
+ * thrown network error can be simulated). Tracks how many times it was called.
+ */
+function queuedFetch(entries: Array<Response | (() => Response | never)>): {
+  fetch: typeof fetch;
+  calls: () => number;
+} {
+  let i = 0;
+  const stub = (async () => {
+    const entry = entries[Math.min(i, entries.length - 1)];
+    i += 1;
+    return typeof entry === "function" ? entry() : entry;
+  }) as unknown as typeof fetch;
+  return { fetch: stub, calls: () => i };
+}
+
+function jsonOk(content: string): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Internal options shape — `sleep` is injected to keep the suite fast. */
+type RetryTestOptions = Parameters<typeof chatCompletion>[2] & { sleep?: (ms: number) => Promise<void> };
+
+const fastSleep = async () => {};
+
+describe("chatCompletion single bounded retry", () => {
+  const baseConfig: LlmConnectionConfig = {
+    endpoint: "http://localhost:0/v1/chat/completions",
+    model: "test-model",
+    timeoutMs: 5000,
+  };
+
+  test("500 then 200 returns the success body, fires onRetryAttempt once, does not throw", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([new Response("upstream boom", { status: 500 }), jsonOk("recovered")]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    try {
+      const out = await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+      expect(out).toBe("recovered");
+      expect(retries).toBe(1);
+      expect(calls()).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("500 then 500 throws the second provider_error and fires onRetryAttempt once", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([
+      new Response("first", { status: 500 }),
+      new Response("second", { status: 503 }),
+    ]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(caught).toBeInstanceOf(LlmCallError);
+    expect(caught?.code).toBe("provider_error");
+    // The thrown error is the SECOND failure (503), not the first (500).
+    expect(caught?.statusCode).toBe(503);
+    expect(retries).toBe(1);
+    expect(calls()).toBe(2);
+  });
+
+  test("4xx throws immediately with no retry and no callback", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([new Response("bad request", { status: 400 }), jsonOk("unreached")]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(caught?.code).toBe("provider_error");
+    expect(caught?.statusCode).toBe(400);
+    expect(retries).toBe(0);
+    expect(calls()).toBe(1);
+  });
+
+  test("429 rate_limited is not retried", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([new Response("slow down", { status: 429 }), jsonOk("unreached")]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(caught?.code).toBe("rate_limited");
+    expect(retries).toBe(0);
+    expect(calls()).toBe(1);
+  });
+
+  test("timeout is not retried", async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      // Mirror real fetch: reject with an AbortError once the timeout signal fires.
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      });
+    }) as typeof fetch;
+    let retries = 0;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion({ ...baseConfig, timeoutMs: 20 }, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(caught?.code).toBe("timeout");
+    expect(retries).toBe(0);
+    expect(calls).toBe(1);
+  });
+
+  test("ECONNRESET network_error is retried then succeeds", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([
+      () => {
+        throw new Error("read ECONNRESET");
+      },
+      jsonOk("recovered"),
+    ]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    try {
+      const out = await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+      expect(out).toBe("recovered");
+      expect(retries).toBe(1);
+      expect(calls()).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("context-overflow-classified 5xx is not retried", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([
+      new Response("the prompt exceeds the model context length", { status: 500 }),
+      jsonOk("unreached"),
+    ]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(caught?.code).toBe("provider_error");
+    expect(retries).toBe(0);
+    expect(calls()).toBe(1);
+  });
+
+  test("retry is skipped when the first attempt consumes >= 90% of timeoutMs", async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    // First attempt fails with a retryable 500 but only after burning ~95% of
+    // the budget, so the budget guard must suppress the retry.
+    globalThis.fetch = (async () => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 460));
+      return new Response("boom", { status: 500 });
+    }) as unknown as typeof fetch;
+    let retries = 0;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion({ ...baseConfig, timeoutMs: 500 }, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(caught?.code).toBe("provider_error");
+    expect(retries).toBe(0);
+    expect(calls).toBe(1);
+  });
+
+  test("backoff jitter stays within the 200-800ms window", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub } = queuedFetch([new Response("boom", { status: 500 }), jsonOk("recovered")]);
+    globalThis.fetch = stub;
+    let observedMs = -1;
+    try {
+      await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: async (ms: number) => {
+          observedMs = ms;
+        },
+      } as RetryTestOptions);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(observedMs).toBeGreaterThanOrEqual(200);
+    expect(observedMs).toBeLessThan(800);
   });
 });
 

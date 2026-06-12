@@ -19,8 +19,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmReflect } from "../../../src/commands/reflect";
-import { listProposals } from "../../../src/core/proposals";
+import { akmReflect } from "../../../src/commands/improve/reflect";
+import { listProposals } from "../../../src/commands/proposal/validators/proposals";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
 
@@ -164,10 +164,10 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(listProposals(stash).length).toBe(0);
   });
 
-  test("vault:* ref is rejected (.env files must never get YAML frontmatter)", async () => {
+  test("env:* ref is rejected (.env files must never get YAML frontmatter)", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "vault:default",
+      ref: "env:default",
       stashDir: stash,
       agentProfile: makeProfile(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
@@ -175,7 +175,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.reason).toBe("unsupported_type");
-    expect(result.error).toContain("vault");
+    expect(result.error).toContain("env");
   });
 
   test("task:* ref is rejected (YAML tasks are not markdown-shaped)", async () => {
@@ -403,7 +403,10 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "",
     ].join("\n");
 
-    // LLM tries to rename the skill in frontmatter (#26941510).
+    // LLM tries to rename the skill in frontmatter (#26941510). The body also
+    // carries a substantive edit — without one, restoring `name` would leave
+    // an empty diff and the #580 noise gate would suppress the proposal
+    // before the assertions below could inspect it.
     const llmBlob = [
       "---",
       "name: diagnostic-checklist",
@@ -412,6 +415,8 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "---",
       "",
       sourceBody,
+      "",
+      "A genuinely new troubleshooting paragraph added by the agent.",
     ].join("\n");
     const payload = JSON.stringify({ ref: "skill:openpalm-stack-diagnostics", content: llmBlob });
 
@@ -438,7 +443,18 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "\n",
     );
 
-    const llmBlob = ["---", "id: fabricated-by-llm", "description: doc", "---", "", LONG_SOURCE_BODY].join("\n");
+    // As above: include a substantive body edit so the restored-`id` proposal
+    // is not an empty diff (which the #580 noise gate would suppress).
+    const llmBlob = [
+      "---",
+      "id: fabricated-by-llm",
+      "description: doc",
+      "---",
+      "",
+      LONG_SOURCE_BODY,
+      "",
+      "A genuinely new paragraph added by the agent.",
+    ].join("\n");
     const payload = JSON.stringify({ ref: "knowledge:id-protected", content: llmBlob });
 
     const result = await akmReflect({

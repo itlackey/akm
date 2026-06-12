@@ -2,10 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { getWorkflowDbPath } from "../core/paths";
+import { type Database, openDatabase } from "../storage/database";
+import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 
 /**
  * workflow.db — Durable SQLite database for workflow run state.
@@ -49,8 +50,12 @@ export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = new Database(dbPath);
+  const db = openDatabase(dbPath);
   db.exec("PRAGMA journal_mode = WAL");
+  // #589: 30 s busy timeout, matching index.db / state.db. Without it the
+  // default is 0 ms, so any concurrent writer fails immediately with
+  // SQLITE_BUSY.
+  db.exec("PRAGMA busy_timeout = 30000");
   db.exec("PRAGMA foreign_keys = ON");
   ensureBaseSchema(db);
   runMigrations(db);
@@ -112,21 +117,12 @@ function ensureBaseSchema(db: Database): void {
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────
-
-/**
- * A single migration: a stable string `id` and idempotent SQL `up` script.
- *
- * Rules:
- *   - `id` is permanent and must never be reused.
- *   - `up` must be idempotent (use IF NOT EXISTS, etc.).
- *   - `up` must not DROP any table that holds durable data.
- *   - `up` must not RENAME or change the type of an existing column.
- *   - To add a column: use `ALTER TABLE … ADD COLUMN … DEFAULT …`.
- */
-interface Migration {
-  id: string;
-  up: string;
-}
+//
+// The runner itself (ensureMigrationsTable + runMigrations) lives in the shared
+// engine at src/storage/engines/sqlite-migrations.ts. This module owns its own
+// MIGRATIONS array plus the pre-versioning `bootstrap` hook, and delegates
+// application to that shared runner. The {@link Migration} interface is imported
+// from there.
 
 /**
  * All workflow.db migrations in application order. New migrations are
@@ -147,6 +143,39 @@ const MIGRATIONS: Migration[] = [
         ON workflow_runs(scope_key, workflow_ref, status);
     `,
   },
+  // ── Migration 002 — record agent harness + session identity ──────────────────
+  //
+  // Persists the agent harness identifier (e.g. "claude-code", "opencode") and
+  // the platform-native session id that owns each workflow run. This is the
+  // first concrete slice of #501 / #506: capturing *who* is driving a run so a
+  // future (separately-approved) monitor can correlate workflow runs with
+  // session activity. Both columns are nullable — runs started outside an agent
+  // harness, and all pre-existing runs, simply have NULL identity.
+  {
+    id: "002-add-agent-identity",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN agent_harness TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN agent_session_id TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id);
+    `,
+  },
+  // ── Migration 003 — check-in arming + per-step summary (#506) ────────────────
+  //
+  // Builds on the agent identity recorded by migration 002. Arms a file-signal
+  // check-in (a timestamp, NOT a background thread — see
+  // docs/technical/workflow-agent-checkin-adr.md) so a stalled run can be
+  // re-targeted with a `continue` directive, and adds a per-step `summary`
+  // column so step/workflow completion can capture and validate a required
+  // summary of work done. Both columns are nullable.
+  {
+    id: "003-checkin-and-step-summary",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN checkin_armed_at TEXT;
+      ALTER TABLE workflow_run_steps ADD COLUMN summary TEXT;
+    `,
+  },
 ];
 
 /**
@@ -156,23 +185,10 @@ const MIGRATIONS: Migration[] = [
 const SCOPE_KEY_MIGRATION_ID = "001-add-scope-key";
 
 /**
- * Create the migrations table if it does not exist. Called unconditionally on
- * every open so a fresh database bootstraps correctly.
- */
-function ensureMigrationsTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-}
-
-/**
  * Detect whether a column exists on a given table.
  */
 function hasColumn(db: Database, table: string, column: string): boolean {
-  const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+  const rows = db.prepare<{ name: string }>(`PRAGMA table_info(${table})`).all();
   return rows.some((r) => r.name === column);
 }
 
@@ -202,26 +218,13 @@ function bootstrapPreVersioningDb(db: Database): void {
 /**
  * Apply every pending migration in a single transaction per migration.
  *
- * Each migration is applied in its own transaction so a failure in migration N
- * does not roll back already-applied migrations 1..N-1. The migration row is
- * inserted AFTER the DDL succeeds — a crash mid-migration leaves no row and
- * the migration is retried on next open.
+ * Delegates to the shared SQLite migration engine, passing the
+ * `bootstrapPreVersioningDb` hook so databases created before this file gained
+ * migration tracking back-fill their scope_key row instead of re-running the
+ * ALTER.
  *
  * Called automatically by {@link openWorkflowDatabase}.
  */
 export function runMigrations(db: Database): void {
-  ensureMigrationsTable(db);
-  bootstrapPreVersioningDb(db);
-
-  const appliedRows = db.prepare("SELECT id FROM schema_migrations").all() as Array<{ id: string }>;
-  const applied = new Set(appliedRows.map((r) => r.id));
-
-  for (const migration of MIGRATIONS) {
-    if (applied.has(migration.id)) continue;
-
-    db.transaction(() => {
-      db.exec(migration.up);
-      db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
-    })();
-  }
+  runSqliteMigrations(db, MIGRATIONS, { bootstrap: bootstrapPreVersioningDb });
 }

@@ -18,7 +18,7 @@
  * why mutable accumulation is preferred over immutable returns.
  */
 
-import type { AkmConfig } from "../core/config";
+import type { AkmConfig } from "../core/config/config";
 
 /**
  * Context handed to each `SetupStep.run()`. Steps read the in-progress

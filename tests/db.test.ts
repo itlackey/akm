@@ -1,16 +1,20 @@
-import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   closeDatabase,
+  collectTagSetFromEntries,
   DB_VERSION,
   deleteEntriesByDir,
   getAllEntries,
+  getEmbeddableEntryCount,
   getEntriesByDir,
   getEntryById,
   getEntryCount,
+  getEntryFilePathById,
+  getEntryIdByFilePath,
+  getEntryRefRowsForStashRoot,
   getMeta,
   isVecAvailable,
   openDatabase,
@@ -21,8 +25,9 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
-} from "../src/indexer/db";
-import type { StashEntry } from "../src/indexer/metadata";
+} from "../src/indexer/db/db";
+import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { Database } from "../src/storage/database";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
@@ -296,6 +301,22 @@ describe("Entry CRUD", () => {
 
       const remaining = getAllEntries(db);
       expect(remaining[0].entryKey).toBe("keep-1");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  // Since the `vault` type was removed (0.9.0) every indexed entry is
+  // embeddable, so the embeddable count always equals the full entry count.
+  test("getEmbeddableEntryCount equals total entry count", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "asset-1", { type: "skill" });
+      insertTestEntry(db, "asset-2", { type: "command" });
+      insertTestEntry(db, "asset-3", { type: "script" });
+
+      expect(getEmbeddableEntryCount(db)).toBe(getEntryCount(db));
+      expect(getEmbeddableEntryCount(db)).toBe(3);
     } finally {
       closeDatabase(db);
     }
@@ -775,5 +796,169 @@ describe("rebuildFts incremental", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+});
+
+// ── collectTagSetFromEntries (WS5: lessons-coverage SQL moved out of cli.ts) ──
+//
+// Characterization test pinning the exact query results of the tag-collection
+// read that powers `akm lessons coverage`. The SQL + JSON-parse + tag
+// normalisation logic was lifted verbatim from cli.ts into indexer/db.ts so
+// the `entries` table SQL lives with all its siblings and cli.ts holds zero
+// raw SQL. These assertions capture the pre-move behaviour exactly.
+describe("collectTagSetFromEntries", () => {
+  function seedTagged(db: Database, key: string, type: StashEntry["type"], tags: unknown): number {
+    const entry = { description: `Description for ${key}`, type, tags } as unknown as StashEntry;
+    return upsertEntry(db, key, "/test/dir", `/test/dir/${key}.md`, "/test/stash", entry, key);
+  }
+
+  test("collects the union of all tags across all entries, normalised + deduped", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      seedTagged(db, "skill-a", "skill", ["Deploy", "networking"]);
+      seedTagged(db, "memory-b", "memory", ["AUTH", " deploy "]); // dup of deploy after trim/lower
+      seedTagged(db, "lesson-c", "lesson", ["deploy"]);
+
+      const all = collectTagSetFromEntries(db, undefined);
+      expect([...all].sort()).toEqual(["auth", "deploy", "networking"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("filters by entry_type when a type is provided", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      seedTagged(db, "skill-a", "skill", ["deploy", "networking"]);
+      seedTagged(db, "lesson-c", "lesson", ["deploy"]);
+
+      const lessonTags = collectTagSetFromEntries(db, "lesson");
+      expect([...lessonTags].sort()).toEqual(["deploy"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("skips entries with missing, non-array, or blank tags and malformed JSON", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      seedTagged(db, "no-tags", "skill", undefined);
+      seedTagged(db, "non-array", "skill", "deploy");
+      seedTagged(db, "blank", "skill", ["", "   "]);
+      seedTagged(db, "good", "skill", ["valid"]);
+      // Force malformed entry_json directly so the try/catch path is exercised.
+      db.prepare("UPDATE entries SET entry_json = ? WHERE entry_key = ?").run("{not json", "blank");
+
+      const tags = collectTagSetFromEntries(db, undefined);
+      expect([...tags].sort()).toEqual(["valid"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("returns an empty set when there are no entries", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      expect(collectTagSetFromEntries(db, undefined).size).toBe(0);
+      expect(collectTagSetFromEntries(db, "lesson").size).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── entries-by-path reads (WS5: command-code `entries` SQL moved into db.ts) ──
+//
+// Characterization tests pinning the exact query results of the three raw
+// `entries` reads lifted verbatim out of command code (commands/search.ts,
+// commands/feedback-cli.ts, commands/graph.ts) into indexer/db.ts so all SQL
+// touching the `entries` table lives in one module. These assertions capture
+// the pre-move behaviour exactly.
+describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / getEntryRefRowsForStashRoot)", () => {
+  function seedAt(db: Database, key: string, filePath: string, stashDir: string, type: StashEntry["type"]): number {
+    const entry = { description: `Description for ${key}`, type, name: key } as unknown as StashEntry;
+    return upsertEntry(db, key, path.dirname(filePath), filePath, stashDir, entry, key);
+  }
+
+  test("getEntryIdByFilePath resolves the row id by exact file_path, undefined when no match", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const id = seedAt(db, "skill-a", "/s/skill-a.md", "/s", "skill");
+      expect(getEntryIdByFilePath(db, "/s/skill-a.md")).toBe(id);
+      // Exact match only — a prefix or suffix must NOT resolve.
+      expect(getEntryIdByFilePath(db, "/s/skill-a")).toBeUndefined();
+      expect(getEntryIdByFilePath(db, "/s/skill-a.md.bak")).toBeUndefined();
+      expect(getEntryIdByFilePath(db, "/nope.md")).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEntryFilePathById returns the file_path by id, undefined when no match", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const id = seedAt(db, "lesson-x", "/s/lesson-x.md", "/s", "lesson");
+      expect(getEntryFilePathById(db, id)).toBe("/s/lesson-x.md");
+      expect(getEntryFilePathById(db, id + 9999)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEntryFilePathById still returns the path when entry_json is corrupt (no JSON parse)", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const id = seedAt(db, "broken", "/s/broken.md", "/s", "skill");
+      db.prepare("UPDATE entries SET entry_json = ? WHERE id = ?").run("{not json", id);
+      expect(getEntryFilePathById(db, id)).toBe("/s/broken.md");
+      // getEntryById, by contrast, drops the corrupt row — proving the new
+      // helper deliberately avoids JSON parsing to preserve feedback-cli's
+      // pre-extraction behaviour.
+      expect(getEntryById(db, id)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getEntryRefRowsForStashRoot matches by stash_dir OR file_path prefix; dedupe stays with caller", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      // Matches by exact stash_dir.
+      seedAt(db, "in-stash", "/elsewhere/in-stash.md", "/root", "skill");
+      // Matches by file_path prefix even though stash_dir differs.
+      seedAt(db, "by-prefix", "/root/sub/by-prefix.md", "/other", "memory");
+      // Should NOT match: different stash_dir and a non-prefix path.
+      seedAt(db, "outside", "/somewhere/outside.md", "/other", "lesson");
+
+      const rows = getEntryRefRowsForStashRoot(db, "/root");
+      const paths = rows.map((r) => r.file_path).sort();
+      expect(paths).toEqual(["/elsewhere/in-stash.md", "/root/sub/by-prefix.md"]);
+      // entry_json is returned raw (unparsed) for the caller to decode.
+      for (const r of rows) {
+        expect(typeof r.entry_json).toBe("string");
+        expect(() => JSON.parse(r.entry_json)).not.toThrow();
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("ref rows survive db.close() — result set fully materialised (WS5 lifetime rule)", () => {
+    const dbPath = tmpDbPath();
+    const db = openDatabase(dbPath);
+    seedAt(db, "a", "/root/a.md", "/root", "skill");
+    seedAt(db, "b", "/root/b.md", "/root", "memory");
+    const rows = getEntryRefRowsForStashRoot(db, "/root");
+    closeDatabase(db);
+    // Iterating after close must not throw / truncate — proves no live cursor.
+    expect(rows.map((r) => r.file_path).sort()).toEqual(["/root/a.md", "/root/b.md"]);
   });
 });

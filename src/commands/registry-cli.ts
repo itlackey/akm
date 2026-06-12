@@ -5,13 +5,13 @@
 import { defineCommand } from "citty";
 import { parsePositiveIntFlag } from "../cli/parse-args";
 import { output, runWithJsonErrors } from "../cli/shared";
-import type { RegistryConfigEntry } from "../core/config";
-import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config";
+import type { RegistryConfigEntry } from "../core/config/config";
+import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
 import { buildRegistryIndex, writeRegistryIndex } from "../registry/build-index";
-import { searchRegistry } from "./registry-search";
+import { searchRegistry } from "./read/registry-search";
 
 export const registryCommand = defineCommand({
   meta: { name: "registry", description: "Manage stash registries" },

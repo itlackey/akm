@@ -16,7 +16,7 @@
  * architecture spec §2.1.
  */
 
-import type { SourceSpec } from "../../core/config";
+import type { SourceSpec } from "../../core/config/config";
 
 export interface SyncOptions {
   /** Force a fresh fetch even when cached content is still valid. */

@@ -12,8 +12,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmConfig } from "../src/core/config";
-import { loadConfig, saveConfig } from "../src/core/config";
+import type { AkmConfig } from "../src/core/config/config";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 
 const tempDirs: string[] = [];
 let stashDir = "";

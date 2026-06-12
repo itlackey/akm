@@ -147,29 +147,6 @@ export function formatRegistryBuildIndexPlain(r: Record<string, unknown>): strin
   return `Wrote registry index ${version} (${total} kits) → ${outPath}`.replace(/\s+/g, " ").trim();
 }
 
-export function formatVaultListPlain(r: Record<string, unknown>): string {
-  // Multi-vault listing: { vaults: [{ ref, path, keys }, ...] }
-  const vaults = Array.isArray(r.vaults) ? (r.vaults as Array<Record<string, unknown>>) : [];
-  if (vaults.length === 0) {
-    return "No vaults. Create one with `akm vault create <name>` then `akm vault set vault:<name> KEY=VALUE`.";
-  }
-  const lines: string[] = [];
-  for (const v of vaults) {
-    const ref = String(v.ref ?? "?");
-    const keys = Array.isArray(v.keys) ? (v.keys as unknown[]).map(String) : [];
-    if (lines.length > 0) lines.push("");
-    lines.push(`## ${ref}`);
-    if (keys.length === 0) {
-      lines.push("- (no keys)");
-      continue;
-    }
-    for (const key of keys) {
-      lines.push(`- ${key}`);
-    }
-  }
-  return lines.join("\n");
-}
-
 export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
@@ -206,6 +183,20 @@ export function formatEnvRemovePlain(r: Record<string, unknown>): string {
   return removed ? `Removed env ${String(r.ref ?? "?")}` : `Env ${String(r.ref ?? "?")} was not present`;
 }
 
+export function formatEnvSetPlain(r: Record<string, unknown>): string {
+  return `Set ${String(r.key ?? "?")} in env ${String(r.ref ?? "?")} (value not displayed)`;
+}
+
+export function formatEnvUnsetPlain(r: Record<string, unknown>): string {
+  const removed = Array.isArray(r.removed) ? (r.removed as unknown[]).map(String) : [];
+  const missing = Array.isArray(r.missing) ? (r.missing as unknown[]).map(String) : [];
+  const ref = String(r.ref ?? "?");
+  const parts: string[] = [];
+  if (removed.length > 0) parts.push(`Removed ${removed.join(", ")} from env ${ref}`);
+  if (missing.length > 0) parts.push(`Not present in env ${ref}: ${missing.join(", ")}`);
+  return parts.join("\n") || `No keys changed in env ${ref}`;
+}
+
 export function formatWikiRegisterPlain(r: Record<string, unknown>): string {
   const name = String(r.name ?? r.wiki ?? "?");
   const ref = String(r.ref ?? r.path ?? r.url ?? "?");
@@ -219,6 +210,24 @@ export function formatWorkflowValidatePlain(r: Record<string, unknown>): string 
   const title = typeof r.title === "string" ? r.title : "";
   const stepCount = typeof r.stepCount === "number" ? r.stepCount : 0;
   return `workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`;
+}
+
+/**
+ * Plain-text rendering for a step-completion that was rejected by the
+ * summary-validation gate (#506): the step stays pending and the agent gets
+ * corrective feedback on what to finish/fix.
+ */
+export function formatWorkflowCompleteRejectedPlain(r: Record<string, unknown>): string {
+  const stepId = String(r.stepId ?? "?");
+  const feedback = typeof r.feedback === "string" ? r.feedback : "";
+  const missing = Array.isArray(r.missing) ? (r.missing as unknown[]).map((m) => String(m)) : [];
+  const lines = [`workflow complete: rejected — step "${stepId}" does not meet its completion criteria`];
+  if (feedback) lines.push(`  feedback: ${feedback}`);
+  if (missing.length > 0) {
+    lines.push("  outstanding:");
+    for (const m of missing) lines.push(`    - ${m}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatProposalProducerPlain(command: string, r: Record<string, unknown>): string {
@@ -240,6 +249,53 @@ export function formatProposalProducerPlain(command: string, r: Record<string, u
   return `${command}: queued proposal ${id} (${ref}) [${status}]`;
 }
 
+/**
+ * Render a one-line gate-decision summary for the proposal list / show surfaces
+ * (#577), e.g. `gate=deferred:below-threshold (0.72 < 0.90)`. Returns the empty
+ * string for a missing or malformed decision so legacy proposals render cleanly.
+ */
+export function formatGateDecisionSummary(raw: unknown): string {
+  if (typeof raw !== "object" || raw === null) return "";
+  const d = raw as Record<string, unknown>;
+  const outcome = typeof d.outcome === "string" ? d.outcome : undefined;
+  if (!outcome) return "";
+  const reason = typeof d.reason === "string" && d.reason.length > 0 ? `:${d.reason}` : "";
+  const cmp = formatGateThresholdComparison(d);
+  return `gate=${outcome}${reason}${cmp ? ` (${cmp})` : ""}`;
+}
+
+/**
+ * Reconstruct the threshold comparison the gate applied, when both sides are
+ * present (e.g. confidence 0.72 vs. autoAccept 0.90 → "0.72 < 0.90"). Returns
+ * the empty string when the decision lacks the operands.
+ */
+function formatGateThresholdComparison(d: Record<string, unknown>): string {
+  const thresholds = (typeof d.thresholds === "object" && d.thresholds !== null ? d.thresholds : {}) as Record<
+    string,
+    unknown
+  >;
+  const confidence = typeof d.confidence === "number" ? d.confidence : undefined;
+  const autoAccept = typeof thresholds.autoAccept === "number" ? thresholds.autoAccept : undefined;
+  if (confidence !== undefined && autoAccept !== undefined) {
+    const op = confidence >= autoAccept ? ">=" : "<";
+    return `${confidence.toFixed(2)} ${op} ${autoAccept.toFixed(2)}`;
+  }
+  // Drain bands: when the measured value is present, render the full comparison
+  // ("210 > 200" / "1 < 5"); otherwise fall back to the bound alone (#577).
+  const measured = typeof d.measured === "number" ? d.measured : undefined;
+  if (typeof thresholds.maxDiffLines === "number") {
+    return measured !== undefined
+      ? `${measured} > ${thresholds.maxDiffLines}`
+      : `maxDiffLines=${thresholds.maxDiffLines}`;
+  }
+  if (typeof thresholds.minContentLines === "number") {
+    return measured !== undefined
+      ? `${measured} < ${thresholds.minContentLines}`
+      : `minContentLines=${thresholds.minContentLines}`;
+  }
+  return "";
+}
+
 export function formatProposalListPlain(r: Record<string, unknown>): string {
   const proposals = Array.isArray(r.proposals) ? (r.proposals as Array<Record<string, unknown>>) : [];
   const total = typeof r.totalCount === "number" ? r.totalCount : proposals.length;
@@ -253,7 +309,11 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
     const status = String(p.status ?? "?");
     const source = String(p.source ?? "?");
     const created = String(p.createdAt ?? "?");
-    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}`);
+    // #577: surface the gate verdict inline so the queue explains itself
+    // ("deferred: below-threshold"). Legacy proposals carry no gateDecision.
+    const gate = formatGateDecisionSummary(p.gateDecision);
+    const gateSuffix = gate ? `  ${gate}` : "";
+    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}`);
   }
   return lines.join("\n").trimEnd();
 }
@@ -268,6 +328,21 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   if (p.sourceRun) lines.push(`sourceRun: ${String(p.sourceRun)}`);
   if (p.createdAt) lines.push(`createdAt: ${String(p.createdAt)}`);
   if (p.updatedAt) lines.push(`updatedAt: ${String(p.updatedAt)}`);
+  if (typeof p.confidence === "number") lines.push(`confidence: ${p.confidence.toFixed(2)}`);
+  // #577: gate decision (auto-accepted / deferred / auto-rejected + reason +
+  // thresholds). Absent on legacy proposals — render "unknown" so the field is
+  // always present and the operator never sees a silent gap.
+  const gate = p.gateDecision as Record<string, unknown> | undefined;
+  if (gate && typeof gate.outcome === "string") {
+    lines.push(`gate.decision: ${String(gate.outcome)}`);
+    lines.push(`gate.reason: ${gate.reason ? String(gate.reason) : "unknown"}`);
+    const cmp = formatGateThresholdComparison(gate);
+    if (cmp) lines.push(`gate.thresholds: ${cmp}`);
+    if (gate.gate) lines.push(`gate.by: ${String(gate.gate)}`);
+    if (gate.decidedAt) lines.push(`gate.decidedAt: ${String(gate.decidedAt)}`);
+  } else {
+    lines.push("gate.decision: unknown");
+  }
   const review = p.review as Record<string, unknown> | undefined;
   if (review) {
     lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);
@@ -276,12 +351,27 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {
-    const ok = validation.ok === true;
     const findings = Array.isArray(validation.findings) ? (validation.findings as Array<Record<string, unknown>>) : [];
+    // Partition findings by severity. `severity: "warn"` findings are
+    // non-blocking (the validator reports `ok: true` for a warn-only proposal),
+    // so they must read as advisory — a distinct icon/label from blocking errors.
+    const warnings = findings.filter((f) => f.severity === "warn");
+    const errors = findings.filter((f) => f.severity !== "warn");
     lines.push("");
-    lines.push(`validation: ${ok ? "ok" : `${findings.length} finding(s)`}`);
-    for (const f of findings) {
-      lines.push(`  - [${String(f.kind)}] ${String(f.message)}`);
+    if (errors.length > 0) {
+      const warnSuffix = warnings.length > 0 ? `, ${warnings.length} warning(s)` : "";
+      lines.push(`✗ invalid (${errors.length} error(s)${warnSuffix})`);
+    } else if (warnings.length > 0) {
+      lines.push(`✓ valid (${warnings.length} warning(s))`);
+    } else {
+      lines.push("✓ valid");
+    }
+    // Errors first (blocking), then warnings (advisory, non-blocking).
+    for (const f of errors) {
+      lines.push(`  ✗ error  [${String(f.kind)}] ${String(f.message)}`);
+    }
+    for (const f of warnings) {
+      lines.push(`  ⚠ warning  [${String(f.kind)}] ${String(f.message)} (non-blocking)`);
     }
   }
   const payload = p.payload as Record<string, unknown> | undefined;
@@ -1059,21 +1149,6 @@ export function formatWorkflowCreatePlain(r: Record<string, unknown>): string | 
     return `Created ${String(r.ref)} at ${String(r.path)}`;
   }
   return null;
-}
-
-export function formatVaultCreatePlain(r: Record<string, unknown>): string {
-  return `Created vault ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
-}
-
-export function formatVaultSetPlain(r: Record<string, unknown>): string {
-  return `Set ${String(r.key ?? "?")} in ${String(r.ref ?? "?")} (value not displayed)`;
-}
-
-export function formatVaultUnsetPlain(r: Record<string, unknown>): string {
-  const removed = r.removed === true;
-  return removed
-    ? `Removed ${String(r.key ?? "?")} from ${String(r.ref ?? "?")}`
-    : `Key ${String(r.key ?? "?")} was not present in ${String(r.ref ?? "?")}`;
 }
 
 export function formatWorkflowResumePlain(r: Record<string, unknown>): string {

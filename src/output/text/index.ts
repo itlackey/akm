@@ -3,6 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { formatIndexPlain } from "./helpers";
-import { registerTextFormatter } from "./registry";
+import type { TextFormatterEntry } from "./registry";
 
-registerTextFormatter("index", (r) => formatIndexPlain(r));
+export const indexFormatters: TextFormatterEntry[] = [{ command: "index", handler: (r) => formatIndexPlain(r) }];
