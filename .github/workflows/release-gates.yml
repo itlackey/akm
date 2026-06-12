@@ -75,6 +75,10 @@ jobs:
         run: bun run build
       - name: Node smoke test (runs the built CLI under node)
         run: bun run test:node-smoke
+      - name: Node compat parity tests (Bun vs Node feature parity)
+        run: bun run test:node-compat
+        env:
+          AKM_SMOKE_NODE: node
 
   semantic-search:
     runs-on: ubuntu-latest
