@@ -229,13 +229,30 @@ export type ProposalGateDecisionOutcome = "auto-accepted" | "deferred" | "auto-r
 export interface ProposalGateDecision {
   outcome: ProposalGateDecisionOutcome;
   /**
-   * Short machine-stable reason token, e.g. `mid-band`, `below-threshold`,
-   * `max-diff-lines`, `type-filter`, `possible-dup`, `empty-diff`,
-   * `no-judge-configured`. Chosen by the gate that recorded the decision.
+   * Short machine-stable reason token chosen by the gate that recorded the
+   * decision. The vocabulary actually persisted today:
+   *
+   *   - improve gate: `above-threshold`, `below-threshold`, `no-confidence`.
+   *   - drain/triage gate: `empty-diff`, `max-diff-lines`, `min-content-lines`,
+   *     `policy-accept`, `mid-band`, `possible-dup`, `no-judge-configured`,
+   *     `judgment-accept`, `judgment-reject`.
+   *
+   * The spec (#577) also names `type-filter` as an example token, but that is a
+   * *ref-level* improve pre-filter (`shouldSkipRef`) that runs before any
+   * proposal exists — there is no proposal to stamp at that point — so no gate
+   * path persists it. It is documented here only as a spec example.
    */
   reason: string;
   /** Computed confidence score in `[0, 1]`, when the gate had one. */
   confidence?: number;
+  /**
+   * The value the gate actually measured and compared against the threshold
+   * (drain gate). For the over-band defer this is the proposed content's line
+   * count, for the body-floor defer the non-empty body-line count — so a full
+   * comparison such as "210 > 200" stays reconstructable, not just the bound.
+   * The improve gate uses {@link confidence} as its measured value instead.
+   */
+  measured?: number;
   /**
    * The thresholds in effect when the decision was made, so a comparison such
    * as "72 < 90" stays reconstructable later. Sparse — a gate records only the

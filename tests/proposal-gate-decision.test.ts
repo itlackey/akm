@@ -189,6 +189,9 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     expect(decision?.reason).toBe("max-diff-lines");
     // 200 is the personal-stash consolidate band — reconstructable later.
     expect(decision?.thresholds?.maxDiffLines).toBe(200);
+    // The measured line count is persisted alongside the bound so the full
+    // "<measured> > 200" comparison stays reconstructable (#577 finding 4).
+    expect(decision?.measured).toBeGreaterThan(200);
   });
 
   test("deferred (no-judge-configured): defer-list source with no runner", async () => {
@@ -340,6 +343,23 @@ describe("proposal show / list expose the gate decision (#577)", () => {
       decidedAt: "2026-06-11T00:00:01.000Z",
     },
   };
+  // A drain over-band defer: the measured line count is persisted alongside the
+  // bound so the full "210 > 200" comparison renders (#577 finding 4).
+  const drainBand = {
+    id: "uuid-drain",
+    ref: "lesson:big",
+    status: "pending",
+    source: "consolidate",
+    createdAt: "2026-06-11T00:00:00.000Z",
+    gateDecision: {
+      outcome: "deferred",
+      reason: "max-diff-lines",
+      measured: 210,
+      thresholds: { maxDiffLines: 200 },
+      gate: "triage:personal-stash",
+      decidedAt: "2026-06-11T00:00:01.000Z",
+    },
+  };
   const legacy = {
     id: "uuid-legacy",
     ref: "lesson:old",
@@ -363,6 +383,19 @@ describe("proposal show / list expose the gate decision (#577)", () => {
     expect(out).toContain("gate.reason: below-threshold");
     expect(out).toContain("0.72 < 0.90");
     expect(out).toContain("gate.by: improve:reflect");
+  });
+
+  test("formatProposalShowPlain renders the full '210 > 200' comparison for a drain band defer", () => {
+    const out = formatProposalShowPlain({ proposal: drainBand });
+    expect(out).toContain("gate.decision: deferred");
+    expect(out).toContain("gate.reason: max-diff-lines");
+    expect(out).toContain("gate.thresholds: 210 > 200");
+    expect(out).toContain("gate.by: triage:personal-stash");
+  });
+
+  test("formatProposalListPlain surfaces the full drain comparison inline", () => {
+    const out = formatProposalListPlain({ totalCount: 1, proposals: [drainBand] });
+    expect(out).toContain("gate=deferred:max-diff-lines (210 > 200)");
   });
 
   test("formatProposalShowPlain renders 'unknown' for a legacy proposal with no decision", () => {

@@ -89,6 +89,13 @@ export type DrainDeferReason = "mid-band" | "possible-dup";
  */
 export interface DrainGateContext {
   reason: string;
+  /**
+   * The value this gate measured and compared against the threshold (the
+   * proposed content's line count for `max-diff-lines`, the non-empty body-line
+   * count for `min-content-lines`), so `akm proposal show` can render a full
+   * comparison like "210 > 200" rather than only the bound (#577).
+   */
+  measured?: number;
   thresholds?: { maxDiffLines?: number; minContentLines?: number };
 }
 
@@ -221,7 +228,7 @@ export function classifyProposal(
       return {
         verdict: "defer",
         reason: "mid-band",
-        gate: { reason: "max-diff-lines", thresholds: { maxDiffLines: effectiveMax } },
+        gate: { reason: "max-diff-lines", measured: lines, thresholds: { maxDiffLines: effectiveMax } },
       };
     }
     if (rule.minContentLines !== undefined && body < rule.minContentLines) {
@@ -229,7 +236,7 @@ export function classifyProposal(
       return {
         verdict: "defer",
         reason: "mid-band",
-        gate: { reason: "min-content-lines", thresholds: { minContentLines: rule.minContentLines } },
+        gate: { reason: "min-content-lines", measured: body, thresholds: { minContentLines: rule.minContentLines } },
       };
     }
     return { verdict: "accept", gate: { reason: "policy-accept" } };
@@ -582,6 +589,7 @@ export async function drainProposals(
     stampGateDecision(opts, proposal.id, {
       outcome,
       reason: decision.gate.reason,
+      ...(decision.gate.measured !== undefined ? { measured: decision.gate.measured } : {}),
       ...(decision.gate.thresholds ? { thresholds: decision.gate.thresholds } : {}),
       gate: gateLabel,
     });

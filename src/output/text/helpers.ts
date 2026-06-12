@@ -280,8 +280,19 @@ function formatGateThresholdComparison(d: Record<string, unknown>): string {
     const op = confidence >= autoAccept ? ">=" : "<";
     return `${confidence.toFixed(2)} ${op} ${autoAccept.toFixed(2)}`;
   }
-  if (typeof thresholds.maxDiffLines === "number") return `maxDiffLines=${thresholds.maxDiffLines}`;
-  if (typeof thresholds.minContentLines === "number") return `minContentLines=${thresholds.minContentLines}`;
+  // Drain bands: when the measured value is present, render the full comparison
+  // ("210 > 200" / "1 < 5"); otherwise fall back to the bound alone (#577).
+  const measured = typeof d.measured === "number" ? d.measured : undefined;
+  if (typeof thresholds.maxDiffLines === "number") {
+    return measured !== undefined
+      ? `${measured} > ${thresholds.maxDiffLines}`
+      : `maxDiffLines=${thresholds.maxDiffLines}`;
+  }
+  if (typeof thresholds.minContentLines === "number") {
+    return measured !== undefined
+      ? `${measured} < ${thresholds.minContentLines}`
+      : `minContentLines=${thresholds.minContentLines}`;
+  }
   return "";
 }
 
