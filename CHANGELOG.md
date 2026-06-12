@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`--format html` output with per-command templates** (#582). `akm health
+  --format html` renders the full interactive health report (ECharts inlined by
+  default, or via CDN with `AKM_ECHARTS=cdn`); every other command falls back to
+  a dark-mode default template that pretty-prints its JSON. A global `--output
+  <path>` flag writes the rendered HTML to a file instead of stdout. Token
+  replacement only — no template engine. The standalone health-report skill is
+  now folded into core.
+- **Per-stage LLM telemetry** (#576). Every `chatCompletion` call now records
+  tokens (prompt/completion/total/reasoning), wall-time, model, and
+  finish_reason as an `llm_usage` event, attributed to the pipeline stage via an
+  ambient `AsyncLocalStorage` context (`withLlmStage`) set once per phase — no
+  `stage` parameter threaded through call sites. `akm health` exposes per-stage
+  token and time aggregates. Telemetry is best-effort and can never fail a run;
+  capture is forward-only.
+- **Per-proposal gate decision + confidence** (#577). When a proposal passes
+  through the auto-accept/triage gate, its outcome (`auto-accepted` /
+  `deferred` / `auto-rejected`), reason, confidence, measured value, and the
+  thresholds in effect are persisted on the proposal (in the SQLite metadata).
+  `akm proposal show`/`list` surface them with reconstructable comparisons
+  (e.g. `0.72 < 0.90`), so tooling can explain *why* each proposal is pending
+  instead of relying on a run-level aggregate. Forward-only; legacy proposals
+  render `unknown`.
+
 ### Fixed
 
 - **`SQLITE_BUSY` / "database is locked" under concurrent runs** (#584, #585,
