@@ -51,7 +51,7 @@ function createErrorServer(statusCode: number, body: string): { url: string; ser
   const server = Bun.serve({
     port: 0,
     fetch() {
-      return new Response(body, { status: statusCode });
+      return new Response(body, { status: statusCode, headers: { Connection: "close" } });
     },
   });
   return { url: `http://localhost:${server.port}`, server };
@@ -79,7 +79,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("sk-proj-LEAKYKEYABCDEF12345");
       expect(caught?.message).toContain("[REDACTED]");
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 
@@ -99,7 +99,7 @@ describe("chatCompletion error redaction", () => {
       // Status + URL prefix should remain; the body portion is truncated.
       expect((caught?.message ?? "").length).toBeLessThan(huge.length);
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 
@@ -117,7 +117,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("abcXYZsupersecret999");
       expect(caught?.message).toContain("Bearer [REDACTED]");
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 

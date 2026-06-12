@@ -52,7 +52,7 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
     async fetch() {
       return new Response(JSON.stringify({ data: [{ embedding }] }), {
         status: 200,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Connection: "close" },
       });
     },
   });
@@ -169,7 +169,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
         closeDatabase(db);
       }
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 
