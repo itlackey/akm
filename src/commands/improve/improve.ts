@@ -1909,7 +1909,9 @@ async function runImprovePreparationStage(args: {
   // / `akm feedback` invocations. Replaces the akm-plugin session-checkpoint
   // hook with an on-demand pull pipeline.
   //
-  // Default-on; opt out via `profiles.improve.default.processes.extract.enabled: false`.
+  // Default-on; opt out via the ACTIVE profile's `processes.extract.enabled: false`
+  // (#593: the gate respects the resolved improve profile, not just the
+  // hardcoded `default` profile path the legacy feature flag reads).
   // Each available harness gets one call with the default --since window;
   // already-seen sessions (tracked in state.db.extract_sessions_seen) are
   // skipped automatically so re-runs don't burn LLM calls on unchanged data.
@@ -1944,7 +1946,13 @@ async function runImprovePreparationStage(args: {
   const configuredMinNewSessions = extractConfig.profiles?.improve?.default?.processes?.extract?.minNewSessions;
   const minNewSessions =
     typeof configuredMinNewSessions === "number" ? configuredMinNewSessions : EXTRACT_DEFAULT_MIN_NEW_SESSIONS;
-  if (isLlmFeatureEnabled(extractConfig, "session_extraction")) {
+  // #593: gate on BOTH the legacy feature flag (which only reads
+  // `profiles.improve.default.processes.extract.enabled` — kept for back-compat
+  // with users who disable extract via the default-profile path) AND the active
+  // resolved profile. Without the second check a non-default profile setting
+  // `extract.enabled: false` (e.g. the built-in `quick`) was silently ignored
+  // and extract ran on every improve call regardless.
+  if (isLlmFeatureEnabled(extractConfig, "session_extraction") && resolveProcessEnabled("extract", improveProfile)) {
     const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
     // The guard engages only when minNewSessions > 0; 0 disables it entirely.
     let belowMinNewSessions = false;
