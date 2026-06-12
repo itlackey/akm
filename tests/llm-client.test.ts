@@ -79,7 +79,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("sk-proj-LEAKYKEYABCDEF12345");
       expect(caught?.message).toContain("[REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -99,7 +99,7 @@ describe("chatCompletion error redaction", () => {
       // Status + URL prefix should remain; the body portion is truncated.
       expect((caught?.message ?? "").length).toBeLessThan(huge.length);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -117,7 +117,7 @@ describe("chatCompletion error redaction", () => {
       expect(caught?.message).not.toContain("abcXYZsupersecret999");
       expect(caught?.message).toContain("Bearer [REDACTED]");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
