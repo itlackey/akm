@@ -56,7 +56,7 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
     async fetch() {
       return new Response(JSON.stringify({ data: [{ embedding }] }), {
         status: 200,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Connection: "close" },
       });
     },
   });
@@ -234,7 +234,7 @@ describe("Database search path (FTS scoring)", () => {
         closeDatabase(db);
       }
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 
