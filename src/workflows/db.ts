@@ -52,6 +52,10 @@ export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
 
   const db = openDatabase(dbPath);
   db.exec("PRAGMA journal_mode = WAL");
+  // #589: 30 s busy timeout, matching index.db / state.db. Without it the
+  // default is 0 ms, so any concurrent writer fails immediately with
+  // SQLITE_BUSY.
+  db.exec("PRAGMA busy_timeout = 30000");
   db.exec("PRAGMA foreign_keys = ON");
   ensureBaseSchema(db);
   runMigrations(db);

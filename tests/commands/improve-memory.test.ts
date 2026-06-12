@@ -899,7 +899,7 @@ describe("akm improve memory cleanup", () => {
           lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
         }) satisfies AkmDistillResult,
     });
-    expect(withSignal.plannedRefs).toEqual([{ ref: "memory:alpha", reason: "scope-type" }]);
+    expect(withSignal.plannedRefs).toEqual([expect.objectContaining({ ref: "memory:alpha", reason: "scope-type" })]);
     expect(reflectedWithSignal).toEqual(["memory:alpha"]);
   }, 60_000);
 

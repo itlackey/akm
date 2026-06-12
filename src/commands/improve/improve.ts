@@ -396,7 +396,7 @@ async function collectEligibleRefs(
       };
     }
     return {
-      plannedRefs: [{ ref: scope.value, reason: "scope-ref" }],
+      plannedRefs: [{ ref: scope.value, reason: "scope-ref", filePath }],
       memorySummary: {
         eligible: parsed.type === "memory" ? 1 : 0,
         derived: parsed.type === "memory" && parsed.name.endsWith(".derived") ? 1 : 0,
@@ -460,12 +460,14 @@ async function collectEligibleRefs(
           profileFiltered.set(ref, {
             ref,
             reason: "profile_filtered_all_passes",
+            filePath: indexed.filePath,
           });
         } else {
           planned.set(ref, {
             ref,
             reason:
               scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
+            filePath: indexed.filePath,
           });
         }
       }
@@ -1112,18 +1114,22 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       eventsCtx = { dbPath: resolvedStateDbPath };
     }
 
-    // 2026-05-27: emit `improve_skipped` audit events for refs the planner
+    // 2026-05-27: emit an `improve_skipped` audit event for refs the planner
     // pre-filtered (reflect AND distill both refuse them under the active
-    // profile). One event per ref so the existing improve_skipped histogram in
-    // `health.ts#improveSummary.skipReasons` accumulates the right count under
-    // the new `profile_filtered_all_passes` reason code. See
-    // `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
-    for (const filtered of profileFilteredRefs) {
+    // profile). Emitted as a single summary event (count only) rather than one
+    // event per ref (#592) — the per-ref loop caused O(n) sequential state.db
+    // writes that consumed ~500 s on a 9 000-ref stash. No downstream consumer
+    // needs the per-ref audit trail: health's skip histogram reads the
+    // `profile_filtered_all_passes` counters from `improve_completed` metadata.
+    if (profileFilteredRefs.length > 0) {
       appendEvent(
         {
           eventType: "improve_skipped",
-          ref: filtered.ref,
-          metadata: { reason: "profile_filtered_all_passes" },
+          ref: undefined,
+          metadata: {
+            reason: "profile_filtered_all_passes",
+            count: profileFilteredRefs.length,
+          },
         },
         eventsCtx,
       );
@@ -2089,7 +2095,14 @@ async function runImprovePreparationStage(args: {
   const validationFailures: Array<{ ref: string; reason: string }> = [];
   for (const candidate of postCleanupRefs) {
     try {
-      const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+      // #591: use the path pre-resolved at planning time when it is still on
+      // disk — a serial async DB lookup per ref cost ~500 s on a 9 000-ref
+      // stash. Fall back to findAssetFilePath only for refs that bypassed
+      // collectEligibleRefs' index scan or whose file moved since planning.
+      const filePath =
+        candidate.filePath && fs.existsSync(candidate.filePath)
+          ? candidate.filePath
+          : await findAssetFilePath(candidate.ref, options.stashDir);
       if (!filePath) {
         validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
         continue;
@@ -2424,16 +2437,34 @@ async function runImprovePreparationStage(args: {
   const assetMissingOnDisk: string[] = [];
   const existsCheckedActionable: ImproveEligibleRef[] = [];
   for (const candidate of sorted) {
-    const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+    // #591: prefer the path pre-resolved at planning time (synchronous
+    // existsSync) over a serial async DB lookup per ref.
+    const filePath =
+      candidate.filePath && fs.existsSync(candidate.filePath)
+        ? candidate.filePath
+        : await findAssetFilePath(candidate.ref, options.stashDir);
     if (filePath && fs.existsSync(filePath)) {
       existsCheckedActionable.push(candidate);
     } else {
       assetMissingOnDisk.push(candidate.ref);
-      appendEvent(
-        { eventType: "improve_skipped", ref: candidate.ref, metadata: { reason: "asset_missing_on_disk" } },
-        eventsCtx,
-      );
     }
+  }
+  // #592 audit: one summary event instead of one per missing ref. Normally
+  // tiny, but a stash deletion racing the run could make this O(n) sequential
+  // state.db writes. `refs` is capped so the metadata row stays bounded.
+  if (assetMissingOnDisk.length > 0) {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: undefined,
+        metadata: {
+          reason: "asset_missing_on_disk",
+          count: assetMissingOnDisk.length,
+          refs: assetMissingOnDisk.slice(0, 50),
+        },
+      },
+      eventsCtx,
+    );
   }
   const actionableRefs = existsCheckedActionable;
 
@@ -3146,7 +3177,9 @@ async function runImprovePostLoopStage(args: {
 }
 
 // TODO(refactor): mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass.
-async function runImproveMaintenancePasses(args: {
+// Exported for tests (#584/#585 DB-locking regression coverage); production
+// callers reach it only through akmImprove → runImprovePostLoopStage.
+export async function runImproveMaintenancePasses(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
   actionableRefs: ImproveEligibleRef[];
@@ -3191,11 +3224,29 @@ async function runImproveMaintenancePasses(args: {
   let orphansPurged = 0;
   let proposalsExpired = 0;
 
+  const openIndexDb = () =>
+    openDatabase(getDbPath(), config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined);
+
+  // #584: reindexFn opens its own write handle on the same index.db WAL file.
+  // Holding our handle across that call produced SQLITE_BUSY / "database is
+  // locked" failures in production, so the handle is closed BEFORE every
+  // reindex and reopened after — the fresh handle also sees the post-reindex
+  // state that graph extraction and staleness detection below rely on. The
+  // reopen runs in `finally` so a failed reindex still leaves a usable handle.
+  const reindexWithIndexDbReleased = async (stashDir: string): Promise<void> => {
+    if (db) {
+      closeDatabase(db);
+      db = undefined;
+    }
+    try {
+      await reindexFn({ stashDir });
+    } finally {
+      db = openIndexDb();
+    }
+  };
+
   try {
-    db = openDatabase(
-      getDbPath(),
-      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-    );
+    db = openIndexDb();
 
     // Memory inference candidate-discovery (post-Item 9 fix from
     // memory:akm-improve-critical-review-2026-05-20). Previously this pass
@@ -3250,7 +3301,7 @@ async function runImproveMaintenancePasses(args: {
     if (memoryInference && (memoryInference.splitParents > 0 || memoryInference.writtenFacts > 0)) {
       info("[improve] reindexing after memory inference writes");
       try {
-        await reindexFn({ stashDir: primaryStashDir });
+        await reindexWithIndexDbReleased(primaryStashDir);
         reindexedAfterInference = true;
         info("[improve] reindex after memory inference complete");
       } catch (err) {
@@ -3284,20 +3335,15 @@ async function runImproveMaintenancePasses(args: {
         if (consolidationRan && !reindexedAfterInference) {
           info("[improve] reindexing after consolidation (graph extraction needs current state)");
           try {
-            await reindexFn({ stashDir: primaryStashDir });
+            await reindexWithIndexDbReleased(primaryStashDir);
             reindexedAfterInference = true;
             info("[improve] reindex after consolidation complete");
           } catch (err) {
             allWarnings.push(`reindex after consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
-        if (db && reindexedAfterInference) {
-          closeDatabase(db);
-          db = openDatabase(
-            getDbPath(),
-            config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
-          );
-        }
+        // #584: no close/reopen needed here — reindexWithIndexDbReleased
+        // already swapped in a fresh post-reindex handle.
         // Resolve touched refs to absolute file paths. Skipped for fullScan
         // (candidatePaths stays undefined → extractor processes all files).
         let candidatePaths: Set<string> | undefined;
@@ -3420,19 +3466,23 @@ async function runImproveMaintenancePasses(args: {
     // invocation, and every command surface emits at least one event besides —
     // without this trim, state.db is a permanent append-only log. Config key
     // `improve.eventRetentionDays` (default 90, set 0 to disable) controls the
-    // window. `purgeOldEvents()` opens its own state.db handle separate from
-    // the index `db` above (different SQLite file).
+    // window. The purge runs against state.db (a different SQLite file from
+    // the index `db` above).
     {
       const retentionDays =
         typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
       if (retentionDays > 0) {
+        // #585: reuse the long-lived eventsCtx.db connection when akmImprove
+        // opened one — opening a second state.db write connection while
+        // eventsDb is still live made two simultaneous writers contend on the
+        // same WAL file ("database is locked"). Only the eventsCtx.dbPath
+        // fallback path (state.db failed to open up-front) opens — and then
+        // owns and closes — its own handle. C2 still holds: the fallback uses
+        // the boundary-pinned path, never a live `process.env` re-read.
+        const ownsStateDb = !eventsCtx?.db;
         let stateDb: ReturnType<typeof openStateDatabase> | undefined;
         try {
-          // C2: reuse the boundary-pinned state.db path carried on eventsCtx so
-          // this purge open never re-reads `process.env` live mid-run. The path
-          // is always set by akmImprove; openStateDatabase() falls back to the
-          // env-derived default only if a caller omitted it entirely.
-          stateDb = openStateDatabase(eventsCtx?.dbPath);
+          stateDb = eventsCtx?.db ?? openStateDatabase(eventsCtx?.dbPath);
           const purgedCount = purgeOldEvents(stateDb, retentionDays);
           if (purgedCount > 0) {
             info(`[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`);
@@ -3467,7 +3517,7 @@ async function runImproveMaintenancePasses(args: {
         } catch (err) {
           allWarnings.push(`events purge failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
-          if (stateDb) {
+          if (ownsStateDb && stateDb) {
             try {
               stateDb.close();
             } catch {

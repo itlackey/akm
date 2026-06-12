@@ -23,6 +23,13 @@ import { assertNever } from "./assert";
 export interface ImproveEligibleRef {
   ref: string;
   reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
+  /**
+   * Absolute path on disk, pre-resolved from the index at planning time (#591).
+   * Avoids repeated serial async DB lookups in the validation and disk-check
+   * passes (~500 s on a 9 000-ref stash). Unset for scope-ref entries that
+   * bypass `collectEligibleRefs`; consumers fall back to the async lookup.
+   */
+  filePath?: string;
 }
 
 /**
@@ -148,7 +155,9 @@ export interface AkmImproveResult {
    * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
    *
    * Each ref has its `reason` set to `"profile_filtered_all_passes"`. The
-   * audit trail is also emitted as one `improve_skipped` event per ref.
+   * audit trail is also emitted as a single summary `improve_skipped` event
+   * with metadata `{reason, count}` (#592) — one event per ref caused O(n)
+   * sequential state.db writes on large stashes.
    * Omitted entirely when no refs were filtered (keeps the envelope tidy
    * for stashes whose profile accepts every indexed type).
    */
