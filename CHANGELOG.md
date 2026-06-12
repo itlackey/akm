@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.3] - 2026-06-12
+
+Stabilization batch closing the remaining 0.9.0 milestone: DB-locking and
+improve-pipeline perf backports, extract/reflect gate fixes, SQLite-first
+proposal and log storage, `--format html` output, and per-stage LLM telemetry.
+
 ### Added
 
 - **`--format html` output with per-command templates** (#582). `akm health
