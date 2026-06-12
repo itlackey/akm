@@ -218,7 +218,7 @@ describe("import --target", () => {
     writeConfig(configDir, { semanticSearchMode: "off" });
 
     const server = http.createServer((_req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", Connection: "close" });
       res.end(
         "<html><head><title>Guide Title</title></head><body><h1>Guide Title</h1><p>Hello <strong>world</strong>.</p></body></html>",
       );
