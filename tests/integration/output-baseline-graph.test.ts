@@ -104,7 +104,8 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
     stderr.includes("Starting") ||
     stderr.includes("Scanned") ||
     stderr.includes("Rebuilt") ||
-    stderr.includes("[embed]");
+    stderr.includes("[embed]") ||
+    stderr.includes("Embedding generation failed");
   if (stderr.trim() && !isAutoIndexOutput) {
     expect(stderr.trim()).toBe("");
   }

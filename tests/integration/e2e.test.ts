@@ -1475,6 +1475,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
     process.env.XDG_DATA_HOME = scenarioDataDir;
     process.env.XDG_STATE_HOME = scenarioStateDir;
+    saveConfig({ semanticSearchMode: "off" });
   });
 
   beforeEach(() => {
