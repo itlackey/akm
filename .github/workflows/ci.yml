@@ -37,6 +37,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # GitHub runners have ~4 cores; the test scripts default to --parallel=12
     # (dev machines). Over-subscribing the runner caused an intermittent
     # Bun-runtime `epoll_ctl EEXIST` race under load, so cap workers to the

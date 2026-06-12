@@ -150,7 +150,7 @@ describe("remote endpoint independence", () => {
       const norm = Math.sqrt(result.reduce((sum, v) => sum + v * v, 0));
       expect(norm).toBeCloseTo(1.0, 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -186,7 +186,7 @@ describe("remote endpoint independence", () => {
       expect(capturedBody?.model).toBe("remote-model");
       expect(capturedBody).not.toHaveProperty("localModel");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 });

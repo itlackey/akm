@@ -67,7 +67,7 @@ describe("remote embed", () => {
       expect(result[1]).toBeCloseTo(0.6 / Math.sqrt(1.1), 5);
       expect(result[2]).toBeCloseTo(0.7 / Math.sqrt(1.1), 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -96,7 +96,7 @@ describe("remote embed", () => {
       await embed("hello world", config);
       expect(requestedPath).toBe("/v1/embeddings");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -118,7 +118,7 @@ describe("remote embed", () => {
         dimensions: 384,
       });
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -128,7 +128,7 @@ describe("remote embed", () => {
       const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" };
       await expect(embed("hello", config)).rejects.toThrow("Embedding request failed (500)");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -139,7 +139,7 @@ describe("remote embed", () => {
       const available = await isEmbeddingAvailable(config);
       expect(available).toBe(true);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -165,7 +165,7 @@ describe("remote embed", () => {
       expect(result[0]).toBeCloseTo(0.6, 5);
       expect(result[1]).toBeCloseTo(0.8, 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -196,7 +196,7 @@ describe("remote embed", () => {
         expect(norm).toBeCloseTo(1.0, 5);
       }
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -229,7 +229,7 @@ describe("remote embed", () => {
       expect(results[1][0]).toBeCloseTo(0.0, 5); // second result is [0, 1]
       expect(results[1][1]).toBeCloseTo(1.0, 5);
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -260,7 +260,7 @@ describe("remote embed", () => {
       await embedBatch(["hello", "world"], config);
       expect(requestedPath).toBe("/v1/embeddings");
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 
@@ -283,7 +283,7 @@ describe("remote embed", () => {
         `Unexpected embedding batch response: expected 1 embeddings, got 0. Check that your endpoint includes the full embeddings path (for example "http://localhost:${port}/v1/embeddings", not just "http://localhost:${port}/v1").`,
       );
     } finally {
-      server.stop();
+      server.stop(true);
     }
   });
 });
