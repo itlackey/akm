@@ -14,6 +14,7 @@ import { stringify as yamlStringify } from "yaml";
 import { assertNever } from "../core/assert";
 import { AkmError } from "../core/errors";
 import { getOutputMode, type OutputMode } from "../output/context";
+import { DEFAULT_TEMPLATE, deliverRendered, escapeHtml, renderHtml, resolveTemplatePath } from "../output/html-render";
 import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
 
@@ -129,7 +130,10 @@ export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCo
 }
 
 /**
- * Render a command result according to the active output mode (json/jsonl/yaml/text).
+ * Render a command result according to the active output mode
+ * (json/jsonl/yaml/text/md/html). When `--output <path>` is set, the rendered
+ * document is written to that file instead of stdout (jsonl excepted — it is
+ * a line-streaming protocol and always goes to stdout).
  */
 export function output(command: string, result: unknown): void {
   const mode: OutputMode = getOutputMode();
@@ -142,14 +146,14 @@ export function output(command: string, result: unknown): void {
 
   switch (mode.format) {
     case "json":
-      console.log(JSON.stringify(shaped, null, 2));
+      deliverRendered(JSON.stringify(shaped, null, 2), mode.outputPath);
       return;
     case "yaml":
-      console.log(yamlStringify(shaped));
+      deliverRendered(yamlStringify(shaped), mode.outputPath);
       return;
     case "text": {
       const plain = formatPlain(command, shaped, mode.detail);
-      console.log(plain ?? JSON.stringify(shaped, null, 2));
+      deliverRendered(plain ?? JSON.stringify(shaped, null, 2), mode.outputPath);
       return;
     }
     case "md":
@@ -157,8 +161,20 @@ export function output(command: string, result: unknown): void {
       // per-run / window-compare table renderings. Commands that don't
       // implement an md renderer fall back to the JSON envelope so
       // pipelines never get an empty stdout.
-      console.log(JSON.stringify(shaped, null, 2));
+      deliverRendered(JSON.stringify(shaped, null, 2), mode.outputPath);
       return;
+    case "html": {
+      // Generic fallback: render the JSON envelope inside the dark-mode
+      // default template. Commands with a bespoke HTML template (`akm health`)
+      // intercept before reaching output(), same as the `md` intercept.
+      const html = renderHtml(resolveTemplatePath(DEFAULT_TEMPLATE), {
+        "%%COMMAND%%": escapeHtml(command),
+        "%%CONTENT_JSON%%": escapeHtml(JSON.stringify(shaped, null, 2)),
+        "%%GENERATED_AT%%": new Date().toISOString(),
+      });
+      deliverRendered(html, mode.outputPath);
+      return;
+    }
   }
 }
 

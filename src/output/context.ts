@@ -15,7 +15,7 @@
 
 import { UsageError } from "../core/errors";
 
-export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
+export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md" | "html";
 /** Verbosity axis. `--detail` is verbosity ONLY (v1 §3.2). */
 export type DetailLevel = "brief" | "normal" | "full";
 /** Output-projection axis. `--shape` selects how a result is projected. */
@@ -27,6 +27,11 @@ export interface OutputMode {
   shape: ShapeMode;
   /** Derived convenience: true when shape === "agent". */
   forAgent: boolean;
+  /**
+   * Destination file for rendered output (`--output <path>`). When set,
+   * `output()` writes the rendered document to this path instead of stdout.
+   */
+  outputPath?: string;
 }
 
 export interface OutputDefaults {
@@ -34,7 +39,7 @@ export interface OutputDefaults {
   detail?: DetailLevel | "brief" | "normal" | "full";
 }
 
-export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
+export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md", "html"];
 export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
 export const SHAPE_MODES: ShapeMode[] = ["human", "agent", "summary"];
 
@@ -113,8 +118,9 @@ export function resolveOutputMode(argv: string[], defaults: OutputDefaults | und
   // use `--shape`. Unknown `--detail` values fall through to the default.
   const detail = parseDetailLevel(rawDetail) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
   const shape: ShapeMode = parseShapeMode(rawShape) ?? "human";
+  const outputPath = parseFlagValue(argv, "--output");
 
-  return { format, detail, shape, forAgent: shape === "agent" };
+  return { format, detail, shape, forAgent: shape === "agent", ...(outputPath ? { outputPath } : {}) };
 }
 
 let _mode: OutputMode | undefined;

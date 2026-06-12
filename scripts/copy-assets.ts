@@ -20,6 +20,19 @@ for await (const src of assetGlob.scan(".")) {
   await Bun.write(dest, Bun.file(src));
 }
 
+// Soft check: the vendored ECharts payload backs `akm health --format html`
+// in self-contained (inline) mode. Missing it is non-fatal — the report can
+// still be generated with AKM_ECHARTS=cdn — but warn loudly so a broken
+// checkout doesn't silently ship a build without offline reports (#582).
+try {
+  statSync("src/assets/templates/html/vendor/echarts.min.js");
+} catch {
+  console.warn(
+    "copy-assets: WARNING — src/assets/templates/html/vendor/echarts.min.js is missing; " +
+      "`akm health --format html` will only work with AKM_ECHARTS=cdn.",
+  );
+}
+
 // 3. Copy the Node-runtime entry wrapper + text-import loader hook into dist/.
 //    These let `node dist/cli-node.mjs` run akm end-to-end on Node (the bun:*
 //    text-import that Bun loads natively needs a loader hook on Node). They are

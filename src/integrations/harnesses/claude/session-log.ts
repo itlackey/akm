@@ -15,7 +15,19 @@ import type {
   SessionSummary,
 } from "../../session-logs/types";
 
-const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
+/**
+ * Root directory holding Claude Code's per-project JSONL session logs.
+ *
+ * Resolved per call (not memoized at module load) so the `AKM_CLAUDE_PROJECTS_DIR`
+ * override can be set after import. The override exists so tests — and the
+ * isolated-storage sandbox — can point the scan at an empty fixture directory
+ * instead of the real `~/.claude/projects`, which on an actively-used machine
+ * holds many large session files and would make `akm health` (which scans it
+ * synchronously) slow and non-hermetic.
+ */
+function claudeProjectsDir(): string {
+  return process.env.AKM_CLAUDE_PROJECTS_DIR ?? path.join(os.homedir(), ".claude", "projects");
+}
 
 /**
  * Parse a single Claude Code JSONL event into a normalized {@link SessionEvent}.
@@ -106,12 +118,12 @@ export class ClaudeCodeProvider implements SessionLogHarness {
   readonly name = "claude-code";
 
   isAvailable(): boolean {
-    return fs.existsSync(CLAUDE_PROJECTS_DIR);
+    return fs.existsSync(claudeProjectsDir());
   }
 
   *readEvents(input: { sinceMs: number }): Iterable<SessionEvent> {
     try {
-      for (const jsonlPath of this.#walkJsonl(CLAUDE_PROJECTS_DIR)) {
+      for (const jsonlPath of this.#walkJsonl(claudeProjectsDir())) {
         const stat = fs.statSync(jsonlPath);
         if (stat.mtimeMs < input.sinceMs) continue;
 
@@ -140,7 +152,7 @@ export class ClaudeCodeProvider implements SessionLogHarness {
   }
 
   listSessions(input: { sinceMs?: number; location?: string } = {}): SessionSummary[] {
-    const root = input.location ?? CLAUDE_PROJECTS_DIR;
+    const root = input.location ?? claudeProjectsDir();
     const sinceMs = input.sinceMs ?? 0;
     const summaries: SessionSummary[] = [];
     try {
