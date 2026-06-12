@@ -157,6 +157,11 @@ export const ImproveProcessConfigSchema = z
     // Extract process config (only meaningful for extract process)
     defaultSince: z.string().min(1).optional(),
     maxTotalChars: positiveInt.optional(),
+    // Extract process: minimum raw session size (pre-filter inputCount) below
+    // which the extract LLM call is skipped (#595/#596). 0 disables the gate.
+    // Absent = default 10 (skip only truly empty sessions). Only meaningful
+    // on the `extract` process.
+    minContentChars: z.number().int().min(0).optional(),
     maxChunkSize: z.number().int().min(1).max(50).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate
     // sessions below which the extract pass skips entirely (emits an

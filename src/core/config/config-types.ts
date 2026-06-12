@@ -165,6 +165,18 @@ export interface ImproveProcessConfig {
    */
   maxTotalChars?: number;
   /**
+   * Minimum raw session character count for the `extract` process. Sessions
+   * whose total content falls below this threshold are skipped before the LLM
+   * call — avoids burning inference capacity on empty sessions (journal files)
+   * that never yield candidates. Checked against pre-filter `inputCount` (raw
+   * size), not `outputCount`, since the pre-filter strips so much boilerplate
+   * that even signal-bearing sessions can have tiny output. Absent = default
+   * 10 (only truly empty sessions are safe to skip — tiny sessions of a few
+   * hundred chars regularly yield candidates). `0` disables the gate. Only
+   * meaningful on the `extract` process.
+   */
+  minContentChars?: number;
+  /**
    * Max chunk size for the consolidation pass (1–50).
    * Overrides the computed value derived from the model context window.
    * Absent = use computed value (capped at 50).

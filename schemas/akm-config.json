@@ -202,6 +202,10 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
@@ -337,6 +341,10 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "maxChunkSize": {
                         "type": "integer",
@@ -474,6 +482,10 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
@@ -609,6 +621,10 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "maxChunkSize": {
                         "type": "integer",
@@ -746,6 +762,10 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
@@ -882,6 +902,10 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
@@ -1017,6 +1041,10 @@
                       "maxTotalChars": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "maxChunkSize": {
                         "type": "integer",
@@ -1771,6 +1799,10 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
@@ -1906,6 +1938,10 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "maxChunkSize": {
                             "type": "integer",
@@ -2043,6 +2079,10 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
@@ -2178,6 +2218,10 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "maxChunkSize": {
                             "type": "integer",
@@ -2315,6 +2359,10 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
@@ -2451,6 +2499,10 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
@@ -2586,6 +2638,10 @@
                           "maxTotalChars": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "maxChunkSize": {
                             "type": "integer",
@@ -3322,6 +3378,10 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "minContentChars": {
+          "type": "integer",
+          "minimum": 0
+        },
         "maxChunkSize": {
           "type": "integer",
           "minimum": 1,
@@ -3468,6 +3528,10 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
@@ -3603,6 +3667,10 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "maxChunkSize": {
                   "type": "integer",
@@ -3740,6 +3808,10 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
@@ -3875,6 +3947,10 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "maxChunkSize": {
                   "type": "integer",
@@ -4012,6 +4088,10 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
@@ -4148,6 +4228,10 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
@@ -4283,6 +4367,10 @@
                 "maxTotalChars": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "maxChunkSize": {
                   "type": "integer",

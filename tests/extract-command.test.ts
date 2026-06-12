@@ -12,6 +12,7 @@ import { isValidDescription } from "../src/commands/proposal/validators/proposal
 import { listProposals } from "../src/commands/proposal/validators/proposals";
 import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { AkmConfig } from "../src/core/config/config";
+import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config/config-schema";
 import { UsageError } from "../src/core/errors";
 import { detectTruncatedDescription } from "../src/core/text-truncation";
 import type {
@@ -497,6 +498,24 @@ describe("akmExtract — LLM call wiring", () => {
   });
 });
 
+// ── minContentChars config schema (#595) ────────────────────────────────────
+
+describe("minContentChars improve-process config schema", () => {
+  test("accepts 0 (disabled) and positive integers; rejects negatives and floats", () => {
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 0 }).success).toBe(true);
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 500 }).success).toBe(true);
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: -1 }).success).toBe(false);
+    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 1.5 }).success).toBe(false);
+  });
+
+  test("parses inside a profile's extract process block", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: { extract: { enabled: true, minContentChars: 10 } },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 // ── per-process profile + config support ────────────────────────────────────
 
 describe("akmExtract — profile + config resolution", () => {
@@ -648,6 +667,104 @@ describe("akmExtract — profile + config resolution", () => {
     });
     expect(chatCalls).toBe(1);
     expect(result.sessions).toHaveLength(1);
+  });
+
+  // ── #595/#596 — minContentChars pre-LLM gate ──────────────────────────────
+
+  /** Session whose raw content is exactly the given texts (one user event each). */
+  function sessionWithTexts(id: string, texts: string[]): SessionData {
+    const endedAt = Date.now() - 60_000;
+    return {
+      ref: {
+        harness: "claude-code",
+        sessionId: id,
+        filePath: `/tmp/fake/${id}.jsonl`,
+        startedAt: endedAt - 3600_000,
+        endedAt,
+      },
+      events: texts.map((text, i) => ({
+        harness: "claude-code",
+        text,
+        ts: endedAt - 60_000 * (texts.length - i),
+        sessionId: id,
+        role: "user" as const,
+        filePath: `/tmp/fake/${id}.jsonl`,
+      })),
+      inlineRefs: [],
+    };
+  }
+
+  async function runExtract(
+    session: SessionData,
+    processOverride: Record<string, unknown>,
+  ): Promise<{ result: Awaited<ReturnType<typeof akmExtract>>; chatCalls: number }> {
+    const stash = makeStashDir();
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude-code",
+      sessionId: session.ref.sessionId,
+      stashDir: stash,
+      config: configWithProfile(stash, processOverride),
+      harnesses: [makeFakeHarness([session])],
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    return { result, chatCalls };
+  }
+
+  test("minContentChars skips sub-threshold sessions before the LLM call (skipReason too_short)", async () => {
+    const tiny = sessionWithTexts("ses_tiny", ["short note"]); // 10 raw chars < 500
+    const { result, chatCalls } = await runExtract(tiny, { minContentChars: 500 });
+    expect(chatCalls).toBe(0);
+    expect(result.sessionsProcessed).toBe(0);
+    expect(result.sessionsSkipped).toBe(1);
+    expect(result.sessions[0]?.skipped).toBe(true);
+    expect(result.sessions[0]?.skipReason).toBe("too_short");
+  });
+
+  test("minContentChars processes sessions at/above the threshold", async () => {
+    const exact = sessionWithTexts("ses_exact", ["x".repeat(500)]); // 500 raw chars
+    const { result, chatCalls } = await runExtract(exact, { minContentChars: 500 });
+    expect(chatCalls).toBe(1);
+    expect(result.sessionsProcessed).toBe(1);
+    expect(result.sessionsSkipped).toBe(0);
+  });
+
+  test("gates on RAW pre-filter size, not post-filter output (#596)", async () => {
+    // Every event is noise the pre-filter strips (system reminders), so the
+    // post-filter output is empty — but the RAW session is large, so the gate
+    // must NOT skip it (gating post-filter wrongly skipped 100% of sessions).
+    const noisy = sessionWithTexts(
+      "ses_noisy",
+      Array.from({ length: 5 }, () => `<system-reminder>${"n".repeat(200)}</system-reminder>`),
+    );
+    const { result, chatCalls } = await runExtract(noisy, { minContentChars: 500 });
+    expect(chatCalls).toBe(1);
+    expect(result.sessions[0]?.preFilter.outputCount).toBe(0); // proves the pre-filter stripped everything
+    expect(result.sessions[0]?.skipReason).toBeUndefined();
+  });
+
+  test("default threshold is 10: empty sessions skip, tiny real sessions process", async () => {
+    // No minContentChars in config → in-code default 10.
+    const empty = sessionWithTexts("ses_empty_raw", []);
+    const emptyRun = await runExtract(empty, {});
+    expect(emptyRun.chatCalls).toBe(0);
+    expect(emptyRun.result.sessions[0]?.skipReason).toBe("too_short");
+
+    // 22 raw chars — the analysis floor for candidate-yielding sessions (#597).
+    const tinyReal = sessionWithTexts("ses_22", ["use jwt 24h ttl always"]);
+    const tinyRun = await runExtract(tinyReal, {});
+    expect(tinyRun.chatCalls).toBe(1);
+    expect(tinyRun.result.sessionsProcessed).toBe(1);
+  });
+
+  test("minContentChars: 0 disables the gate entirely", async () => {
+    const empty = sessionWithTexts("ses_empty_gate_off", []);
+    const { result, chatCalls } = await runExtract(empty, { minContentChars: 0 });
+    expect(chatCalls).toBe(1);
+    expect(result.sessionsProcessed).toBe(1);
   });
 
   test("honors maxTotalChars override for the pre-filter budget", async () => {
