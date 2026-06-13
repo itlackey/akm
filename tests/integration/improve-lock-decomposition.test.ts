@@ -62,7 +62,9 @@ describe("#607 lock decomposition — per-process locks", () => {
 
       const probe = probeLock(consolidateLock, { staleAfterMs: 60 * 60 * 1000 });
       expect(probe.state).toBe("held");
-      expect(probe.holderPid).toBe(process.pid);
+      if (probe.state === "held") {
+        expect(probe.holderPid).toBe(process.pid);
+      }
 
       releaseLock(consolidateLock);
       expect(tryAcquireLockSync(consolidateLock, payload)).toBe(true);
@@ -107,9 +109,13 @@ describe("#607 lock decomposition — per-process locks", () => {
       const triageProbe = probeLock(triageLock, { staleAfterMs: 30 * 60 * 1000 });
 
       expect(consolidateProbe.state).toBe("stale");
-      expect(consolidateProbe.reason).toBe("pid_dead");
+      if (consolidateProbe.state === "stale") {
+        expect(consolidateProbe.reason).toBe("pid_dead");
+      }
       expect(triageProbe.state).toBe("stale");
-      expect(triageProbe.reason).toBe("pid_dead");
+      if (triageProbe.state === "stale") {
+        expect(triageProbe.reason).toBe("pid_dead");
+      }
 
       releaseLock(consolidateLock);
       releaseLock(triageLock);

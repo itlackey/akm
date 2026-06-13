@@ -13,10 +13,11 @@
  * behind a single entry point.
  */
 
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
-import { getDbPath } from "../core/paths";
+import { getDataDir, getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
 
@@ -109,22 +110,85 @@ export function isIndexStale(stashDir: string): boolean {
 }
 
 /**
- * Run an incremental index when the local index is stale. Best-effort —
- * failures are logged as warnings but never thrown, so the caller can
- * proceed (and surface a proper "not in index" error if the index is
- * still unusable).
+ * #607: Spawn a background `akm index` process. Non-blocking — returns
+ * immediately. Uses a PID file to prevent multiple concurrent background
+ * reindexes. The background process writes completion status to a log file.
+ */
+function spawnBackgroundReindex(_stashDir: string): void {
+  const dataDir = getDataDir();
+  const pidFile = path.join(dataDir, "akm-index-background.pid");
+  const logFile = path.join(dataDir, "logs", "index-background.log");
+
+  if (fs.existsSync(pidFile)) {
+    try {
+      const pid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          return;
+        } catch {
+          fs.unlinkSync(pidFile);
+        }
+      }
+    } catch {
+      // PID file unreadable — proceed
+    }
+  }
+
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+
+  const akmBin = process.argv[0];
+  const akmScript = process.argv[1];
+  const child = spawn(akmBin, [akmScript, "index", "--background"], {
+    detached: true,
+    stdio: ["ignore", fs.openSync(logFile, "a"), fs.openSync(logFile, "a")],
+    env: { ...process.env, AKM_INDEX_BACKGROUND_PID_FILE: pidFile },
+  });
+
+  if (child.pid) {
+    try {
+      fs.writeFileSync(pidFile, String(child.pid), "utf8");
+    } catch {
+      // best-effort PID file write
+    }
+    child.unref();
+  }
+}
+
+/**
+ * #607: Non-blocking auto-index. When the local index is stale, spawns a
+ * background `akm index` process and returns immediately. The caller can
+ * proceed with a search against the existing (possibly stale) index.
+ *
+ * Set `AKM_INDEX_INLINE=1` to force synchronous indexing (for tests and CI).
  *
  * Returns `true` if an index run was attempted.
  */
 export async function ensureIndex(stashDir: string): Promise<boolean> {
   if (!isIndexStale(stashDir)) return false;
 
+  if (process.env.AKM_INDEX_INLINE === "1") {
+    try {
+      const { akmIndex } = await import("./indexer.js");
+      await akmIndex({ stashDir });
+      return true;
+    } catch (error) {
+      warn(
+        "Auto-index failed, proceeding with existing index:",
+        error instanceof Error ? error.message : String(error),
+      );
+      return true;
+    }
+  }
+
   try {
-    const { akmIndex } = await import("./indexer.js");
-    await akmIndex({ stashDir });
+    spawnBackgroundReindex(stashDir);
     return true;
   } catch (error) {
-    warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
+    warn(
+      "Background reindex spawn failed, proceeding with existing index:",
+      error instanceof Error ? error.message : String(error),
+    );
     return true;
   }
 }

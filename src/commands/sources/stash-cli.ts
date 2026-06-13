@@ -26,6 +26,7 @@
  * SIGINT/SIGTERM handlers in a try/finally — left byte-for-byte untouched.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
@@ -75,6 +76,11 @@ export const indexCommand = defineCommand({
       description: "When combined with --clean, report stale entries without deleting them.",
       default: false,
     },
+    background: {
+      type: "boolean",
+      description: "Run as a background process (suppresses interactive output, manages PID file).",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -88,6 +94,7 @@ export const indexCommand = defineCommand({
           "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
         );
       }
+      const isBackground = args.background === true;
       const outputMode = getOutputMode();
       const controller = new AbortController();
       const abort = (): void => controller.abort(new Error("index interrupted"));
@@ -101,7 +108,7 @@ export const indexCommand = defineCommand({
       );
       setLogFile(indexLogFile);
       const verbose = isVerbose();
-      const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
+      const spin = !verbose && !isBackground && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
@@ -126,7 +133,9 @@ export const indexCommand = defineCommand({
         if (spin) {
           spin.stop(`Indexed ${result.totalEntries} assets.`);
         }
-        output("index", result);
+        if (!isBackground) {
+          output("index", result);
+        }
       } catch (error) {
         if (spin) {
           spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
@@ -136,6 +145,15 @@ export const indexCommand = defineCommand({
         clearLogFile();
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
+        // #607: clean up background PID file if this was a background run
+        const bgPidFile = process.env.AKM_INDEX_BACKGROUND_PID_FILE;
+        if (bgPidFile) {
+          try {
+            fs.unlinkSync(bgPidFile);
+          } catch {
+            // ignore — file may already be gone
+          }
+        }
       }
     });
   },
