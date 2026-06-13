@@ -301,7 +301,7 @@ export class ClaudeCodeProvider implements SessionLogHarness {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) yield* this.#walkJsonl(full);
-        else if (entry.name.endsWith(".jsonl")) yield full;
+        else if (entry.name.endsWith(".jsonl") && entry.name !== "journal.jsonl") yield full;
       }
     } catch {
       // permission errors etc.

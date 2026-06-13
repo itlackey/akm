@@ -1832,7 +1832,14 @@ async function runConsolidationPass(args: {
         {
           eventType: "consolidate_completed",
           ref: "memory:_consolidation",
-          metadata: { processed: consolidation.processed, merged: consolidation.merged },
+          metadata: {
+            processed: consolidation.processed,
+            merged: consolidation.merged,
+            deleted: consolidation.deleted,
+            contradicted: consolidation.contradicted,
+            failedChunks: consolidation.failedChunks ?? 0,
+            durationMs: consolidation.durationMs,
+          },
         },
         eventsCtx,
       );
