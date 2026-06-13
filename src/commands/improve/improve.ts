@@ -84,6 +84,124 @@ import { detectAndWriteContradictions } from "./memory/memory-contradiction-dete
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 
+// #607 Lock Decomposition: fine-grained per-process locks replace the single
+// `improve.lock`. Three independent locks allow concurrent improve runs when
+// they touch different subsystems (e.g. quick-shredder consolidate can run
+// alongside daily reflect+distill).
+//
+//   consolidate.lock   — protects consolidate + memoryInference (both write index.db)
+//   reflect-distill.lock — protects reflect + distill (both write state.db proposals)
+//   triage.lock         — protects triage (writes proposal promotions)
+//
+// Stale timeouts are per-lock, tuned to the expected runtime of the protected
+// processes: consolidate is disk-bound (1h), reflect+distill is GPU-bound (2h),
+// triage is fast (30min).
+
+const PROCESS_LOCK_DEFS = {
+  consolidate: { fileName: "consolidate.lock", staleAfterMs: 60 * 60 * 1000 },
+  reflectDistill: { fileName: "reflect-distill.lock", staleAfterMs: 2 * 60 * 60 * 1000 },
+  triage: { fileName: "triage.lock", staleAfterMs: 30 * 60 * 1000 },
+} as const;
+
+const heldProcessLocks = new Set<string>();
+
+export function resetHeldProcessLocks(): void {
+  heldProcessLocks.clear();
+}
+
+function processLockPath(lockBaseDir: string, lockName: keyof typeof PROCESS_LOCK_DEFS): string {
+  return path.join(lockBaseDir, PROCESS_LOCK_DEFS[lockName].fileName);
+}
+
+function tryAcquireProcessLock(
+  lockPath: string,
+  staleAfterMs: number,
+  skipIfLocked: boolean | undefined,
+  lockLabel: string,
+): "acquired" | "skipped" {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+  if (tryAcquireLockSync(lockPath, lockPayload())) {
+    heldProcessLocks.add(lockPath);
+    return "acquired";
+  }
+
+  const probe = probeLock(lockPath, { staleAfterMs });
+  const rawContent = probe.state === "absent" ? undefined : probe.rawContent;
+  const lock = rawContent
+    ? (() => {
+        try {
+          return JSON.parse(rawContent) as { pid: number; startedAt: string };
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  if (probe.state === "stale") {
+    try {
+      appendEvent({
+        eventType: "improve_lock_recovered",
+        metadata: {
+          lockName: lockLabel,
+          stalePid: lock?.pid ?? null,
+          lockedAt: lock?.startedAt ?? null,
+          recoveredAt: new Date().toISOString(),
+          lockAgeMs: probe.ageMs ?? null,
+          reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
+        },
+      });
+    } catch {
+      /* event emission is best-effort; never block lock recovery */
+    }
+    releaseLock(lockPath);
+    if (tryAcquireLockSync(lockPath, lockPayload())) {
+      heldProcessLocks.add(lockPath);
+      return "acquired";
+    }
+    if (skipIfLocked) {
+      warn(`[improve] ${lockLabel} lock acquired by another run during stale recovery; skipping (--skip-if-locked)`);
+      return "skipped";
+    }
+    throw new ConfigError(
+      `akm improve ${lockLabel} is already running. Delete ${lockPath} to force.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
+  if (skipIfLocked) {
+    warn(
+      `[improve] ${lockLabel} lock held by another run (PID ${lock?.pid}, started ${lock?.startedAt}); skipping (--skip-if-locked)`,
+    );
+    return "skipped";
+  }
+
+  throw new ConfigError(
+    `akm improve ${lockLabel} is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${lockPath} to force.`,
+    "INVALID_CONFIG_FILE",
+  );
+}
+
+function releaseProcessLock(lockPath: string): void {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // ignore
+  }
+  heldProcessLocks.delete(lockPath);
+}
+
+function releaseAllProcessLocks(): void {
+  for (const p of heldProcessLocks) {
+    try {
+      fs.unlinkSync(p);
+    } catch {
+      // ignore
+    }
+  }
+  heldProcessLocks.clear();
+}
+
 export interface AkmImproveOptions {
   scope?: string;
   task?: string;
@@ -109,11 +227,13 @@ export interface AkmImproveOptions {
   timeoutMs?: number;
   limit?: number;
   /**
-   * When another improve run already holds the lock, skip gracefully (return a
-   * no-op result, exit 0) instead of failing with a "already running" config
-   * error (exit 78). Intended for high-frequency scheduled runs (e.g. the
-   * every-30-min `quick` pass) that would otherwise pile up exit-78 failures
-   * whenever a longer run is in progress. Default: false (preserve hard error).
+   * When another improve run already holds a per-process lock, skip that
+   * specific process gracefully instead of failing with a "already running"
+   * config error (exit 78). Each process (consolidate, reflect+distill, triage)
+   * has its own lock; a held lock skips only that process, not the entire run.
+   * Intended for high-frequency scheduled runs (e.g. the every-30-min `quick`
+   * pass) that would otherwise pile up exit-78 failures whenever a longer run
+   * is in progress. Default: false (preserve hard error per lock).
    */
   skipIfLocked?: boolean;
   /** Named improve profile from profiles.improve or built-in profile names (default, quick, thorough, memory-focus). */
@@ -792,112 +912,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // calling test's own at this point; we capture it before yielding the loop.
   const resolvedStateDbPath = getStateDbPathInDataDir();
 
-  // Phase 4 lock hoist (§7): the `improve.lock` setup is hoisted ABOVE
-  // ensureIndex/collectEligibleRefs so the triage pre-pass (and improve's own
-  // queue writes) run fully serialized under the lock. The dry-run early-return
-  // below still skips the lock and triage (the lock+triage block is gated on
-  // `!options.dryRun`); contradiction-detection and memory-cleanup analysis,
-  // which previously ran before the lock, now sit after it for free.
-  const resolvedLockPath = primaryStashDir
-    ? path.join(primaryStashDir, ".akm", "improve.lock")
-    : path.join(options.stashDir ?? ".", ".akm", "improve.lock");
-  const MAX_LOCK_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
-
-  const acquireLock = (): "acquired" | "skipped" => {
-    fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
-    const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
-    if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return "acquired";
-
-    // Lock file already exists — probe to determine whether it's still held
-    // or whether the prior run died without cleaning up.
-    const probe = probeLock(resolvedLockPath, { staleAfterMs: MAX_LOCK_AGE_MS });
-    const rawContent = probe.state === "absent" ? undefined : probe.rawContent;
-    const lock = rawContent
-      ? (() => {
-          try {
-            return JSON.parse(rawContent) as { pid: number; startedAt: string };
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-
-    if (probe.state === "stale") {
-      // O-7 / #394: Emit improve_lock_recovered event before recovery so the
-      // audit trail records the abnormal prior-run exit (Temporal/Airflow pattern).
-      try {
-        appendEvent({
-          eventType: "improve_lock_recovered",
-          metadata: {
-            stalePid: lock?.pid ?? null,
-            lockedAt: lock?.startedAt ?? null,
-            recoveredAt: new Date().toISOString(),
-            lockAgeMs: probe.ageMs ?? null,
-            reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
-          },
-        });
-      } catch {
-        /* event emission is best-effort; never block lock recovery */
-      }
-      releaseLock(resolvedLockPath);
-      if (tryAcquireLockSync(resolvedLockPath, lockPayload())) return "acquired";
-      // Lost the race to another run that grabbed the freed stale lock.
-      if (options.skipIfLocked) {
-        warn("[improve] another run acquired the lock during stale recovery; skipping (--skip-if-locked)");
-        return "skipped";
-      }
-      throw new ConfigError(
-        `akm improve is already running. Delete ${resolvedLockPath} to force.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-
-    // Lock is held by a live run within the staleness window.
-    if (options.skipIfLocked) {
-      warn(
-        `[improve] another improve run holds the lock (PID ${lock?.pid}, started ${lock?.startedAt}); skipping (--skip-if-locked)`,
-      );
-      return "skipped";
-    }
-
-    throw new ConfigError(
-      `akm improve is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${resolvedLockPath} to force.`,
-      "INVALID_CONFIG_FILE",
-    );
-  };
-
-  // Phase 4 lock-leak guard (§7 ordering hazard): hoisting `improve.lock` above
-  // the pre-index region (so the triage pre-pass runs under it) means the lock is
-  // held while ensureIndex / collectEligibleRefs / contradiction-detection /
-  // memory-cleanup analysis run — but the main protecting `try { … } finally {
-  // unlinkSync(resolvedLockPath) }` does not begin until after them. A throw in
-  // any of those steps would leak the lock. We close that window by wrapping the
-  // whole region in a try whose catch releases the lock (when held) and
-  // re-throws. The values this region computes are declared in the outer scope so
-  // they remain visible to the main run below. The dry-run path never sets
-  // `lockAcquired`, so its early return releases nothing.
-  let lockAcquired = false;
-  const releaseLockOnError = (): void => {
-    if (!lockAcquired) return;
-    try {
-      fs.unlinkSync(resolvedLockPath);
-    } catch {
-      // best-effort release on the error path
-    }
-    lockAcquired = false;
-  };
-
-  // Signal-safe lock release. The SIGTERM/SIGINT/SIGHUP handler in improve-cli.ts
-  // calls `process.exit()`, which does NOT run the `finally` below that owns lock
-  // release — so a cron-timeout SIGTERM leaked `improve.lock` every run.
-  // `process.exit()` DOES fire `'exit'` listeners, so we release the lock from
-  // one. `releaseLockIfOwned` only unlinks a lock still owned by this PID, so it
-  // is safe even if a later run re-acquired it. The listener is removed in the
-  // `finally` so the normal path stays single-release and repeated in-process
-  // `akmImprove` calls (tests) do not accumulate listeners.
-  const releaseLockOnExit = (): void => {
-    releaseLockIfOwned(resolvedLockPath, process.pid);
-  };
+  // #607 Lock decomposition: three per-process locks replace the single
+  // `improve.lock`. Each process acquires only the lock(s) it needs, so
+  // quick-shredder consolidate can run alongside daily reflect+distill.
+  //
+  //   consolidate.lock     — protects consolidate + memoryInference + graphExtraction (index.db writers)
+  //   reflect-distill.lock — protects reflect + distill (state.db proposal writers)
+  //   triage.lock          — protects triage pre-pass (state.db proposal promotions)
+  //
+  // Lock base directory — same `.akm/` under the primary stash dir.
+  const lockBaseDir = primaryStashDir ? path.join(primaryStashDir, ".akm") : path.join(options.stashDir ?? ".", ".akm");
 
   const preEnsureCleanupWarnings: string[] = [];
   let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"];
@@ -908,64 +932,61 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let triageDrain: DrainResult | undefined;
 
   try {
-    // Acquire the lock and run the triage pre-pass for non-dry-run executions.
-    // The dry-run branch below produces plannedRefs/memorySummary WITHOUT the lock
-    // or triage (decision: dry-run never mutates the queue).
+    // #607: Per-process lock acquisition. Each process acquires only the lock(s)
+    // it needs. The dry-run branch produces plannedRefs/memorySummary WITHOUT any
+    // locks (decision: dry-run never mutates the queue).
     if (!options.dryRun) {
-      if (acquireLock() === "skipped") {
-        // Another improve holds the lock and the caller asked to skip rather
-        // than fail. Return a clean no-op result (exit 0) before any index/DB
-        // work — never registered the exit listener, never set lockAcquired,
-        // so we release nothing belonging to the run that owns the lock.
-        return {
-          schemaVersion: 1,
-          ok: true,
-          scope,
-          dryRun: false,
-          skipped: { reason: "lock-held" },
-          memorySummary: { eligible: 0, derived: 0 },
-          plannedRefs: [],
-        };
-      }
-      lockAcquired = true;
       // Backstop release on process.exit() (signal handler / budget watchdog),
       // which skips the finally below. Removed in that finally on the normal path.
-      process.on("exit", releaseLockOnExit);
+      const releaseAllOnExit = (): void => {
+        for (const p of heldProcessLocks) {
+          releaseLockIfOwned(p, process.pid);
+        }
+      };
+      process.on("exit", releaseAllOnExit);
 
-      // Phase 4 triage pre-pass (§7, §13): drain the standing pending backlog
-      // BEFORE ensureIndex so improve generates fresh proposals against a cleared
-      // queue (no `duplicate_pending` collisions) and ensureIndex absorbs triage's
-      // promotions for free. Gated on the triage process being enabled (opt-in,
-      // defaults off) and on a whole-stash / type-scoped run — a single-ref
-      // `akm improve skill:x` must never drain the whole queue. Best-effort: a
-      // triage failure is a non-fatal warning, never an abort (mirrors the
-      // contradiction-detection pass below).
+      // #607 triage pre-pass: acquire triage.lock, drain the standing pending
+      // backlog BEFORE ensureIndex so improve generates fresh proposals against
+      // a cleared queue (no `duplicate_pending` collisions) and ensureIndex
+      // absorbs triage's promotions for free. Release immediately after —
+      // triage.lock is not needed again until the next improve run.
       if (primaryStashDir && resolveProcessEnabled("triage", improveProfile)) {
         if (scope.mode === "ref") {
           warn("[improve] triage pre-pass skipped (single-ref scope never drains the whole queue)");
         } else {
-          try {
-            const triageConfig = improveProfile.processes?.triage;
-            const policy = resolveDrainPolicy(triageConfig?.policy);
-            const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
-            const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
-            const judgment = triageConfig?.judgment
-              ? resolveTriageJudgmentRunner(triageConfig.judgment, _earlyConfig)
-              : null;
-            triageDrain = await drainProposalsFn({
-              stashDir: primaryStashDir,
-              policy,
-              applyMode,
-              maxAccepts,
-              dryRun: false,
-              // No fresh ids exist yet — triage runs before improve generates any.
-              excludeIds: new Set<string>(),
-              ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
-              judgment,
-            });
-          } catch (err) {
-            // Non-fatal: triage is a best-effort pre-pass and must never abort improve.
-            warn(`[improve] triage pre-pass failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+          const triageLPath = processLockPath(lockBaseDir, "triage");
+          const triageResult = tryAcquireProcessLock(
+            triageLPath,
+            PROCESS_LOCK_DEFS.triage.staleAfterMs,
+            options.skipIfLocked,
+            "triage",
+          );
+          if (triageResult === "skipped") {
+            triageDrain = undefined;
+          } else {
+            try {
+              const triageConfig = improveProfile.processes?.triage;
+              const policy = resolveDrainPolicy(triageConfig?.policy);
+              const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
+              const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
+              const judgment = triageConfig?.judgment
+                ? resolveTriageJudgmentRunner(triageConfig.judgment, _earlyConfig)
+                : null;
+              triageDrain = await drainProposalsFn({
+                stashDir: primaryStashDir,
+                policy,
+                applyMode,
+                maxAccepts,
+                dryRun: false,
+                excludeIds: new Set<string>(),
+                ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
+                judgment,
+              });
+            } catch (err) {
+              warn(`[improve] triage pre-pass failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+            } finally {
+              releaseProcessLock(triageLPath);
+            }
           }
         }
       }
@@ -1071,18 +1092,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       return result;
     }
   } catch (err) {
-    releaseLockOnError();
+    releaseAllProcessLocks();
     throw err;
   }
 
-  // FIX 2 (lock-leak window): everything from here on runs UNDER the lock that
-  // `acquireLock()` just took. The single `try { … } finally { unlinkSync(lock) }`
-  // below now spans the budget-timer setup, `openStateDatabase()`, and the
-  // `profileFilteredRefs` audit-event loop too — regions that previously sat in
-  // the gap between the lock-acquire catch (above) and the main try. A throw in
-  // any of them used to leak the lock (blocking the next improve up to 4h);
-  // now the finally releases it exactly once. The dry-run path already returned
-  // above without acquiring the lock, so it never reaches this finally; the
+  // #607: per-process locks are acquired/released around each stage below.
+  // The triage pre-pass already ran under triage.lock (released). The
+  // preparation stage runs under consolidate.lock, the loop stage under
+  // reflect-distill.lock, and the post-loop stage under consolidate.lock again.
+  // Each stage acquires its lock just before starting and releases in finally.
   // best-effort `unlinkSync` is a no-op when no lock file exists.
   const startMs = Date.now();
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
@@ -1153,6 +1171,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       );
     }
 
+    // #607: acquire consolidate.lock for the preparation stage (consolidate,
+    // ensureIndex, extract all write index.db). Released immediately after.
+    const consolidateLPath = processLockPath(lockBaseDir, "consolidate");
+    const consolidatePrepAcquired =
+      tryAcquireProcessLock(
+        consolidateLPath,
+        PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
+        options.skipIfLocked,
+        "consolidate",
+      ) === "acquired";
     const preparation = await runImprovePreparationStage({
       scope,
       options,
@@ -1167,6 +1195,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       initialCleanupWarnings: preEnsureCleanupWarnings,
       improveProfile,
     });
+    if (consolidatePrepAcquired) releaseProcessLock(consolidateLPath);
 
     // D6: pre-load all proposal_rejected events from the last 30 days once,
     // so the per-asset loop can use a Map lookup instead of N DB round trips.
@@ -1180,6 +1209,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
+    // #607: acquire reflect-distill.lock for the loop stage (reflect + distill
+    // both write proposals to state.db). Released immediately after.
+    const reflectDistillLPath = processLockPath(lockBaseDir, "reflectDistill");
+    const reflectDistillAcquired =
+      tryAcquireProcessLock(
+        reflectDistillLPath,
+        PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
+        options.skipIfLocked,
+        "reflect-distill",
+      ) === "acquired";
     const {
       reflectsWithErrorContext,
       memoryRefsForInference,
@@ -1204,11 +1243,22 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       eventsCtx,
       improveProfile,
     });
+    if (reflectDistillAcquired) releaseProcessLock(reflectDistillLPath);
 
     // #551: consolidation now runs in the preparation stage (before extract);
     // its result and run-flag are read from `preparation`, not the post-loop.
     const consolidation = preparation.consolidation;
 
+    // #607: acquire consolidate.lock for the post-loop stage (memoryInference +
+    // graphExtraction both write index.db). Released immediately after.
+    const consolidatePostLPath = processLockPath(lockBaseDir, "consolidate");
+    const consolidatePostAcquired =
+      tryAcquireProcessLock(
+        consolidatePostLPath,
+        PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
+        options.skipIfLocked,
+        "consolidate",
+      ) === "acquired";
     const {
       allWarnings,
       deadUrls,
@@ -1232,11 +1282,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memoryRefsForInference,
       reindexFn,
       eventsCtx,
-      // O-1 (#364): propagate wall-clock budget signal to post-loop maintenance.
       budgetSignal: budgetAbortController.signal,
       improveProfile,
       consolidationRan: preparation.consolidationRan,
     });
+    if (consolidatePostAcquired) releaseProcessLock(consolidatePostLPath);
 
     const finalActions =
       maintenanceActions && maintenanceActions.length > 0
@@ -1418,14 +1468,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // O-1 (#364): Clear the budget abort timer so it does not keep the event
     // loop alive after the run completes.
     clearBudgetTimer();
-    try {
-      fs.unlinkSync(resolvedLockPath);
-    } catch {
-      // ignore
-    }
-    // The normal path released the lock above; drop the process.exit backstop so
-    // it does not fire later (or accumulate across repeated in-process calls).
-    process.removeListener("exit", releaseLockOnExit);
+    // #607: release any per-process locks still held (backstop for error paths;
+    // the normal path already released each lock after its stage completed).
+    releaseAllProcessLocks();
+    // Drop the process.exit backstop so it does not fire later (or accumulate
+    // across repeated in-process calls).
+    process.removeAllListeners("exit");
     // I1: close the long-lived state.db connection opened at the top of the run.
     try {
       eventsDb?.close();

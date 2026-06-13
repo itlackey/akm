@@ -3,20 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `--skip-if-locked` (0.8.4 hotfix). When another improve run already holds the
- * lock, a run started with `skipIfLocked: true` returns a clean no-op result
- * (ok:true, `skipped.reason === "lock-held"`) and exits 0 instead of throwing
- * the "already running" ConfigError (exit 78). Without the flag the hard error
- * is preserved.
+ * #607 per-process lock decomposition. The old single `improve.lock` is
+ * replaced by three fine-grained locks (consolidate, reflect-distill, triage).
+ * When a per-process lock is held:
+ *   - With `skipIfLocked: true`: that process is skipped, the rest of the run continues.
+ *   - Without `skipIfLocked`: throws ConfigError ("already running").
  *
- * The lock is pre-created owned by THIS process's pid so `probeLock` classifies
- * it as held (live pid, within the staleness window) rather than stale.
+ * These tests plant a triage.lock (the first lock acquired in the pipeline)
+ * to verify the skip-if-locked behavior.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmImprove } from "../../../src/commands/improve/improve";
+import { akmImprove, resetHeldProcessLocks } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -26,7 +26,6 @@ const TIMEOUT_MS = 20_000;
 let cleanup: Cleanup = () => {};
 let stashDir = "";
 
-/** Cheap config — every heavy improve sub-process disabled. */
 function quietConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
@@ -41,7 +40,7 @@ function quietConfig(): AkmConfig {
             memoryInference: { enabled: false },
             graphExtraction: { enabled: false },
             extract: { enabled: false },
-            triage: { enabled: false },
+            triage: { enabled: true },
           },
         },
       },
@@ -49,9 +48,8 @@ function quietConfig(): AkmConfig {
   } as unknown as AkmConfig;
 }
 
-/** Plant a live (held) lock owned by this process. */
-function plantHeldLock(): string {
-  const lockPath = path.join(stashDir, ".akm", "improve.lock");
+function plantHeldTriageLock(): string {
+  const lockPath = path.join(stashDir, ".akm", "triage.lock");
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
   return lockPath;
@@ -62,19 +60,21 @@ beforeEach(() => {
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
   saveConfig({ semanticSearchMode: "off" });
+  resetHeldProcessLocks();
 });
 
 afterEach(() => {
+  resetHeldProcessLocks();
   cleanup();
   cleanup = () => {};
   stashDir = "";
 });
 
-describe("akm improve — skip-if-locked", () => {
+describe("akm improve — skip-if-locked (#607 per-process locks)", () => {
   test(
-    "returns a skipped no-op result when the lock is held and skipIfLocked is set",
+    "completes successfully when triage.lock is held and skipIfLocked is set (triage skipped)",
     async () => {
-      const lockPath = plantHeldLock();
+      const lockPath = plantHeldTriageLock();
 
       const result = await akmImprove({
         scope: "memory",
@@ -84,7 +84,6 @@ describe("akm improve — skip-if-locked", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(result.skipped?.reason).toBe("lock-held");
       // The other run's lock is left exactly as we planted it — never released.
       expect(fs.existsSync(lockPath)).toBe(true);
       expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
@@ -93,9 +92,9 @@ describe("akm improve — skip-if-locked", () => {
   );
 
   test(
-    "throws 'already running' when the lock is held and skipIfLocked is NOT set",
+    "throws 'already running' when triage.lock is held and skipIfLocked is NOT set",
     async () => {
-      plantHeldLock();
+      plantHeldTriageLock();
       await expect(akmImprove({ scope: "memory", stashDir, config: quietConfig() })).rejects.toThrow(
         /already running/i,
       );
