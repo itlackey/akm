@@ -14,13 +14,13 @@
  * registry index builder).
  */
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin } from "../../core/common";
 import type { SourceSpec } from "../../core/config/config";
 import { warn } from "../../core/warn";
+import { spawnSync } from "../../runtime";
 
 /**
  * Verify an archive's integrity against a known hash. Throws and removes
@@ -79,24 +79,28 @@ export function verifyArchiveIntegrity(
  * tree for symlinks that would escape the destination.
  */
 export function extractTarGzSecure(archivePath: string, destinationDir: string): void {
-  const listResult = spawnSync("tar", ["tzf", archivePath], { encoding: "utf8" });
-  if (listResult.status !== 0) {
-    const err = listResult.stderr?.trim() || listResult.error?.message || "unknown error";
+  const listResult = spawnSync(["tar", "tzf", archivePath]);
+  if (!listResult.success) {
+    const err = listResult.stderr?.toString().trim() || "unknown error";
     throw new Error(`Failed to inspect archive ${archivePath}: ${err}`);
   }
 
-  validateTarEntries(listResult.stdout);
+  validateTarEntries(listResult.stdout.toString());
 
   fs.rmSync(destinationDir, { recursive: true, force: true });
   fs.mkdirSync(destinationDir, { recursive: true });
 
-  const extractResult = spawnSync(
+  const extractResult = spawnSync([
     "tar",
-    ["xzf", archivePath, "--no-same-owner", "--strip-components=1", "-C", destinationDir],
-    { encoding: "utf8" },
-  );
-  if (extractResult.status !== 0) {
-    const err = extractResult.stderr?.trim() || extractResult.error?.message || "unknown error";
+    "xzf",
+    archivePath,
+    "--no-same-owner",
+    "--strip-components=1",
+    "-C",
+    destinationDir,
+  ]);
+  if (!extractResult.success) {
+    const err = extractResult.stderr?.toString().trim() || "unknown error";
     throw new Error(`Failed to extract archive ${archivePath}: ${err}`);
   }
 
