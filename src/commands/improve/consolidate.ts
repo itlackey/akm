@@ -1134,7 +1134,25 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
 
   if (opts.limit !== undefined && memories.length > opts.limit) {
-    warnings.push(`Consolidation: pool capped at ${opts.limit} memories (limit option).`);
+    // Order oldest-modified-first before capping so the limit selects the
+    // stalest memories rather than a fixed head of the (rowid-ordered) DB
+    // query. Consolidation rewrites surviving files, bumping their mtime, so
+    // processed memories drift to the back of the queue and the cap rotates
+    // across the whole corpus over successive runs instead of revisiting the
+    // same slice every time. Fail-open to 0 (front of queue) when a file can
+    // no longer be stat'd.
+    const mtimeOf = (m: MemoryEntry): number => {
+      try {
+        return fs.statSync(m.filePath).mtimeMs;
+      } catch {
+        return 0;
+      }
+    };
+    const mtimeCache = new Map<string, number>(memories.map((m) => [m.filePath, mtimeOf(m)]));
+    memories = [...memories].sort((a, b) => (mtimeCache.get(a.filePath) ?? 0) - (mtimeCache.get(b.filePath) ?? 0));
+    warnings.push(
+      `Consolidation: pool capped at ${opts.limit} of ${memories.length} memories (limit option, oldest-modified first).`,
+    );
     memories = memories.slice(0, opts.limit);
   }
 
