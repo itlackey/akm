@@ -163,6 +163,20 @@ export const ImproveProcessConfigSchema = z
     // on the `extract` process.
     minContentChars: z.number().int().min(0).optional(),
     maxChunkSize: z.number().int().min(1).max(50).optional(),
+    // Consolidate process: narrow candidate pool to memories modified within
+    // this duration window plus their graph neighbours. Only meaningful on
+    // the `consolidate` process. Absent = full-pool sweep.
+    incrementalSince: z.string().optional(),
+    // Consolidate process: hard cap on memories processed per pass.
+    // Reflect/distill: max refs processed (same as profile-level `limit`).
+    limit: positiveInt.optional(),
+    // Consolidate process: graph neighbours per changed memory during
+    // incremental consolidation. Default 5. Only meaningful with incrementalSince.
+    neighborsPerChanged: z.number().int().min(1).optional(),
+    // Distill process: skip distill entirely when reflect produced zero planned refs.
+    requirePlannedRefs: z.boolean().optional(),
+    // MemoryInference process: minimum pending memory count to run the pass.
+    minPendingCount: z.number().int().min(0).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate
     // sessions below which the extract pass skips entirely (emits an
     // `improve_skipped` event with `reason: "below_min_new_sessions"`). 0

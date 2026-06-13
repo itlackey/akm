@@ -37,7 +37,11 @@ import {
 import { ensureIndex } from "../../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { akmIndex } from "../../indexer/indexer";
-import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
+import {
+  collectPendingMemories,
+  type MemoryInferenceResult,
+  runMemoryInferencePass,
+} from "../../indexer/passes/memory-inference";
 import { runStalenessDetectionPass, type StalenessDetectionResult } from "../../indexer/passes/staleness-detect";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { countUsageEventsByType } from "../../indexer/usage/usage-events";
@@ -767,7 +771,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   options = {
     ...options,
     autoAccept: options.autoAccept ?? improveProfile.autoAccept,
-    limit: options.limit ?? improveProfile.limit,
+    // Profile-level limit, then process-level reflect.limit as fallback.
+    // CLI --limit takes precedence over both.
+    limit: options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit,
   };
   let primaryStashDir: string | undefined;
   try {
@@ -1788,13 +1794,13 @@ async function runConsolidationPass(args: {
         // Tie consolidate proposals back to this improve invocation so
         // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
         sourceRun: `consolidate-${Date.now()}`,
-        // Full-pool sweep: consolidation only runs on the nightly default-profile
-        // pass (quick/frequent disable it), so a complete re-cluster is correct and
-        // affordable here. Do NOT pass incrementalSince — the time-window narrowing
-        // it triggers permanently excludes stale-but-unmerged duplicate clusters,
-        // starving merge recall and letting the pool grow unbounded. (The narrowing
-        // was a band-aid for an every-30-min consolidation cadence that the profile
-        // split has since eliminated.) lastConsolidateTs still gates whether we run.
+        // Pass profile-configured options. incrementalSince narrows the pool to
+        // recently-changed memories + graph neighbours — use this for frequent
+        // passes (quick-shredder). Leave absent in the nightly default profile for
+        // a full-pool sweep that catches stale-but-unmerged duplicates.
+        incrementalSince: improveProfile?.processes?.consolidate?.incrementalSince,
+        limit: improveProfile?.processes?.consolidate?.limit,
+        neighborsPerChanged: improveProfile?.processes?.consolidate?.neighborsPerChanged,
         maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
         // Honor profile.autoAccept (already merged into options.autoAccept at the
         // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
@@ -2624,6 +2630,15 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
 
   const RECENT_ERRORS_CAP = 3;
 
+  // requirePlannedRefs guard: when the distill profile sets this flag, skip
+  // distill for distill-only refs if the reflect phase produced no planned refs.
+  // Prevents the distill loop from generating hundreds of distill-skipped events
+  // on quiet passes (all refs on reflect cooldown, no new signal to distill).
+  const requirePlannedRefs = improveProfile?.processes?.distill?.requirePlannedRefs === true;
+  const _distillOnlyRefNames = new Set(distillOnlyRefs.map((r) => r.ref));
+  const hasReflectEligibleRefs = loopRefs.some((r) => !_distillOnlyRefNames.has(r.ref));
+  const skipDistillDueToRequirePlannedRefs = requirePlannedRefs && !hasReflectEligibleRefs;
+
   // R-2 / #389: Self-Consistency multi-sample voting helpers.
   // Wang et al. arXiv:2203.11171 — N=3 samples beat single-shot on reasoning tasks.
   const SC_THRESHOLD = options.selfConsistencyThreshold ?? 0.7;
@@ -2942,6 +2957,18 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
           ref: planned.ref,
           mode: "distill-skipped",
           result: { ok: true, reason: distillSkip.reason },
+        });
+        completedCount++;
+        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+        continue;
+      }
+      // requirePlannedRefs guard: skip distill for distill-only refs when no
+      // reflect-eligible refs were planned this run, preventing mass skip events.
+      if (skipDistillDueToRequirePlannedRefs && isDistillOnly) {
+        actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "require_planned_refs" },
         });
         completedCount++;
         info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
@@ -3300,8 +3327,20 @@ export async function runImproveMaintenancePasses(args: {
     // candidates from the filesystem-of-truth. The this-run set is still
     // logged as a hint but no longer used as a filter.
     const memoryInferenceDisabledByProfile = improveProfile?.processes?.memoryInference?.enabled === false;
+    const minPendingCount = improveProfile?.processes?.memoryInference?.minPendingCount;
+    const pendingBelowMinCount = (() => {
+      if (!primaryStashDir || minPendingCount === undefined || minPendingCount <= 0) return false;
+      const pending = collectPendingMemories(primaryStashDir).length;
+      if (pending < minPendingCount) {
+        info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
+        return true;
+      }
+      return false;
+    })();
     if (memoryInferenceDisabledByProfile) {
       info("[improve] memory inference skipped (disabled by improve profile)");
+    } else if (pendingBelowMinCount) {
+      // skipped — message already emitted above
     } else {
       const hintRefs = memoryRefsForInference.size;
       info(

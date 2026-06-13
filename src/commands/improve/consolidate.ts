@@ -211,6 +211,10 @@ export interface AkmConsolidateOptions {
   incrementalSince?: string;
   /** Override the computed safe chunk size cap (1–50). */
   maxChunkSize?: number;
+  /** Hard cap on memories processed per pass (applied after incremental narrowing). Absent = no cap. */
+  limit?: number;
+  /** Number of graph neighbours per changed memory during incremental consolidation. Default 5. */
+  neighborsPerChanged?: number;
   /**
    * PROV-DM traceability token for proposals created by this run. When set,
    * every `createProposal` call includes it so accept-rate-per-run aggregation
@@ -1109,7 +1113,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
 
   if (opts.incrementalSince) {
-    memories = narrowToIncrementalCandidates(memories, opts.incrementalSince, warnings);
+    memories = narrowToIncrementalCandidates(memories, opts.incrementalSince, warnings, opts.neighborsPerChanged);
     if (memories.length === 0) {
       return {
         schemaVersion: 1 as const,
@@ -1127,6 +1131,11 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         durationMs: Date.now() - startMs,
       };
     }
+  }
+
+  if (opts.limit !== undefined && memories.length > opts.limit) {
+    warnings.push(`Consolidation: pool capped at ${opts.limit} memories (limit option).`);
+    memories = memories.slice(0, opts.limit);
   }
 
   // Consolidation always uses the HTTP LLM client directly — never the agent
@@ -2435,6 +2444,7 @@ export function narrowToIncrementalCandidates(
   memories: MemoryEntry[],
   since: string,
   warnings: string[],
+  neighborsPerChanged = 5,
 ): MemoryEntry[] {
   const sinceIso = parseSinceToIso(since);
   const isChanged = (m: MemoryEntry): boolean => {
@@ -2448,7 +2458,6 @@ export function narrowToIncrementalCandidates(
   if (changed.length === 0) return [];
   if (changed.length === memories.length) return memories;
 
-  const NEIGHBORS_PER_CHANGED = 5;
   const byName = new Map(memories.map((m) => [m.name, m]));
   const keep = new Set<string>(changed.map((m) => m.name));
   let db: ReturnType<typeof openExistingDatabase> | undefined;
@@ -2457,7 +2466,7 @@ export function narrowToIncrementalCandidates(
     for (const m of changed) {
       const id = findEntryIdByRef(db, `memory:${m.name}`);
       if (id === undefined) continue;
-      for (const hit of getNeighborsByEntryId(db, id, NEIGHBORS_PER_CHANGED + 1)) {
+      for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged + 1)) {
         if (hit.id === id) continue;
         const entry = getEntryById(db, hit.id);
         if (!entry) continue;

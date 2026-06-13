@@ -183,6 +183,41 @@ export interface ImproveProcessConfig {
    */
   maxChunkSize?: number;
   /**
+   * Narrows the consolidation candidate pool to memories modified within this
+   * window (e.g. `"1h"`, `"4h"`, `"7d"`) plus their top-k graph neighbours.
+   * Useful when consolidation runs more than once per day — keeps each pass
+   * focused on recent changes. Absent = full-pool sweep. Only meaningful on
+   * the `consolidate` process.
+   */
+  incrementalSince?: string;
+  /**
+   * Hard cap on memories processed per consolidation pass. Absent = no cap
+   * (full pool after incremental narrowing). Only meaningful on the
+   * `consolidate` process. For `reflect`/`distill`: max refs processed (same
+   * semantics as the profile-level `limit` field).
+   */
+  limit?: number;
+  /**
+   * Number of graph neighbours to include per changed memory during
+   * incremental consolidation. Default 5 (hardcoded). Only meaningful on the
+   * `consolidate` process when `incrementalSince` is set.
+   */
+  neighborsPerChanged?: number;
+  /**
+   * When `true`, the distill process is skipped entirely if the reflect phase
+   * produced zero planned refs (i.e. no refs passed the signal gate for
+   * reflect). Prevents the distill loop from running against distill-only refs
+   * and generating hundreds of `distill-skipped` events on quiet passes. Only
+   * meaningful on the `distill` process.
+   */
+  requirePlannedRefs?: boolean;
+  /**
+   * Minimum number of pending split-parent memories below which the memory
+   * inference pass is skipped entirely (zero LLM calls). Absent = always run
+   * when enabled. Only meaningful on the `memoryInference` process.
+   */
+  minPendingCount?: number;
+  /**
    * Minimum eligible-memory pool size for the consolidation pass. When the
    * eligible pool is below this threshold the pass skips entirely (emitting an
    * `improve_skipped` event with `reason: "pool_below_min_size"`) and makes

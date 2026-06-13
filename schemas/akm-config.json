@@ -211,6 +211,24 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "minNewSessions": {
                         "type": "integer",
                         "minimum": 0
@@ -350,6 +368,24 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "minNewSessions": {
                         "type": "integer",
@@ -491,6 +527,24 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "minNewSessions": {
                         "type": "integer",
                         "minimum": 0
@@ -630,6 +684,24 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "minNewSessions": {
                         "type": "integer",
@@ -771,6 +843,24 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "minNewSessions": {
                         "type": "integer",
                         "minimum": 0
@@ -911,6 +1001,24 @@
                         "minimum": 1,
                         "maximum": 50
                       },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "minNewSessions": {
                         "type": "integer",
                         "minimum": 0
@@ -1050,6 +1158,24 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "minNewSessions": {
                         "type": "integer",
@@ -1808,6 +1934,24 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "minNewSessions": {
                             "type": "integer",
                             "minimum": 0
@@ -1947,6 +2091,24 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "minNewSessions": {
                             "type": "integer",
@@ -2088,6 +2250,24 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "minNewSessions": {
                             "type": "integer",
                             "minimum": 0
@@ -2227,6 +2407,24 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "minNewSessions": {
                             "type": "integer",
@@ -2368,6 +2566,24 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "minNewSessions": {
                             "type": "integer",
                             "minimum": 0
@@ -2508,6 +2724,24 @@
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "minNewSessions": {
                             "type": "integer",
                             "minimum": 0
@@ -2647,6 +2881,24 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "minNewSessions": {
                             "type": "integer",
@@ -3387,6 +3639,24 @@
           "minimum": 1,
           "maximum": 50
         },
+        "incrementalSince": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "neighborsPerChanged": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requirePlannedRefs": {
+          "type": "boolean"
+        },
+        "minPendingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
         "minNewSessions": {
           "type": "integer",
           "minimum": 0
@@ -3537,6 +3807,24 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "minNewSessions": {
                   "type": "integer",
                   "minimum": 0
@@ -3676,6 +3964,24 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "minNewSessions": {
                   "type": "integer",
@@ -3817,6 +4123,24 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "minNewSessions": {
                   "type": "integer",
                   "minimum": 0
@@ -3956,6 +4280,24 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "minNewSessions": {
                   "type": "integer",
@@ -4097,6 +4439,24 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "minNewSessions": {
                   "type": "integer",
                   "minimum": 0
@@ -4237,6 +4597,24 @@
                   "minimum": 1,
                   "maximum": 50
                 },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "minNewSessions": {
                   "type": "integer",
                   "minimum": 0
@@ -4376,6 +4754,24 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "minNewSessions": {
                   "type": "integer",
