@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.6] - 2026-06-12
+
+Pipeline optimization: new per-process config fields wire up the consolidation
+and improve pipeline knobs exposed by the optimization report — incremental
+consolidation, pool caps, distill gating, and memory inference throttling.
+
+### Added
+
+- **`consolidate.incrementalSince`** — profile config field that narrows the
+  consolidation candidate pool to memories modified within the given window
+  (e.g. `"1h"`, `"4h"`) plus their graph neighbours. Enables frequent
+  consolidation passes (e.g. `quick-shredder` every 15 min) without full-pool
+  sweeps. Absent = full-pool sweep (correct for nightly runs).
+- **`consolidate.limit`** — hard cap on memories processed per consolidation
+  pass, applied after incremental narrowing. Prevents runaway full-pool sweeps
+  in the nightly default profile.
+- **`consolidate.neighborsPerChanged`** — configurable graph-neighbour count
+  per changed memory during incremental consolidation (was hardcoded to 5).
+  `quick-shredder` sets this to 3 for a 40% candidate reduction per burst.
+- **`distill.requirePlannedRefs`** — when `true`, the distill process is
+  skipped entirely for distill-only refs when the reflect phase produced zero
+  planned refs. Eliminates hundreds of `distill-skipped` events on quiet passes
+  where all refs are on reflect cooldown.
+- **`memoryInference.minPendingCount`** — minimum pending split-parent memory
+  count below which the inference pass is skipped entirely (zero LLM calls).
+  Prevents lock acquisition on passes where there is nothing to infer.
+- **`reflect.limit`** — per-process ref limit for the reflect/distill loop,
+  applied as the improve run limit when no CLI `--limit` is given.
+- **New `reflect-distill` improve profile** — dedicated reflect + distill + 
+  memoryInference + triage profile for the every-4h `akm-improve-frequent`
+  task. `reflect.limit: 25` bounds LLM cost per pass.
+
+### Changed
+
+- **`quick-shredder` profile tuned**: `incrementalSince` `4h` → `1h`,
+  `maxChunkSize` 25 → 35, added `minPoolSize: 10`, `neighborsPerChanged: 3`,
+  `memoryInference.minPendingCount: 5`. All `profile: "qwen-9b-shredder"`
+  process references removed — falls back to default LLM.
+- **`default` improve profile** (nightly): extract disabled (dedicated
+  `akm-extract` task runs at 01:48), consolidate gets `limit: 500`,
+  reflect gets `limit: 100` and `allowedTypes`, distill gets
+  `requirePlannedRefs: true`, triage enabled at 50 accepts/run,
+  graphExtraction explicitly enabled.
+- **Cron schedule optimised**: extract reverted to `8,28,48 * * * *` (3×/hr),
+  quick-shredder shifted to `4,19,34,49` (4-min extract gap), health-report
+  shifted to `:03` (avoids `:00` collision), `akm-improve-frequent` re-enabled
+  at `45 */4` with `reflect-distill` profile.
+
 ## [0.9.0-beta.3] - 2026-06-12
 
 Stabilization batch closing the remaining 0.9.0 milestone: DB-locking and
