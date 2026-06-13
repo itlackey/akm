@@ -137,17 +137,20 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     // Drive a no-DB starting state — akmImprove must still build the index
     // before computing plannedRefs in dry-run mode.
     let ensureCalls = 0;
+    let ensureMode: string | undefined;
     const result = await akmImprove({
       dryRun: true,
       stashDir,
-      ensureIndexFn: async (dir: string) => {
+      ensureIndexFn: async (dir: string, options) => {
         ensureCalls += 1;
+        ensureMode = options?.mode;
         const { ensureIndex } = await import("../../src/indexer/ensure-index");
-        return ensureIndex(dir);
+        return ensureIndex(dir, options);
       },
     });
 
     expect(ensureCalls).toBe(1);
+    expect(ensureMode).toBe("blocking");
     expect(result.ok).toBe(true);
     expect(result.plannedRefs.map((p) => p.ref)).toContain("lesson:single-lesson");
   });

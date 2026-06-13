@@ -21,6 +21,10 @@ import { getDataDir, getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
 
+export interface EnsureIndexOptions {
+  mode?: "background" | "blocking";
+}
+
 function getIndexableFiles(root: string, spec: AssetSpec): string[] {
   if (!fs.existsSync(root)) return [];
 
@@ -155,30 +159,35 @@ function spawnBackgroundReindex(_stashDir: string): void {
   }
 }
 
+async function runInlineReindex(stashDir: string): Promise<boolean> {
+  try {
+    const { akmIndex } = await import("./indexer.js");
+    await akmIndex({ stashDir });
+    return true;
+  } catch (error) {
+    warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
+    return true;
+  }
+}
+
 /**
- * #607: Non-blocking auto-index. When the local index is stale, spawns a
- * background `akm index` process and returns immediately. The caller can
- * proceed with a search against the existing (possibly stale) index.
+ * Ensure the local index exists and is fresh enough for the caller's needs.
  *
- * Set `AKM_INDEX_INLINE=1` to force synchronous indexing (for tests and CI).
+ * Default mode is `background`, which preserves the low-latency behavior used
+ * by read paths (`search`, `show`, `feedback`): when stale, spawn a detached
+ * reindex and proceed against the existing index.
+ *
+ * `mode: "blocking"` waits for the rebuild to finish before returning. Use
+ * this for callers like `improve` whose planning logic depends on a populated
+ * `entries` table in the same process.
  *
  * Returns `true` if an index run was attempted.
  */
-export async function ensureIndex(stashDir: string): Promise<boolean> {
+export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
   if (!isIndexStale(stashDir)) return false;
 
-  if (process.env.AKM_INDEX_INLINE === "1") {
-    try {
-      const { akmIndex } = await import("./indexer.js");
-      await akmIndex({ stashDir });
-      return true;
-    } catch (error) {
-      warn(
-        "Auto-index failed, proceeding with existing index:",
-        error instanceof Error ? error.message : String(error),
-      );
-      return true;
-    }
+  if (options.mode === "blocking") {
+    return runInlineReindex(stashDir);
   }
 
   try {

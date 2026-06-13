@@ -80,8 +80,6 @@ const HARNESSED: readonly string[] = [
   // Registry overrides used by registry-providers tests.
   "AKM_REGISTRY_URL",
   "AKM_NPM_REGISTRY",
-  // #607: force synchronous indexing in tests (ensureIndex runs inline, not background).
-  "AKM_INDEX_INLINE",
 ];
 
 /**
@@ -106,9 +104,6 @@ function installSuiteWideSandbox(): void {
   process.env.XDG_CACHE_HOME = path.join(suiteSandboxRoot, "xdg-cache");
   process.env.XDG_DATA_HOME = path.join(suiteSandboxRoot, "xdg-data");
   process.env.XDG_STATE_HOME = path.join(suiteSandboxRoot, "xdg-state");
-  // #607: force synchronous indexing in tests so ensureIndex completes before
-  // search assertions run. Production uses background reindex by default.
-  process.env.AKM_INDEX_INLINE = "1";
   // The AKM_*_DIR overrides take precedence over XDG in src/core/paths.ts.
   // If a developer's shell exports any of them, they would defeat the XDG
   // sandbox above and leak production paths into the suite. Delete them at

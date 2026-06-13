@@ -34,7 +34,7 @@ import {
   openDatabase,
   openExistingDatabase,
 } from "../../indexer/db/db";
-import { ensureIndex } from "../../indexer/ensure-index";
+import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { akmIndex } from "../../indexer/indexer";
 import {
@@ -264,7 +264,7 @@ export interface AkmImproveOptions {
    * `akmExtract` calls so the same harness set drives the gate and the pass.
    */
   extractHarnesses?: SessionLogHarness[];
-  ensureIndexFn?: (stashDir: string) => Promise<unknown>;
+  ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
   repairValidationFailures?: boolean;
@@ -1018,7 +1018,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
 
       try {
-        await ensureIndexFn(primaryStashDir);
+        await ensureIndexFn(primaryStashDir, { mode: "blocking" });
       } catch (err) {
         preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
       }

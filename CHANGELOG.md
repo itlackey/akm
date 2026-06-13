@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.7] - 2026-06-13
+
+Fix the `akm improve` regression introduced by background `ensureIndex`.
+
+### Changed
+
+- Added an explicit `ensureIndex` mode so callers choose `background` or
+  `blocking` behavior directly instead of relying on hidden environment state.
+- `akm improve` now uses blocking index preparation before collecting eligible
+  refs, restoring the post-upgrade empty-index recovery path.
+- Removed the `AKM_INDEX_INLINE` test-only override so tests exercise the same
+  index behavior model as production.
+
 ## [0.9.0-beta.6] - 2026-06-12
 
 Pipeline optimization: new per-process config fields wire up the consolidation
