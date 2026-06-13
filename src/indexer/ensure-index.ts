@@ -20,6 +20,7 @@ import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec
 import { getDataDir, getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
+import { acquireIndexWriterLease, handoffIndexWriterLeaseToPid } from "./index-writer-lock";
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
@@ -114,48 +115,42 @@ export function isIndexStale(stashDir: string): boolean {
 }
 
 /**
- * #607: Spawn a background `akm index` process. Non-blocking — returns
- * immediately. Uses a PID file to prevent multiple concurrent background
- * reindexes. The background process writes completion status to a log file.
+ * Spawn a background `akm index` process. Non-blocking — returns immediately.
+ * Background callers share the same global index-writer lease as foreground
+ * writers, so stale-read-triggered auto-index attempts coalesce safely.
  */
-function spawnBackgroundReindex(_stashDir: string): void {
+async function spawnBackgroundReindex(_stashDir: string): Promise<void> {
   const dataDir = getDataDir();
-  const pidFile = path.join(dataDir, "akm-index-background.pid");
   const logFile = path.join(dataDir, "logs", "index-background.log");
-
-  if (fs.existsSync(pidFile)) {
-    try {
-      const pid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
-      if (Number.isInteger(pid) && pid > 0) {
-        try {
-          process.kill(pid, 0);
-          return;
-        } catch {
-          fs.unlinkSync(pidFile);
-        }
-      }
-    } catch {
-      // PID file unreadable — proceed
-    }
-  }
 
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
+  const lease = await acquireIndexWriterLease({ mode: "try", purpose: "background-reindex-spawn" });
+  if (!lease) return;
+
   const akmBin = process.argv[0];
   const akmScript = process.argv[1];
-  const child = spawn(akmBin, [akmScript, "index", "--background"], {
-    detached: true,
-    stdio: ["ignore", fs.openSync(logFile, "a"), fs.openSync(logFile, "a")],
-    env: { ...process.env, AKM_INDEX_BACKGROUND_PID_FILE: pidFile },
-  });
+  try {
+    const child = spawn(akmBin, [akmScript, "index", "--background"], {
+      detached: true,
+      stdio: ["ignore", fs.openSync(logFile, "a"), fs.openSync(logFile, "a")],
+      env: { ...process.env },
+    });
 
-  if (child.pid) {
-    try {
-      fs.writeFileSync(pidFile, String(child.pid), "utf8");
-    } catch {
-      // best-effort PID file write
+    if (!child.pid) {
+      lease.release();
+      return;
     }
-    child.unref();
+
+    handoffIndexWriterLeaseToPid(lease, child.pid, "background-reindex");
+    try {
+      child.unref();
+    } catch {
+      // ignore
+    }
+  } catch (error) {
+    lease.release();
+    throw error;
   }
 }
 
@@ -191,7 +186,7 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
   }
 
   try {
-    spawnBackgroundReindex(stashDir);
+    await spawnBackgroundReindex(stashDir);
     return true;
   } catch (error) {
     warn(

@@ -512,6 +512,21 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+
+  // ── Migration 006 — pending proposal lookup index ──────────────────────────
+  //
+  // Supports the transaction-scoped dedup / queue-mutation hardening added in
+  // 0.9.x. The queue now acquires an IMMEDIATE write transaction before it
+  // reads pending proposals, so the hot path is a stash-scoped `status='pending'
+  // AND ref=?` probe followed by an update/insert. This composite index keeps
+  // that lookup index-covered under contention.
+  {
+    id: "006-proposals-pending-ref-source",
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_proposals_stash_status_ref_source
+        ON proposals(stash_dir, status, ref, source);
+    `,
+  },
 ];
 
 /**
@@ -935,6 +950,31 @@ export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDi
     );
   const changes = (result as { changes?: number | bigint }).changes ?? 0;
   return Number(changes) > 0;
+}
+
+/**
+ * Run `fn` inside a `BEGIN IMMEDIATE` transaction.
+ *
+ * `db.transaction()` is DEFERRED by default on both Bun and better-sqlite3,
+ * which means two writers can both perform stale preflight reads and only race
+ * when they finally attempt the write. Proposal creation and queue mutation
+ * need the write lock BEFORE those reads so concurrent processes serialize on
+ * the live queue state rather than clobbering each other.
+ */
+export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Ignore rollback failures so the original error is preserved.
+    }
+    throw err;
+  }
 }
 
 // ── task_history table helpers ───────────────────────────────────────────────

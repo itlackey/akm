@@ -13,6 +13,7 @@ import type {
   GraphExtractionResult,
 } from "../../src/indexer/graph/graph-extraction";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph/graph-extraction";
+import { probeIndexWriterLease } from "../../src/indexer/index-writer-lock";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
@@ -154,10 +155,13 @@ describe("akmGraphUpdate", () => {
     seedIndex();
 
     let capturedOptions: GraphExtractionPassOptions | undefined;
+    let lockHeldDuringExtraction = false;
 
     const result = await akmGraphUpdate({
       graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
+        const probe = probeIndexWriterLease();
+        lockHeldDuringExtraction = probe.state === "held" && probe.holderPid === process.pid;
         return fakeExtractionResult(2);
       },
     });
@@ -169,6 +173,7 @@ describe("akmGraphUpdate", () => {
     expect(result.entitiesUpserted).toBe(4);
     expect(result.relationsUpserted).toBe(2);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(lockHeldDuringExtraction).toBe(true);
     // candidatePaths must be absent for a full pass.
     expect(capturedOptions?.candidatePaths).toBeUndefined();
   });

@@ -249,6 +249,10 @@ export function getDbPath(): string {
   return path.join(getDataDir(), "index.db");
 }
 
+export function getIndexWriterLockPath(): string {
+  return path.join(getDataDir(), "index.db.write.lock");
+}
+
 export function getWorkflowDbPath(): string {
   return path.join(getDataDir(), "workflow.db");
 }

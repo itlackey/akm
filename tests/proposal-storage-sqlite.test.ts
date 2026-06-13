@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -90,6 +91,103 @@ function countRows(stashDir: string, status?: string): number {
   } finally {
     db.close();
   }
+}
+
+interface WorkerHandle<T> {
+  ready: Promise<void>;
+  result: Promise<T>;
+  release: () => void;
+}
+
+function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<T> {
+  const scriptDir = makeTempDir("akm-prop-worker-");
+  const scriptPath = path.join(scriptDir, "worker.mts");
+  const moduleHref = proposalsModuleHref();
+  fs.writeFileSync(
+    scriptPath,
+    `
+      import {
+        archiveProposal,
+        createProposal,
+        isProposalSkipped,
+        recordGateDecision,
+      } from ${JSON.stringify(moduleHref)};
+
+      self.onmessage = (event) => {
+        const { signalBuffer, action, payload } = event.data;
+        const signal = new Int32Array(signalBuffer);
+        postMessage({ type: "ready" });
+        Atomics.wait(signal, 0, 0);
+
+        if (action === "create") {
+          const result = createProposal(payload.stashDir, payload.input, { dbPath: payload.dbPath });
+          postMessage({
+            type: "result",
+            result: isProposalSkipped(result)
+              ? { kind: "skipped", reason: result.reason, existingProposalId: result.existingProposalId ?? null }
+              : { kind: "created", id: result.id },
+          });
+          return;
+        }
+
+        if (action === "archive") {
+          const updated = archiveProposal(payload.stashDir, payload.id, payload.status, payload.reason, {
+            dbPath: payload.dbPath,
+          });
+          postMessage({ type: "result", result: { kind: "archived", status: updated.status } });
+          return;
+        }
+
+        if (action === "gate") {
+          const updated = recordGateDecision(payload.stashDir, payload.id, payload.decision, { dbPath: payload.dbPath });
+          postMessage({ type: "result", result: { kind: "gate", updated: updated !== undefined } });
+        }
+      };
+    `,
+    "utf8",
+  );
+
+  const worker = new Worker(pathToFileURL(scriptPath).href, { type: "module" });
+  const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  let resolveReady: (() => void) | undefined;
+  let resolveResult: ((value: T) => void) | undefined;
+  let rejectResult: ((error: unknown) => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+  const result = new Promise<T>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+
+  worker.addEventListener("message", (event) => {
+    if (event.data?.type === "ready") {
+      resolveReady?.();
+      return;
+    }
+    if (event.data?.type === "result") {
+      resolveResult?.(event.data.result as T);
+      void worker.terminate();
+    }
+  });
+  worker.addEventListener("error", (event) => {
+    rejectResult?.(event.error ?? new Error(event.message));
+    void worker.terminate();
+  });
+  worker.postMessage({ signalBuffer: signal.buffer, ...payload });
+
+  return {
+    ready,
+    result,
+    release: () => {
+      Atomics.store(signal, 0, 1);
+      Atomics.notify(signal, 0);
+    },
+  };
+}
+
+function proposalsModuleHref(): string {
+  return pathToFileURL(path.join(import.meta.dir, "../src/commands/proposal/validators/proposals.ts")).href;
 }
 
 // ── canonical store ──────────────────────────────────────────────────────────
@@ -354,4 +452,98 @@ describe("concurrent create + list safety (WAL)", () => {
     expect(listed.map((p) => p.ref).sort()).toEqual([...refs].sort());
     expect(countRows(stash, "pending")).toBe(10);
   });
+
+  test(
+    "concurrent duplicate proposal creation serializes on state.db and yields one pending row",
+    async () => {
+      const stash = makeStashDir();
+      const dbPath = path.join(makeTempDir("akm-prop-sql-concurrency-db-"), "state.db");
+      openStateDatabase(dbPath).close();
+
+      const ref = "lesson:concurrent-duplicate";
+      const source = "reflect";
+      const workerA = startProposalWorker<Record<string, unknown>>({
+        action: "create",
+        payload: {
+          stashDir: stash,
+          dbPath,
+          input: { ref, source, sourceRun: "run-concurrency-a", payload: { content: `${VALID_LESSON}\nA` } },
+        },
+      });
+      const workerB = startProposalWorker<Record<string, unknown>>({
+        action: "create",
+        payload: {
+          stashDir: stash,
+          dbPath,
+          input: { ref, source, sourceRun: "run-concurrency-b", payload: { content: `${VALID_LESSON}\nB` } },
+        },
+      });
+      await Promise.all([workerA.ready, workerB.ready]);
+      workerA.release();
+      workerB.release();
+
+      const parsed = await Promise.all([workerA.result, workerB.result]);
+      expect(parsed.filter((entry) => entry.kind === "created")).toHaveLength(1);
+      expect(parsed.filter((entry) => entry.kind === "skipped" && entry.reason === "duplicate_pending")).toHaveLength(
+        1,
+      );
+      expect(listProposals(stash, {}, { dbPath })).toHaveLength(1);
+
+      const db = openStateDatabase(dbPath);
+      try {
+        const row = db
+          .prepare("SELECT COUNT(*) AS c FROM proposals WHERE stash_dir = ? AND status = 'pending'")
+          .get(stash) as {
+          c: number;
+        };
+        expect(row.c).toBe(1);
+      } finally {
+        db.close();
+      }
+    },
+    { timeout: 30_000 },
+  );
+
+  test(
+    "concurrent reject + gate-decision mutation cannot revive a pending row",
+    async () => {
+      const stash = makeStashDir();
+      const dbPath = path.join(makeTempDir("akm-prop-sql-mutation-db-"), "state.db");
+      openStateDatabase(dbPath).close();
+      const created = createProposal(
+        stash,
+        { ref: "lesson:mutation-race", source: "reflect", force: true, payload: { content: VALID_LESSON } },
+        { dbPath },
+      );
+      if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+      const archiveWorker = startProposalWorker<{ kind: string; status: string }>({
+        action: "archive",
+        payload: { stashDir: stash, dbPath, id: created.id, status: "rejected", reason: "race reject" },
+      });
+      const gateWorker = startProposalWorker<{ kind: string; updated: boolean }>({
+        action: "gate",
+        payload: {
+          stashDir: stash,
+          dbPath,
+          id: created.id,
+          decision: { outcome: "deferred", reason: "race-gate", gate: "triage:test" },
+        },
+      });
+      await Promise.all([archiveWorker.ready, gateWorker.ready]);
+      archiveWorker.release();
+      gateWorker.release();
+
+      const [, gateOutcome] = await Promise.all([archiveWorker.result, gateWorker.result]);
+      const finalProposal = getProposal(stash, created.id, { dbPath });
+      expect(finalProposal.status).toBe("rejected");
+      expect(finalProposal.review?.reason).toBe("race reject");
+      if (gateOutcome.updated) {
+        expect(finalProposal.gateDecision?.reason).toBe("race-gate");
+      } else {
+        expect(finalProposal.gateDecision).toBeUndefined();
+      }
+    },
+    { timeout: 30_000 },
+  );
 });

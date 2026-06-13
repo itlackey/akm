@@ -26,7 +26,6 @@
  * SIGINT/SIGTERM handlers in a try/finally — left byte-for-byte untouched.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
@@ -145,15 +144,6 @@ export const indexCommand = defineCommand({
         clearLogFile();
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
-        // #607: clean up background PID file if this was a background run
-        const bgPidFile = process.env.AKM_INDEX_BACKGROUND_PID_FILE;
-        if (bgPidFile) {
-          try {
-            fs.unlinkSync(bgPidFile);
-          } catch {
-            // ignore — file may already be gone
-          }
-        }
       }
     });
   },

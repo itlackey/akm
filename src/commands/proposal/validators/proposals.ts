@@ -65,6 +65,7 @@ import {
   openStateDatabase,
   recordFsProposalsImport,
   upsertProposal,
+  withImmediateTransaction,
 } from "../../../core/state-db";
 import { warn } from "../../../core/warn";
 import {
@@ -673,41 +674,43 @@ export function createProposal(
   const normalizedRef = makeAssetRef(parsedRef.type, parsedRef.name, parsedRef.origin);
 
   return withProposalsDb(stashDir, ctx, (db) => {
-    if (!input.force) {
-      const skip = checkDedupAndCooldown(db, stashDir, normalizedRef, input, ctx);
-      if (skip) return skip;
-    }
+    return withImmediateTransaction(db, () => {
+      if (!input.force) {
+        const skip = checkDedupAndCooldown(db, stashDir, normalizedRef, input, ctx);
+        if (skip) return skip;
+      }
 
-    const created = nowIso(ctx);
+      const created = nowIso(ctx);
 
-    // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
-    // is dropped silently — we never store NaN, Infinity, or out-of-range values.
-    // Callers that mis-report confidence should not poison the auto-accept gate.
-    const sanitizedConfidence =
-      typeof input.confidence === "number" &&
-      Number.isFinite(input.confidence) &&
-      input.confidence >= 0 &&
-      input.confidence <= 1
-        ? input.confidence
-        : undefined;
+      // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
+      // is dropped silently — we never store NaN, Infinity, or out-of-range values.
+      // Callers that mis-report confidence should not poison the auto-accept gate.
+      const sanitizedConfidence =
+        typeof input.confidence === "number" &&
+        Number.isFinite(input.confidence) &&
+        input.confidence >= 0 &&
+        input.confidence <= 1
+          ? input.confidence
+          : undefined;
 
-    const proposal: Proposal = {
-      id: newId(ctx),
-      ref: normalizedRef,
-      status: "pending",
-      source: input.source,
-      ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
-      createdAt: created,
-      updatedAt: created,
-      payload: {
-        content: input.payload.content,
-        ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
-      },
-      ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
-    };
+      const proposal: Proposal = {
+        id: newId(ctx),
+        ref: normalizedRef,
+        status: "pending",
+        source: input.source,
+        ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
+        createdAt: created,
+        updatedAt: created,
+        payload: {
+          content: input.payload.content,
+          ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
+        },
+        ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
+      };
 
-    upsertProposal(db, proposal, stashDir);
-    return proposal;
+      upsertProposal(db, proposal, stashDir);
+      return proposal;
+    });
   });
 }
 
@@ -891,19 +894,28 @@ export function archiveProposal(
   ctx?: ProposalsContext,
 ): Proposal {
   return withProposalsDb(stashDir, ctx, (db) => {
-    const existing = requireProposal(db, stashDir, id);
-    const updated: Proposal = {
-      ...existing,
-      status,
-      updatedAt: nowIso(ctx),
-      review: {
-        outcome: status,
-        ...(reason !== undefined ? { reason } : {}),
-        decidedAt: nowIso(ctx),
-      },
-    };
-    upsertProposal(db, updated, stashDir);
-    return updated;
+    return withImmediateTransaction(db, () => {
+      const existing = requireProposal(db, stashDir, id);
+      if (existing.status !== "pending") {
+        throw new UsageError(
+          `Proposal ${id} is not pending (current status: ${existing.status}). Only pending proposals can be ${status}.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const decidedAt = nowIso(ctx);
+      const updated: Proposal = {
+        ...existing,
+        status,
+        updatedAt: decidedAt,
+        review: {
+          outcome: status,
+          ...(reason !== undefined ? { reason } : {}),
+          decidedAt,
+        },
+      };
+      upsertProposal(db, updated, stashDir);
+      return updated;
+    });
   });
 }
 
@@ -928,14 +940,16 @@ export function recordGateDecision(
   ctx?: ProposalsContext,
 ): Proposal | undefined {
   return withProposalsDb(stashDir, ctx, (db) => {
-    const existing = getStateProposal(db, id, stashDir);
-    if (!existing) return undefined;
-    const updated: Proposal = {
-      ...existing,
-      gateDecision: { ...decision, decidedAt: decision.decidedAt ?? nowIso(ctx) },
-    };
-    upsertProposal(db, updated, stashDir);
-    return updated;
+    return withImmediateTransaction(db, () => {
+      const existing = getStateProposal(db, id, stashDir);
+      if (!existing || existing.status !== "pending") return undefined;
+      const updated: Proposal = {
+        ...existing,
+        gateDecision: { ...decision, decidedAt: decision.decidedAt ?? nowIso(ctx) },
+      };
+      upsertProposal(db, updated, stashDir);
+      return updated;
+    });
   });
 }
 

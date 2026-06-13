@@ -28,6 +28,7 @@ import { akmImprove, runImproveMaintenancePasses } from "../../../src/commands/i
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { insertEvent, openStateDatabase } from "../../../src/core/state-db";
+import { probeIndexWriterLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import type { StalenessDetectionResult } from "../../../src/indexer/passes/staleness-detect";
@@ -110,6 +111,8 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     let reindexCalls = 0;
     let handleOpenDuringReindex: boolean | undefined;
     let handleOpenDuringStaleness: boolean | undefined;
+    let leaseHeldDuringInference: boolean | undefined;
+    let leaseHeldDuringStaleness: boolean | undefined;
     let stalenessDb: Database | undefined;
 
     const result = await akmImprove({
@@ -142,6 +145,8 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
       // post-inference reindex (#584 call site 1).
       memoryInferenceFn: async (ctx) => {
         capturedInferenceDb = ctx.db;
+        const probe = probeIndexWriterLease();
+        leaseHeldDuringInference = probe.state === "held" && probe.holderPid === process.pid;
         return stubMemoryInferenceResult({ considered: 1, splitParents: 1, writtenFacts: 1 });
       },
       reindexFn: async () => {
@@ -156,6 +161,8 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
       stalenessDetectionFn: async (ctx) => {
         stalenessDb = ctx.db;
         handleOpenDuringStaleness = isHandleOpen(ctx.db);
+        const probe = probeIndexWriterLease();
+        leaseHeldDuringStaleness = probe.state === "held" && probe.holderPid === process.pid;
         return stubStalenessResult;
       },
     });
@@ -164,6 +171,8 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     expect(reindexCalls).toBeGreaterThanOrEqual(1);
     expect(handleOpenDuringReindex).toBe(false);
     expect(handleOpenDuringStaleness).toBe(true);
+    expect(leaseHeldDuringInference).toBe(true);
+    expect(leaseHeldDuringStaleness).toBe(true);
     // The post-reindex handle is a NEW connection, not the closed original.
     expect(stalenessDb).toBeDefined();
     expect(stalenessDb).not.toBe(capturedInferenceDb);

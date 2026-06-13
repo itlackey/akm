@@ -26,6 +26,7 @@ import type {
   GraphFileNode,
 } from "../../indexer/graph/graph-extraction";
 import { runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
+import { withIndexWriterLease } from "../../indexer/index-writer-lock";
 import { lookup } from "../../indexer/indexer";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
@@ -544,92 +545,95 @@ export async function akmGraphUpdate(options: {
 
   const scoped = Array.isArray(options.refs) && options.refs.length > 0;
 
-  let candidatePaths: Set<string> | undefined;
-  if (scoped && options.refs) {
-    // Resolve each ref to an absolute file path via the index DB.
-    const dbPath = getDbPath();
-    let db: import("../../storage/database").Database | undefined;
-    const resolvedPaths = new Set<string>();
-    try {
-      db = openDatabase(dbPath);
-      for (const ref of options.refs) {
-        const trimmed = ref.trim();
-        if (!trimmed) continue;
-        const entryId = findEntryIdByRef(db, trimmed);
-        if (entryId === undefined) {
-          warn(`[graph] ref not found in index, skipping: ${trimmed}`);
-          continue;
+  return withIndexWriterLease({ purpose: "graph-update" }, async () => {
+    let candidatePaths: Set<string> | undefined;
+    if (scoped && options.refs) {
+      // Resolve each ref to an absolute file path while the writer lease is held
+      // so the scoped graph write sees the same index snapshot it resolved from.
+      const dbPath = getDbPath();
+      let db: import("../../storage/database").Database | undefined;
+      const resolvedPaths = new Set<string>();
+      try {
+        db = openDatabase(dbPath);
+        for (const ref of options.refs) {
+          const trimmed = ref.trim();
+          if (!trimmed) continue;
+          const entryId = findEntryIdByRef(db, trimmed);
+          if (entryId === undefined) {
+            warn(`[graph] ref not found in index, skipping: ${trimmed}`);
+            continue;
+          }
+          const row = getEntryById(db, entryId);
+          if (!row?.filePath) {
+            warn(`[graph] could not resolve path for ref, skipping: ${trimmed}`);
+            continue;
+          }
+          resolvedPaths.add(row.filePath);
         }
-        const row = getEntryById(db, entryId);
-        if (!row?.filePath) {
-          warn(`[graph] could not resolve path for ref, skipping: ${trimmed}`);
-          continue;
-        }
-        resolvedPaths.add(row.filePath);
+      } finally {
+        if (db) closeDatabase(db);
       }
-    } finally {
-      if (db) closeDatabase(db);
+
+      if (resolvedPaths.size === 0) {
+        warn("[graph] none of the provided refs resolved to indexed paths — no extraction performed.");
+        return {
+          shape: "graph-update",
+          ok: true,
+          filesExtracted: 0,
+          entitiesUpserted: 0,
+          relationsUpserted: 0,
+          durationMs: 0,
+          scoped: true,
+        };
+      }
+      candidatePaths = resolvedPaths;
     }
 
-    if (resolvedPaths.size === 0) {
-      warn("[graph] none of the provided refs resolved to indexed paths — no extraction performed.");
+    const extractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
+    const passOptions: GraphExtractionPassOptions = candidatePaths ? { candidatePaths } : {};
+
+    let db: import("../../storage/database").Database | undefined;
+    const startMs = Date.now();
+    try {
+      db = openDatabase(getDbPath());
+
+      const onProgress = (event: {
+        processed: number;
+        total: number;
+        extracted: number;
+        totalEntities: number;
+        totalRelations: number;
+        currentPath?: string;
+      }) => {
+        if (!event.currentPath) return;
+        const file = path.basename(event.currentPath);
+        warn(`[graph] extracting ${event.processed}/${event.total} ${file}`);
+      };
+
+      const result = await extractionFn({
+        config,
+        sources,
+        signal: undefined,
+        db,
+        reEnrich: false,
+        onProgress,
+        options: passOptions,
+      });
+      const durationMs = Date.now() - startMs;
+
       return {
         shape: "graph-update",
         ok: true,
-        filesExtracted: 0,
-        entitiesUpserted: 0,
-        relationsUpserted: 0,
-        durationMs: 0,
-        scoped: true,
+        filesExtracted: result.quality.extractedFiles,
+        entitiesUpserted: result.quality.entityCount,
+        relationsUpserted: result.quality.relationCount,
+        durationMs,
+        scoped,
       };
+    } finally {
+      if (db) closeDatabase(db);
     }
-    candidatePaths = resolvedPaths;
-  }
-
-  const extractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
-  const passOptions: GraphExtractionPassOptions = candidatePaths ? { candidatePaths } : {};
-
-  let db: import("../../storage/database").Database | undefined;
-  const startMs = Date.now();
-  try {
-    db = openDatabase(getDbPath());
-
-    const onProgress = (event: {
-      processed: number;
-      total: number;
-      extracted: number;
-      totalEntities: number;
-      totalRelations: number;
-      currentPath?: string;
-    }) => {
-      if (!event.currentPath) return;
-      const file = path.basename(event.currentPath);
-      warn(`[graph] extracting ${event.processed}/${event.total} ${file}`);
-    };
-
-    const result = await extractionFn({
-      config,
-      sources,
-      signal: undefined,
-      db,
-      reEnrich: false,
-      onProgress,
-      options: passOptions,
-    });
-    const durationMs = Date.now() - startMs;
-
-    return {
-      shape: "graph-update",
-      ok: true,
-      filesExtracted: result.quality.extractedFiles,
-      entitiesUpserted: result.quality.entityCount,
-      relationsUpserted: result.quality.relationCount,
-      durationMs,
-      scoped,
-    };
-  } finally {
-    if (db) closeDatabase(db);
-  }
+  });
 }
 
 async function resolveGraphTarget(ref: string, source?: string): Promise<ResolvedGraphTarget> {

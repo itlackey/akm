@@ -3,8 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
-import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase } from "../src/indexer/db/db";
+import { getDataDir, getDbPath } from "../src/core/paths";
+import { closeDatabase, findEntryIdByRef, openDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { runCliCapture } from "./_helpers/cli";
@@ -193,5 +193,34 @@ describe("akm feedback", () => {
     const afterMemories = after.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
     expect(afterMemories[0]?.ref).toBe("memory:omega");
     expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
+  });
+
+  test("stale feedback reindexes inline instead of spawning a competing background writer", async () => {
+    writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha body.\n");
+    await buildIndex();
+
+    writeFile(path.join(stashDir, "memories", "beta.md"), "---\ndescription: beta memory\n---\nBeta body.\n");
+
+    const result = await runCli(["feedback", "memory:beta", "--positive", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(parseJsonOutput(result)).toMatchObject({
+      ok: true,
+      ref: "memory:beta",
+      signal: "positive",
+    });
+
+    expect(fs.existsSync(path.join(getDataDir(), "akm-index-background.pid"))).toBe(false);
+
+    const db = openDatabase(getDbPath());
+    try {
+      expect(findEntryIdByRef(db, "memory:beta")).toEqual(expect.any(Number));
+
+      const feedbackEvent = db
+        .prepare("SELECT signal FROM usage_events WHERE event_type = 'feedback' AND entry_ref = ?")
+        .get("memory:beta") as { signal: string } | undefined;
+      expect(feedbackEvent?.signal).toBe("positive");
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

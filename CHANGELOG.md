@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.8] - 2026-06-13
+
+Fix multi-process SQLite contention in `index.db` and harden concurrent proposal
+queue mutations.
+
+### Changed
+
+- Added a global `index.db` writer lease used by foreground indexing,
+  background auto-index, improve maintenance index writers, graph updates, and
+  feedback writes.
+- Replaced the racy background index PID-file dedup flow with lease-based
+  coordination and explicit handoff to the spawned worker.
+- `akm feedback` now uses blocking index preparation and writes under the same
+  `index.db` lease, avoiding self-inflicted `database is locked` failures.
+- Proposal queue create/archive/gate-decision mutations now run under
+  `BEGIN IMMEDIATE` state.db transactions so concurrent processes serialize on
+  live queue state.
+
 ## [0.9.0-beta.7] - 2026-06-13
 
 Fix the `akm improve` regression introduced by background `ensureIndex`.

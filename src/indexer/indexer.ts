@@ -71,6 +71,7 @@ import {
   warnIfVecMissing,
 } from "./db/db";
 import { deleteStoredGraph } from "./db/graph-db";
+import { withIndexWriterLease } from "./index-writer-lock";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
@@ -433,133 +434,135 @@ function runCleanPass(db: Database, dryRun: boolean): IndexCleanResult {
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
 export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
-  const stashDir = options?.stashDir || resolveStashDir();
-  const onProgress = options?.onProgress ?? (() => {});
-  const signal = options?.signal;
-  const reEnrich = options?.reEnrich === true;
-  const full = options?.full === true;
-  const clean = options?.clean === true;
-  const dryRun = options?.dryRun === true;
+  return withIndexWriterLease({ purpose: "akm-index", signal: options?.signal }, async () => {
+    const stashDir = options?.stashDir || resolveStashDir();
+    const onProgress = options?.onProgress ?? (() => {});
+    const signal = options?.signal;
+    const reEnrich = options?.reEnrich === true;
+    const full = options?.full === true;
+    const clean = options?.clean === true;
+    const dryRun = options?.dryRun === true;
 
-  // Load config and resolve all stash sources
-  const { loadConfig } = await import("../core/config/config.js");
-  const config = loadConfig();
+    // Load config and resolve all stash sources
+    const { loadConfig } = await import("../core/config/config.js");
+    const config = loadConfig();
 
-  // One-time, read-only guard: warn if the writable stash still holds an
-  // un-migrated `vaults/` directory. In 0.9.0 the indexer skips `vaults/`
-  // entirely, so an unmigrated vault's `.env` data would silently never be
-  // indexed. Non-destructive — only stats, never reads/writes/deletes.
-  const { warnOnUnmigratedVaults } = await import("./usage/unmigrated-vaults-guard.js");
-  warnOnUnmigratedVaults(stashDir);
+    // One-time, read-only guard: warn if the writable stash still holds an
+    // un-migrated `vaults/` directory. In 0.9.0 the indexer skips `vaults/`
+    // entirely, so an unmigrated vault's `.env` data would silently never be
+    // indexed. Non-destructive — only stats, never reads/writes/deletes.
+    const { warnOnUnmigratedVaults } = await import("./usage/unmigrated-vaults-guard.js");
+    warnOnUnmigratedVaults(stashDir);
 
-  // Ensure git stash caches are extracted before resolving stash dirs,
-  // so their content directories exist on disk for the walker to discover.
-  const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
-  await ensureSourceCaches(config, { force: full });
-  const allSourceEntries = resolveSourceEntries(stashDir, config);
-  const allSourceDirs = allSourceEntries.map((s) => s.path);
+    // Ensure git stash caches are extracted before resolving stash dirs,
+    // so their content directories exist on disk for the walker to discover.
+    const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
+    await ensureSourceCaches(config, { force: full });
+    const allSourceEntries = resolveSourceEntries(stashDir, config);
+    const allSourceDirs = allSourceEntries.map((s) => s.path);
 
-  const t0 = Date.now();
+    const t0 = Date.now();
 
-  // Open database — pass embedding dimension from config if available
-  const dbPath = getDbPath();
-  const embeddingDim = config.embedding?.dimension;
-  const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
+    // Open database — pass embedding dimension from config if available
+    const dbPath = getDbPath();
+    const embeddingDim = config.embedding?.dimension;
+    const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
 
-  try {
-    // Determine incremental vs full mode
-    const prevStashDir = getMeta(db, "stashDir");
-    const prevBuiltAt = getMeta(db, "builtAt");
-    const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
-    const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
+    try {
+      // Determine incremental vs full mode
+      const prevStashDir = getMeta(db, "stashDir");
+      const prevBuiltAt = getMeta(db, "builtAt");
+      const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
+      const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
 
-    // Assemble the run context
-    const ctx: IndexRunContext = {
-      db,
-      config,
-      sources: allSourceEntries,
-      sourceDirs: allSourceDirs,
-      full,
-      reEnrich,
-      stashDir,
-      onProgress,
-      signal,
-      timing: {
-        t0,
-        tWalkStart: t0,
-        tWalkEnd: t0,
-        tLlmEnd: t0,
-        tFtsEnd: t0,
-        tEmbedEnd: t0,
-      },
-      isIncremental,
-      builtAtMs,
-      hadRemovedSources: false,
-      scannedDirs: 0,
-      skippedDirs: 0,
-      generatedCount: 0,
-      walkWarnings: [],
-      dirsNeedingLlm: [],
-      embeddingResult: null,
-      graphExtractionResult: null,
-    };
+      // Assemble the run context
+      const ctx: IndexRunContext = {
+        db,
+        config,
+        sources: allSourceEntries,
+        sourceDirs: allSourceDirs,
+        full,
+        reEnrich,
+        stashDir,
+        onProgress,
+        signal,
+        timing: {
+          t0,
+          tWalkStart: t0,
+          tWalkEnd: t0,
+          tLlmEnd: t0,
+          tFtsEnd: t0,
+          tEmbedEnd: t0,
+        },
+        isIncremental,
+        builtAtMs,
+        hadRemovedSources: false,
+        scannedDirs: 0,
+        skippedDirs: 0,
+        generatedCount: 0,
+        walkWarnings: [],
+        dirsNeedingLlm: [],
+        embeddingResult: null,
+        graphExtractionResult: null,
+      };
 
-    onProgress({
-      phase: "summary",
-      message: buildIndexSummaryMessage({
+      onProgress({
+        phase: "summary",
+        message: buildIndexSummaryMessage({
+          mode: isIncremental ? "incremental" : "full",
+          sourcesCount: allSourceDirs.length,
+          semanticSearchMode: config.semanticSearchMode,
+          embeddingProvider: getEmbeddingProvider(config.embedding),
+          llmEnabled: !!resolveIndexPassLLM("enrichment", config),
+          vecAvailable: isVecAvailable(db),
+        }),
+      });
+
+      // ── Phase sequence ───────────────────────────────────────────────────────
+      await runSourceCachePhase(ctx);
+      await runWalkPhase(ctx);
+      await runEmbeddingPhase(ctx);
+      await runFinalizePhase(ctx);
+      // ────────────────────────────────────────────────────────────────────────
+
+      const { _verification: verification, _totalEntries: totalEntries } = ctx as IndexRunContext & {
+        _verification: IndexVerification;
+        _totalEntries: number;
+      };
+      const { timing } = ctx;
+
+      // ── Clean pass ───────────────────────────────────────────────────────────
+      // After the normal index completes, remove entries whose source files no
+      // longer exist on disk. Remote entries (empty file_path) are skipped.
+      let cleanResult: IndexCleanResult | undefined;
+      if (clean) {
+        cleanResult = runCleanPass(db, dryRun);
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
+      return {
+        stashDir,
+        totalEntries,
+        generatedMetadata: ctx.generatedCount,
+        indexPath: dbPath,
         mode: isIncremental ? "incremental" : "full",
-        sourcesCount: allSourceDirs.length,
-        semanticSearchMode: config.semanticSearchMode,
-        embeddingProvider: getEmbeddingProvider(config.embedding),
-        llmEnabled: !!resolveIndexPassLLM("enrichment", config),
-        vecAvailable: isVecAvailable(db),
-      }),
-    });
-
-    // ── Phase sequence ───────────────────────────────────────────────────────
-    await runSourceCachePhase(ctx);
-    await runWalkPhase(ctx);
-    await runEmbeddingPhase(ctx);
-    await runFinalizePhase(ctx);
-    // ────────────────────────────────────────────────────────────────────────
-
-    const { _verification: verification, _totalEntries: totalEntries } = ctx as IndexRunContext & {
-      _verification: IndexVerification;
-      _totalEntries: number;
-    };
-    const { timing } = ctx;
-
-    // ── Clean pass ───────────────────────────────────────────────────────────
-    // After the normal index completes, remove entries whose source files no
-    // longer exist on disk. Remote entries (empty file_path) are skipped.
-    let cleanResult: IndexCleanResult | undefined;
-    if (clean) {
-      cleanResult = runCleanPass(db, dryRun);
+        directoriesScanned: ctx.scannedDirs,
+        directoriesSkipped: ctx.skippedDirs,
+        ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
+        verification,
+        timing: {
+          totalMs: Date.now() - timing.t0,
+          walkMs: timing.tWalkEnd - timing.tWalkStart,
+          llmMs: timing.tLlmEnd - timing.tWalkEnd,
+          embedMs: timing.tEmbedEnd - timing.tLlmEnd,
+          ftsMs: timing.tFtsEnd - timing.tEmbedEnd,
+        },
+        ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
+      };
+    } finally {
+      closeDatabase(db);
     }
-    // ────────────────────────────────────────────────────────────────────────
-
-    return {
-      stashDir,
-      totalEntries,
-      generatedMetadata: ctx.generatedCount,
-      indexPath: dbPath,
-      mode: isIncremental ? "incremental" : "full",
-      directoriesScanned: ctx.scannedDirs,
-      directoriesSkipped: ctx.skippedDirs,
-      ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
-      verification,
-      timing: {
-        totalMs: Date.now() - timing.t0,
-        walkMs: timing.tWalkEnd - timing.tWalkStart,
-        llmMs: timing.tLlmEnd - timing.tWalkEnd,
-        embedMs: timing.tEmbedEnd - timing.tLlmEnd,
-        ftsMs: timing.tFtsEnd - timing.tEmbedEnd,
-      },
-      ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
-    };
-  } finally {
-    closeDatabase(db);
-  }
+  });
 }
 
 // ── Extracted helpers for indexing ────────────────────────────────────────────
