@@ -160,6 +160,12 @@ export async function runAutoAcceptGate(
             confidence,
             threshold: effectiveThreshold,
             phase: cfg.phase,
+            // Attribution tagging: carry the eligibility lane from the proposal
+            // record onto the auto-accept promoted event so the lane survives to
+            // accept time even when promotion happens in a later run.
+            ...(promotion.proposal.eligibilitySource !== undefined
+              ? { eligibilitySource: promotion.proposal.eligibilitySource }
+              : {}),
           },
         },
         cfg.eventsCtx ?? {},

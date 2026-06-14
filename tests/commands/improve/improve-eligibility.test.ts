@@ -692,6 +692,120 @@ describe("aggregated no_new_signal skip event", () => {
   });
 });
 
+// ── Attribution: eligibilitySource lane tagging ──────────────────────────────
+//
+// Each eligibility lane must stamp the ref it selects with the correct
+// `eligibilitySource` so the planner can thread it to reflect/distill and onto
+// the persisted proposal. The improve harness mocks reflectFn/distillFn, so we
+// capture the `eligibilitySource` option the planner passes per ref. The real
+// reflect/distill event + proposal stamping is covered by reflect-propose.test
+// and distill.test; proactive lane tagging is in proactive-maintenance-flow.test.
+
+describe("attribution: eligibilitySource lane tagging", () => {
+  test("signal-delta lane stamps eligibilitySource='signal-delta'", async () => {
+    const stash = makeTempDir("akm-attr-signal-");
+    writeMemory(stash, "rated", "Has fresh feedback.");
+    await buildIndex(stash);
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:rated" }, { now: () => OLDER_MS });
+    appendEvent(
+      { eventType: "feedback", ref: "memory:rated", metadata: { signal: "negative" } },
+      { now: () => NEWER_MS },
+    );
+
+    const seen = new Map<string, string | undefined>();
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 0,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref, eligibilitySource }) => {
+        if (ref) seen.set(ref, eligibilitySource);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(seen.get("memory:rated")).toBe("signal-delta");
+  });
+
+  test("high-retrieval lane stamps eligibilitySource='high-retrieval'", async () => {
+    const stash = makeTempDir("akm-attr-highret-");
+    writeMemory(stash, "popular", "Frequently retrieved, never rated.");
+    await buildIndex(stash);
+    seedRetrievals("memory:popular", 6);
+
+    const seen = new Map<string, string | undefined>();
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref, eligibilitySource }) => {
+        if (ref) seen.set(ref, eligibilitySource);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(seen.get("memory:popular")).toBe("high-retrieval");
+  });
+
+  test("explicit --scope <ref> bypass stamps eligibilitySource='scope'", async () => {
+    const stash = makeTempDir("akm-attr-scope-");
+    writeMemory(stash, "targeted", "Explicitly targeted, no feedback at all.");
+    await buildIndex(stash);
+
+    const seen = new Map<string, string | undefined>();
+    await akmImprove({
+      scope: "memory:targeted",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref, eligibilitySource }) => {
+        if (ref) seen.set(ref, eligibilitySource);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(seen.get("memory:targeted")).toBe("scope");
+  });
+
+  test("precedence: a ref with BOTH fresh feedback and high retrieval is attributed to signal-delta", async () => {
+    const stash = makeTempDir("akm-attr-prec-");
+    writeMemory(stash, "both", "Rated AND frequently retrieved.");
+    await buildIndex(stash);
+    // Fresh feedback signal (reactive feedback lane).
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:both" }, { now: () => OLDER_MS });
+    appendEvent(
+      { eventType: "feedback", ref: "memory:both", metadata: { signal: "negative" } },
+      { now: () => NEWER_MS },
+    );
+    // Also above the retrieval threshold (would qualify for high-retrieval too).
+    seedRetrievals("memory:both", 10);
+
+    const seen = new Map<string, string | undefined>();
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref, eligibilitySource }) => {
+        if (ref) seen.set(ref, eligibilitySource);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    // signal-delta > high-retrieval: feedback wins.
+    expect(seen.get("memory:both")).toBe("signal-delta");
+  });
+});
+
 // Removed keys (cooldownByType, cooldownDays, feedbackDistillation) are
 // rejected by the strict() default on the affected schema objects — no
 // custom test coverage needed beyond zod's own.

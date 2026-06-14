@@ -36,6 +36,7 @@ import type { LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
+import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { lookup } from "../../indexer/indexer";
 import {
@@ -165,6 +166,15 @@ export interface AkmReflectOptions {
    * In production this is always `undefined`; the indexer drives lookup.
    */
   assetContent?: string;
+  /**
+   * Attribution tagging: which eligibility lane (`signal-delta`, `high-retrieval`,
+   * `proactive`, `scope`) selected this asset for the current improve run. Set by
+   * `akm improve`'s loop from the partitioned {@link ImproveEligibleRef}. Recorded
+   * in `reflect_invoked` event metadata and persisted on the created proposal so
+   * accept/reject/revert/retrieval outcomes can be sliced by lane. Omitted for
+   * direct `akm reflect` invocations (no lane → downstream treats as `"unknown"`).
+   */
+  eligibilitySource?: EligibilitySource;
 }
 
 export interface AkmReflectFailure {
@@ -812,6 +822,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     metadata: {
       ...(options.task ? { task: options.task } : {}),
       ...(options.profile ? { profile: options.profile } : {}),
+      // Attribution tagging: stamp the eligibility lane so reflect_invoked can be
+      // sliced by lane downstream. See EligibilitySource.
+      ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
     },
   });
 
@@ -1478,6 +1491,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // `parseAgentProposalPayload` already clamps to [0, 1] and drops non-
     // finite values; `createProposal` runs its own sanitizer as a safety net.
     ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
+    // Attribution tagging: persist the eligibility lane on the proposal so it
+    // survives to accept/reject/revert time even across runs. See EligibilitySource.
+    ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
   };
   const proposalResult = createProposal(stash, createInput, options.ctx);
 

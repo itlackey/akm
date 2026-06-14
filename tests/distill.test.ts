@@ -587,6 +587,46 @@ describe("akmDistill — queued proposal", () => {
     expect(events[0].metadata?.proposalId).toBe(result.proposalId);
   });
 
+  test("attribution: eligibilitySource stamps distill_invoked event + proposal record", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+      eligibilitySource: "high-retrieval",
+    });
+    expect(result.outcome).toBe("queued");
+
+    // (a) distill_invoked event carries the lane.
+    const { events } = readEvents({ type: "distill_invoked" });
+    const queued = events.find((e) => e.metadata?.outcome === "queued");
+    expect(queued?.metadata?.eligibilitySource).toBe("high-retrieval");
+
+    // (b) the persisted proposal record carries the lane.
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    expect(proposals[0].eligibilitySource).toBe("high-retrieval");
+  });
+
+  test("attribution: omitted eligibilitySource leaves distill_invoked + proposal unstamped", async () => {
+    const stash = makeStashDir();
+    await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    const { events } = readEvents({ type: "distill_invoked" });
+    const queued = events.find((e) => e.metadata?.outcome === "queued");
+    expect(queued?.metadata?.eligibilitySource).toBeUndefined();
+    expect(listProposals(stash)[0].eligibilitySource).toBeUndefined();
+  });
+
   test("LLM-fenced response is unwrapped before linting", async () => {
     const stash = makeStashDir();
     const fenced = `\`\`\`markdown\n${VALID_LESSON}\n\`\`\``;

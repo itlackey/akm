@@ -15,6 +15,7 @@ import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from 
 import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
 import type {
   AkmImproveResult,
+  EligibilitySource,
   ImproveActionResult,
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
@@ -321,7 +322,13 @@ export interface AkmImproveOptions {
   sync?: { enabled?: boolean; push?: boolean };
 }
 
-export type { AkmImproveResult, ImproveActionResult, ImproveEligibleRef, ImproveMemoryCleanupResult };
+export type {
+  AkmImproveResult,
+  EligibilitySource,
+  ImproveActionResult,
+  ImproveEligibleRef,
+  ImproveMemoryCleanupResult,
+};
 
 type ImproveScope = ReturnType<typeof resolveImproveScope>;
 
@@ -2665,6 +2672,38 @@ async function runImprovePreparationStage(args: {
   const mergedRefs =
     scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
 
+  // ── Attribution tagging: stamp each ref with the eligibility lane that
+  // selected it ──────────────────────────────────────────────────────────────
+  // Every reflect/distill proposal must record WHICH lane chose its source asset
+  // so downstream accept/reject/revert/retrieval outcomes can be sliced by lane
+  // (does the PROACTIVE lane produce value vs the reactive lanes?). We build the
+  // lane map here — the one place all four lanes are known — and stamp it onto
+  // each ImproveEligibleRef object. Because the ref objects are shared by
+  // reference across buckets, the stamp travels with the ref through the sort,
+  // disk-check, and loop stages down to the reflect/distill event emit sites and
+  // createProposal calls. See EligibilitySource for the lane vocabulary.
+  //
+  // Precedence (prefer the most specific reactive signal):
+  //   scope > signal-delta > high-retrieval > proactive
+  // A ref with real feedback is attributed to feedback even if it was also due
+  // for proactive maintenance. We apply lanes weakest-first so the strongest
+  // overwrites; the explicit --scope <ref> bypass wins outright (user intent).
+  const eligibilitySourceByRef = new Map<string, EligibilitySource>();
+  for (const r of proactiveRefs) eligibilitySourceByRef.set(r.ref, "proactive");
+  for (const r of highRetrievalRefs) eligibilitySourceByRef.set(r.ref, "high-retrieval");
+  for (const r of signalFiltered) eligibilitySourceByRef.set(r.ref, "signal-delta");
+  if (scope.mode === "ref") {
+    // O-2 (#365): explicit --scope <ref> bypass — every ref in processableRefs
+    // arrived via the scopeRefBypass branch, so attribute the whole set to scope.
+    for (const r of processableRefs) eligibilitySourceByRef.set(r.ref, "scope");
+  }
+  for (const r of mergedRefs) {
+    // "unknown" is a genuine fallback, never a silent alias for signal-delta:
+    // only refs we truly cannot attribute land here (none in practice, since
+    // mergedRefs is always a subset of the four lanes above).
+    r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
+  }
+
   const utilityMap = buildUtilityMap(mergedRefs);
 
   // Load feedback ratio per ref from the pre-computed summary (no extra DB pass).
@@ -3069,6 +3108,9 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
             eventSource: "improve" as const,
             ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
             ...(reflectProfileRunner ? { runner: reflectProfileRunner } : {}),
+            // Attribution: carry the eligibility lane so reflect stamps it on
+            // the reflect_invoked event and the persisted proposal.
+            ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
           };
           // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
           // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
@@ -3094,6 +3136,9 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
                 source: "reflect",
                 sourceRun: `reflect-sc-${Date.now()}`,
                 payload: winner.proposal.payload,
+                // Attribution: the self-consistency path persists the winner here
+                // (draftMode skips reflect's own createProposal), so stamp the lane.
+                ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
               });
               reflectResult = isProposalSkipped(persistResult)
                 ? {
@@ -3313,6 +3358,9 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
             ref: planned.ref,
             ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+            // Attribution: carry the eligibility lane so distill stamps it on the
+            // distill_invoked event and the persisted proposal.
+            ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
           }),
         );
         actions.push({ ref: planned.ref, mode: "distill", result: distillResult });

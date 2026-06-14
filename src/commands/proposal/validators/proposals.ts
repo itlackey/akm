@@ -54,6 +54,7 @@ import { resolveAssetPathFromName, TYPE_DIRS } from "../../../core/asset/asset-s
 import type { AkmConfig } from "../../../core/config/config";
 import { NotFoundError, UsageError } from "../../../core/errors";
 import { appendEvent } from "../../../core/events";
+import type { EligibilitySource } from "../../../core/improve-types";
 import {
   type Database,
   getStateDbPath,
@@ -337,6 +338,16 @@ export interface Proposal {
    * revert state carried on the row.
    */
   backupContent?: string;
+  /**
+   * Attribution tagging: which eligibility lane selected the source asset for the
+   * improve run that produced this proposal (`signal-delta`, `high-retrieval`,
+   * `proactive`, `scope`, or `unknown`). Persisted in `metadata_json` so the lane
+   * survives to accept/reject/revert time even across runs, letting downstream
+   * analysis measure whether the PROACTIVE lane produces value vs the reactive
+   * lanes. Absent on proposals created before this field shipped (treat as
+   * `"unknown"`) and on human-initiated sources that have no eligibility lane.
+   */
+  eligibilitySource?: EligibilitySource;
 }
 
 export interface ProposalsContext {
@@ -380,6 +391,13 @@ export interface CreateProposalInput {
    * confidence should omit the field.
    */
   confidence?: number;
+  /**
+   * Attribution tagging: the eligibility lane that selected the source asset for
+   * the improve run creating this proposal. Forwarded verbatim onto the persisted
+   * {@link Proposal} (`eligibilitySource`). Omitted by human-initiated sources
+   * (`propose`, `remember`, `import`) that have no eligibility lane.
+   */
+  eligibilitySource?: EligibilitySource;
 }
 
 /**
@@ -706,6 +724,9 @@ export function createProposal(
           ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
         },
         ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
+        // Attribution tagging: persist the eligibility lane so it survives to
+        // accept/reject/revert time. See EligibilitySource.
+        ...(input.eligibilitySource !== undefined ? { eligibilitySource: input.eligibilitySource } : {}),
       };
 
       upsertProposal(db, proposal, stashDir);

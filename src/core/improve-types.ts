@@ -20,6 +20,30 @@ import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
 import type { StalenessDetectionResult } from "../indexer/passes/staleness-detect";
 import { assertNever } from "./assert";
 
+/**
+ * Which eligibility lane selected an asset for an improve run (attribution
+ * tagging). Recorded on `reflect_invoked` / `distill_invoked` / `promoted`
+ * state.db events and persisted on the proposal record so downstream
+ * accept / reject / revert / retrieval outcomes can be sliced by lane — i.e.
+ * "does the PROACTIVE lane produce value vs the reactive lanes?".
+ *
+ *   - `"signal-delta"`   — asset had fresh feedback since its last proposal
+ *                          (the reactive feedback-signal lane).
+ *   - `"high-retrieval"` — P0-A fallback: zero-feedback but frequently
+ *                          retrieved (the reactive retrieval-spike lane).
+ *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
+ *   - `"scope"`          — explicit `--scope <ref>` bypass (user intent wins).
+ *   - `"unknown"`        — origin lane could not be determined. NOT a silent
+ *                          alias for `signal-delta`; only used when the lane
+ *                          genuinely cannot be attributed.
+ *
+ * Precedence when a ref qualifies via multiple lanes (prefer the most specific
+ * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive`.
+ * A ref with real feedback is attributed to feedback even if it was also due
+ * for proactive maintenance.
+ */
+export type EligibilitySource = "signal-delta" | "high-retrieval" | "proactive" | "scope" | "unknown";
+
 export interface ImproveEligibleRef {
   ref: string;
   reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
@@ -30,6 +54,13 @@ export interface ImproveEligibleRef {
    * bypass `collectEligibleRefs`; consumers fall back to the async lookup.
    */
   filePath?: string;
+  /**
+   * The eligibility lane that selected this ref for the current run. Stamped at
+   * partition time in `runImprovePreparationStage` and threaded through to the
+   * reflect/distill event emit sites and proposal creation. See
+   * {@link EligibilitySource} for the lane vocabulary and precedence rule.
+   */
+  eligibilitySource?: EligibilitySource;
 }
 
 /**

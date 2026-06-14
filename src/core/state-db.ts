@@ -213,7 +213,7 @@ const MIGRATIONS: Migration[] = [
       --   metadata_json TEXT      — JSON object for future proposal fields.
       --                             Current fields stored here: sourceRun,
       --                             review, confidence, gateDecision (#577),
-      --                             backupContent.
+      --                             backupContent, eligibilitySource.
       --
       -- ADD COLUMN extension points (future migrations):
       --   ALTER TABLE proposals ADD COLUMN source_run TEXT DEFAULT NULL;
@@ -645,6 +645,9 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
     ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
+    ...(typeof meta.eligibilitySource === "string"
+      ? { eligibilitySource: meta.eligibilitySource as Proposal["eligibilitySource"] }
+      : {}),
   };
 }
 
@@ -660,6 +663,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
   if (proposal.gateDecision !== undefined) metaObj.gateDecision = proposal.gateDecision;
   if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
+  if (proposal.eligibilitySource !== undefined) metaObj.eligibilitySource = proposal.eligibilitySource;
 
   return {
     id: proposal.id,

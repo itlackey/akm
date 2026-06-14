@@ -172,6 +172,50 @@ describe("akm reflect", () => {
     expect(events.events[0]?.ref).toBe("lesson:rg-over-grep");
   });
 
+  test("attribution: eligibilitySource stamps reflect_invoked event + proposal record", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
+      eligibilitySource: "proactive",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+
+    // (a) reflect_invoked event carries the lane.
+    const events = readEvents({ type: "reflect_invoked" });
+    expect(events.events.length).toBe(1);
+    expect((events.events[0]?.metadata as { eligibilitySource?: string }).eligibilitySource).toBe("proactive");
+
+    // (b) the persisted proposal record carries the lane (survives across runs).
+    const proposals = listProposals(stash);
+    expect(proposals.length).toBe(1);
+    expect(proposals[0]?.eligibilitySource).toBe("proactive");
+  });
+
+  test("attribution: omitted eligibilitySource leaves reflect_invoked + proposal unstamped", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
+    });
+    expect(result.ok).toBe(true);
+    // Durable contract: the persisted proposal record carries no lane when none
+    // was supplied. (Primary assertion — listProposals is the cross-run source
+    // of truth for attribution.)
+    expect(listProposals(stash)[0]?.eligibilitySource).toBeUndefined();
+    // And the reflect_invoked event likewise carries no lane (null-safe: absence
+    // of the field is the contract whether or not the event row is present).
+    const events = readEvents({ type: "reflect_invoked" });
+    expect(
+      (events.events[0]?.metadata as { eligibilitySource?: string } | undefined)?.eligibilitySource,
+    ).toBeUndefined();
+  });
+
   test("emits reflect_invoked even when the agent fails", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({

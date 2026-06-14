@@ -149,6 +149,11 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
       source: result.proposal.source,
       ...(result.proposal.sourceRun !== undefined ? { sourceRun: result.proposal.sourceRun } : {}),
       assetPath: result.assetPath,
+      // Attribution tagging: carry the eligibility lane from the proposal record
+      // onto the promoted event so accept outcomes can be sliced by lane.
+      ...(result.proposal.eligibilitySource !== undefined
+        ? { eligibilitySource: result.proposal.eligibilitySource }
+        : {}),
     },
   });
 

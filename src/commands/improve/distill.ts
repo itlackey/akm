@@ -63,6 +63,7 @@ import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
+import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { warnVerbose } from "../../core/warn";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
@@ -199,6 +200,15 @@ export interface AkmDistillOptions {
    * library admission checks against the existing library.
    */
   fetchSimilarLessonsFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+  /**
+   * Attribution tagging: which eligibility lane (`signal-delta`, `high-retrieval`,
+   * `proactive`, `scope`) selected this asset for the current improve run. Set by
+   * `akm improve`'s loop from the partitioned {@link ImproveEligibleRef}. Recorded
+   * in `distill_invoked` event metadata and persisted on the created proposal so
+   * accept/reject/revert/retrieval outcomes can be sliced by lane. Omitted for
+   * direct `akm distill` invocations (no lane → downstream treats as `"unknown"`).
+   */
+  eligibilitySource?: EligibilitySource;
 }
 
 export interface AkmDistillResult {
@@ -828,6 +838,7 @@ function writeQualityRejection(
   score: number,
   reason: string,
   extraMeta: Record<string, unknown> = {},
+  eligibilitySource?: EligibilitySource,
 ): AkmDistillResult {
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
@@ -848,6 +859,9 @@ function writeQualityRejection(
       score,
       reason,
       ...extraMeta,
+      // Attribution tagging: stamp the eligibility lane so distill_invoked can be
+      // sliced by lane downstream. See EligibilitySource.
+      ...(eligibilitySource ? { eligibilitySource } : {}),
     },
   });
   return {
@@ -878,6 +892,13 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const parsedInputRef = parseAssetRef(inputRef);
   const targetKind = options.proposalKind ?? "lesson";
 
+  // Attribution tagging: spread into every distill_invoked event's metadata so
+  // the lane that selected this asset is recorded uniformly across all outcome
+  // branches. Empty object when no lane was supplied (direct `akm distill`).
+  const eligMeta: { eligibilitySource?: EligibilitySource } = options.eligibilitySource
+    ? { eligibilitySource: options.eligibilitySource }
+    : {};
+
   // Recursive-distillation guard. Distill produces *lessons* from non-lesson
   // sources (memory, skill, knowledge, etc.). Calling distill on an existing
   // lesson would derive `lesson:lesson-<name>-lesson-lesson` (double `-lesson`
@@ -899,6 +920,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         lessonRef: skippedRef,
         message: "distill refuses lesson inputs — lessons are the distilled form, not a source",
         skipReason: "recursive_lesson_input",
+        ...eligMeta,
       },
     });
     return {
@@ -1029,6 +1051,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
               outcome: "skipped" as const,
               lessonRef: promotion.knowledgeRef,
               message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
+              ...eligMeta,
             },
           });
           return {
@@ -1091,6 +1114,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
             judgeResult.score,
             judgeResult.reason,
             { reviewNeeded: true },
+            options.eligibilitySource,
           );
         }
         return writeQualityRejection(
@@ -1100,6 +1124,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           resolvedPromotionContent,
           judgeResult.score,
           judgeResult.reason,
+          {},
+          options.eligibilitySource,
         );
       }
       // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
@@ -1119,6 +1145,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           ...(Object.keys(knowledgeParsed.data).length > 0 ? { frontmatter: knowledgeParsed.data } : {}),
         },
         ...(knowledgeJudgeConfidence !== undefined ? { confidence: knowledgeJudgeConfidence } : {}),
+        // Attribution tagging: persist the eligibility lane on the proposal.
+        ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
       },
       options.ctx,
     );
@@ -1132,6 +1160,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
           lessonRef: promotion.knowledgeRef,
           message: proposalResult.message,
           skipReason: proposalResult.reason,
+          ...eligMeta,
         },
       });
       return {
@@ -1156,6 +1185,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         proposalId: proposal.id,
         ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...eligMeta,
       },
     });
 
@@ -1285,6 +1315,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         lessonRef: effectiveLessonRef,
         proposalKind: effectiveProposalKind,
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...eligMeta,
       },
     });
     return {
@@ -1520,6 +1551,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         proposalKind: effectiveProposalKind,
         findingKinds: findings.map((f) => f.kind),
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...eligMeta,
       },
     });
     const message = findings.map((f) => f.message).join("\n");
@@ -1560,6 +1592,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
             reviewNeeded: true,
             ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
           },
+          options.eligibilitySource,
         );
       }
       return writeQualityRejection(
@@ -1570,6 +1603,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         judgeResult.score,
         judgeResult.reason,
         exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
+        options.eligibilitySource,
       );
     }
     // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
@@ -1602,6 +1636,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         frontmatter: frontmatterWithSources,
       },
       ...(lessonJudgeConfidence !== undefined ? { confidence: lessonJudgeConfidence } : {}),
+      // Attribution tagging: persist the eligibility lane on the proposal.
+      ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
     },
     options.ctx,
   );
@@ -1615,6 +1651,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         lessonRef: effectiveLessonRef,
         message: proposalResult2.message,
         skipReason: proposalResult2.reason,
+        ...eligMeta,
       },
     });
     return {
@@ -1640,6 +1677,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
       ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
+      ...eligMeta,
     },
   });
 
