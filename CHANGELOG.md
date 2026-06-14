@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.9] - 2026-06-14
+
+Restore and instrument `akm improve` steady-state output. The reflect/distill
+self-improvement lanes had been near-zero in steady state because the
+signal-delta eligibility gate was the only lane (cache "no-access = no-work"
+pathology) and the high-retrieval fallback was structurally dead. This release
+revives proactive improvement, adds attribution + a measurement/kill-criterion
+system so the lane must prove its value, and right-sizes reflect budgets to
+their task timeouts.
+
+### Added
+
+- **Proactive maintenance selector** (`proactiveMaintenance` improve process):
+  due-gated, composite-priority (`importance × log(1+retrievalFreq) ×
+  recencyDecay / log(size)`), bounded rotating top-N reflect/distill over
+  stale/never-reflected assets. **Disabled by default**; enable per profile.
+- **Eligibility attribution**: every reflect/distill proposal is stamped
+  `eligibilitySource ∈ {signal-delta, high-retrieval, proactive, scope,
+  unknown}` on `reflect_invoked`/`distill_invoked`/`promoted` events and the
+  proposal record, so outcomes are sliceable by lane.
+- **Measurement system** under `scripts/akm-eval/`: a real-query retrieval suite
+  generated from `usage_events`, and `akm-eval-proactive-verdict` — a read-only
+  kill-criterion runner comparing the proactive lane (treatment) vs due-but-
+  untouched assets (control). Emits PASS/FAIL/INCONCLUSIVE and recommends
+  disabling the lane on FAIL. New `proactive_selected` event +
+  `proactiveSelected`/`proactiveDueTotal`/`proactiveNeverReflected` fields on
+  `improve_completed`.
+
+### Fixed
+
+- Revived the P0-A high-retrieval fallback: genuinely zero-feedback assets were
+  routed to the fully-skipped branch one phase before the fallback could see
+  them, so frequently-retrieved-but-never-rated assets were never improved.
+- `getRetrievalCounts` now normalizes bare vs `origin//`-prefixed refs (it was
+  dropping ~half the retrieval signal) and counts `curate` events
+  (`akm curate` now records per-item `entry_ref`).
+- The fully-skipped `no_new_signal` branch emitted one `improve_skipped` event
+  per ref (~11K writes/run, ~400K rows/day) — a contributor to 900s improve
+  timeouts and state.db bloat. Collapsed into one aggregated counted event.
+
+### Changed
+
+- `session_extraction` feature gate is always on; the real on/off control lives
+  at the active improve profile's `processes.extract.enabled`, so non-default
+  profiles no longer get extract hard-disabled by the `default` profile.
+
 ## [0.9.0-beta.8] - 2026-06-13
 
 Fix multi-process SQLite contention in `index.db` and harden concurrent proposal
