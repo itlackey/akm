@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-025-image-generation",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (34× searched; 69 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "image generation",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/design/creaturepunk-design-guide",
+      "knowledge:print/design/creaturepunk-design-guide.md",
+      "knowledge:skills/print/pdf-review/references/ttrpg-standards",
+      "knowledge:skills/print/pdf-review/references/ttrpg-standards.md",
+      "agent:print/ttrpg-print-layout-dev",
+      "agent:print/ttrpg-print-layout-dev.md",
+      "workflow:spread-improvement-loop",
+      "workflow:spread-improvement-loop.md",
+      "skill:print/pdfx-print-pipeline",
+      "skill:print/pdfx-print-pipeline.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 34,
+    "engagedRefCount": 69,
+    "firstSeen": "2026-05-23 02:56:59",
+    "lastSeen": "2026-05-25 06:20:29",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/design/creaturepunk-design-guide",
+        "weight": 98
+      },
+      {
+        "ref": "knowledge:skills/print/pdf-review/references/ttrpg-standards",
+        "weight": 98
+      },
+      {
+        "ref": "agent:print/ttrpg-print-layout-dev",
+        "weight": 98
+      },
+      {
+        "ref": "workflow:spread-improvement-loop",
+        "weight": 87
+      },
+      {
+        "ref": "skill:print/pdfx-print-pipeline",
+        "weight": 87
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-002-docker",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (351× searched; 103 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "docker",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:skills/system-ops/docker-homelab/references/compose",
+      "knowledge:skills/system-ops/docker-homelab/references/compose.md",
+      "knowledge:api-guide",
+      "knowledge:api-guide.md",
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "command:print/review-pdf",
+      "command:print/review-pdf.md",
+      "skill:print/pdf-layout-reviewer",
+      "skill:print/pdf-layout-reviewer.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 351,
+    "engagedRefCount": 103,
+    "firstSeen": "2026-05-20 00:48:02",
+    "lastSeen": "2026-06-02 00:47:57",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:skills/system-ops/docker-homelab/references/compose",
+        "weight": 4353
+      },
+      {
+        "ref": "knowledge:api-guide",
+        "weight": 3438
+      },
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 2515
+      },
+      {
+        "ref": "command:print/review-pdf",
+        "weight": 1719
+      },
+      {
+        "ref": "skill:print/pdf-layout-reviewer",
+        "weight": 1578
+      }
+    ]
+  }
+}

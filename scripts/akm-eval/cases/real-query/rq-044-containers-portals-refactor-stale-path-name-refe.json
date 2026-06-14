@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-044-containers-portals-refactor-stale-path-name-refe",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (29× searched; 10 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "containers portals refactor stale path name references release readiness",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "command:code-review",
+      "command:code-review.md",
+      "knowledge:docs/stale-pr-salvage-ledger",
+      "knowledge:docs/stale-pr-salvage-ledger.md",
+      "knowledge:skills/system-ops/docker-homelab/references/troubleshooting",
+      "knowledge:skills/system-ops/docker-homelab/references/troubleshooting.md",
+      "skill:ab-testing",
+      "skill:ab-testing.md",
+      "command:flutter-test",
+      "command:flutter-test.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 29,
+    "engagedRefCount": 10,
+    "firstSeen": "2026-06-13 01:01:01",
+    "lastSeen": "2026-06-13 03:38:53",
+    "topEngagedRefs": [
+      {
+        "ref": "command:code-review",
+        "weight": 40
+      },
+      {
+        "ref": "knowledge:docs/stale-pr-salvage-ledger",
+        "weight": 27
+      },
+      {
+        "ref": "knowledge:skills/system-ops/docker-homelab/references/troubleshooting",
+        "weight": 27
+      },
+      {
+        "ref": "skill:ab-testing",
+        "weight": 9
+      },
+      {
+        "ref": "command:flutter-test",
+        "weight": 9
+      }
+    ]
+  }
+}

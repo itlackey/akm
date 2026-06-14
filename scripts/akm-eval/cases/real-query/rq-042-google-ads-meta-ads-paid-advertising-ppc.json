@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-042-google-ads-meta-ads-paid-advertising-ppc",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (17× searched; 57 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "Google Ads Meta Ads paid advertising PPC",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:cro",
+      "skill:cro.md",
+      "skill:seo-audit",
+      "skill:seo-audit.md",
+      "skill:analytics",
+      "skill:analytics.md",
+      "skill:social",
+      "skill:social.md",
+      "skill:ai-seo",
+      "skill:ai-seo.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 17,
+    "engagedRefCount": 57,
+    "firstSeen": "2026-06-02 07:08:54",
+    "lastSeen": "2026-06-02 07:08:54",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:cro",
+        "weight": 221
+      },
+      {
+        "ref": "skill:seo-audit",
+        "weight": 221
+      },
+      {
+        "ref": "skill:analytics",
+        "weight": 204
+      },
+      {
+        "ref": "skill:social",
+        "weight": 204
+      },
+      {
+        "ref": "skill:ai-seo",
+        "weight": 204
+      }
+    ]
+  }
+}

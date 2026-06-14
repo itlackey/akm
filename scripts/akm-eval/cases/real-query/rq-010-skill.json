@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-010-skill",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (104× searched; 84 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "skill",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "workflow:github-issues-parallel-implementer",
+      "workflow:github-issues-parallel-implementer.md",
+      "script:skills/print/pdf-layout-reviewer/setup.sh",
+      "script:skills/print/pdf-layout-reviewer/setup.sh.md",
+      "memory:principle-fix-root-cause-in-repo-not-local-patches-2026-05-22",
+      "memory:principle-fix-root-cause-in-repo-not-local-patches-2026-05-22.md",
+      "knowledge:projects/akm/session-2026-05-20-followups",
+      "knowledge:projects/akm/session-2026-05-20-followups.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 104,
+    "engagedRefCount": 84,
+    "firstSeen": "2026-05-23 18:19:52",
+    "lastSeen": "2026-05-23 20:28:58",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 348
+      },
+      {
+        "ref": "workflow:github-issues-parallel-implementer",
+        "weight": 342
+      },
+      {
+        "ref": "script:skills/print/pdf-layout-reviewer/setup.sh",
+        "weight": 280
+      },
+      {
+        "ref": "memory:principle-fix-root-cause-in-repo-not-local-patches-2026-05-22",
+        "weight": 274
+      },
+      {
+        "ref": "knowledge:projects/akm/session-2026-05-20-followups",
+        "weight": 254
+      }
+    ]
+  }
+}

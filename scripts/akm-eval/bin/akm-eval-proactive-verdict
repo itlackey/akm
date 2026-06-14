@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# akm-eval-proactive-verdict — kill-criterion for the proactive improve lane.
+#
+# Thin wrapper around scripts/akm-eval/src/proactive-verdict.ts. Forwards
+# every argument unchanged; proactive-verdict.ts owns argument parsing
+# (including its own --stash flag). READ-ONLY against index.db / state.db /
+# eval runs; writes only its report under <stash>/.akm/measurement/verdicts/.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/proactive-verdict.ts" "$@"

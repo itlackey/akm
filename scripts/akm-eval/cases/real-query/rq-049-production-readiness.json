@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-049-production-readiness",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (18× searched; 42 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "production readiness",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "command:print/publish-pipeline",
+      "command:print/publish-pipeline.md",
+      "workflow:publish-stash",
+      "workflow:publish-stash.md",
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "lesson:knowledge-print-design-design-quality-checklist-lesson",
+      "lesson:knowledge-print-design-design-quality-checklist-lesson.md",
+      "knowledge:print/REVIEW-SKILL-IMPROVEMENTS",
+      "knowledge:print/REVIEW-SKILL-IMPROVEMENTS.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 18,
+    "engagedRefCount": 42,
+    "firstSeen": "2026-05-24 15:40:42",
+    "lastSeen": "2026-05-24 15:40:42",
+    "topEngagedRefs": [
+      {
+        "ref": "command:print/publish-pipeline",
+        "weight": 108
+      },
+      {
+        "ref": "workflow:publish-stash",
+        "weight": 108
+      },
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 72
+      },
+      {
+        "ref": "lesson:knowledge-print-design-design-quality-checklist-lesson",
+        "weight": 72
+      },
+      {
+        "ref": "knowledge:print/REVIEW-SKILL-IMPROVEMENTS",
+        "weight": 54
+      }
+    ]
+  }
+}

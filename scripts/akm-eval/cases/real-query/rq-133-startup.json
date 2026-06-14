@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-133-startup",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (7× searched; 40 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "startup",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "knowledge:print/design/print-design-guide",
+      "knowledge:print/design/print-design-guide.md",
+      "skill:print-pagedjs-dom-analysis",
+      "skill:print-pagedjs-dom-analysis.md",
+      "knowledge:print/design/spread-composition-mastery",
+      "knowledge:print/design/spread-composition-mastery.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 7,
+    "engagedRefCount": 40,
+    "firstSeen": "2026-05-30 03:48:10",
+    "lastSeen": "2026-05-30 03:48:10",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 245
+      },
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 238
+      },
+      {
+        "ref": "knowledge:print/design/print-design-guide",
+        "weight": 210
+      },
+      {
+        "ref": "skill:print-pagedjs-dom-analysis",
+        "weight": 168
+      },
+      {
+        "ref": "knowledge:print/design/spread-composition-mastery",
+        "weight": 147
+      }
+    ]
+  }
+}

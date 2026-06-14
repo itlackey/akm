@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-147-print-md-dimm-city-print-layout-review-spread-co",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (6× searched; 73 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "print-md Dimm City print layout review spread composition whitespace readability defects",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "skill:git-worktree",
+      "skill:git-worktree.md",
+      "knowledge:skills/application-security-review/assets/review-checklist",
+      "knowledge:skills/application-security-review/assets/review-checklist.md",
+      "agent:skills/coding/application-security-review/agents/security-review-orchestrator",
+      "agent:skills/coding/application-security-review/agents/security-review-orchestrator.md",
+      "command:skills/application-security-review/commands/security-code-review-pass",
+      "command:skills/application-security-review/commands/security-code-review-pass.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 6,
+    "engagedRefCount": 73,
+    "firstSeen": "2026-05-30 00:09:52",
+    "lastSeen": "2026-05-30 03:42:33",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 506
+      },
+      {
+        "ref": "skill:git-worktree",
+        "weight": 183
+      },
+      {
+        "ref": "knowledge:skills/application-security-review/assets/review-checklist",
+        "weight": 174
+      },
+      {
+        "ref": "agent:skills/coding/application-security-review/agents/security-review-orchestrator",
+        "weight": 174
+      },
+      {
+        "ref": "command:skills/application-security-review/commands/security-code-review-pass",
+        "weight": 174
+      }
+    ]
+  }
+}

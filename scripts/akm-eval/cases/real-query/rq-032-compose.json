@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-032-compose",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (31× searched; 23 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "compose",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "knowledge:skills/system-ops/docker-homelab/references/compose",
+      "knowledge:skills/system-ops/docker-homelab/references/compose.md",
+      "workflow:three-judge-design-gate",
+      "workflow:three-judge-design-gate.md",
+      "agent:print/visual-design-contest-judge",
+      "agent:print/visual-design-contest-judge.md",
+      "memory:three-judge-design-gate-rule",
+      "memory:three-judge-design-gate-rule.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 31,
+    "engagedRefCount": 23,
+    "firstSeen": "2026-05-29 20:32:02",
+    "lastSeen": "2026-05-30 07:45:33",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 185
+      },
+      {
+        "ref": "knowledge:skills/system-ops/docker-homelab/references/compose",
+        "weight": 93
+      },
+      {
+        "ref": "workflow:three-judge-design-gate",
+        "weight": 66
+      },
+      {
+        "ref": "agent:print/visual-design-contest-judge",
+        "weight": 44
+      },
+      {
+        "ref": "memory:three-judge-design-gate-rule",
+        "weight": 44
+      }
+    ]
+  }
+}

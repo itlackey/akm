@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-031-improve-performance-analysis",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (32× searched; 56 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "improve performance analysis",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "skill:openpalm-stack-diagnostics",
+      "skill:openpalm-stack-diagnostics.md",
+      "lesson:script-skills-print-pagedjs-dom-analysis-scripts-validators-image-overflow-ts-lesson",
+      "lesson:script-skills-print-pagedjs-dom-analysis-scripts-validators-image-overflow-ts-lesson.md",
+      "agent:akm-librarian",
+      "agent:akm-librarian.md",
+      "skill:akm-dream",
+      "skill:akm-dream.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 32,
+    "engagedRefCount": 56,
+    "firstSeen": "2026-05-23 16:53:15",
+    "lastSeen": "2026-05-23 19:56:32",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 126
+      },
+      {
+        "ref": "skill:openpalm-stack-diagnostics",
+        "weight": 66
+      },
+      {
+        "ref": "lesson:script-skills-print-pagedjs-dom-analysis-scripts-validators-image-overflow-ts-lesson",
+        "weight": 64
+      },
+      {
+        "ref": "agent:akm-librarian",
+        "weight": 63
+      },
+      {
+        "ref": "skill:akm-dream",
+        "weight": 63
+      }
+    ]
+  }
+}

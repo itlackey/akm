@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-006-test",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (206× searched; 143 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "test",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:api-guide",
+      "knowledge:api-guide.md",
+      "script:deploy.sh",
+      "script:deploy.sh.md",
+      "lesson:knowledge-projects-akm-akm-semantic-search-restored-lesson",
+      "lesson:knowledge-projects-akm-akm-semantic-search-restored-lesson.md",
+      "knowledge:print/layout-defects-catalog",
+      "knowledge:print/layout-defects-catalog.md",
+      "script:skills/akm-dream/tests/phase3-plan.test.ts",
+      "script:skills/akm-dream/tests/phase3-plan.test.ts.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 206,
+    "engagedRefCount": 143,
+    "firstSeen": "2026-05-20 00:47:48",
+    "lastSeen": "2026-06-12 19:26:36",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:api-guide",
+        "weight": 1128
+      },
+      {
+        "ref": "script:deploy.sh",
+        "weight": 376
+      },
+      {
+        "ref": "lesson:knowledge-projects-akm-akm-semantic-search-restored-lesson",
+        "weight": 324
+      },
+      {
+        "ref": "knowledge:print/layout-defects-catalog",
+        "weight": 294
+      },
+      {
+        "ref": "script:skills/akm-dream/tests/phase3-plan.test.ts",
+        "weight": 270
+      }
+    ]
+  }
+}

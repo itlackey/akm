@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-124-reorganization",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (10× searched; 19 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "reorganization",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "command:skills/coding/application-security-review/commands/security-fix-plan-pass",
+      "command:skills/coding/application-security-review/commands/security-fix-plan-pass.md",
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "knowledge:skills/ai-skills/opencode-troubleshoot/references/symptom-map",
+      "knowledge:skills/ai-skills/opencode-troubleshoot/references/symptom-map.md",
+      "agent:skills/coding/application-security-review/agents/security-fix-planner",
+      "agent:skills/coding/application-security-review/agents/security-fix-planner.md",
+      "memory:review-fixes-require-personal-source-and-live-verification",
+      "memory:review-fixes-require-personal-source-and-live-verification.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 10,
+    "engagedRefCount": 19,
+    "firstSeen": "2026-06-07 16:22:39",
+    "lastSeen": "2026-06-07 16:22:39",
+    "topEngagedRefs": [
+      {
+        "ref": "command:skills/coding/application-security-review/commands/security-fix-plan-pass",
+        "weight": 30
+      },
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 30
+      },
+      {
+        "ref": "knowledge:skills/ai-skills/opencode-troubleshoot/references/symptom-map",
+        "weight": 30
+      },
+      {
+        "ref": "agent:skills/coding/application-security-review/agents/security-fix-planner",
+        "weight": 20
+      },
+      {
+        "ref": "memory:review-fixes-require-personal-source-and-live-verification",
+        "weight": 20
+      }
+    ]
+  }
+}

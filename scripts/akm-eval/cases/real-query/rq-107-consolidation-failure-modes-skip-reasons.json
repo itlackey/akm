@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-107-consolidation-failure-modes-skip-reasons",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (12× searched; 16 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "consolidation failure modes skip reasons",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:directory-submissions",
+      "skill:directory-submissions.md",
+      "command:print/check-accessibility",
+      "command:print/check-accessibility.md",
+      "script:google/check-gmail.ts",
+      "script:google/check-gmail.ts.md",
+      "knowledge:akm-setup-yes-overrides-env-isolation",
+      "knowledge:akm-setup-yes-overrides-env-isolation.md",
+      "memory:revised-2026-05-23-with-forensic-proof-akm-setup-yes-dir-writes",
+      "memory:revised-2026-05-23-with-forensic-proof-akm-setup-yes-dir-writes.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 12,
+    "engagedRefCount": 16,
+    "firstSeen": "2026-06-03 14:14:45",
+    "lastSeen": "2026-06-03 14:14:45",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:directory-submissions",
+        "weight": 36
+      },
+      {
+        "ref": "command:print/check-accessibility",
+        "weight": 36
+      },
+      {
+        "ref": "script:google/check-gmail.ts",
+        "weight": 36
+      },
+      {
+        "ref": "knowledge:akm-setup-yes-overrides-env-isolation",
+        "weight": 24
+      },
+      {
+        "ref": "memory:revised-2026-05-23-with-forensic-proof-akm-setup-yes-dir-writes",
+        "weight": 24
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-148-print-design-review-ttrpg-spread-judging-rubric-",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (6× searched; 55 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "print design review TTRPG spread judging rubric Dimm City constitution",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "command:print/validate-print",
+      "command:print/validate-print.md",
+      "skill:ai-skills/llm-delegation-tool",
+      "skill:ai-skills/llm-delegation-tool.md",
+      "script:skills/tracker/scripts/platforms/github.ts",
+      "script:skills/tracker/scripts/platforms/github.ts.md",
+      "agent:development/bun-node-architect",
+      "agent:development/bun-node-architect.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 6,
+    "engagedRefCount": 55,
+    "firstSeen": "2026-05-30 02:21:15",
+    "lastSeen": "2026-05-30 04:05:03",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 506
+      },
+      {
+        "ref": "command:print/validate-print",
+        "weight": 180
+      },
+      {
+        "ref": "skill:ai-skills/llm-delegation-tool",
+        "weight": 165
+      },
+      {
+        "ref": "script:skills/tracker/scripts/platforms/github.ts",
+        "weight": 165
+      },
+      {
+        "ref": "agent:development/bun-node-architect",
+        "weight": 165
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-066-notify",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (15× searched; 28 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "notify",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "script:discord/wiki-articles-ingest.sh",
+      "script:discord/wiki-articles-ingest.sh.md",
+      "memory:discord-wiki-ingest",
+      "memory:discord-wiki-ingest.md",
+      "skill:ai-skills/agent-cli-tools",
+      "skill:ai-skills/agent-cli-tools.md",
+      "command:print/preview-qa-workflow",
+      "command:print/preview-qa-workflow.md",
+      "skill:administrative/article-curator",
+      "skill:administrative/article-curator.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 15,
+    "engagedRefCount": 28,
+    "firstSeen": "2026-06-03 16:50:12",
+    "lastSeen": "2026-06-03 16:50:18",
+    "topEngagedRefs": [
+      {
+        "ref": "script:discord/wiki-articles-ingest.sh",
+        "weight": 60
+      },
+      {
+        "ref": "memory:discord-wiki-ingest",
+        "weight": 60
+      },
+      {
+        "ref": "skill:ai-skills/agent-cli-tools",
+        "weight": 45
+      },
+      {
+        "ref": "command:print/preview-qa-workflow",
+        "weight": 45
+      },
+      {
+        "ref": "skill:administrative/article-curator",
+        "weight": 45
+      }
+    ]
+  }
+}
