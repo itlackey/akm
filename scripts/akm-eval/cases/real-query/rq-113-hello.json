@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-113-hello",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (10× searched; 27 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "hello",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:workspace/blog/akm-0-8-0-brief",
+      "knowledge:workspace/blog/akm-0-8-0-brief.md",
+      "script:skills/tracker/scripts/tests/platform-detector.test.ts",
+      "script:skills/tracker/scripts/tests/platform-detector.test.ts.md",
+      "memory:opencode-session-20260523-ses_1add",
+      "memory:opencode-session-20260523-ses_1add.md",
+      "workflow:knowledge/field-guide-markdown-audit",
+      "workflow:knowledge/field-guide-markdown-audit.md",
+      "knowledge:projects/akm/test-harness-redesign",
+      "knowledge:projects/akm/test-harness-redesign.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 10,
+    "engagedRefCount": 27,
+    "firstSeen": "2026-05-24 07:59:24",
+    "lastSeen": "2026-05-24 07:59:24",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:workspace/blog/akm-0-8-0-brief",
+        "weight": 30
+      },
+      {
+        "ref": "script:skills/tracker/scripts/tests/platform-detector.test.ts",
+        "weight": 30
+      },
+      {
+        "ref": "memory:opencode-session-20260523-ses_1add",
+        "weight": 20
+      },
+      {
+        "ref": "workflow:knowledge/field-guide-markdown-audit",
+        "weight": 20
+      },
+      {
+        "ref": "knowledge:projects/akm/test-harness-redesign",
+        "weight": 20
+      }
+    ]
+  }
+}

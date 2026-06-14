@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-100-print-layout-review-spread-composition-readabili",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (8× searched; 39 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "print layout review spread composition readability",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "skill:git-worktree",
+      "skill:git-worktree.md",
+      "skill:ai-skills/llm-delegation-tool",
+      "skill:ai-skills/llm-delegation-tool.md",
+      "script:skills/tracker/scripts/platforms/github.ts",
+      "script:skills/tracker/scripts/platforms/github.ts.md",
+      "agent:development/bun-node-architect",
+      "agent:development/bun-node-architect.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 8,
+    "engagedRefCount": 39,
+    "firstSeen": "2026-05-29 23:58:17",
+    "lastSeen": "2026-05-30 00:59:48",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 474
+      },
+      {
+        "ref": "skill:git-worktree",
+        "weight": 224
+      },
+      {
+        "ref": "skill:ai-skills/llm-delegation-tool",
+        "weight": 216
+      },
+      {
+        "ref": "script:skills/tracker/scripts/platforms/github.ts",
+        "weight": 216
+      },
+      {
+        "ref": "agent:development/bun-node-architect",
+        "weight": 216
+      }
+    ]
+  }
+}

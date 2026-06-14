@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-028-playwright",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (33× searched; 51 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "playwright",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:akm-workflow-complete-defaults-to-completed",
+      "knowledge:akm-workflow-complete-defaults-to-completed.md",
+      "script:skills/continuous-learning-v2/agents/observer-loop.sh",
+      "script:skills/continuous-learning-v2/agents/observer-loop.sh.md",
+      "agent:docs/tr/agents/loop-operator",
+      "agent:docs/tr/agents/loop-operator.md",
+      "skill:click-path-audit",
+      "skill:click-path-audit.md",
+      "script:tests/ci/validate-workflow-security.test.js",
+      "script:tests/ci/validate-workflow-security.test.js.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 33,
+    "engagedRefCount": 51,
+    "firstSeen": "2026-06-06 06:55:36",
+    "lastSeen": "2026-06-06 06:59:17",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:akm-workflow-complete-defaults-to-completed",
+        "weight": 132
+      },
+      {
+        "ref": "script:skills/continuous-learning-v2/agents/observer-loop.sh",
+        "weight": 99
+      },
+      {
+        "ref": "agent:docs/tr/agents/loop-operator",
+        "weight": 99
+      },
+      {
+        "ref": "skill:click-path-audit",
+        "weight": 99
+      },
+      {
+        "ref": "script:tests/ci/validate-workflow-security.test.js",
+        "weight": 99
+      }
+    ]
+  }
+}

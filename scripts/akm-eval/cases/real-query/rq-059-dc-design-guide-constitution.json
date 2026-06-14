@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-059-dc-design-guide-constitution",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (19× searched; 21 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "dc design guide constitution",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:bluesky",
+      "skill:bluesky.md",
+      "memory:opencode-session-20260525-ses_19fd",
+      "memory:opencode-session-20260525-ses_19fd.md",
+      "memory:claude-session-20260523-3fd79f35",
+      "memory:claude-session-20260523-3fd79f35.md",
+      "memory:claude-session-20260523-3fca3fa4",
+      "memory:claude-session-20260523-3fca3fa4.md",
+      "memory:claude-session-20260521-1c74e8e9",
+      "memory:claude-session-20260521-1c74e8e9.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 19,
+    "engagedRefCount": 21,
+    "firstSeen": "2026-05-26 04:22:01",
+    "lastSeen": "2026-05-26 04:22:01",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:bluesky",
+        "weight": 152
+      },
+      {
+        "ref": "memory:opencode-session-20260525-ses_19fd",
+        "weight": 19
+      },
+      {
+        "ref": "memory:claude-session-20260523-3fd79f35",
+        "weight": 19
+      },
+      {
+        "ref": "memory:claude-session-20260523-3fca3fa4",
+        "weight": 19
+      },
+      {
+        "ref": "memory:claude-session-20260521-1c74e8e9",
+        "weight": 19
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-057-ttrpg-book-design",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (14× searched; 42 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "TTRPG book design",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/design/creaturepunk-design-guide",
+      "knowledge:print/design/creaturepunk-design-guide.md",
+      "knowledge:projects/akm/akm-manual-testing-checklist",
+      "knowledge:projects/akm/akm-manual-testing-checklist.md",
+      "workflow:spread-improvement-loop",
+      "workflow:spread-improvement-loop.md",
+      "knowledge:print/REVIEW-SKILL-IMPROVEMENTS",
+      "knowledge:print/REVIEW-SKILL-IMPROVEMENTS.md",
+      "knowledge:skills/print/pdf-review/references/ttrpg-standards",
+      "knowledge:skills/print/pdf-review/references/ttrpg-standards.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 14,
+    "engagedRefCount": 42,
+    "firstSeen": "2026-05-25 05:14:36",
+    "lastSeen": "2026-05-25 05:14:36",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/design/creaturepunk-design-guide",
+        "weight": 300
+      },
+      {
+        "ref": "knowledge:projects/akm/akm-manual-testing-checklist",
+        "weight": 224
+      },
+      {
+        "ref": "workflow:spread-improvement-loop",
+        "weight": 213
+      },
+      {
+        "ref": "knowledge:print/REVIEW-SKILL-IMPROVEMENTS",
+        "weight": 182
+      },
+      {
+        "ref": "knowledge:skills/print/pdf-review/references/ttrpg-standards",
+        "weight": 171
+      }
+    ]
+  }
+}

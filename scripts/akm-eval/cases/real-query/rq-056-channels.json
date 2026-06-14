@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-056-channels",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (14× searched; 52 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "channels",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "command:print/qa-spread",
+      "command:print/qa-spread.md",
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "command:print/publish-pipeline",
+      "command:print/publish-pipeline.md",
+      "lesson:workflow-print-spread-review-lesson",
+      "lesson:workflow-print-spread-review-lesson.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 14,
+    "engagedRefCount": 52,
+    "firstSeen": "2026-05-29 21:19:58",
+    "lastSeen": "2026-06-12 19:26:33",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 450
+      },
+      {
+        "ref": "command:print/qa-spread",
+        "weight": 380
+      },
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 360
+      },
+      {
+        "ref": "command:print/publish-pipeline",
+        "weight": 270
+      },
+      {
+        "ref": "lesson:workflow-print-spread-review-lesson",
+        "weight": 220
+      }
+    ]
+  }
+}

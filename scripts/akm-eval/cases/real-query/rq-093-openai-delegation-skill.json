@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-093-openai-delegation-skill",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (13× searched; 17 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "openai-delegation-skill",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:fwdslsh-lab/openai-delegation-skill",
+      "skill:fwdslsh-lab/openai-delegation-skill.md",
+      "skill:agent-cli-tools",
+      "skill:agent-cli-tools.md",
+      "knowledge:skills/print-pagedjs-dom-analysis/docs/fix-team-dispatch-template",
+      "knowledge:skills/print-pagedjs-dom-analysis/docs/fix-team-dispatch-template.md",
+      "agent:skills/application-security-review/agents/security-validation-planner",
+      "agent:skills/application-security-review/agents/security-validation-planner.md",
+      "script:skills/litellm-skill/scripts/teams.ts",
+      "script:skills/litellm-skill/scripts/teams.ts.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 13,
+    "engagedRefCount": 17,
+    "firstSeen": "2026-05-24 00:06:49",
+    "lastSeen": "2026-05-24 00:06:50",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:fwdslsh-lab/openai-delegation-skill",
+        "weight": 42
+      },
+      {
+        "ref": "skill:agent-cli-tools",
+        "weight": 39
+      },
+      {
+        "ref": "knowledge:skills/print-pagedjs-dom-analysis/docs/fix-team-dispatch-template",
+        "weight": 39
+      },
+      {
+        "ref": "agent:skills/application-security-review/agents/security-validation-planner",
+        "weight": 39
+      },
+      {
+        "ref": "script:skills/litellm-skill/scripts/teams.ts",
+        "weight": 39
+      }
+    ]
+  }
+}

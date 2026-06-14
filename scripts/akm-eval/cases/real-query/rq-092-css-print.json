@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-092-css-print",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (11× searched; 32 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "css print",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:skills/opencode-troubleshoot/references/filesystem-map",
+      "knowledge:skills/opencode-troubleshoot/references/filesystem-map.md",
+      "skill:fta-code-quality",
+      "skill:fta-code-quality.md",
+      "knowledge:projects/akm/session-2026-05-20-followups",
+      "knowledge:projects/akm/session-2026-05-20-followups.md",
+      "agent:blog/researcher",
+      "agent:blog/researcher.md",
+      "script:skills/print-pagedjs-dom-analysis/scripts/validators/image-not-rendered.ts",
+      "script:skills/print-pagedjs-dom-analysis/scripts/validators/image-not-rendered.ts.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 11,
+    "engagedRefCount": 32,
+    "firstSeen": "2026-05-22 22:36:32",
+    "lastSeen": "2026-05-22 22:36:32",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:skills/opencode-troubleshoot/references/filesystem-map",
+        "weight": 88
+      },
+      {
+        "ref": "skill:fta-code-quality",
+        "weight": 66
+      },
+      {
+        "ref": "knowledge:projects/akm/session-2026-05-20-followups",
+        "weight": 44
+      },
+      {
+        "ref": "agent:blog/researcher",
+        "weight": 33
+      },
+      {
+        "ref": "script:skills/print-pagedjs-dom-analysis/scripts/validators/image-not-rendered.ts",
+        "weight": 33
+      }
+    ]
+  }
+}

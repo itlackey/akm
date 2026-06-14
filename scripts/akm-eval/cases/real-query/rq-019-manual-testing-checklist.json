@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-019-manual-testing-checklist",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (58× searched; 71 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "manual testing checklist",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:send-notification",
+      "skill:send-notification.md",
+      "agent:skills/support-ticket-orchestrator/agents/support-orchestrator",
+      "agent:skills/support-ticket-orchestrator/agents/support-orchestrator.md",
+      "command:implement-tasks",
+      "command:implement-tasks.md",
+      "script:discord/wiki-articles-ingest.sh",
+      "script:discord/wiki-articles-ingest.sh.md",
+      "knowledge:projects/akm/benchmark-task-dual-seed-calibration",
+      "knowledge:projects/akm/benchmark-task-dual-seed-calibration.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 58,
+    "engagedRefCount": 71,
+    "firstSeen": "2026-05-23 05:13:21",
+    "lastSeen": "2026-05-24 18:24:26",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:send-notification",
+        "weight": 336
+      },
+      {
+        "ref": "agent:skills/support-ticket-orchestrator/agents/support-orchestrator",
+        "weight": 336
+      },
+      {
+        "ref": "command:implement-tasks",
+        "weight": 280
+      },
+      {
+        "ref": "script:discord/wiki-articles-ingest.sh",
+        "weight": 224
+      },
+      {
+        "ref": "knowledge:projects/akm/benchmark-task-dual-seed-calibration",
+        "weight": 224
+      }
+    ]
+  }
+}

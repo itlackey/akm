@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-029-node-docker-docker-compose-databasin-tests-end-t",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (33× searched; 243 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "Node, Docker, Docker Compose, databasin-tests, End-to-end and API integration testing suite for the DataBasin platform using Playwright.",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:skills/demo-video/references/databasin-tests-integration",
+      "knowledge:skills/demo-video/references/databasin-tests-integration.md",
+      "memory:databasin-tests-baseurl-and-environment-targets",
+      "memory:databasin-tests-baseurl-and-environment-targets.md",
+      "agent:playwright/playwright-test-reviewer",
+      "agent:playwright/playwright-test-reviewer.md",
+      "command:skills/administrative/support-ticket-orchestrator/commands/support-notify-slack-review",
+      "command:skills/administrative/support-ticket-orchestrator/commands/support-notify-slack-review.md",
+      "lesson:command-skills-support-ticket-orchestrator-commands-support-notify-slack-review-lesson",
+      "lesson:command-skills-support-ticket-orchestrator-commands-support-notify-slack-review-lesson.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 33,
+    "engagedRefCount": 243,
+    "firstSeen": "2026-06-07 05:38:07",
+    "lastSeen": "2026-06-14 16:45:12",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:skills/demo-video/references/databasin-tests-integration",
+        "weight": 149
+      },
+      {
+        "ref": "memory:databasin-tests-baseurl-and-environment-targets",
+        "weight": 70
+      },
+      {
+        "ref": "agent:playwright/playwright-test-reviewer",
+        "weight": 66
+      },
+      {
+        "ref": "command:skills/administrative/support-ticket-orchestrator/commands/support-notify-slack-review",
+        "weight": 49
+      },
+      {
+        "ref": "lesson:command-skills-support-ticket-orchestrator-commands-support-notify-slack-review-lesson",
+        "weight": 49
+      }
+    ]
+  }
+}

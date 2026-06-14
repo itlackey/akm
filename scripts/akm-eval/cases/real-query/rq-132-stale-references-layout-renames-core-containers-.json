@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-132-stale-references-layout-renames-core-containers-",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (15× searched; 3 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "stale references layout renames core containers portals PORTAL_PACKAGE",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:docs/stale-pr-salvage-ledger",
+      "knowledge:docs/stale-pr-salvage-ledger.md",
+      "knowledge:skills/cloudflare/references/r2-data-catalog/api",
+      "knowledge:skills/cloudflare/references/r2-data-catalog/api.md",
+      "knowledge:akm-principles/root-cause-fixes",
+      "knowledge:akm-principles/root-cause-fixes.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 15,
+    "engagedRefCount": 3,
+    "firstSeen": "2026-06-13 01:01:05",
+    "lastSeen": "2026-06-13 03:46:18",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:docs/stale-pr-salvage-ledger",
+        "weight": 12
+      },
+      {
+        "ref": "knowledge:skills/cloudflare/references/r2-data-catalog/api",
+        "weight": 12
+      },
+      {
+        "ref": "knowledge:akm-principles/root-cause-fixes",
+        "weight": 12
+      }
+    ]
+  }
+}

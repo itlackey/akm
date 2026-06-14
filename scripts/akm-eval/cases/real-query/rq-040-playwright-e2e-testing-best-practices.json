@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-040-playwright-e2e-testing-best-practices",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (20× searched; 54 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "playwright e2e testing best practices",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:playwright/best-practices",
+      "knowledge:playwright/best-practices.md",
+      "knowledge:akm-distill-is-a-flag-not-a-top-level-command",
+      "knowledge:akm-distill-is-a-flag-not-a-top-level-command.md",
+      "skill:headless-modern/pwa-storefront",
+      "skill:headless-modern/pwa-storefront.md",
+      "script:skills/app-store-optimization/scripts/launch_checklist.py",
+      "script:skills/app-store-optimization/scripts/launch_checklist.py.md",
+      "skill:analytics",
+      "skill:analytics.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 20,
+    "engagedRefCount": 54,
+    "firstSeen": "2026-06-06 17:22:03",
+    "lastSeen": "2026-06-06 17:22:03",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:playwright/best-practices",
+        "weight": 83
+      },
+      {
+        "ref": "knowledge:akm-distill-is-a-flag-not-a-top-level-command",
+        "weight": 80
+      },
+      {
+        "ref": "skill:headless-modern/pwa-storefront",
+        "weight": 60
+      },
+      {
+        "ref": "script:skills/app-store-optimization/scripts/launch_checklist.py",
+        "weight": 60
+      },
+      {
+        "ref": "skill:analytics",
+        "weight": 60
+      }
+    ]
+  }
+}

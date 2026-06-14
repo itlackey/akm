@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-024-itlackey-akm-stash-manage-akm-proposals",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (37× searched; 57 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "itlackey/akm-stash manage-akm-proposals",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:manage-akm-proposals",
+      "skill:manage-akm-proposals.md",
+      "knowledge:akm-stash-structure",
+      "knowledge:akm-stash-structure.md",
+      "memory:opencode-session-20260602-ses_176b",
+      "memory:opencode-session-20260602-ses_176b.md",
+      "command:akm-find",
+      "command:akm-find.md",
+      "agent:akm-librarian",
+      "agent:akm-librarian.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 37,
+    "engagedRefCount": 57,
+    "firstSeen": "2026-06-02 15:20:36",
+    "lastSeen": "2026-06-02 20:20:29",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:manage-akm-proposals",
+        "weight": 288
+      },
+      {
+        "ref": "knowledge:akm-stash-structure",
+        "weight": 55
+      },
+      {
+        "ref": "memory:opencode-session-20260602-ses_176b",
+        "weight": 40
+      },
+      {
+        "ref": "command:akm-find",
+        "weight": 36
+      },
+      {
+        "ref": "agent:akm-librarian",
+        "weight": 36
+      }
+    ]
+  }
+}

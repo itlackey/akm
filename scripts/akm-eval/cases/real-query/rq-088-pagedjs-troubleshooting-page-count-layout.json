@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-088-pagedjs-troubleshooting-page-count-layout",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (13× searched; 17 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "pagedjs troubleshooting page count layout",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/pagedjs-failure-modes",
+      "knowledge:print/pagedjs-failure-modes.md",
+      "knowledge:skills/print/pagedjs/references/troubleshooting",
+      "knowledge:skills/print/pagedjs/references/troubleshooting.md",
+      "agent:skills/administrative/support-ticket-orchestrator/agents/review-gatekeeper",
+      "agent:skills/administrative/support-ticket-orchestrator/agents/review-gatekeeper.md",
+      "skill:print/pdf-review",
+      "skill:print/pdf-review.md",
+      "command:implement-tasks",
+      "command:implement-tasks.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 13,
+    "engagedRefCount": 17,
+    "firstSeen": "2026-05-28 16:36:28",
+    "lastSeen": "2026-05-28 16:36:28",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/pagedjs-failure-modes",
+        "weight": 55
+      },
+      {
+        "ref": "knowledge:skills/print/pagedjs/references/troubleshooting",
+        "weight": 55
+      },
+      {
+        "ref": "agent:skills/administrative/support-ticket-orchestrator/agents/review-gatekeeper",
+        "weight": 39
+      },
+      {
+        "ref": "skill:print/pdf-review",
+        "weight": 39
+      },
+      {
+        "ref": "command:implement-tasks",
+        "weight": 26
+      }
+    ]
+  }
+}

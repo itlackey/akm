@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-105-test-suite-speed-external-resources",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (10× searched; 31 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "test suite speed external resources",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "command:skills/administrative/support-ticket-orchestrator/commands/support-notify-slack-escalation",
+      "command:skills/administrative/support-ticket-orchestrator/commands/support-notify-slack-escalation.md",
+      "memory:claude-session-20260510-eb85d067",
+      "memory:claude-session-20260510-eb85d067.md",
+      "knowledge:systems/KOKORO_USAGE_GUIDE",
+      "knowledge:systems/KOKORO_USAGE_GUIDE.md",
+      "skill:bluesky",
+      "skill:bluesky.md",
+      "knowledge:skills/ai-skills/agent-cli-tools/references/claude-code",
+      "knowledge:skills/ai-skills/agent-cli-tools/references/claude-code.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 10,
+    "engagedRefCount": 31,
+    "firstSeen": "2026-05-25 20:35:26",
+    "lastSeen": "2026-05-25 20:35:27",
+    "topEngagedRefs": [
+      {
+        "ref": "command:skills/administrative/support-ticket-orchestrator/commands/support-notify-slack-escalation",
+        "weight": 40
+      },
+      {
+        "ref": "memory:claude-session-20260510-eb85d067",
+        "weight": 40
+      },
+      {
+        "ref": "knowledge:systems/KOKORO_USAGE_GUIDE",
+        "weight": 33
+      },
+      {
+        "ref": "skill:bluesky",
+        "weight": 30
+      },
+      {
+        "ref": "knowledge:skills/ai-skills/agent-cli-tools/references/claude-code",
+        "weight": 30
+      }
+    ]
+  }
+}

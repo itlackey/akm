@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-098-visual-design-readability-print-spread-review-fi",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (8× searched; 53 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "visual design readability print spread review field guide chapter layout",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "knowledge:print/design/print-design-guide",
+      "knowledge:print/design/print-design-guide.md",
+      "knowledge:print/design/spread-composition-mastery",
+      "knowledge:print/design/spread-composition-mastery.md",
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "skill:git-worktree",
+      "skill:git-worktree.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 8,
+    "engagedRefCount": 53,
+    "firstSeen": "2026-05-30 02:14:07",
+    "lastSeen": "2026-05-30 03:38:13",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 674
+      },
+      {
+        "ref": "knowledge:print/design/print-design-guide",
+        "weight": 298
+      },
+      {
+        "ref": "knowledge:print/design/spread-composition-mastery",
+        "weight": 232
+      },
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 222
+      },
+      {
+        "ref": "skill:git-worktree",
+        "weight": 204
+      }
+    ]
+  }
+}

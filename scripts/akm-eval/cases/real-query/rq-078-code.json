@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-078-code",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (11× searched; 46 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "code",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "knowledge:print/design/design-quality-checklist",
+      "knowledge:print/design/design-quality-checklist.md",
+      "skill:print/pdf-layout-reviewer",
+      "skill:print/pdf-layout-reviewer.md",
+      "command:skills/application-security-review/commands/security-code-review-pass",
+      "command:skills/application-security-review/commands/security-code-review-pass.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 11,
+    "engagedRefCount": 46,
+    "firstSeen": "2026-05-29 20:05:18",
+    "lastSeen": "2026-05-29 20:05:18",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 209
+      },
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 187
+      },
+      {
+        "ref": "knowledge:print/design/design-quality-checklist",
+        "weight": 176
+      },
+      {
+        "ref": "skill:print/pdf-layout-reviewer",
+        "weight": 165
+      },
+      {
+        "ref": "command:skills/application-security-review/commands/security-code-review-pass",
+        "weight": 135
+      }
+    ]
+  }
+}

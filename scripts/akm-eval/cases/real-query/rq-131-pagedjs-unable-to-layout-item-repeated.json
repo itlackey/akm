@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-131-pagedjs-unable-to-layout-item-repeated",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (10× searched; 15 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "pagedjs unable to layout item repeated",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/pagedjs-failure-modes",
+      "knowledge:print/pagedjs-failure-modes.md",
+      "knowledge:skills/print/pagedjs/references/troubleshooting",
+      "knowledge:skills/print/pagedjs/references/troubleshooting.md",
+      "agent:skills/administrative/support-ticket-orchestrator/agents/review-gatekeeper",
+      "agent:skills/administrative/support-ticket-orchestrator/agents/review-gatekeeper.md",
+      "skill:print/pdf-review",
+      "skill:print/pdf-review.md",
+      "command:implement-tasks",
+      "command:implement-tasks.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 10,
+    "engagedRefCount": 15,
+    "firstSeen": "2026-05-28 16:36:29",
+    "lastSeen": "2026-05-28 16:36:29",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/pagedjs-failure-modes",
+        "weight": 43
+      },
+      {
+        "ref": "knowledge:skills/print/pagedjs/references/troubleshooting",
+        "weight": 40
+      },
+      {
+        "ref": "agent:skills/administrative/support-ticket-orchestrator/agents/review-gatekeeper",
+        "weight": 30
+      },
+      {
+        "ref": "skill:print/pdf-review",
+        "weight": 30
+      },
+      {
+        "ref": "command:implement-tasks",
+        "weight": 20
+      }
+    ]
+  }
+}

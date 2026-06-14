@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-048-print-layout-reviewer-judge-1-resized-images",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (15× searched; 52 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "print layout reviewer judge 1 resized images",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "skill:print/pdf-layout-reviewer",
+      "skill:print/pdf-layout-reviewer.md",
+      "agent:print/visual-design-contest-judge",
+      "agent:print/visual-design-contest-judge.md",
+      "workflow:three-judge-design-gate",
+      "workflow:three-judge-design-gate.md",
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 15,
+    "engagedRefCount": 52,
+    "firstSeen": "2026-05-29 18:08:36",
+    "lastSeen": "2026-05-29 18:08:36",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 468
+      },
+      {
+        "ref": "skill:print/pdf-layout-reviewer",
+        "weight": 423
+      },
+      {
+        "ref": "agent:print/visual-design-contest-judge",
+        "weight": 360
+      },
+      {
+        "ref": "workflow:three-judge-design-gate",
+        "weight": 330
+      },
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 291
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-061-apprise-notification",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (15× searched; 41 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "apprise notification",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:notify",
+      "skill:notify.md",
+      "knowledge:akm-stash-structure",
+      "knowledge:akm-stash-structure.md",
+      "command:skills/openpalm-stack-diagnostics/commands/stack-health-snapshot",
+      "command:skills/openpalm-stack-diagnostics/commands/stack-health-snapshot.md",
+      "agent:skills/application-security-review/agents/security-review-orchestrator",
+      "agent:skills/application-security-review/agents/security-review-orchestrator.md",
+      "skill:markdown-validator",
+      "skill:markdown-validator.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 15,
+    "engagedRefCount": 41,
+    "firstSeen": "2026-05-21 20:39:38",
+    "lastSeen": "2026-05-21 20:39:38",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:notify",
+        "weight": 216
+      },
+      {
+        "ref": "knowledge:akm-stash-structure",
+        "weight": 60
+      },
+      {
+        "ref": "command:skills/openpalm-stack-diagnostics/commands/stack-health-snapshot",
+        "weight": 45
+      },
+      {
+        "ref": "agent:skills/application-security-review/agents/security-review-orchestrator",
+        "weight": 45
+      },
+      {
+        "ref": "skill:markdown-validator",
+        "weight": 45
+      }
+    ]
+  }
+}

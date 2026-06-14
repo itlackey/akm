@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-101-release-workflow-rc-publish",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (11× searched; 23 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "release workflow RC publish",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:manage-akm-proposals",
+      "skill:manage-akm-proposals.md",
+      "knowledge:skills/administrative/agent-team-reporting/references/agent-orchestrator",
+      "knowledge:skills/administrative/agent-team-reporting/references/agent-orchestrator.md",
+      "workflow:field-guide-markdown-audit",
+      "workflow:field-guide-markdown-audit.md",
+      "command:memories/akm-improve-performance-report-runbook",
+      "command:memories/akm-improve-performance-report-runbook.md",
+      "knowledge:projects/akm/release-idempotency-and-build-matrix-fixes",
+      "knowledge:projects/akm/release-idempotency-and-build-matrix-fixes.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 11,
+    "engagedRefCount": 23,
+    "firstSeen": "2026-05-28 07:34:03",
+    "lastSeen": "2026-05-28 07:34:03",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:manage-akm-proposals",
+        "weight": 44
+      },
+      {
+        "ref": "knowledge:skills/administrative/agent-team-reporting/references/agent-orchestrator",
+        "weight": 33
+      },
+      {
+        "ref": "workflow:field-guide-markdown-audit",
+        "weight": 33
+      },
+      {
+        "ref": "command:memories/akm-improve-performance-report-runbook",
+        "weight": 22
+      },
+      {
+        "ref": "knowledge:projects/akm/release-idempotency-and-build-matrix-fixes",
+        "weight": 22
+      }
+    ]
+  }
+}

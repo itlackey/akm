@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-007-review",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (149× searched; 167 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "review",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:notify",
+      "skill:notify.md",
+      "skill:openpalm-stack-diagnostics",
+      "skill:openpalm-stack-diagnostics.md",
+      "skill:application-security-review",
+      "skill:application-security-review.md",
+      "skill:support-ticket-orchestrator",
+      "skill:support-ticket-orchestrator.md",
+      "memory:release-workflow-failures-rerunning-an-already-published-version",
+      "memory:release-workflow-failures-rerunning-an-already-published-version.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 149,
+    "engagedRefCount": 167,
+    "firstSeen": "2026-05-21 20:55:43",
+    "lastSeen": "2026-05-26 19:19:19",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:notify",
+        "weight": 180
+      },
+      {
+        "ref": "skill:openpalm-stack-diagnostics",
+        "weight": 174
+      },
+      {
+        "ref": "skill:application-security-review",
+        "weight": 171
+      },
+      {
+        "ref": "skill:support-ticket-orchestrator",
+        "weight": 159
+      },
+      {
+        "ref": "memory:release-workflow-failures-rerunning-an-already-published-version",
+        "weight": 158
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-125-headless-agent-cli-delegate",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (9× searched; 30 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "headless agent cli delegate",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:akm-librarian",
+      "agent:akm-librarian.md",
+      "script:skills/print-pagedjs-dom-analysis/scripts/validators/run-on-prose-detection.ts",
+      "script:skills/print-pagedjs-dom-analysis/scripts/validators/run-on-prose-detection.ts.md",
+      "workflow:blog-publish-article",
+      "workflow:blog-publish-article.md",
+      "script:skills/blog-writing/scripts/linkedin-post-cli.ts",
+      "script:skills/blog-writing/scripts/linkedin-post-cli.ts.md",
+      "skill:db-tickets",
+      "skill:db-tickets.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 9,
+    "engagedRefCount": 30,
+    "firstSeen": "2026-05-22 21:37:52",
+    "lastSeen": "2026-05-22 21:37:52",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:akm-librarian",
+        "weight": 36
+      },
+      {
+        "ref": "script:skills/print-pagedjs-dom-analysis/scripts/validators/run-on-prose-detection.ts",
+        "weight": 27
+      },
+      {
+        "ref": "workflow:blog-publish-article",
+        "weight": 27
+      },
+      {
+        "ref": "script:skills/blog-writing/scripts/linkedin-post-cli.ts",
+        "weight": 27
+      },
+      {
+        "ref": "skill:db-tickets",
+        "weight": 27
+      }
+    ]
+  }
+}

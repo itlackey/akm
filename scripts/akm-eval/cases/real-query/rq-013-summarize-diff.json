@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-013-summarize-diff",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (86× searched; 11 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "summarize diff",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:api-guide",
+      "knowledge:api-guide.md",
+      "script:deploy.sh",
+      "script:deploy.sh.md",
+      "knowledge:release-notes",
+      "knowledge:release-notes.md",
+      "memory:deployment-needs-vpn-access",
+      "memory:deployment-needs-vpn-access.md",
+      "skill:ops",
+      "skill:ops.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 86,
+    "engagedRefCount": 11,
+    "firstSeen": "2026-05-20 00:47:42",
+    "lastSeen": "2026-05-21 02:08:42",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:api-guide",
+        "weight": 2760
+      },
+      {
+        "ref": "script:deploy.sh",
+        "weight": 920
+      },
+      {
+        "ref": "knowledge:release-notes",
+        "weight": 468
+      },
+      {
+        "ref": "memory:deployment-needs-vpn-access",
+        "weight": 466
+      },
+      {
+        "ref": "skill:ops",
+        "weight": 460
+      }
+    ]
+  }
+}

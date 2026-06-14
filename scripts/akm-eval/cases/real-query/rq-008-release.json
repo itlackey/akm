@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-008-release",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (136× searched; 256 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "release",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "skill:git-worktree",
+      "skill:git-worktree.md",
+      "agent:development/bun-node-architect",
+      "agent:development/bun-node-architect.md",
+      "knowledge:print/design/print-design-guide",
+      "knowledge:print/design/print-design-guide.md",
+      "agent:skills/coding/application-security-review/agents/security-review-orchestrator",
+      "agent:skills/coding/application-security-review/agents/security-review-orchestrator.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 136,
+    "engagedRefCount": 256,
+    "firstSeen": "2026-05-21 20:55:43",
+    "lastSeen": "2026-06-13 03:38:53",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 1019
+      },
+      {
+        "ref": "skill:git-worktree",
+        "weight": 458
+      },
+      {
+        "ref": "agent:development/bun-node-architect",
+        "weight": 411
+      },
+      {
+        "ref": "knowledge:print/design/print-design-guide",
+        "weight": 406
+      },
+      {
+        "ref": "agent:skills/coding/application-security-review/agents/security-review-orchestrator",
+        "weight": 405
+      }
+    ]
+  }
+}

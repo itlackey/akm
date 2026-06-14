@@ -383,6 +383,128 @@ file; see
 [`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md) for the
 full schema.
 
+## Proactive-improve kill-criterion (real-query suite + verdict)
+
+This is the measurement system that proves whether the `akm improve`
+**proactive lane** (`akm-improve-proactive-weekly`) actually improves the
+stash versus burning GPU cycles. Three pieces: a real-query retrieval suite
+generator, a stored T0 baseline, and a pass/fail verdict runner.
+
+### Why this is a built-in controlled trial
+
+The proactive selector rotates a top-N slice of "due" assets per run.
+Because it can only touch N assets at a time, at any instant some due assets
+have been proactively touched (TREATMENT) while equally-due assets have not
+(CONTROL). Treatment and control therefore **coexist in the same stash**,
+giving a natural A/B without having to stand up a parallel environment.
+
+- **TREATMENT** = refs with proposal/event `eligibilitySource = proactive`.
+  When that field is absent on older events, the runner falls back to the
+  pilot treatment file
+  `<stash>/.akm/measurement/treatment-pilot-2026-06-14.txt`.
+- **CONTROL** = assets that are "due" (never reflected, OR last reflected
+  > 30 days ago) and were **not** touched by the proactive lane, derived
+  from `state.db` `reflect_invoked`/`distill_invoked`/`promoted` history and
+  the `entries` catalog.
+
+### 1. Real-query retrieval suite
+
+```sh
+bun run scripts/akm-eval/src/gen-real-query-suite.ts [--max-cases 150]
+```
+
+Mines `index.db` `usage_events` for what users **actually** search for. For
+each distinct meaningful `search`/`curate` query it derives
+`mustIncludeRefs` = the refs the user subsequently engaged with for that
+query (`select`/`curate`/`show`/positive-`feedback` within a 30-minute
+window), normalised across bare (`type:name`) and origin-prefixed
+(`origin//type:name`) forms (see `src/lib/ref-normalize.ts`). It emits
+ordinary `type: "retrieval"` cases into `cases/real-query/` (capped at the
+top 150 highest-signal queries; query frequency × engagement weight) plus a
+`cases/real-query.manifest.json` recording emitted/dropped counts and the
+drop reasons (`too-short`, `synthetic-probe`, `free-text-prompt`,
+`no-engaged-refs`, `below-max-cases-cutoff`). The manifest is written
+**outside** the suite dir because the orchestrator parses every `*.json`
+under a suite dir as a case.
+
+This suite is the **corpus-quality benchmark**: its aggregate score, tracked
+across runs, is the "did retrieval get better or worse" signal. Pass
+thresholds per case are deliberately low (0.2) — the aggregate trend matters
+more than per-case pass/fail, and the sessionless event stream makes
+individual `mustIncludeRefs` noisy.
+
+### 2. T0 baseline
+
+Run the suite once now (state is essentially pre-proactive — only ~13 assets
+changed) and store it as the T0 baseline:
+
+```sh
+AKM_STASH_DIR=~/akm scripts/akm-eval/bin/akm-eval-run \
+  --suite real-query --mode baseline --label "T0-pre-proactive-2026-06-14"
+```
+
+The eval-run id it prints is the baseline the verdict runner compares
+against. (First captured baseline: `2026-06-14T17-29-48-772Z-498258e2`,
+overall retrieval score 0.216, against stash tag
+`baseline/pre-proactive-2026-06-14`.)
+
+### 3. Verdict runner
+
+```sh
+scripts/akm-eval/bin/akm-eval-proactive-verdict [--format md]
+```
+
+Read-only against `index.db`, `state.db`, and the stored eval runs; writes
+only its own report to `<stash>/.akm/measurement/verdicts/verdict-<ts>.{json,md}`.
+Computes:
+
+- **(a) retrieval-quality delta** — latest real-query run minus the stored
+  T0 baseline (no regression allowed).
+- **(b) accept-rate-by-source** — proactive vs reactive (reflect
+  `signal-delta`/`high-retrieval`) from the proposals table.
+- **(c) proactive reversion/reject rate.**
+- **(d) downstream lift** — post-touch positive-feedback rate and retrieval
+  count per ref, treatment vs control, over the last 30 days.
+
+#### Verdict thresholds + rationale
+
+Named constants in `src/proactive-verdict.ts`, each overridable by flag:
+
+| Constant | Default | Flag | Rationale |
+| --- | ---: | --- | --- |
+| `ACCEPT_RATIO` | 0.9 | `--accept-ratio` | Proactive may lag reactive slightly (reactive fires on a concrete signal, so it has a structural quality edge), but accepting at < 90% of the reactive rate means the lane mostly emits noise the curator rejects — the "burning cycles" failure. |
+| `MAX_REVERSION` | 0.15 | `--max-reversion` | A reverted promotion is strictly negative (churned then undone). 15% tolerates early-rollout noise without rewarding a lane that keeps shipping regressions. |
+| `MIN_RETRIEVAL_DELTA` | 0.0 | `--min-retrieval-delta` | The corpus-quality benchmark must not regress. A positive delta isn't required (gains may surface in feedback first), but a negative delta means edits made it harder to find what users use — an immediate kill signal. |
+| `MIN_DECIDED` | 30 | `--min-decided` | Below ~30 decided proactive proposals the accept-rate estimate is too noisy to act on; the runner returns **INCONCLUSIVE** rather than pass/fail. |
+
+**PASS** requires proactive accept-rate >= 0.9 × reactive accept-rate AND
+proactive reversion <= 0.15 AND retrieval delta >= 0. **FAIL** if any
+breaches, emitting `RECOMMEND DISABLE akm-improve-proactive-weekly` plus the
+offending metric(s). **INCONCLUSIVE** when proactive decided count < 30 — it
+does not pass or fail on thin data. Exit codes: 0 PASS, 1 FAIL, 3
+INCONCLUSIVE, 2 error.
+
+On current (pilot) data the verdict is **INCONCLUSIVE** by design: only ~13
+proactive promotions / 15 decided proposals exist, well under the 30 floor.
+
+#### Re-running after N weeks
+
+```sh
+# 1. Regenerate the suite so it reflects the latest queries.
+bun run scripts/akm-eval/src/gen-real-query-suite.ts
+
+# 2. Capture a fresh run of the same suite (the new "current").
+AKM_STASH_DIR=~/akm scripts/akm-eval/bin/akm-eval-run --suite real-query --mode baseline
+
+# 3. Render the verdict (auto-selects oldest real-query run as baseline,
+#    newest as current).
+scripts/akm-eval/bin/akm-eval-proactive-verdict
+```
+
+Once proactive promotions clear the 30-decided floor the verdict flips to a
+real PASS/FAIL. Override the compared runs with `--baseline-run <id>` /
+`--current-run <id>` if you want a specific pair.
+
 ## Status
 
 All eight phases of `docs/technical/akm-eval-implementation-plan.md` are

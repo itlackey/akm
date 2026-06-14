@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-134-filesystem",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (9× searched; 14 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "filesystem",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:skills/ai-skills/opencode-troubleshoot/references/filesystem-map",
+      "knowledge:skills/ai-skills/opencode-troubleshoot/references/filesystem-map.md",
+      "skill:administrative/article-curator",
+      "skill:administrative/article-curator.md",
+      "command:print/preview-qa-workflow",
+      "command:print/preview-qa-workflow.md",
+      "memory:claude-session-20260521-40ef18a3",
+      "memory:claude-session-20260521-40ef18a3.md",
+      "memory:claude-session-20260528-91de3148",
+      "memory:claude-session-20260528-91de3148.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 9,
+    "engagedRefCount": 14,
+    "firstSeen": "2026-05-30 17:09:14",
+    "lastSeen": "2026-05-30 17:09:15",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:skills/ai-skills/opencode-troubleshoot/references/filesystem-map",
+        "weight": 117
+      },
+      {
+        "ref": "skill:administrative/article-curator",
+        "weight": 63
+      },
+      {
+        "ref": "command:print/preview-qa-workflow",
+        "weight": 27
+      },
+      {
+        "ref": "memory:claude-session-20260521-40ef18a3",
+        "weight": 18
+      },
+      {
+        "ref": "memory:claude-session-20260528-91de3148",
+        "weight": 18
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-128-akm-plugin-release-publication",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (9× searched; 23 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "akm plugin release publication",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "knowledge:print/visual-review/designer-eye-method",
+      "knowledge:print/visual-review/designer-eye-method.md",
+      "knowledge:workspace/blog/akm-0-8-0-brief",
+      "knowledge:workspace/blog/akm-0-8-0-brief.md",
+      "workflow:curate-to-wiki",
+      "workflow:curate-to-wiki.md",
+      "memory:claude-session-20260510-e02c18f8",
+      "memory:claude-session-20260510-e02c18f8.md",
+      "skill:publish-akm-stash",
+      "skill:publish-akm-stash.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 9,
+    "engagedRefCount": 23,
+    "firstSeen": "2026-05-24 22:56:20",
+    "lastSeen": "2026-05-24 22:56:21",
+    "topEngagedRefs": [
+      {
+        "ref": "knowledge:print/visual-review/designer-eye-method",
+        "weight": 63
+      },
+      {
+        "ref": "knowledge:workspace/blog/akm-0-8-0-brief",
+        "weight": 54
+      },
+      {
+        "ref": "workflow:curate-to-wiki",
+        "weight": 36
+      },
+      {
+        "ref": "memory:claude-session-20260510-e02c18f8",
+        "weight": 36
+      },
+      {
+        "ref": "skill:publish-akm-stash",
+        "weight": 30
+      }
+    ]
+  }
+}

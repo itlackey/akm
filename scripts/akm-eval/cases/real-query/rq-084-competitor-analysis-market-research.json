@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-084-competitor-analysis-market-research",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (10× searched; 61 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "competitor analysis market research",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "workflow:blog-publish-article",
+      "workflow:blog-publish-article.md",
+      "agent:blog/researcher",
+      "agent:blog/researcher.md",
+      "agent:blog/editor",
+      "agent:blog/editor.md",
+      "command:blog-grow-audience",
+      "command:blog-grow-audience.md",
+      "skill:social-media/bluesky",
+      "skill:social-media/bluesky.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 10,
+    "engagedRefCount": 61,
+    "firstSeen": "2026-06-02 05:19:26",
+    "lastSeen": "2026-06-02 05:20:07",
+    "topEngagedRefs": [
+      {
+        "ref": "workflow:blog-publish-article",
+        "weight": 181
+      },
+      {
+        "ref": "agent:blog/researcher",
+        "weight": 137
+      },
+      {
+        "ref": "agent:blog/editor",
+        "weight": 127
+      },
+      {
+        "ref": "command:blog-grow-audience",
+        "weight": 110
+      },
+      {
+        "ref": "skill:social-media/bluesky",
+        "weight": 107
+      }
+    ]
+  }
+}

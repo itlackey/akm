@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-141-print-design-competition-ttrpg-field-guide-revie",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (6× searched; 59 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "print design competition ttrpg field guide review exemplars",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "agent:print/print-layout-reviewer",
+      "agent:print/print-layout-reviewer.md",
+      "command:print/qa-spread",
+      "command:print/qa-spread.md",
+      "knowledge:print/design/field-guide-layout-workflow",
+      "knowledge:print/design/field-guide-layout-workflow.md",
+      "command:print/publish-pipeline",
+      "command:print/publish-pipeline.md",
+      "skill:ai-skills/llm-delegation-tool",
+      "skill:ai-skills/llm-delegation-tool.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 6,
+    "engagedRefCount": 59,
+    "firstSeen": "2026-05-29 21:38:12",
+    "lastSeen": "2026-05-29 21:38:12",
+    "topEngagedRefs": [
+      {
+        "ref": "agent:print/print-layout-reviewer",
+        "weight": 474
+      },
+      {
+        "ref": "command:print/qa-spread",
+        "weight": 228
+      },
+      {
+        "ref": "knowledge:print/design/field-guide-layout-workflow",
+        "weight": 222
+      },
+      {
+        "ref": "command:print/publish-pipeline",
+        "weight": 162
+      },
+      {
+        "ref": "skill:ai-skills/llm-delegation-tool",
+        "weight": 144
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-036-akm",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (24× searched; 184 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "akm",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "skill:akm-dream",
+      "skill:akm-dream.md",
+      "workflow:field-guide-markdown-audit",
+      "workflow:field-guide-markdown-audit.md",
+      "knowledge:skills/akm-dream/references/akm-commands",
+      "knowledge:skills/akm-dream/references/akm-commands.md",
+      "script:skills/akm-dream/scripts/audit-review-artifacts.ts",
+      "script:skills/akm-dream/scripts/audit-review-artifacts.ts.md",
+      "agent:akm-librarian",
+      "agent:akm-librarian.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 24,
+    "engagedRefCount": 184,
+    "firstSeen": "2026-05-21 20:55:43",
+    "lastSeen": "2026-05-30 07:38:12",
+    "topEngagedRefs": [
+      {
+        "ref": "skill:akm-dream",
+        "weight": 49
+      },
+      {
+        "ref": "workflow:field-guide-markdown-audit",
+        "weight": 39
+      },
+      {
+        "ref": "knowledge:skills/akm-dream/references/akm-commands",
+        "weight": 30
+      },
+      {
+        "ref": "script:skills/akm-dream/scripts/audit-review-artifacts.ts",
+        "weight": 30
+      },
+      {
+        "ref": "agent:akm-librarian",
+        "weight": 28
+      }
+    ]
+  }
+}

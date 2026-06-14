@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "rq-077-content-calendar-editorial-planning",
+  "suite": "real-query",
+  "type": "retrieval",
+  "description": "Real user query (11× searched; 63 engaged refs). Retrieval should surface what users went on to use.",
+  "input": {
+    "query": "content calendar editorial planning",
+    "topK": 10
+  },
+  "expected": {
+    "mustIncludeRefs": [
+      "workflow:blog-publish-article",
+      "workflow:blog-publish-article.md",
+      "agent:blog/editor",
+      "agent:blog/editor.md",
+      "agent:blog/researcher",
+      "agent:blog/researcher.md",
+      "command:blog-grow-audience",
+      "command:blog-grow-audience.md",
+      "skill:social-media/bluesky",
+      "skill:social-media/bluesky.md"
+    ],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.8,
+      "minHits": 0.2
+    },
+    "passThreshold": 0.2
+  },
+  "requires": {
+    "minAkmVersion": "0.8.0"
+  },
+  "tags": [
+    "retrieval",
+    "real-query",
+    "corpus-quality"
+  ],
+  "_provenance": {
+    "queryCount": 11,
+    "engagedRefCount": 63,
+    "firstSeen": "2026-06-02 05:19:25",
+    "lastSeen": "2026-06-02 05:20:03",
+    "topEngagedRefs": [
+      {
+        "ref": "workflow:blog-publish-article",
+        "weight": 200
+      },
+      {
+        "ref": "agent:blog/editor",
+        "weight": 148
+      },
+      {
+        "ref": "agent:blog/researcher",
+        "weight": 148
+      },
+      {
+        "ref": "command:blog-grow-audience",
+        "weight": 121
+      },
+      {
+        "ref": "skill:social-media/bluesky",
+        "weight": 118
+      }
+    ]
+  }
+}
