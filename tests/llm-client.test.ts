@@ -495,6 +495,33 @@ describe("chatCompletion single bounded retry", () => {
     }
   });
 
+  test("Bun 'socket connection was closed' network_error is retried then succeeds", async () => {
+    const originalFetch = globalThis.fetch;
+    const { fetch: stub, calls } = queuedFetch([
+      () => {
+        // Bun 1.3.x surfaces a mid-flight dropped connection with this exact
+        // message; it contains no ECONNRESET/EPIPE/"fetch failed" substring.
+        throw new Error("The socket connection was closed unexpectedly.");
+      },
+      jsonOk("recovered"),
+    ]);
+    globalThis.fetch = stub;
+    let retries = 0;
+    try {
+      const out = await chatCompletion(baseConfig, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        onRetryAttempt: () => {
+          retries += 1;
+        },
+      } as RetryTestOptions);
+      expect(out).toBe("recovered");
+      expect(retries).toBe(1);
+      expect(calls()).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("context-overflow-classified 5xx is not retried", async () => {
     const originalFetch = globalThis.fetch;
     const { fetch: stub, calls } = queuedFetch([

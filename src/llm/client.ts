@@ -203,9 +203,23 @@ function looksLikeContextOverflow(message: string): boolean {
 /**
  * Decide whether a first-attempt {@link LlmCallError} is eligible for a single
  * retry. Retryable: HTTP 5xx (`provider_error` with statusCode >= 500) and
- * `network_error` whose message looks like a transient connection reset
- * (ECONNRESET / EPIPE / "fetch failed"). NOT retryable: 4xx, `rate_limited`
- * (429), `timeout`, `parse_error`, and context-overflow-classified errors.
+ * `network_error` whose message looks like a transient connection drop.
+ * NOT retryable: 4xx, `rate_limited` (429), `timeout`, `parse_error`, and
+ * context-overflow-classified errors.
+ *
+ * The connection-drop heuristic covers the substrings emitted across runtimes
+ * for a mid-flight socket close:
+ *  - `ECONNRESET` / `EPIPE` — Node/libuv socket reset codes
+ *  - `fetch failed` — undici's generic wrapper message
+ *  - `socket connection was closed` — Bun's message for a dropped connection
+ *    (e.g. "The socket connection was closed unexpectedly.")
+ *  - `terminated` / `other side closed` — undici's phrasings for the same
+ *
+ * These all describe a transient transport failure where a second attempt can
+ * legitimately succeed, which is exactly the case a single bounded retry is
+ * meant to absorb. Before this list was widened, Bun's "socket connection was
+ * closed unexpectedly" fell through unretried and surfaced as a recurring
+ * failure in the improve/reflect and capability-probe flows.
  */
 function isRetryable(err: LlmCallError): boolean {
   if (looksLikeContextOverflow(err.message)) return false;
@@ -214,7 +228,14 @@ function isRetryable(err: LlmCallError): boolean {
   }
   if (err.code === "network_error") {
     const lower = err.message.toLowerCase();
-    return lower.includes("econnreset") || lower.includes("epipe") || lower.includes("fetch failed");
+    return (
+      lower.includes("econnreset") ||
+      lower.includes("epipe") ||
+      lower.includes("fetch failed") ||
+      lower.includes("socket connection was closed") ||
+      lower.includes("terminated") ||
+      lower.includes("other side closed")
+    );
   }
   return false;
 }
