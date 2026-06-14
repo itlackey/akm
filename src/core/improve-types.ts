@@ -244,6 +244,15 @@ export interface AkmImproveResult {
    */
   triage?: { promoted: number; rejected: number; deferred: number; skippedByCap: number };
   /**
+   * Layer 2 proactive-maintenance selector outcome. Present only when the
+   * `proactiveMaintenance` process is enabled and the run was whole-stash / type
+   * scope; omitted entirely otherwise. `selected` is the count of due assets
+   * folded into the reflect/distill candidate set this run (bounded by
+   * `maxPerRun`); `dueTotal` is the full due pool before the bound;
+   * `neverReflected` is the subset of the due pool never previously reflected.
+   */
+  proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
+  /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and
    * the `{runId}` sync-commit token can read it. Absent for programmatic

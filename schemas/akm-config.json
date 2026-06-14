@@ -225,6 +225,23 @@
                       "requirePlannedRefs": {
                         "type": "boolean"
                       },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
+                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -382,6 +399,23 @@
                       },
                       "requirePlannedRefs": {
                         "type": "boolean"
+                      },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -541,6 +575,23 @@
                       "requirePlannedRefs": {
                         "type": "boolean"
                       },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
+                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -698,6 +749,23 @@
                       },
                       "requirePlannedRefs": {
                         "type": "boolean"
+                      },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -857,6 +925,23 @@
                       "requirePlannedRefs": {
                         "type": "boolean"
                       },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
+                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -1015,6 +1100,23 @@
                       "requirePlannedRefs": {
                         "type": "boolean"
                       },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
+                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -1172,6 +1274,198 @@
                       },
                       "requirePlannedRefs": {
                         "type": "boolean"
+                      },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
+                      },
+                      "minPendingCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "minSessionDuration": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "applyMode": {
+                        "type": "string",
+                        "enum": [
+                          "queue",
+                          "promote"
+                        ]
+                      },
+                      "policy": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxAcceptsPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "maxDiffLines": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rejectEmpty": {
+                        "type": "boolean"
+                      },
+                      "judgment": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "proactiveMaintenance": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "llm",
+                          "agent",
+                          "sdk"
+                        ]
+                      },
+                      "profile": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "timeoutMs": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "allowedTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "minPoolSize": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "qualityGate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contradictionDetection": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "defaultSince": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxTotalChars": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "minContentChars": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxChunkSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50
+                      },
+                      "incrementalSince": {
+                        "type": "string"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "neighborsPerChanged": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "requirePlannedRefs": {
+                        "type": "boolean"
+                      },
+                      "dueDays": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxPerRun": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "importanceWeights": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "minLength": 1
+                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -1948,6 +2242,23 @@
                           "requirePlannedRefs": {
                             "type": "boolean"
                           },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
+                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -2105,6 +2416,23 @@
                           },
                           "requirePlannedRefs": {
                             "type": "boolean"
+                          },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -2264,6 +2592,23 @@
                           "requirePlannedRefs": {
                             "type": "boolean"
                           },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
+                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -2421,6 +2766,23 @@
                           },
                           "requirePlannedRefs": {
                             "type": "boolean"
+                          },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -2580,6 +2942,23 @@
                           "requirePlannedRefs": {
                             "type": "boolean"
                           },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
+                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -2738,6 +3117,23 @@
                           "requirePlannedRefs": {
                             "type": "boolean"
                           },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
+                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -2895,6 +3291,198 @@
                           },
                           "requirePlannedRefs": {
                             "type": "boolean"
+                          },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
+                          },
+                          "minPendingCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "minSessionDuration": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "applyMode": {
+                            "type": "string",
+                            "enum": [
+                              "queue",
+                              "promote"
+                            ]
+                          },
+                          "policy": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxAcceptsPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "maxDiffLines": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "rejectEmpty": {
+                            "type": "boolean"
+                          },
+                          "judgment": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "llm",
+                                  "agent",
+                                  "sdk"
+                                ]
+                              },
+                              "profile": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "timeoutMs": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "proactiveMaintenance": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "llm",
+                              "agent",
+                              "sdk"
+                            ]
+                          },
+                          "profile": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowedTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "minPoolSize": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "qualityGate": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "contradictionDetection": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "defaultSince": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxTotalChars": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "minContentChars": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxChunkSize": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50
+                          },
+                          "incrementalSince": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "neighborsPerChanged": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "requirePlannedRefs": {
+                            "type": "boolean"
+                          },
+                          "dueDays": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxPerRun": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "importanceWeights": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "propertyNames": {
+                              "minLength": 1
+                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -3653,6 +4241,23 @@
         "requirePlannedRefs": {
           "type": "boolean"
         },
+        "dueDays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxPerRun": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "importanceWeights": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
+        },
         "minPendingCount": {
           "type": "integer",
           "minimum": 0
@@ -3821,6 +4426,23 @@
                 "requirePlannedRefs": {
                   "type": "boolean"
                 },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
+                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -3978,6 +4600,23 @@
                 },
                 "requirePlannedRefs": {
                   "type": "boolean"
+                },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
                 },
                 "minPendingCount": {
                   "type": "integer",
@@ -4137,6 +4776,23 @@
                 "requirePlannedRefs": {
                   "type": "boolean"
                 },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
+                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -4294,6 +4950,23 @@
                 },
                 "requirePlannedRefs": {
                   "type": "boolean"
+                },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
                 },
                 "minPendingCount": {
                   "type": "integer",
@@ -4453,6 +5126,23 @@
                 "requirePlannedRefs": {
                   "type": "boolean"
                 },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
+                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -4611,6 +5301,23 @@
                 "requirePlannedRefs": {
                   "type": "boolean"
                 },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
+                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -4768,6 +5475,198 @@
                 },
                 "requirePlannedRefs": {
                   "type": "boolean"
+                },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
+                },
+                "minPendingCount": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexSessions": {
+                  "type": "boolean"
+                },
+                "minSessionDuration": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "applyMode": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "promote"
+                  ]
+                },
+                "policy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxAcceptsPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxDiffLines": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "rejectEmpty": {
+                  "type": "boolean"
+                },
+                "judgment": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "llm",
+                        "agent",
+                        "sdk"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "proactiveMaintenance": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "agent",
+                    "sdk"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "allowedTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "minPoolSize": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "qualityGate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "contradictionDetection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "defaultSince": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxTotalChars": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "minContentChars": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxChunkSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                },
+                "incrementalSince": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "neighborsPerChanged": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "requirePlannedRefs": {
+                  "type": "boolean"
+                },
+                "dueDays": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxPerRun": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "importanceWeights": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "propertyNames": {
+                    "minLength": 1
+                  }
                 },
                 "minPendingCount": {
                   "type": "integer",

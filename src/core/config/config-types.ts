@@ -259,6 +259,31 @@ export interface ImproveProcessConfig {
    */
   minSessionDuration?: number;
   /**
+   * Proactive-maintenance selector (Layer 2): staleness gate in DAYS. An asset
+   * is eligible only when it has never been reflected/distilled OR was last
+   * reflected/distilled more than this many days ago. This same value doubles as
+   * the per-ref rotation cooldown — a freshly-reflected asset is excluded until
+   * it ages back past `dueDays`, so successive runs rotate through the due pool.
+   * Absent = default 30. Only meaningful on the `proactiveMaintenance` process.
+   */
+  dueDays?: number;
+  /**
+   * Proactive-maintenance selector (Layer 2): hard cap on how many due assets
+   * are surfaced into the reflect/distill candidate set per run. Bounds the
+   * blast radius of a scheduled maintenance sweep. Absent = default 25. Alias
+   * for the per-process `limit` field; `maxPerRun` wins when both are set. Only
+   * meaningful on the `proactiveMaintenance` process.
+   */
+  maxPerRun?: number;
+  /**
+   * Proactive-maintenance selector (Layer 2): optional override of the
+   * importance multiplier applied per asset type in the composite priority.
+   * Merged over the built-in defaults (skill/agent 1.5, command/workflow 1.3,
+   * lesson 1.2, knowledge 1.0, script 0.9, memory 0.7) — supply only the types
+   * you want to change. Only meaningful on the `proactiveMaintenance` process.
+   */
+  importanceWeights?: Record<string, number>;
+  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.
@@ -324,6 +349,15 @@ export interface ImproveProfileConfig {
      * triage policy. Opt-in (default disabled).
      */
     triage?: ImproveProcessConfig;
+    /**
+     * Layer 2 — proactive-maintenance selector. On whole-stash / type scope,
+     * surfaces the top-N highest-priority *due* assets (never reflected, or last
+     * reflected > `dueDays` ago) into the reflect/distill candidate set so stable
+     * high-value assets get refreshed on a schedule even without new feedback.
+     * Opt-in (default DISABLED). Knobs: `enabled`, `dueDays` (30),
+     * `maxPerRun`/`limit` (25), `importanceWeights`.
+     */
+    proactiveMaintenance?: ImproveProcessConfig;
   };
   autoAccept?: number;
   limit?: number;

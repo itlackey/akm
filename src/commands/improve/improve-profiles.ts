@@ -62,6 +62,10 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   // proposal-queue triage drains the standing backlog. Opt-in (default off),
   // like `validation` — needs an explicit `enabled: true`.
   triage: false,
+  // Layer 2 proactive-maintenance selector. Opt-in (default off) — surfaces
+  // stale high-value assets on a schedule. Enable per-profile with an explicit
+  // `processes.proactiveMaintenance.enabled: true`.
+  proactiveMaintenance: false,
 };
 
 /**

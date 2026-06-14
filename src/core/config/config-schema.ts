@@ -175,6 +175,15 @@ export const ImproveProcessConfigSchema = z
     neighborsPerChanged: z.number().int().min(1).optional(),
     // Distill process: skip distill entirely when reflect produced zero planned refs.
     requirePlannedRefs: z.boolean().optional(),
+    // proactiveMaintenance process (Layer 2): staleness gate + rotation cooldown
+    // in days (default 30). Only meaningful on `proactiveMaintenance`.
+    dueDays: z.number().int().min(0).optional(),
+    // proactiveMaintenance process: top-N bound per run (default 25). Alias for
+    // `limit`; `maxPerRun` wins when both are set.
+    maxPerRun: positiveInt.optional(),
+    // proactiveMaintenance process: optional per-type importance overrides,
+    // merged over the built-in defaults. Only meaningful on `proactiveMaintenance`.
+    importanceWeights: z.record(z.string().min(1), z.number()).optional(),
     // MemoryInference process: minimum pending memory count to run the pass.
     minPendingCount: z.number().int().min(0).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate
@@ -215,6 +224,7 @@ const ImproveProfileProcessesSchema = z
     graphExtraction: ImproveProcessConfigSchema.optional(),
     validation: ImproveProcessConfigSchema.optional(),
     triage: ImproveProcessConfigSchema.optional(),
+    proactiveMaintenance: ImproveProcessConfigSchema.optional(),
   })
   .passthrough()
   .superRefine((val, ctx) => {
@@ -239,6 +249,7 @@ const ImproveProfileProcessesSchema = z
       "validation",
       "extract",
       "triage",
+      "proactiveMaintenance",
     ]);
     for (const k of Object.keys(raw)) {
       if (!allowed.has(k)) {

@@ -83,6 +83,7 @@ import {
 } from "./improve-profiles";
 import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
+import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 
 // #607 Lock Decomposition: fine-grained per-process locks replace the single
@@ -378,6 +379,11 @@ interface ImprovePreparationResult {
   consolidation: ConsolidateResult;
   /** Whether the consolidation pass actually ran (vs profile-disabled / pool-delta skip). Drives graph-extraction reindex. */
   consolidationRan: boolean;
+  /**
+   * Layer 2 proactive-maintenance selector outcome, when the process ran.
+   * Undefined when the process is disabled or the run is ref-scoped.
+   */
+  proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
 }
 
 interface ImproveLoopResult {
@@ -483,6 +489,22 @@ export function renderSyncCommitMessage(
     runId: result.runId ?? "",
   };
   return template.replace(/\{(\w+)\}/g, (match, key: string) => (Object.hasOwn(tokens, key) ? tokens[key] : match));
+}
+
+/**
+ * Dedupe a list of eligible refs by `ref`, preserving first-seen order. Used to
+ * merge the three eligibility sources (feedback-signal, P0-A high-retrieval,
+ * Layer-2 proactive-maintenance) without admitting a ref into the loop twice.
+ */
+function dedupeRefs(refs: ImproveEligibleRef[]): ImproveEligibleRef[] {
+  const seen = new Set<string>();
+  const out: ImproveEligibleRef[] = [];
+  for (const r of refs) {
+    if (seen.has(r.ref)) continue;
+    seen.add(r.ref);
+    out.push(r);
+  }
+  return out;
 }
 
 async function collectEligibleRefs(
@@ -1375,6 +1397,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             },
           }
         : {}),
+      ...(preparation.proactiveMaintenance ? { proactiveMaintenance: preparation.proactiveMaintenance } : {}),
       ...(options.runId !== undefined ? { runId: options.runId } : {}),
     };
     if (!result.dryRun)
@@ -1600,6 +1623,11 @@ function emitImproveCompletedEvent(
         memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
         graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
         graphExtractionDurationMs: durations.graphExtractionDurationMs,
+        // Layer-2 proactive-maintenance coverage (0 when the process is disabled
+        // or the run was ref-scoped) so a scheduled sweep's reach is trackable.
+        proactiveSelected: result.proactiveMaintenance?.selected ?? 0,
+        proactiveDueTotal: result.proactiveMaintenance?.dueTotal ?? 0,
+        proactiveNeverReflected: result.proactiveMaintenance?.neverReflected ?? 0,
         // New metrics for tuning the improve loop.
         ...(durations.totalDurationMs !== undefined ? { durationMs: durations.totalDurationMs } : {}),
         ...(durations.warningCount !== undefined ? { warningCount: durations.warningCount } : {}),
@@ -2489,6 +2517,9 @@ async function runImprovePreparationStage(args: {
   }
 
   let highRetrievalRefs: ImproveEligibleRef[] = [];
+  // Retrieval counts for the zero-feedback pool, hoisted so the Layer-2
+  // proactive-maintenance selector below can reuse them without a second DB pass.
+  let retrievalCounts = new Map<string, number>();
   let dbForRetrieval: import("../../storage/database").Database | undefined;
   try {
     dbForRetrieval = openExistingDatabase();
@@ -2498,7 +2529,7 @@ async function runImprovePreparationStage(args: {
         "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
       );
     }
-    const retrievalCounts = getRetrievalCounts(
+    retrievalCounts = getRetrievalCounts(
       dbForRetrieval,
       noFeedbackCandidates.map((r) => r.ref),
     );
@@ -2523,6 +2554,82 @@ async function runImprovePreparationStage(args: {
     if (dbForRetrieval) closeDatabase(dbForRetrieval);
   }
 
+  // ── Layer 2: PROACTIVE MAINTENANCE SELECTOR (third eligibility source) ─────
+  // The signal-delta gate and P0-A only surface assets with fresh feedback or a
+  // raw-retrieval spike. Neither revisits a stable, high-value asset on a
+  // schedule, so on a quiet stash useful assets drift stale and are never
+  // refreshed. When the `proactiveMaintenance` process is enabled (DEFAULT OFF)
+  // and the run is whole-stash / type scope, this selector ranks the eligible
+  // population by a composite maintenance priority, gates on staleness ("due"),
+  // bounds to top-N, and folds the winners into the SAME candidate set the other
+  // two sources feed — so they flow through the existing #580 empty-diff /
+  // cosmetic suppression and additive-distill gates. It adds no new mutation
+  // logic of its own. The due gate doubles as the rotation cooldown: a freshly
+  // reflected asset is excluded until it ages back past `dueDays`, so successive
+  // runs rotate through the due pool rather than re-selecting the same heads.
+  let proactiveRefs: ImproveEligibleRef[] = [];
+  let proactiveMaintenanceSummary: { selected: number; dueTotal: number; neverReflected: number } | undefined;
+  const proactiveEnabled = scope.mode !== "ref" && resolveProcessEnabled("proactiveMaintenance", improveProfile);
+  if (proactiveEnabled) {
+    const pmCfg = improveProfile.processes?.proactiveMaintenance;
+    const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;
+    const maxPerRun = pmCfg?.maxPerRun ?? pmCfg?.limit ?? DEFAULT_MAX_PER_RUN;
+    const importanceWeights = pmCfg?.importanceWeights;
+
+    // Candidate population: the zero-feedback / non-signal pool — exactly the
+    // assets the other two sources would NOT pick this run. Exclude any P0-A
+    // rescued this run so we never double-select the same ref.
+    const alreadySelected = new Set(highRetrievalRefs.map((r) => r.ref));
+    const pmCandidates = noFeedbackCandidates.filter((r) => !alreadySelected.has(r.ref));
+
+    const selection = selectProactiveMaintenanceRefs({
+      candidates: pmCandidates,
+      lastReflectTs: lastReflectProposalTs,
+      lastDistillTs: lastDistillProposalTs,
+      retrievalCounts,
+      sizeBytesOf: (r) => {
+        const fp = r.filePath;
+        if (!fp) return undefined;
+        try {
+          return fs.statSync(fp).size;
+        } catch {
+          return undefined;
+        }
+      },
+      dueDays,
+      maxPerRun,
+      importanceWeights,
+    });
+
+    proactiveRefs = selection.selected;
+    proactiveMaintenanceSummary = {
+      selected: selection.selected.length,
+      dueTotal: selection.dueTotal,
+      neverReflected: selection.neverReflected,
+    };
+
+    // Aggregated observability event (never per-ref — avoids the event flood the
+    // Layer-1 work eliminated). Mirrors the `no_new_signal` aggregation pattern.
+    appendEvent(
+      {
+        eventType: "proactive_selected",
+        ref: undefined,
+        metadata: {
+          count: selection.selected.length,
+          dueTotal: selection.dueTotal,
+          neverReflected: selection.neverReflected,
+        },
+      },
+      eventsCtx,
+    );
+    if (selection.selected.length > 0) {
+      info(
+        `[improve] proactive maintenance selected ${selection.selected.length}/${selection.dueTotal} due refs ` +
+          `(${selection.neverReflected} never reflected, dueDays=${dueDays}, maxPerRun=${maxPerRun})`,
+      );
+    }
+  }
+
   // Record an in-memory skip action for every zero-feedback ref that the
   // partition loop deferred to P0-A but P0-A then declined (retrievalCount below
   // threshold, or a prior reflect proposal already on record). These never make
@@ -2530,7 +2637,7 @@ async function runImprovePreparationStage(args: {
   // summary. No DB event is written here — these refs carry no signal at all, so
   // there is nothing for the skip histogram to aggregate; the action log alone
   // preserves the per-ref audit trail (mirrors the fully-skipped action above).
-  const rescuedSet = new Set(highRetrievalRefs.map((r) => r.ref));
+  const rescuedSet = new Set([...highRetrievalRefs, ...proactiveRefs].map((r) => r.ref));
   for (const r of noFeedbackPool) {
     if (rescuedSet.has(r.ref)) continue;
     actions.push({
@@ -2549,7 +2656,12 @@ async function runImprovePreparationStage(args: {
   // or sufficient retrievals). A stash with no signals has 0 eligible refs —
   // usage is the gate. Run `akm feedback <ref> --positive` or retrieve assets
   // to bring them into the eligible pool.
-  const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
+  // Layer-2 proactive refs join the eligible set alongside feedback-signal and
+  // high-retrieval (P0-A) refs. The three sources are disjoint by construction
+  // (proactive draws from noFeedbackCandidates with the P0-A picks removed), but
+  // dedupe defensively so a ref can never enter the loop twice. `requireFeedbackSignal`
+  // still suppresses both fallback sources for callers that want feedback-only runs.
+  const signalAndRetrievalRefs = dedupeRefs([...signalFiltered, ...highRetrievalRefs, ...proactiveRefs]);
   const mergedRefs =
     scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
 
@@ -2708,6 +2820,7 @@ async function runImprovePreparationStage(args: {
     gateAutoAcceptFailedCount,
     consolidation: consolidationPass.consolidation,
     consolidationRan: consolidationPass.consolidationRan,
+    ...(proactiveMaintenanceSummary ? { proactiveMaintenance: proactiveMaintenanceSummary } : {}),
   };
 }
 

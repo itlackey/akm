@@ -69,6 +69,12 @@ export type EventType =
   | "select"
   /** Emitted when a cooldown guard or budget exhaustion in `akm improve` skips an asset. */
   | "improve_skipped"
+  /**
+   * Layer 2 — emitted once per `akm improve` run when the proactive-maintenance
+   * selector runs. Aggregated (never per-ref): metadata carries
+   * `{count, dueTotal, neverReflected}`.
+   */
+  | "proactive_selected"
   /** Emitted after `createProposal()` succeeds in `akm reflect`. */
   | "reflect_completed"
   | "improve_completed"
