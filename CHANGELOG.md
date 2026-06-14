@@ -46,12 +46,6 @@ their task timeouts.
   per ref (~11K writes/run, ~400K rows/day) — a contributor to 900s improve
   timeouts and state.db bloat. Collapsed into one aggregated counted event.
 
-### Changed
-
-- `session_extraction` feature gate is always on; the real on/off control lives
-  at the active improve profile's `processes.extract.enabled`, so non-default
-  profiles no longer get extract hard-disabled by the `default` profile.
-
 ## [0.9.0-beta.8] - 2026-06-13
 
 Fix multi-process SQLite contention in `index.db` and harden concurrent proposal
