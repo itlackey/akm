@@ -1853,25 +1853,100 @@ export function computeBodyHash(body: string): string {
 }
 
 /**
- * Count search and show events for the given entry refs.
- * Returns a Map<ref, count> with only refs that have at least one event.
- * Used by the improve loop to find high-retrieval assets without feedback.
+ * Reduce a ref to its bare `type:name` form, dropping any `origin//` prefix.
+ *
+ * usage_events store entry_ref inconsistently: search/show writers persist
+ * whatever ref the result carried, which is sometimes stash-prefixed
+ * (`origin//type:name`) and sometimes bare (`type:name`). Retrieval counting
+ * keys on the bare form so both spellings of the same asset collapse together.
+ *
+ * Returns the bare form, or the original string when it cannot be parsed (best
+ * effort — never throws so a malformed stored ref can't break counting).
+ */
+function bareRef(ref: string): string {
+  try {
+    const parsed = parseAssetRef(ref);
+    return `${parsed.type}:${parsed.name}`;
+  } catch {
+    return ref;
+  }
+}
+
+/**
+ * Count retrieval events for the given entry refs.
+ *
+ * Counts `search`, `show`, and `curate` usage events. Returns a
+ * Map<inputRef, count> keyed by the *input* ref strings (only those with at
+ * least one matching event appear). Used by the improve loop to find
+ * high-retrieval assets without feedback.
+ *
+ * Matching is normalization-aware: each stored `entry_ref` is reduced to its
+ * bare `type:name` form before comparison, so a stash-prefixed stored ref
+ * (`origin//type:name`) still matches a bare input ref (`type:name`) and vice
+ * versa. Previously the raw `entry_ref IN (...)` comparison silently dropped
+ * roughly half the signal whenever the two spellings disagreed.
+ *
+ * `curate` events are included: their per-item rows are written with
+ * entry_ref populated (see logCurateEvent), so curation is a real retrieval
+ * signal here. Legacy summary-only curate rows with a NULL entry_ref simply
+ * contribute nothing.
  */
 export function getRetrievalCounts(db: Database, refs: string[]): Map<string, number> {
   if (refs.length === 0) return new Map();
-  const result = new Map<string, number>();
+
+  // Map each distinct bare form back to the input ref(s) that produced it so we
+  // can re-key DB results (grouped by bare form) onto the caller's ref strings.
+  const bareToInputs = new Map<string, string[]>();
+  for (const ref of refs) {
+    const bare = bareRef(ref);
+    const existing = bareToInputs.get(bare);
+    if (existing) existing.push(ref);
+    else bareToInputs.set(bare, [ref]);
+  }
+  const bareForms = [...bareToInputs.keys()];
+
+  // Accumulate counts per bare form across chunks before re-keying.
+  const countsByBare = new Map<string, number>();
   // Chunk to stay within SQLITE_MAX_VARIABLE_NUMBER (same pattern as getUtilityScoresByIds).
-  for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
+  for (let i = 0; i < bareForms.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = bareForms.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(", ");
+    // Normalize the stored entry_ref to its bare form inside SQL by stripping
+    // everything up to and including the last `//` separator. SQLite has no
+    // rfind, but stored origins never themselves contain `//`, so a stash ref
+    // has exactly one `//` and `substr(... instr ...)` is exact; bare refs have
+    // no `//` and pass through unchanged.
     const rows = db
       .prepare(
-        `SELECT entry_ref, COUNT(*) AS cnt FROM usage_events
-         WHERE event_type IN ('search','show') AND entry_ref IN (${placeholders})
-         GROUP BY entry_ref`,
+        `SELECT
+           CASE
+             WHEN instr(entry_ref, '//') > 0
+               THEN substr(entry_ref, instr(entry_ref, '//') + 2)
+             ELSE entry_ref
+           END AS bare_ref,
+           COUNT(*) AS cnt
+         FROM usage_events
+         WHERE event_type IN ('search','show','curate')
+           AND entry_ref IS NOT NULL
+           AND CASE
+                 WHEN instr(entry_ref, '//') > 0
+                   THEN substr(entry_ref, instr(entry_ref, '//') + 2)
+                 ELSE entry_ref
+               END IN (${placeholders})
+         GROUP BY bare_ref`,
       )
-      .all(...(chunk as SqlValue[])) as Array<{ entry_ref: string; cnt: number }>;
-    for (const r of rows) result.set(r.entry_ref, r.cnt);
+      .all(...(chunk as SqlValue[])) as Array<{ bare_ref: string; cnt: number }>;
+    for (const r of rows) {
+      countsByBare.set(r.bare_ref, (countsByBare.get(r.bare_ref) ?? 0) + r.cnt);
+    }
+  }
+
+  // Re-key bare-form counts onto every input ref that maps to that bare form.
+  const result = new Map<string, number>();
+  for (const [bare, count] of countsByBare) {
+    for (const input of bareToInputs.get(bare) ?? []) {
+      result.set(input, count);
+    }
   }
   return result;
 }

@@ -108,6 +108,9 @@ function logCurateEvent(query: string, result: CurateResponse): void {
   try {
     const db = openExistingDatabase();
     try {
+      // Summary row (entry_ref = NULL): preserves the query → itemRefs audit
+      // trail. Retrieval counting ignores NULL-ref rows, so this row is purely
+      // informational.
       insertUsageEvent(db, {
         event_type: "curate",
         query,
@@ -117,6 +120,19 @@ function logCurateEvent(query: string, result: CurateResponse): void {
         }),
         source: "user",
       });
+      // Per-item rows with entry_ref populated so curation registers as a real
+      // retrieval signal in getRetrievalCounts (which counts 'curate' events).
+      // Only stash items expose a canonical asset ref; registry hits
+      // (`registry:<id>`) have no asset ref and are skipped here.
+      for (const item of result.items) {
+        if (!("ref" in item) || typeof item.ref !== "string") continue;
+        insertUsageEvent(db, {
+          event_type: "curate",
+          query,
+          entry_ref: item.ref,
+          source: "user",
+        });
+      }
     } finally {
       closeDatabase(db);
     }

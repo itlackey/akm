@@ -21,7 +21,10 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
+import { getDbPath } from "../../../src/core/paths";
+import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 
 // Deterministic, strictly-ordered timestamps for signal-delta ordering.
 // These replace `await sleep(10)` between two appendEvent() calls: instead of
@@ -554,6 +557,138 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
 
     const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
+  });
+});
+
+// ── P0-A high-retrieval fallback revival ─────────────────────────────────────
+
+/**
+ * Seed `count` `search` usage events (with a populated entry_ref) into the
+ * freshly-built index.db so getRetrievalCounts sees the ref as high-retrieval.
+ * Must run AFTER buildIndex() (the DB has to exist).
+ */
+function seedRetrievals(ref: string, count: number): void {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    for (let i = 0; i < count; i++) {
+      insertUsageEvent(db, { event_type: "search", entry_ref: ref, query: "q", source: "user" });
+    }
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+describe("P0-A high-retrieval fallback (zero-feedback assets)", () => {
+  test("zero-feedback ref above retrieval threshold → reflected (revived P0-A)", async () => {
+    const stash = makeTempDir("akm-p0a-rescue-");
+    writeMemory(stash, "popular", "Frequently retrieved, never rated.");
+    await buildIndex(stash);
+    // No feedback events at all — previously this fell into the fullySkipped
+    // bucket and never reached the high-retrieval fallback. Seed retrievals so
+    // it clears the threshold.
+    seedRetrievals("memory:popular", 6);
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).toContain("memory:popular");
+  });
+
+  test("zero-feedback ref below retrieval threshold → not reflected", async () => {
+    const stash = makeTempDir("akm-p0a-below-");
+    writeMemory(stash, "rarely", "Retrieved once, never rated.");
+    await buildIndex(stash);
+    seedRetrievals("memory:rarely", 1); // below threshold of 5
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).not.toContain("memory:rarely");
+  });
+
+  test("P0-A fires at most once per asset (prior reflect proposal blocks re-rescue)", async () => {
+    const stash = makeTempDir("akm-p0a-once-");
+    writeMemory(stash, "already", "High retrieval but already reflected once.");
+    await buildIndex(stash);
+    seedRetrievals("memory:already", 10);
+    // A reflect proposal already exists for this ref → P0-A must not re-fire.
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:already" });
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).not.toContain("memory:already");
+  });
+});
+
+// ── Aggregated no_new_signal skip event ──────────────────────────────────────
+
+describe("aggregated no_new_signal skip event", () => {
+  test("stale-feedback refs emit a single counted improve_skipped, not one per ref", async () => {
+    const stash = makeTempDir("akm-no-new-signal-");
+    // Two refs with feedback on record but a NEWER reflect+distill proposal →
+    // signal-delta gate rejects both for reflect AND distill (fully skipped).
+    writeMemory(stash, "stale-a", "Stable A.");
+    writeMemory(stash, "stale-b", "Stable B.");
+    await buildIndex(stash);
+
+    for (const name of ["stale-a", "stale-b"]) {
+      const ref = `memory:${name}`;
+      appendEvent({ eventType: "feedback", ref, metadata: { signal: "negative" } }, { now: () => OLDER_MS });
+      appendEvent({ eventType: "reflect_invoked", ref }, { now: () => NEWER_MS });
+      appendEvent({ eventType: "distill_invoked", ref, metadata: { outcome: "queued" } }, { now: () => NEWER_MS });
+    }
+
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    const noNewSignal = readEvents({ type: "improve_skipped" }).events.filter(
+      (e) => e.metadata?.reason === "no_new_signal",
+    );
+    // Exactly ONE aggregated event (not one per ref), carrying the ref count.
+    expect(noNewSignal.length).toBe(1);
+    expect(noNewSignal[0]?.ref).toBeUndefined();
+    expect(noNewSignal[0]?.metadata?.count).toBe(2);
   });
 });
 

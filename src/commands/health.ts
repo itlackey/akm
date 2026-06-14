@@ -1314,12 +1314,20 @@ function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]
   skipReasons: Record<string, number>;
 } {
   const skipReasons: Record<string, number> = {};
+  let skipped = 0;
   for (const event of events) {
     const reason =
       typeof event.metadata?.reason === "string" && event.metadata.reason.trim() ? event.metadata.reason : "unknown";
-    skipReasons[reason] = (skipReasons[reason] ?? 0) + 1;
+    // Aggregated skip events (e.g. `no_new_signal`, `profile_filtered_all_passes`)
+    // carry a `count` of the refs they represent in a single row instead of one
+    // event per ref. Honor that count so the skip histogram reflects the true
+    // number of skipped refs; per-ref events without a count contribute 1.
+    const rawCount = event.metadata?.count;
+    const count = typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0 ? rawCount : 1;
+    skipReasons[reason] = (skipReasons[reason] ?? 0) + count;
+    skipped += count;
   }
-  return { skipped: events.length, skipReasons };
+  return { skipped, skipReasons };
 }
 
 function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: number | null; error?: string } {

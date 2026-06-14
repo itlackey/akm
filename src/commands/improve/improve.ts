@@ -2324,10 +2324,19 @@ async function runImprovePreparationStage(args: {
   //                         refs that fail the distill signal-delta gate).
   //   distillOnlyRefs     — reflect blocked but distill signal-delta passes
   //                         AND ref is a distill candidate.
-  //   fullySkippedCount   — neither gate passes → synthetic skip action
-  //                         + improve_skipped event, excluded from sort.
+  //   noFeedbackPool      — neither signal-delta gate passes *and* the ref has
+  //                         no recent feedback signal at all. These are NOT
+  //                         skipped here: they are handed to the high-retrieval
+  //                         fallback (P0-A) below so frequently-retrieved but
+  //                         never-rated assets can still be improved. Only refs
+  //                         that P0-A declines are ultimately fully skipped.
+  //   fullySkippedCount   — has stale feedback but no signal delta → genuine
+  //                         skip (counted, aggregated event emitted post-loop),
+  //                         excluded from sort.
   const eligibleRefs: ImproveEligibleRef[] = [];
   const distillOnlyRefs: ImproveEligibleRef[] = [];
+  // Zero-(recent-)feedback refs deferred to the P0-A high-retrieval fallback.
+  const noFeedbackPool: ImproveEligibleRef[] = [];
   let fullySkippedCount = 0;
 
   // O-2 (#365): explicit --scope <ref> bypasses every gate (user intent wins).
@@ -2369,23 +2378,64 @@ async function runImprovePreparationStage(args: {
     } else if (distillOk && isDistillCandidate) {
       // Reflect blocked but distill passes → distill-only bucket.
       distillOnlyRefs.push(r);
+    } else if (!latestFeedbackTs.has(r.ref)) {
+      // Neither signal-delta gate passes AND there is no recent feedback signal
+      // at all. Rather than skip outright, defer to the high-retrieval fallback
+      // (P0-A) below: a never-rated-but-frequently-retrieved asset is exactly
+      // what that path is meant to rescue. Refs P0-A declines are skipped there.
+      noFeedbackPool.push(r);
     } else {
-      // Neither gate passes — fully skipped.
+      // Has feedback on record but no signal delta since the last proposal —
+      // genuinely fully skipped. Counted here; a single aggregated
+      // improve_skipped event is emitted after the loop (mirrors
+      // profile_filtered_all_passes) instead of one event per ref.
       fullySkippedCount++;
       actions.push({
         ref: r.ref,
         mode: "distill-skipped",
         result: { ok: true, reason: "no new signal since last proposal" },
       });
-      appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "no_new_signal" } }, eventsCtx);
     }
   }
 
+  // Emit ONE aggregated skip event for the fully-skipped bucket rather than one
+  // improve_skipped event per ref (#592 pattern, mirrors
+  // profile_filtered_all_passes above). The per-ref loop previously produced
+  // ~11K state.db writes per run on a large stash, the dominant contributor to
+  // 900 s timeouts. The in-memory `actions` log keeps the per-ref detail for the
+  // run summary; no downstream consumer needs a per-ref DB audit trail (health's
+  // skip histogram reads the `no_new_signal` counter from the count field).
+  if (fullySkippedCount > 0) {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: undefined,
+        metadata: {
+          reason: "no_new_signal",
+          count: fullySkippedCount,
+        },
+      },
+      eventsCtx,
+    );
+  }
+
   // ── Phase 4: signal/feedback/utility/sort on the reduced set ──────────────
-  // Everything from here works only on (eligibleRefs ∪ distillOnlyRefs). The
-  // fully-skipped bucket has already been routed and emitted; we deliberately
-  // avoid spending DB/CPU on refs that cannot enter the loop.
+  // Everything from here works on (eligibleRefs ∪ distillOnlyRefs) plus the
+  // deferred noFeedbackPool that may be rescued by the high-retrieval fallback
+  // (P0-A). The fully-skipped bucket has already been routed and its aggregated
+  // event emitted; we deliberately avoid spending DB/CPU on refs that the
+  // signal-delta gate rejected with feedback already on record.
   const processableRefs: ImproveEligibleRef[] = [...eligibleRefs, ...distillOnlyRefs];
+
+  // Refs eligible for the high-retrieval fallback (P0-A): the signal-delta
+  // partition above could not place these in a reflect/distill bucket, but they
+  // may still qualify if they have been retrieved often enough. Two disjoint
+  // sources feed this set:
+  //   1. noFeedbackPool — refs with no recent feedback that the partition loop
+  //      deliberately deferred here (otherwise they would never reach P0-A).
+  //   2. processableRefs entries that turn out to carry no recent feedback
+  //      *signal* once feedbackSummary is computed below.
+  // (1) is added here; (2) is folded in after feedbackSummary is built.
 
   // Gap 6: only surface feedback signals from the last 30 days so that
   // ancient one-off feedback events don't permanently lock an asset into
@@ -2397,8 +2447,11 @@ async function runImprovePreparationStage(args: {
   // Pre-compute feedback summary per ref in a single pass so we don't issue
   // two readEvents({type:"feedback", ref}) per asset (one for signal filtering,
   // one for ratio computation).
+  // Cover processableRefs *and* the deferred noFeedbackPool so utility/feedback
+  // ratios are available for any noFeedbackPool ref that P0-A rescues below.
   const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
-  for (const candidate of processableRefs) {
+  for (const candidate of [...processableRefs, ...noFeedbackPool]) {
+    if (feedbackSummary.has(candidate.ref)) continue;
     const { events } = readEvents({ type: "feedback", ref: candidate.ref });
     let hasSignal = false;
     let positive = 0;
@@ -2424,7 +2477,16 @@ async function runImprovePreparationStage(args: {
   const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
 
   const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
-  const noFeedbackCandidates = processableRefs.filter((r) => !signalBearingSet.has(r.ref));
+  // Zero-feedback candidates for P0-A: processableRefs without a recent signal,
+  // plus the deferred noFeedbackPool. Dedupe by ref (the two sources are
+  // disjoint by construction, but guard against overlap defensively).
+  const noFeedbackSeen = new Set<string>();
+  const noFeedbackCandidates: ImproveEligibleRef[] = [];
+  for (const r of [...processableRefs.filter((r) => !signalBearingSet.has(r.ref)), ...noFeedbackPool]) {
+    if (noFeedbackSeen.has(r.ref)) continue;
+    noFeedbackSeen.add(r.ref);
+    noFeedbackCandidates.push(r);
+  }
 
   let highRetrievalRefs: ImproveEligibleRef[] = [];
   let dbForRetrieval: import("../../storage/database").Database | undefined;
@@ -2441,20 +2503,41 @@ async function runImprovePreparationStage(args: {
       noFeedbackCandidates.map((r) => r.ref),
     );
     // High-retrieval signal-delta (simplified rule, 0.8.0): a no-feedback
-    // ref qualifies exactly once — when retrievalCount ≥ threshold AND no
-    // prior reflect proposal exists for it. Once a reflect proposal is on
-    // record, subsequent re-eligibility requires explicit feedback (which
-    // flows through the normal signal-delta gate above). Tracking growth in
-    // retrieval count would require persisting the count in proposal
-    // metadata; deferred to a follow-up.
-    highRetrievalRefs = noFeedbackCandidates.filter(
-      (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD && !lastReflectProposalTs.has(r.ref),
-    );
+    // ref qualifies exactly once — when it has actually been retrieved
+    // (retrievalCount ≥ 1) AND retrievalCount ≥ threshold AND no prior reflect
+    // proposal exists for it. Once a reflect proposal is on record, subsequent
+    // re-eligibility requires explicit feedback (which flows through the normal
+    // signal-delta gate above). The explicit `> 0` guard keeps a threshold of 0
+    // from rescuing genuinely never-retrieved assets — the fallback is for
+    // *retrieved* assets, not silent ones. Tracking growth in retrieval count
+    // would require persisting the count in proposal metadata; deferred to a
+    // follow-up.
+    highRetrievalRefs = noFeedbackCandidates.filter((r) => {
+      const count = retrievalCounts.get(r.ref) ?? 0;
+      return count > 0 && count >= RETRIEVAL_COUNT_THRESHOLD && !lastReflectProposalTs.has(r.ref);
+    });
   } catch (err) {
     rethrowIfTestIsolationError(err);
     // best-effort: if DB unavailable, highRetrievalRefs stays empty
   } finally {
     if (dbForRetrieval) closeDatabase(dbForRetrieval);
+  }
+
+  // Record an in-memory skip action for every zero-feedback ref that the
+  // partition loop deferred to P0-A but P0-A then declined (retrievalCount below
+  // threshold, or a prior reflect proposal already on record). These never make
+  // it into mergedRefs, so without this they would silently vanish from the run
+  // summary. No DB event is written here — these refs carry no signal at all, so
+  // there is nothing for the skip histogram to aggregate; the action log alone
+  // preserves the per-ref audit trail (mirrors the fully-skipped action above).
+  const rescuedSet = new Set(highRetrievalRefs.map((r) => r.ref));
+  for (const r of noFeedbackPool) {
+    if (rescuedSet.has(r.ref)) continue;
+    actions.push({
+      ref: r.ref,
+      mode: "distill-skipped",
+      result: { ok: true, reason: "no new signal since last proposal" },
+    });
   }
 
   // If the user explicitly scoped to a single ref, always act on it —
