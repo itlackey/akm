@@ -11,8 +11,17 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "006-proposals-pending-ref-source",
     "007-consolidation-judged",
     "008-body-embeddings",
+    "009-asset-salience",
   ],
   "schema": [
+    {
+      "name": "idx_asset_salience_rank",
+      "sql": 
+"CREATE INDEX idx_asset_salience_rank
+        ON asset_salience(rank_score DESC)"
+,
+      "type": "index",
+    },
     {
       "name": "idx_events_ref",
       "sql": "CREATE INDEX idx_events_ref  ON events(ref)",
@@ -131,6 +140,21 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         ON task_history(task_id)"
 ,
       "type": "index",
+    },
+    {
+      "name": "asset_salience",
+      "sql": 
+"CREATE TABLE asset_salience (
+        asset_ref          TEXT    PRIMARY KEY,
+        encoding_salience  REAL    NOT NULL DEFAULT 0.5,
+        outcome_salience   REAL    NOT NULL DEFAULT 0.0,
+        retrieval_salience REAL    NOT NULL DEFAULT 0.0,
+        rank_score         REAL    NOT NULL DEFAULT 0.0,
+        consecutive_no_ops INTEGER NOT NULL DEFAULT 0,
+        updated_at         INTEGER NOT NULL DEFAULT 0
+      )"
+,
+      "type": "table",
     },
     {
       "name": "body_embeddings",

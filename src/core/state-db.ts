@@ -603,6 +603,52 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+
+  // ── Migration 009 — asset_salience (WS-1 salience vector) ───────────────────
+  //
+  // Per-asset salience vector persisted in state.db (canonical store).
+  //
+  // Three independently-stored, independently-decayable sub-scores:
+  //   encoding_salience  — intrinsic importance (Gap 1; v1 = type-weight stub).
+  //   outcome_salience   — differential usefulness (WS-2; 0 until that lands).
+  //   retrieval_salience — frequency × recency (the decayable term).
+  //
+  // Plus the scalar projection for ranking:
+  //   rank_score = (w_e·encoding + w_o·outcome + w_r·retrieval) × sizePenalty,
+  //   normalized [0,1]. Every selector reads rank_score; individual sub-scores
+  //   are available for telemetry and per-dimension thresholding.
+  //
+  // Plasticity column:
+  //   consecutive_no_ops INTEGER — number of consecutive improve cycles where
+  //     this asset produced a no-op (reflect/distill produced no change).
+  //     Dampens CONSOLIDATION-SELECTION only — intentionally NOT applied to
+  //     rank_score (stable assets stay retrievable but skip LLM merge passes).
+  //
+  // updated_at is an INTEGER Unix-ms timestamp for recency queries.
+  //
+  // The canonical store is state.db, not frontmatter.  An optional frontmatter
+  // mirror of the stable encodingSalience is allowed for portability (#608).
+  //
+  // TTL: rows are overwritten on every run; orphaned rows for deleted assets
+  // accumulate harmlessly until an operator prunes them.
+  {
+    id: "009-asset-salience",
+    up: `
+      CREATE TABLE IF NOT EXISTS asset_salience (
+        asset_ref          TEXT    PRIMARY KEY,
+        encoding_salience  REAL    NOT NULL DEFAULT 0.5,
+        outcome_salience   REAL    NOT NULL DEFAULT 0.0,
+        retrieval_salience REAL    NOT NULL DEFAULT 0.0,
+        rank_score         REAL    NOT NULL DEFAULT 0.0,
+        consecutive_no_ops INTEGER NOT NULL DEFAULT 0,
+        updated_at         INTEGER NOT NULL DEFAULT 0
+      );
+
+      -- Hot path: sort / filter by rank_score for selector queries.
+      CREATE INDEX IF NOT EXISTS idx_asset_salience_rank
+        ON asset_salience(rank_score DESC);
+    `,
+  },
 ];
 
 /**

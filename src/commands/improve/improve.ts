@@ -80,7 +80,6 @@ import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInp
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./extract";
-import { combinedEligibilityScore, computeValenceScore, negativeOnlyRatio } from "./feedback-valence";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ImproveProfileConfig } from "./improve-profiles";
 import {
@@ -93,6 +92,7 @@ import { detectAndWriteContradictions } from "./memory/memory-contradiction-dete
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
 import { type AkmReflectResult, akmReflect } from "./reflect";
+import { computeSalience, getLastUseMsByRef, upsertAssetSalience } from "./salience";
 
 // #607 Lock Decomposition: fine-grained per-process locks replace the single
 // `improve.lock`. Three independent locks allow concurrent improve runs when
@@ -2655,7 +2655,10 @@ async function runImprovePreparationStage(args: {
   let highRetrievalRefs: ImproveEligibleRef[] = [];
   // Retrieval counts for the zero-feedback pool, hoisted so the Layer-2
   // proactive-maintenance selector below can reuse them without a second DB pass.
+  // Also fetch lastUseMs here for the proactive-maintenance recency term (plan §WS-1
+  // step 2: recency is MANDATORY — never pinned to floor).
   let retrievalCounts = new Map<string, number>();
+  let lastUseMsForProactive = new Map<string, number>();
   let dbForRetrieval: import("../../storage/database").Database | undefined;
   try {
     dbForRetrieval = openExistingDatabase();
@@ -2666,6 +2669,10 @@ async function runImprovePreparationStage(args: {
       );
     }
     retrievalCounts = getRetrievalCounts(
+      dbForRetrieval,
+      noFeedbackCandidates.map((r) => r.ref),
+    );
+    lastUseMsForProactive = getLastUseMsByRef(
       dbForRetrieval,
       noFeedbackCandidates.map((r) => r.ref),
     );
@@ -2723,6 +2730,8 @@ async function runImprovePreparationStage(args: {
       lastReflectTs: lastReflectProposalTs,
       lastDistillTs: lastDistillProposalTs,
       retrievalCounts,
+      // WS-1: wire lastUseMs so the recency decay term is genuine (plan §step 2).
+      lastUseMs: lastUseMsForProactive,
       sizeBytesOf: (r) => {
         const fp = r.filePath;
         if (!fp) return undefined;
@@ -2833,51 +2842,101 @@ async function runImprovePreparationStage(args: {
     r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
   }
 
-  const utilityMap = buildUtilityMap(mergedRefs);
-
-  // #614 — symmetric valence weighting. The legacy attention term is
-  // NEGATIVE-ONLY (`negative / total`), so strong POSITIVE feedback contributes
-  // nothing to attention and a heavily-praised, heavily-used asset is ranked
-  // like a never-rated one. When `symmetricValence` is enabled (DEFAULT OFF —
-  // parity-preserving) the attention term becomes the |valence| MAGNITUDE so
-  // BOTH strong positive and strong negative feedback drive attention, while
-  // utility stays the dominant factor. Strong-signed items are also routed to a
-  // lane: high-negative → "fix", high-positive → "reinforce".
-  const symmetricValence = improveProfile.symmetricValence === true;
-
-  // Per-ref attention term folded into the eligibility sort, plus the routed
-  // feedback lane (only populated under symmetric valence). Computed once from
-  // the pre-aggregated feedback summary (no extra DB pass).
-  const feedbackAttention = new Map<string, number>();
-  for (const ref of mergedRefs) {
-    const summary = feedbackSummary.get(ref.ref);
-    const counts = { positive: summary?.positive ?? 0, negative: summary?.negative ?? 0 };
-    if (symmetricValence) {
-      const score = computeValenceScore(counts);
-      feedbackAttention.set(ref.ref, score.attention);
-      if (score.lane !== null) {
-        // Stamp the feedback-sign lane onto the shared ref object so it travels
-        // with the ref through the sort / disk-check / loop stages. Orthogonal
-        // to eligibilitySource (origin lane). high-negative → "fix",
-        // high-positive → "reinforce".
-        ref.feedbackLane = score.lane;
-      }
-    } else {
-      // ratio = negative proportion (high = needs more improvement)
-      feedbackAttention.set(ref.ref, negativeOnlyRatio(counts));
-    }
+  // WS-1 — Unified salience vector (S1 seam).
+  //
+  // The legacy sort combined three independent formulas (utility EMA, negative-only
+  // ratio / symmetric-valence magnitude, and the proactive-maintenance priority
+  // formula). WS-1 converges them into one `computeSalience()` call per ref, with
+  // three independently-stored sub-scores and one documented rankScore projection.
+  //
+  // Migration note: if a profile still has `symmetricValence` set, emit a one-time
+  // warning — its behaviour (symmetric |valence| attention) is now always-on as
+  // part of the salience vector, so the knob is a no-op and will be removed in 0.10.
+  if (improveProfile.symmetricValence === true) {
+    warn(
+      "[improve] Profile option 'symmetricValence' is deprecated (WS-1 salience vector). " +
+        "Symmetric valence is now always active; remove the option from your improve profile.",
+    );
   }
 
-  // Sort: combine utility (dominant, desc) with the feedback attention term
-  // (desc). Array.prototype.sort is stable in every supported runtime, so the
-  // pre-existing input order is the implicit tie-break in legacy mode (parity
-  // preserved). Under symmetric valence we add an explicit ref-string tie-break
-  // so the order never depends on input ordering, Date.now(), or Math.random().
+  // Fetch last-use timestamps from the index DB for the full merged set so the
+  // recency term in retrievalSalience is genuinely decayable (plan §WS-1 step 2).
+  // This reuses the index DB opened earlier for retrieval counts; a separate
+  // lightweight open is used here to avoid holding the connection longer than needed.
+  let lastUseMsByRef = new Map<string, number>();
+  // utilityMap is kept for backward-compatible observability (health report reads it).
+  const utilityMap = buildUtilityMap(mergedRefs);
+  let dbForSalience: import("../../storage/database").Database | undefined;
+  try {
+    dbForSalience = openExistingDatabase();
+    lastUseMsByRef = getLastUseMsByRef(
+      dbForSalience,
+      mergedRefs.map((r) => r.ref),
+    );
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // best-effort: if DB unavailable, recency term stays at floor (lastUseMs=0)
+  } finally {
+    if (dbForSalience) closeDatabase(dbForSalience);
+  }
+
+  // Compute the salience vector for every ref in the merged set.
+  // Retrieve counts are from the noFeedbackCandidates block above; for signal-delta
+  // refs that weren't in the noFeedbackCandidates pool, retrievalCounts may be 0 —
+  // a conservative fallback (the feedback signal already selected them, so retrieval
+  // is not the gate for those refs).
+  const salienceMap = new Map<string, ReturnType<typeof computeSalience>>();
+  const nowForSalience = Date.now();
+  for (const r of mergedRefs) {
+    const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
+    const sizeBytes = (() => {
+      const fp = r.filePath;
+      if (!fp) return undefined;
+      try {
+        return fs.statSync(fp).size;
+      } catch {
+        return undefined;
+      }
+    })();
+    const vector = computeSalience({
+      ref: r.ref,
+      type,
+      retrievalFreq: retrievalCounts.get(r.ref) ?? 0,
+      lastUseMs: lastUseMsByRef.get(r.ref),
+      utilityScore: utilityMap.get(r.ref),
+      sizeBytes,
+      now: nowForSalience,
+    });
+    salienceMap.set(r.ref, vector);
+  }
+
+  // Persist salience vectors to state.db (best-effort, non-blocking).
+  // The canonical store enables WS-3 homeostatic demotion and WS-2 outcome reads.
+  try {
+    const stateDb = openStateDatabase();
+    try {
+      for (const [ref, vector] of salienceMap) {
+        upsertAssetSalience(stateDb, ref, vector, nowForSalience);
+      }
+    } finally {
+      stateDb.close();
+    }
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // best-effort: salience persistence failure never blocks ranking
+  }
+
+  // Sort by rankScore (desc), with explicit ref-string tie-break for determinism.
+  // This is the ONLY ranking path — negativeOnlyRatio and the legacy
+  // symmetricValence branch are replaced. The three eligibilitySource lanes
+  // (signal-delta / high-retrieval / proactive) survive as labels (set above).
+  // feedbackLane (formerly "fix"/"reinforce" from #614) is removed as it was
+  // never read anywhere downstream — it was a dangling field.
   const sorted = [...mergedRefs].sort((a, b) => {
-    const scoreA = combinedEligibilityScore(utilityMap.get(a.ref) ?? 0, feedbackAttention.get(a.ref) ?? 0);
-    const scoreB = combinedEligibilityScore(utilityMap.get(b.ref) ?? 0, feedbackAttention.get(b.ref) ?? 0);
+    const scoreA = salienceMap.get(a.ref)?.rankScore ?? 0;
+    const scoreB = salienceMap.get(b.ref)?.rankScore ?? 0;
     if (scoreB !== scoreA) return scoreB - scoreA;
-    if (!symmetricValence) return 0;
+    // Stable tie-break: deterministic regardless of input ordering.
     return a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0;
   });
 

@@ -74,6 +74,7 @@ describe("SQLite migration runner characterization", () => {
         "006-proposals-pending-ref-source",
         "007-consolidation-judged",
         "008-body-embeddings",
+        "009-asset-salience",
       ]);
 
       // The set of durable objects the migrations create.
