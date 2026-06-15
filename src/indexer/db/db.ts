@@ -1530,6 +1530,22 @@ export function getEntryIdByFilePath(db: Database, filePath: string): number | u
 }
 
 /**
+ * Set of every non-empty `entries.file_path` currently indexed (across all
+ * stashes/sources). Used by staleness detection to spot files that exist on
+ * disk but were never indexed — a clock-independent signal for newly-added
+ * assets that an mtime-vs-builtAt comparison can miss when the two clocks
+ * (filesystem vs wall-clock) are skewed within the same millisecond.
+ */
+export function getIndexedFilePaths(db: Database): Set<string> {
+  const rows = db
+    .prepare("SELECT DISTINCT file_path FROM entries WHERE file_path IS NOT NULL AND file_path <> ''")
+    .all() as Array<{
+    file_path: string;
+  }>;
+  return new Set(rows.map((r) => r.file_path));
+}
+
+/**
  * Resolve a single `entries.file_path` by primary key, or `undefined` if no
  * row matches.
  *

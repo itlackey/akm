@@ -19,7 +19,7 @@ import path from "node:path";
 import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
 import { getDataDir, getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db/db";
+import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistingDatabase } from "./db/db";
 import { acquireIndexWriterLease, handoffIndexWriterLeaseToPid } from "./index-writer-lock";
 
 export interface EnsureIndexOptions {
@@ -58,15 +58,33 @@ function getIndexableFiles(root: string, spec: AssetSpec): string[] {
   return files;
 }
 
-function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined): boolean {
-  if (!builtAt) return true;
-  const builtAtMs = new Date(builtAt).getTime();
-  if (!Number.isFinite(builtAtMs)) return true;
+/**
+ * Whether any indexable file under `stashDir` is newer than the last build, or
+ * has never been indexed at all.
+ *
+ * Two independent signals, because neither alone is sufficient:
+ *   1. **mtime > builtAt** — catches in-place *edits* of already-indexed files.
+ *   2. **path not in `indexedPaths`** — catches *newly added* files. This is
+ *      clock-independent on purpose: a freshly-written file can have a
+ *      filesystem mtime that compares as *older* than the wall-clock `builtAt`
+ *      (the two clocks are not perfectly synchronized and `builtAt` is
+ *      millisecond-truncated), so the mtime test alone silently misses
+ *      additions made within ~a millisecond of the previous build.
+ *
+ * `getIndexableFiles` applies each asset type's own relevance filter, so
+ * non-indexed companion files (e.g. `package.json` next to a knowledge doc) are
+ * never considered and do not produce false "new file" positives.
+ */
+function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined, indexedPaths: Set<string>): boolean {
+  const builtAtMs = builtAt ? new Date(builtAt).getTime() : Number.NaN;
+  const builtAtUsable = Number.isFinite(builtAtMs);
 
   for (const [type, spec] of Object.entries(ASSET_SPECS)) {
     const typeRoot = path.join(stashDir, TYPE_DIRS[type] ?? spec.stashDir);
     const files = getIndexableFiles(typeRoot, spec);
     for (const file of files) {
+      if (!indexedPaths.has(file)) return true;
+      if (!builtAtUsable) return true;
       try {
         if (fs.statSync(file).mtimeMs > builtAtMs) return true;
       } catch {
@@ -94,7 +112,7 @@ export function isIndexStale(stashDir: string): boolean {
     if (entryCount === 0) return true;
 
     const builtAt = getMeta(db, "builtAt");
-    if (hasNewerIndexableFiles(stashDir, builtAt)) return true;
+    if (hasNewerIndexableFiles(stashDir, builtAt, getIndexedFilePaths(db))) return true;
 
     const storedStashDir = getMeta(db, "stashDir");
     if (storedStashDir !== stashDir) {
@@ -109,6 +127,43 @@ export function isIndexStale(stashDir: string): boolean {
     return false;
   } catch {
     return true;
+  } finally {
+    if (db) closeDatabase(db);
+  }
+}
+
+/**
+ * Whether the existing index can serve queries for `stashDir` *right now* —
+ * i.e. the DB file exists, the `entries` table holds rows, and those rows were
+ * built for this stash (it is the stored primary stash or appears in the
+ * stored `stashDirs` set). When this is true the index is at worst
+ * content-stale, so the `#607` background-reindex optimization is safe: the
+ * caller gets slightly-stale-but-relevant results immediately. When it is
+ * false the existing index has nothing relevant to return (no DB, no `entries`
+ * table, zero rows, or built for a different stash), so a background reindex
+ * would leave the caller empty until the next read — those cases must rebuild
+ * inline.
+ */
+function indexCanServeStash(stashDir: string): boolean {
+  const dbPath = getDbPath();
+  if (!fs.existsSync(dbPath)) return false;
+
+  let db: ReturnType<typeof openExistingDatabase> | undefined;
+  try {
+    db = openExistingDatabase(dbPath);
+    if (getEntryCount(db) === 0) return false;
+
+    const storedStashDir = getMeta(db, "stashDir");
+    if (storedStashDir === stashDir) return true;
+    try {
+      const storedDirs = JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[];
+      return storedDirs.includes(stashDir);
+    } catch {
+      return false;
+    }
+  } catch {
+    // No `entries` table (or otherwise unreadable) — cannot serve.
+    return false;
   } finally {
     if (db) closeDatabase(db);
   }
@@ -169,8 +224,11 @@ async function runInlineReindex(stashDir: string): Promise<boolean> {
  * Ensure the local index exists and is fresh enough for the caller's needs.
  *
  * Default mode is `background`, which preserves the low-latency behavior used
- * by read paths (`search`, `show`, `feedback`): when stale, spawn a detached
- * reindex and proceed against the existing index.
+ * by read paths (`search`, `show`, `feedback`): when a populated index is
+ * merely stale, spawn a detached reindex and proceed against the existing
+ * index. When the index is entirely absent (no DB / no `entries` table / zero
+ * rows) the rebuild runs inline regardless of mode, since there is nothing to
+ * proceed against.
  *
  * `mode: "blocking"` waits for the rebuild to finish before returning. Use
  * this for callers like `improve` whose planning logic depends on a populated
@@ -181,7 +239,13 @@ async function runInlineReindex(stashDir: string): Promise<boolean> {
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
   if (!isIndexStale(stashDir)) return false;
 
-  if (options.mode === "blocking") {
+  // Blocking when explicitly requested, or whenever the existing index cannot
+  // serve this stash (absent DB, no `entries` table, zero rows, or built for a
+  // different stash): a background reindex returns immediately and would leave
+  // a first-time caller (search, curate, wiki, show, feedback) with empty
+  // results. Building inline is a one-off cost; a populated index for this
+  // stash that is merely content-stale still refreshes in the background.
+  if (options.mode === "blocking" || !indexCanServeStash(stashDir)) {
     return runInlineReindex(stashDir);
   }
 

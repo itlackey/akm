@@ -71,6 +71,7 @@ describe("SQLite migration runner characterization", () => {
         "003-improve-runs",
         "004-extract-sessions-seen",
         "005-proposal-fs-imports",
+        "006-proposals-pending-ref-source",
       ]);
 
       // The set of durable objects the migrations create.

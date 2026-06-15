@@ -8,6 +8,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "003-improve-runs",
     "004-extract-sessions-seen",
     "005-proposal-fs-imports",
+    "006-proposals-pending-ref-source",
   ],
   "schema": [
     {
@@ -78,6 +79,14 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "sql": 
 "CREATE INDEX idx_proposals_stash_status
         ON proposals(stash_dir, status)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_proposals_stash_status_ref_source",
+      "sql": 
+"CREATE INDEX idx_proposals_stash_status_ref_source
+        ON proposals(stash_dir, status, ref, source)"
 ,
       "type": "index",
     },
