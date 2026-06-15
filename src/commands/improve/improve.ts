@@ -3570,8 +3570,9 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
             eventsCtx,
           );
 
-          // Plasticity counter (plan §WS-1 step 8): record no-ops so WS-3
-          // consolidation-selection can dampen repeatedly-silent assets.
+          // Plasticity counter (plan §WS-1 step 8): record no-ops so the
+          // WS-1 selection comparator (effectiveScore, ~line 3073) can dampen
+          // repeatedly-silent assets during consolidation-selection.
           // A no_change reflect means the LLM was invoked but found nothing to
           // improve — the asset is stable. Track it. A successful reflect means
           // the asset changed; reset the counter so the dampener lifts.
