@@ -23,7 +23,7 @@
 | Work-stream | Status | Commits | Review | Escalation | Notes |
 |---|---|---|---|---|---|
 | WS-0 extract-capture (#619) | done | 6904606f, a36142d1 | pass / confirmed-green | none | Prompt fix closes non-schema-LLM gap; types, schema, parser, persistence were already correct. |
-| WS-3a consolidation pipeline (#619) | not-started | — | — | — | — |
+| WS-3a consolidation pipeline (#619) | done | 68467d56 | pass / confirmed-green | none | Fixed Zod schema rejection (cosineCandidateLimit + p90ChunkSecondsDefault) and added behavioral cache-wiring tests; curate-command baseline changes folded in (hygiene smell, non-blocking). |
 | WS-1 salience vector | not-started | — | — | — | — |
 | WS-2 outcome loop | not-started | — | — | — | — |
 | WS-3b consolidation (remaining) | not-started | — | — | — | — |
