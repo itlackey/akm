@@ -271,6 +271,27 @@ export function getAssetSalience(db: Database, ref: string): AssetSalienceRow | 
 }
 
 /**
+ * Load ALL rank scores from the asset_salience table (full-stash query).
+ *
+ * Used by the forgetting-safety report (plan §WS-1 step 7) to compute stash-wide
+ * rank positions rather than pool-relative positions. Returns an empty Map when the
+ * table is empty (first WS-1 run = no pre-existing rows).
+ *
+ * Order is unspecified; callers must sort before assigning 1-indexed positions.
+ */
+export function getAllRankScores(db: Database): Map<string, number> {
+  const rows = db.prepare("SELECT asset_ref, rank_score FROM asset_salience").all() as Array<{
+    asset_ref: string;
+    rank_score: number;
+  }>;
+  const result = new Map<string, number>();
+  for (const row of rows) {
+    result.set(row.asset_ref, row.rank_score);
+  }
+  return result;
+}
+
+/**
  * Bulk-load salience rank scores for a set of refs. Returns a Map<ref, rankScore>.
  * Refs not yet in the table get 0.
  */

@@ -95,8 +95,8 @@ import { type AkmReflectResult, akmReflect } from "./reflect";
 import {
   buildRankChangeReport,
   computeSalience,
+  getAllRankScores,
   getLastUseMsByRef,
-  getRankScoresByRefs,
   recordNoOp,
   resetConsecutiveNoOps,
   upsertAssetSalience,
@@ -2923,40 +2923,77 @@ async function runImprovePreparationStage(args: {
   // Persist salience vectors to state.db (best-effort, non-blocking).
   // The canonical store enables WS-3 homeostatic demotion and WS-2 outcome reads.
   //
-  // Forgetting-safety report (plan §WS-1 step 7):
-  // BEFORE persisting the new rankScores, read any existing scores from state.db
-  // and emit a rank-change distribution report. This detects the "silent catastrophic
-  // forgetting" scenario — assets that were top-200 under the old formula but fall
-  // below position 500 under the new WS-1 formula. The report is emitted as a warn
-  // log and an `improve_salience_rank_change` event on the first run where pre-existing
-  // rows exist (subsequent runs are steady-state updates, not formula cutover).
+  // Forgetting-safety report (plan §WS-1 step 7) — stash-wide rank comparison:
+  //
+  // BEFORE persisting the new rankScores, read ALL existing rows from state.db
+  // (not just the per-run candidate pool). This gives stash-wide rank positions so
+  // the top-200/below-500 thresholds are meaningful.
+  //
+  // Two distinct scenarios:
+  //
+  // A. First WS-1 run (table empty): the old combinedEligibilityScore ordering was
+  //    never captured in state.db (asset_salience is a new WS-1 table), so there is
+  //    no baseline to compare against. Emit `improve_salience_first_run` to mark the
+  //    cutover moment; skip the rank-change report since comparing new→new is
+  //    meaningless for forgetting detection.
+  //
+  // B. Subsequent runs (table has rows): use ALL existing rows as old ranks, merge
+  //    them with the current run's salienceMap updates for new ranks, and call
+  //    buildRankChangeReport with stash-wide positions. This detects real rank drift
+  //    — e.g. a retrieval-pattern shift causing a previously top-200 asset to slip
+  //    below position 500.
   //
   // Measurement-protocol deferral (plan §269, Part-V):
   // The Part-V T0 baseline (scripts/akm-eval + health report) and the throughput/
-  // quality gate are deferred pending owner sign-off. Risk: the formula change
-  // (from combinedEligibilityScore utility·0.7+negativeOnlyRatio·0.3 to rankScore
-  // w_e=0.3/w_r=0.7 with utility and feedback valence dropped from ordering) ships
-  // default-on. The forgetting-safety report below partially mitigates the
-  // ordering-quality regression risk by flagging dramatic rank drops. Full
-  // measurement requires a before/after `akm health` report comparing throughput
-  // and quality metrics across two runs. Owner-acknowledged deferral: WS-2 landing
+  // quality gate are deferred pending owner sign-off. Full measurement requires a
+  // before/after `akm health` report. Owner-acknowledged deferral: WS-2 landing
   // will re-introduce outcome salience and trigger the full re-tuning pass at that
   // time. See WS-2-HOOK in salience.ts.
   try {
     const stateDb = openStateDatabase();
     try {
-      // Step 7: build rank-change report from existing rows BEFORE overwriting them.
-      const refs = [...salienceMap.keys()];
-      const existingScores = getRankScoresByRefs(stateDb, refs);
-      if (existingScores.size > 0) {
-        // Compute 1-indexed rank positions for old scores (existing in DB).
-        const oldRankEntries = [...existingScores.entries()].sort(([, a], [, b]) => b - a);
-        const oldRanks = new Map<string, number>(oldRankEntries.map(([ref], i) => [ref, i + 1]));
-        // Compute 1-indexed rank positions for new scores (from salienceMap).
-        const newRankEntries = [...salienceMap.entries()]
-          .filter(([ref]) => existingScores.has(ref))
-          .sort(([, a], [, b]) => b.rankScore - a.rankScore);
-        const newRanks = new Map<string, number>(newRankEntries.map(([ref], i) => [ref, i + 1]));
+      // Step 7: stash-wide rank-change report BEFORE overwriting the table.
+      //
+      // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
+      const existingAllScores = getAllRankScores(stateDb);
+
+      if (existingAllScores.size === 0) {
+        // Scenario A: first WS-1 run — table empty, no baseline for comparison.
+        // Mark the cutover moment without emitting a false rank-change comparison.
+        appendEvent(
+          {
+            eventType: "improve_salience_first_run",
+            ref: undefined,
+            metadata: {
+              candidateCount: salienceMap.size,
+              note: "first WS-1 salience run — no pre-existing baseline; combinedEligibilityScore ordering was not captured",
+            },
+          },
+          eventsCtx,
+        );
+      } else {
+        // Scenario B: subsequent run — compare stash-wide old vs. new ranks.
+        //
+        // Build new scores by merging the full table with this run's updates.
+        // Refs in salienceMap override their stored value; refs not in this run
+        // retain their stored value unchanged. This gives a complete stash-wide
+        // picture of what the new ordering looks like after this run.
+        const mergedNewScores = new Map<string, number>(existingAllScores);
+        for (const [ref, vector] of salienceMap) {
+          mergedNewScores.set(ref, vector.rankScore);
+        }
+
+        // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
+        const toRanks = (scores: Map<string, number>): Map<string, number> => {
+          const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
+            b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
+          );
+          return new Map(sorted.map(([ref], i) => [ref, i + 1]));
+        };
+
+        const oldRanks = toRanks(existingAllScores);
+        const newRanks = toRanks(mergedNewScores);
+
         const report = buildRankChangeReport(oldRanks, newRanks);
         if (report.forgettingCandidates.length > 0) {
           warn(
@@ -2972,6 +3009,7 @@ async function runImprovePreparationStage(args: {
             eventType: "improve_salience_rank_change",
             ref: undefined,
             metadata: {
+              stashSize: existingAllScores.size,
               totalChanged: report.allChanges.length,
               forgettingCandidates: report.forgettingCandidates.length,
               topDrops: report.forgettingCandidates.slice(0, 10).map((e) => ({
@@ -2984,6 +3022,7 @@ async function runImprovePreparationStage(args: {
           eventsCtx,
         );
       }
+
       for (const [ref, vector] of salienceMap) {
         upsertAssetSalience(stateDb, ref, vector, nowForSalience);
       }
