@@ -25,6 +25,7 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
+import { type DedupConfig, runDeterministicDedup } from "./dedup";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
@@ -215,6 +216,13 @@ export interface AkmConsolidateOptions {
   limit?: number;
   /** Number of graph neighbours per changed memory during incremental consolidation. Default 5. */
   neighborsPerChanged?: number;
+  /**
+   * Deterministic near-duplicate dedup pre-pass (#617). DEFAULT OFF. When
+   * `enabled`, a cheap no-LLM fast path collapses obvious duplicates
+   * (`.derived` ↔ origin pairs + content twins) before the LLM consolidation.
+   * Absent / disabled = byte-identical legacy behaviour.
+   */
+  dedup?: DedupConfig;
   /**
    * PROV-DM traceability token for proposals created by this run. When set,
    * every `createProposal` call includes it so accept-rate-per-run aggregation
@@ -1094,6 +1102,42 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
   memories = memories.filter((m) => fs.existsSync(m.filePath));
 
+  // ── Deterministic dedup pre-pass (#617) ─────────────────────────────────────
+  // Cheap, no-LLM fast path that collapses the obvious near-duplicates
+  // (`.derived` ↔ origin pairs + content twins) BEFORE the embedding-clustered
+  // LLM consolidation. DEFAULT OFF — when `dedup.enabled !== true` this is a
+  // no-op and the pass behaves byte-identically to today. Collapsed variants
+  // are pruned from the LLM pool so the model only ever sees genuinely
+  // distinct-but-related memories. Each dropped variant is archived (soft
+  // invalidation) before deletion, matching the LLM merge path.
+  // Dry-run never mutates the filesystem, so the dedup pre-pass is skipped
+  // entirely under `--dry-run` (the LLM plan preview below is unaffected).
+  let dedupCollapsed = 0;
+  if (opts.dedup?.enabled && !opts.dryRun) {
+    const dedupTimestamp = timestampForFilename();
+    const dedupResult = await runDeterministicDedup(stashDir, opts.dedup, config, (variantFilePath, variantName) => {
+      archiveMemory(
+        variantFilePath,
+        stashDir,
+        `memory:${variantName}`,
+        "collapsed by deterministic dedup pre-pass",
+        -1,
+        undefined,
+        warnings,
+      );
+      backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
+    });
+    dedupCollapsed = dedupResult.collapsed;
+    warnings.push(...dedupResult.warnings);
+    if (dedupResult.consumedRefs.length > 0) {
+      const consumed = new Set(dedupResult.consumedRefs);
+      memories = memories.filter((m) => !consumed.has(`memory:${m.name}`));
+      warnings.push(
+        `Deterministic dedup: collapsed ${dedupResult.collapsed} near-duplicate memor${dedupResult.collapsed === 1 ? "y" : "ies"} (no LLM) before chunking.`,
+      );
+    }
+  }
+
   if (memories.length === 0) {
     return {
       schemaVersion: 1 as const,
@@ -1104,7 +1148,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       target: opts.target ?? stashDir,
       processed: 0,
       merged: 0,
-      deleted: 0,
+      // #617: the deterministic dedup pre-pass may have emptied the pool by
+      // collapsing every remaining memory into a canonical. Surface those
+      // collapses in `deleted` so the run reports the work it actually did.
+      deleted: dedupCollapsed,
       promoted: [],
       contradicted: 0,
       warnings,
@@ -2108,7 +2155,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     target: sourceName,
     processed: memories.length,
     merged,
-    deleted,
+    // #617: fold the deterministic dedup pre-pass collapses into the reported
+    // deleted count. Each collapse removed exactly one variant file with NO
+    // LLM call before the LLM pass ran on the pruned pool.
+    deleted: deleted + dedupCollapsed,
     promoted,
     contradicted,
     failedChunks: totalChunksFailed,

@@ -1886,6 +1886,9 @@ async function runConsolidationPass(args: {
         limit: improveProfile?.processes?.consolidate?.limit,
         neighborsPerChanged: improveProfile?.processes?.consolidate?.neighborsPerChanged,
         maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
+        // #617 — deterministic near-duplicate dedup pre-pass. DEFAULT OFF; only
+        // runs when the profile explicitly sets `consolidate.dedup.enabled`.
+        dedup: improveProfile?.processes?.consolidate?.dedup,
         // Honor profile.autoAccept (already merged into options.autoAccept at the
         // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
         // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false

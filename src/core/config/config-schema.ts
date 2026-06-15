@@ -152,6 +152,21 @@ export const ImproveProcessConfigSchema = z
     // consolidation pass skips entirely (emits `pool_below_min_size`). 0 disables
     // the guard. Only meaningful on the `consolidate` process. Default 500.
     minPoolSize: z.number().int().min(0).optional(),
+    // Consolidate process: deterministic near-duplicate dedup pre-pass (#617).
+    // A cheap, no-LLM fast path that collapses obvious duplicates (`.derived`
+    // origin pairs + content twins) before the LLM consolidation. Default OFF
+    // — when absent the consolidate pass behaves byte-identically to today.
+    // `cosineThreshold` is a strict floor in [0, 1] (default 0.97) for the
+    // optional embedding-similarity match; exact normalized content-hash
+    // equality always collapses regardless of the threshold. Only meaningful
+    // on the `consolidate` process.
+    dedup: z
+      .object({
+        enabled: z.boolean().optional(),
+        cosineThreshold: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
     qualityGate: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     // Extract process config (only meaningful for extract process)

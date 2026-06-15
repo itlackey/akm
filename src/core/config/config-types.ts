@@ -226,6 +226,27 @@ export interface ImproveProcessConfig {
    */
   minPoolSize?: number;
   /**
+   * Deterministic near-duplicate dedup pre-pass for the `consolidate` process
+   * (#617). A cheap, no-LLM fast path that collapses the obvious duplicates
+   * (`.derived` origin pairs + content twins) in front of the embedding-clustered
+   * LLM consolidation. Default OFF — when absent the consolidate pass behaves
+   * byte-identically to today.
+   *
+   *   - `enabled`: turn the pre-pass on. Default `false`.
+   *   - `cosineThreshold`: strict similarity floor in [0, 1] (default `0.97`)
+   *     for the optional embedding-similarity match. Exact normalized
+   *     content-hash equality always collapses regardless of this value;
+   *     the cosine path only fires when embeddings are configured and a pair's
+   *     similarity is >= this threshold. Genuinely distinct memories fall
+   *     through untouched to the LLM consolidation.
+   *
+   * Only meaningful on the `consolidate` process.
+   */
+  dedup?: {
+    enabled?: boolean;
+    cosineThreshold?: number;
+  };
+  /**
    * Minimum number of new (unseen, in-window) candidate sessions for the
    * `extract` process. When the candidate-session pool is below this threshold
    * the extract pass skips entirely (emitting an `improve_skipped` event with
