@@ -309,6 +309,18 @@ export function buildHealthHtmlReplacements(
   const mi = improve.memoryInference;
   const ge = improve.graphExtraction;
   const wallTime = improve.wallTime;
+  // #576: real per-stage LLM token/time accounting (replaces the GPU-time
+  // proxy). Optional-guarded so reports built from older health JSON without
+  // the aggregate still render.
+  const llm = result.metrics.llmUsage ?? {
+    calls: 0,
+    totalDurationMs: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    reasoningTokens: 0,
+    byStage: {},
+  };
   const totalRuns = runs.length;
   const failedRuns = runs.filter((r) => !r.ok).length;
   const invoked = improve.invoked || totalRuns;
@@ -464,6 +476,13 @@ export function buildHealthHtmlReplacements(
       `of ${num(improve.memorySummary.eligible)} eligible`,
     ),
     kpiCard("yellow", "Median Duration", `${medianDurMin}m`, `p95 = ${p95DurMin}m`),
+    // #576: real LLM work — total tokens + call count + wall-time, not a GPU proxy.
+    kpiCard(
+      "purple",
+      "🧠 LLM Work",
+      num(llm.totalTokens),
+      `${num(llm.calls)} calls · ${fmtMs(llm.totalDurationMs)} · ${num(llm.reasoningTokens)} reasoning`,
+    ),
     kpiCard(semColor, "Semantic Search", semValue, esc(sem.detail), semStyle),
     kpiCard("yellow", "Pending Proposals", String(proposals.length), `from ${esc(opts.window)} batch`),
   ].join("\n");
@@ -490,6 +509,13 @@ export function buildHealthHtmlReplacements(
     ["Stash derived", num(improve.memorySummary.derived), "up"],
     ["Median wall time", fmtMs(wallTime.medianMs), trend.latency],
     ["P95 wall time", fmtMs(wallTime.p95Ms), trend.latency],
+    // #576: real LLM accounting (replaces the GPU-time proxy).
+    ["LLM calls", num(llm.calls), "flat"],
+    ["LLM total tokens", num(llm.totalTokens), "flat"],
+    ["LLM prompt tokens", num(llm.promptTokens), "flat"],
+    ["LLM completion tokens", num(llm.completionTokens), "flat"],
+    ["LLM reasoning tokens", num(llm.reasoningTokens), "flat"],
+    ["LLM wall time", fmtMs(llm.totalDurationMs), trend.latency],
   ];
   const summaryRowsHtml = summaryRows
     .map(

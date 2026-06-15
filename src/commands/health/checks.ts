@@ -320,6 +320,52 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     },
   },
   {
+    // #603: pool-saturation advisory. The raw `sessionsScanned` count fired on
+    // normal cadence changes (the Jun 12 false alarm). Instead track the ratio
+    // of NEW (unseen) sessions to the total session pool extract evaluated in
+    // the window: a low ratio is the *expected* steady state, only a near-zero
+    // ratio signals a possible discovery/dedup bug.
+    //
+    // unseen ≈ `sessionsScanned` (extract only processes new sessions; already-
+    // seen ones are deduped into `sessionsSkipped`). total = scanned + skipped.
+    // This is a heuristic approximation — `sessionsSkipped` also folds in
+    // too-short skips — so the check is informational and never gates status.
+    name: "pool-saturation",
+    channel: "advisory",
+    run: (ctx) => {
+      const sx = ctx.sessionExtraction;
+      const total = sx.sessionsScanned + sx.sessionsSkipped;
+      const unseen = sx.sessionsScanned;
+      const ratio = total > 0 ? unseen / total : null;
+      const pct = ratio === null ? null : Math.round(ratio * 1000) / 10;
+
+      let status: HealthCheckResult["status"] = "pass";
+      let confidence: HealthCheckResult["confidence"] = "low";
+      let message: string;
+      if (!sx.ran || ratio === null) {
+        message = "Pool saturation: no extract activity in the window — no signal.";
+      } else if (ratio < 0.02) {
+        status = "warn";
+        confidence = "medium";
+        message = `Session pool near-exhausted: only ${pct}% of the ${total}-session pool was new (<2%). Possible discovery/dedup bug — verify extract is still finding new sessions.`;
+      } else if (ratio < 0.1) {
+        confidence = "medium";
+        message = `Session pool saturation: ${pct}% of ${total} sessions were new (<10%, steady-state expected — informational).`;
+      } else {
+        confidence = "medium";
+        message = `Session pool healthy: ${pct}% of ${total} sessions were new.`;
+      }
+      return {
+        name: "pool-saturation",
+        kind: "heuristic",
+        status,
+        confidence,
+        message,
+        evidence: { totalSessions: total, unseenSessions: unseen, saturationRatio: ratio },
+      };
+    },
+  },
+  {
     name: "auto-accept-validation",
     channel: "advisory",
     run: (ctx) => {

@@ -8,6 +8,7 @@ import path from "node:path";
 import { type AkmHealthResult, akmHealth } from "../src/commands/health";
 import { buildHealthHtmlReplacements, type HealthHtmlReportOptions } from "../src/commands/health/html-report";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
+import { appendEvent } from "../src/core/events";
 import { openStateDatabase, recordImproveRun } from "../src/core/state-db";
 import { renderHtml, resolveTemplatePath } from "../src/output/html-render";
 import { type Cleanup, type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "./_helpers/sandbox";
@@ -139,6 +140,52 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%GENERATED_AT%%"]).not.toBe("");
     const again = buildHealthHtmlReplacements(healthResult(), buildOpts());
     expect(again["%%GENERATED_AT%%"]).toBe(replacements["%%GENERATED_AT%%"]);
+  });
+
+  test("#576 real LLM token/time aggregate renders into the KPI card and summary rows", () => {
+    seedImproveRun("run-html-llm");
+    // Seed two llm_usage events into the sandboxed state.db (default path under
+    // the isolated XDG_DATA_HOME); akmHealth aggregates them into metrics.llmUsage.
+    appendEvent({
+      eventType: "llm_usage",
+      metadata: {
+        stage: "reflect",
+        model: "m",
+        durationMs: 1000,
+        promptTokens: 100,
+        completionTokens: 40,
+        totalTokens: 140,
+        reasoningTokens: 10,
+      },
+    });
+    appendEvent({
+      eventType: "llm_usage",
+      metadata: {
+        stage: "distill",
+        model: "m",
+        durationMs: 2000,
+        promptTokens: 60,
+        completionTokens: 20,
+        totalTokens: 80,
+        reasoningTokens: 5,
+      },
+    });
+
+    const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
+
+    // KPI card: total tokens (140+80=220), call count (2), reasoning (10+5=15).
+    expect(replacements["%%KPI_CARDS_HTML%%"]).toContain("🧠 LLM Work");
+    expect(replacements["%%KPI_CARDS_HTML%%"]).toContain("220");
+    expect(replacements["%%KPI_CARDS_HTML%%"]).toContain("2 calls");
+    expect(replacements["%%KPI_CARDS_HTML%%"]).toContain("15 reasoning");
+
+    // Summary rows expose the per-field breakdown (real tokens, not a GPU proxy).
+    const rows = replacements["%%SUMMARY_ROWS_HTML%%"];
+    expect(rows).toContain("LLM total tokens");
+    expect(rows).toContain("LLM prompt tokens");
+    expect(rows).toContain("LLM completion tokens");
+    expect(rows).toContain("LLM reasoning tokens");
+    expect(rows).toContain("LLM calls");
   });
 
   test("pending proposals are listed, counted, and HTML-escaped", () => {

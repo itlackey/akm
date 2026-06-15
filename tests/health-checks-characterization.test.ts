@@ -129,6 +129,13 @@ describe("health checks characterization (WS9)", () => {
         message: "Session extraction not active (feature disabled or no harness available).",
       },
       {
+        name: "pool-saturation",
+        kind: "heuristic",
+        status: "pass",
+        confidence: "low",
+        message: "Pool saturation: no extract activity in the window — no signal.",
+      },
+      {
         name: "auto-accept-validation",
         kind: "heuristic",
         status: "pass",
@@ -202,6 +209,7 @@ describe("health checks characterization (WS9)", () => {
       "semantic-search-runtime",
       "session-log-failures",
       "session-extraction",
+      "pool-saturation",
       "auto-accept-validation",
     ]);
 

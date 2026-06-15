@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **#603** — `akm health` pool-saturation advisory. Instead of alerting on the
+  raw `sessionsScanned` count (which false-alarmed on normal cadence changes),
+  a new `pool-saturation` advisory reports the ratio of new (unseen) sessions
+  to the total session pool: informational below 10% (expected steady state),
+  warning below 2% (possible discovery/dedup bug). Heuristic, never gates
+  overall status.
+- **#576** — the `akm health` HTML report now renders the real per-stage LLM
+  token/time aggregate (a "🧠 LLM Work" KPI card + LLM token/call/wall-time
+  summary rows) from the captured `llm_usage` events, replacing the GPU-time
+  proxy. (The external `akm-health-report` skill template lives in the user
+  stash, outside this repo, and still needs its own swap — flagged separately.)
+
+### Fixed
+
+- **#598** — process-level tuning fields (`consolidate.incrementalSince`,
+  `minPoolSize`, `neighborsPerChanged`, `extract.minContentChars`, per-process
+  `enabled` flags) now survive an `akm config` rewrite. They are first-class
+  typed `ImproveProcessConfigSchema` fields, so the load→save round trip no
+  longer silently drops them. Unknown process sub-keys hard-error at load
+  (`ConfigError`) rather than being silently discarded — the deliberate,
+  documented resolution. Regression-guarded by
+  `tests/config-process-roundtrip.test.ts`.
+
 ## [0.9.0-beta.9] - 2026-06-14
 
 Restore and instrument `akm improve` steady-state output. The reflect/distill
