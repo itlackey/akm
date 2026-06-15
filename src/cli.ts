@@ -601,6 +601,13 @@ const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 // The wrapper sets `AKM_NODE_ENTRY=1` to opt into the startup block. The test
 // harness never sets it, so importing cli.ts under Bun stays inert as before.
 if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
+  // Mark that this process is the real akm CLI: its `process.argv[1]` is the
+  // akm entrypoint, so the background auto-reindex may safely re-invoke it as a
+  // detached child. Hosts that merely import this module (the in-process test
+  // harness, library embeddings) never reach this block, so they fall back to
+  // an inline reindex instead of spawning the wrong program. See
+  // `ensureIndex` in src/indexer/ensure-index.ts.
+  process.env.AKM_CLI_ENTRY = "1";
   // citty reads process.argv directly and does not accept a custom argv array,
   // so we must replace process.argv with the normalized version before runMain.
   process.argv = normalizeShowArgv(process.argv);

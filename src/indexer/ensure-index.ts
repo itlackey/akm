@@ -249,6 +249,17 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
     return runInlineReindex(stashDir);
   }
 
+  // The background path re-invokes the akm CLI as a detached child via
+  // `process.argv[1]`. That is only the akm entrypoint when THIS process is the
+  // akm CLI itself — which the CLI startup block signals with AKM_CLI_ENTRY=1.
+  // In any other host (the in-process test runner, a library embedding akm),
+  // argv[1] points at the host (e.g. the test runner), so spawning it would
+  // launch the wrong program and orphan it. Build inline there instead — same
+  // resulting index, no detached process.
+  if (process.env.AKM_CLI_ENTRY !== "1") {
+    return runInlineReindex(stashDir);
+  }
+
   try {
     await spawnBackgroundReindex(stashDir);
     return true;
