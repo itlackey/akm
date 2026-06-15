@@ -353,6 +353,22 @@ export function getConsecutiveNoOps(db: Database, ref: string): number {
   return row?.consecutive_no_ops ?? 0;
 }
 
+// ── Consolidation-selection dampener constants ────────────────────────────────
+//
+// Assets with consecutive_no_ops >= THRESHOLD are deprioritised in the
+// SELECTION ORDER only. The persisted rank_score is intentionally left
+// unchanged so stable assets remain fully retrievable by other callers.
+//
+// Tuning guidance:
+//   THRESHOLD — how many consecutive no-op runs before dampening kicks in.
+//               3 means "skipped three times in a row", which signals the
+//               LLM consistently has nothing to say about this asset.
+//   FACTOR    — multiplicative penalty on the effective selection score.
+//               0.5 halves the apparent score so a dampened asset sorts
+//               after any peer with >= half its rankScore.
+export const SALIENCE_NO_OP_DAMPEN_THRESHOLD = 3;
+export const SALIENCE_NO_OP_DAMPEN_FACTOR = 0.5;
+
 // ── Forgetting-safety rank-change report ─────────────────────────────────────
 
 export interface RankChangeEntry {

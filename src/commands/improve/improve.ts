@@ -96,9 +96,12 @@ import {
   buildRankChangeReport,
   computeSalience,
   getAllRankScores,
+  getConsecutiveNoOps,
   getLastUseMsByRef,
   recordNoOp,
   resetConsecutiveNoOps,
+  SALIENCE_NO_OP_DAMPEN_FACTOR,
+  SALIENCE_NO_OP_DAMPEN_THRESHOLD,
   upsertAssetSalience,
 } from "./salience";
 
@@ -3034,15 +3037,47 @@ async function runImprovePreparationStage(args: {
     // best-effort: salience persistence failure never blocks ranking
   }
 
-  // Sort by rankScore (desc), with explicit ref-string tie-break for determinism.
+  // Build no-op map for consolidation-selection dampener (plan §WS-1 step 8).
+  // Reads consecutive_no_ops from the SAME pinned db handle used elsewhere in
+  // this function.  The effective score is used ONLY for processing/selection
+  // order — the persisted rank_score in asset_salience is never mutated here.
+  const noOpMap = new Map<string, number>();
+  try {
+    const noOpDb = eventsCtx?.db ?? (eventsCtx?.dbPath ? openStateDatabase(eventsCtx.dbPath) : null);
+    if (noOpDb) {
+      const ownsNoOpDb = !eventsCtx?.db;
+      try {
+        for (const r of mergedRefs) {
+          noOpMap.set(r.ref, getConsecutiveNoOps(noOpDb, r.ref));
+        }
+      } finally {
+        if (ownsNoOpDb) noOpDb.close();
+      }
+    }
+  } catch {
+    // best-effort: dampener failure never blocks selection
+  }
+
+  // Sort by effective selection score (desc), with explicit ref-string tie-break
+  // for determinism.  The effective score applies the consolidation-selection
+  // dampener: assets that have been repeatedly skipped (consecutive_no_ops >=
+  // THRESHOLD) are penalised by FACTOR so they sort after peers with similar
+  // rankScore.  The persisted rank_score is left unchanged — this is the whole
+  // point of the dampener (stable assets stay fully retrievable).
+  //
   // This is the ONLY ranking path — negativeOnlyRatio and the legacy
   // symmetricValence branch are replaced. The three eligibilitySource lanes
   // (signal-delta / high-retrieval / proactive) survive as labels (set above).
   // feedbackLane (formerly "fix"/"reinforce" from #614) is removed as it was
   // never read anywhere downstream — it was a dangling field.
+  const effectiveScore = (ref: string): number => {
+    const rankScore = salienceMap.get(ref)?.rankScore ?? 0;
+    const noOps = noOpMap.get(ref) ?? 0;
+    return noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD ? rankScore * SALIENCE_NO_OP_DAMPEN_FACTOR : rankScore;
+  };
   const sorted = [...mergedRefs].sort((a, b) => {
-    const scoreA = salienceMap.get(a.ref)?.rankScore ?? 0;
-    const scoreB = salienceMap.get(b.ref)?.rankScore ?? 0;
+    const scoreA = effectiveScore(a.ref);
+    const scoreB = effectiveScore(b.ref);
     if (scoreB !== scoreA) return scoreB - scoreA;
     // Stable tie-break: deterministic regardless of input ordering.
     return a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0;
