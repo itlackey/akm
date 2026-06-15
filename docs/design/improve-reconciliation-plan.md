@@ -18,6 +18,18 @@
 > replacement are now **adopted** (git history is the recovery backstop), retiring
 > the old archive/TTL machinery.
 
+## Implementation status
+
+| Work-stream | Status | Commits | Review | Escalation | Notes |
+|---|---|---|---|---|---|
+| WS-0 extract-capture (#619) | done | 6904606f, a36142d1 | pass / confirmed-green | none | Prompt fix closes non-schema-LLM gap; types, schema, parser, persistence were already correct. |
+| WS-3a consolidation pipeline (#619) | not-started | — | — | — | — |
+| WS-1 salience vector | not-started | — | — | — | — |
+| WS-2 outcome loop | not-started | — | — | — | — |
+| WS-3b consolidation (remaining) | not-started | — | — | — | — |
+| WS-4 CHANGE-gate coherence | not-started | — | — | — | — |
+| WS-5 attribution/observability | not-started | — | — | — | — |
+
 ## Part I — How it went off course (the explanation)
 
 The brain-analysis doc states it plainly (§"How this session's work maps"): the
