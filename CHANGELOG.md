@@ -14,9 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `rankScore = (0.3·encodingSalience + 0.7·retrievalSalience) × sizePenalty`
   (feedback valence and utility EMA dropped from ordering until WS-2 re-introduces
   outcome salience). Assets are now ranked by retrieval frequency × recency × type
-  importance rather than by feedback magnitude. A forgetting-safety rank-change report
-  (`improve_salience_rank_change` event) is emitted on the first run to flag any
-  assets that were in the old top-200 but fall below position 500 in the new ranking.
+  importance rather than by feedback magnitude. Because the old
+  `combinedEligibilityScore` ordering was never persisted, a forgetting comparison is
+  not possible on the first run; instead a one-time `improve_salience_first_run` marker
+  event is emitted to record the transition. On every subsequent run a stash-wide
+  `improve_salience_rank_change` drift report (including `stashSize`) is emitted so
+  rank movement under the new scoring can be tracked over time.
   The Part-V measurement protocol (T0 baseline via `scripts/akm-eval` + health report,
   throughput/quality gate) is deferred to the WS-2 milestone, when outcome salience
   re-joins the projection and re-tuning is triggered.
