@@ -186,6 +186,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -283,6 +287,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -388,6 +396,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -485,6 +497,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -590,6 +606,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -687,6 +707,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -792,6 +816,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -889,6 +917,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -994,6 +1026,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1091,6 +1127,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -1196,6 +1236,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1293,6 +1337,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -1398,6 +1446,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1495,6 +1547,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -1600,6 +1656,10 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "cosineCandidateLimit": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": false
@@ -1697,6 +1757,10 @@
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
+                      },
+                      "p90ChunkSecondsDefault": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
                       },
                       "applyMode": {
                         "type": "string",
@@ -2454,6 +2518,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -2551,6 +2619,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2656,6 +2728,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -2753,6 +2829,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -2858,6 +2938,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -2955,6 +3039,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -3060,6 +3148,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -3157,6 +3249,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -3262,6 +3358,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -3359,6 +3459,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -3464,6 +3568,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -3561,6 +3669,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -3666,6 +3778,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -3763,6 +3879,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -3868,6 +3988,10 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "cosineCandidateLimit": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
                               }
                             },
                             "additionalProperties": false
@@ -3965,6 +4089,10 @@
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
+                          },
+                          "p90ChunkSecondsDefault": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
                           "applyMode": {
                             "type": "string",
@@ -4704,6 +4832,10 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "cosineCandidateLimit": {
+              "type": "integer",
+              "exclusiveMinimum": 0
             }
           },
           "additionalProperties": false
@@ -4801,6 +4933,10 @@
         "minSessionDuration": {
           "type": "number",
           "minimum": 0
+        },
+        "p90ChunkSecondsDefault": {
+          "type": "number",
+          "exclusiveMinimum": 0
         },
         "applyMode": {
           "type": "string",
@@ -4916,6 +5052,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -5013,6 +5153,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -5118,6 +5262,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -5215,6 +5363,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -5320,6 +5472,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -5417,6 +5573,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -5522,6 +5682,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -5619,6 +5783,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -5724,6 +5892,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -5821,6 +5993,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -5926,6 +6102,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -6023,6 +6203,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -6128,6 +6312,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -6225,6 +6413,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",
@@ -6330,6 +6522,10 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "cosineCandidateLimit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   },
                   "additionalProperties": false
@@ -6427,6 +6623,10 @@
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
+                },
+                "p90ChunkSecondsDefault": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "applyMode": {
                   "type": "string",

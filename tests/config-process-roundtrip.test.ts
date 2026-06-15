@@ -103,4 +103,41 @@ describe("#598 process-level config fields survive a load→save→load round tr
     resetConfigCache();
     expect(() => loadConfig()).toThrow(ConfigError);
   });
+
+  test("WS-3a: cosineCandidateLimit and p90ChunkSecondsDefault survive a round trip and are not rejected", () => {
+    // Regression guard: both fields were added to the TS types but NOT to the
+    // Zod schema initially (WS-3a review blocker). Any user who set them in a
+    // config file got a hard config-validation error. This test ensures both
+    // fields round-trip cleanly through load → save → reload.
+    const config = {
+      semanticSearchMode: "off",
+      profiles: {
+        improve: {
+          default: {
+            processes: {
+              consolidate: {
+                enabled: true,
+                p90ChunkSecondsDefault: 45,
+                dedup: {
+                  enabled: true,
+                  cosineThreshold: 0.95,
+                  cosineCandidateLimit: 300,
+                },
+              },
+            },
+          },
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    const reloaded = loadConfig();
+
+    const consolidate = reloaded.profiles?.improve?.default?.processes?.consolidate;
+    expect(consolidate?.p90ChunkSecondsDefault).toBe(45);
+    expect(consolidate?.dedup?.cosineCandidateLimit).toBe(300);
+    expect(consolidate?.dedup?.cosineThreshold).toBeCloseTo(0.95);
+    expect(consolidate?.dedup?.enabled).toBe(true);
+  });
 });

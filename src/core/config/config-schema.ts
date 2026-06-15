@@ -164,6 +164,11 @@ export const ImproveProcessConfigSchema = z
       .object({
         enabled: z.boolean().optional(),
         cosineThreshold: z.number().min(0).max(1).optional(),
+        // WS-3a: maximum pool size for the O(n²) cosine-similarity twin compare.
+        // Only the first `cosineCandidateLimit` memories are cosine-compared;
+        // exact-hash matches still run over the full pool. Default 500. Raise
+        // with care — cost is O(n²).
+        cosineCandidateLimit: z.number().int().positive().optional(),
       })
       .strict()
       .optional(),
@@ -224,6 +229,12 @@ export const ImproveProcessConfigSchema = z
     // #561 — minimum session duration in minutes for session indexing. 0
     // disables the gate. Absent = default 5. Only meaningful on `extract`.
     minSessionDuration: z.number().min(0).optional(),
+    // Consolidate process: fallback p90 wall-clock time per consolidation chunk
+    // in seconds, used for cold-start budget estimation when no telemetry
+    // history exists. The actual p90 is derived from observed run durations
+    // once sufficient history accumulates; this value is only used on the very
+    // first run. Default 30 s. Only meaningful on the `consolidate` process.
+    p90ChunkSecondsDefault: z.number().finite().positive().optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),
