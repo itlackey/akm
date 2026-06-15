@@ -286,6 +286,12 @@ export const ImproveProfileConfigSchema = z
     processes: ImproveProfileProcessesSchema.optional(),
     autoAccept: nonNegativeNumber.optional(),
     limit: positiveInt.optional(),
+    // #614 — symmetric valence weighting in the eligibility sort. When true,
+    // the attention term becomes |valence| MAGNITUDE so BOTH strong positive
+    // and strong negative feedback drive attention (utility stays dominant) and
+    // strong-signed assets are routed to a fix/reinforce lane. DEFAULT OFF —
+    // false/absent preserves the legacy negative-only ranking byte-for-byte.
+    symmetricValence: z.boolean().optional(),
     sync: z
       .object({
         enabled: z.boolean().optional(),

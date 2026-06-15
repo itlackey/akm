@@ -392,6 +392,19 @@ export interface ImproveProfileConfig {
   autoAccept?: number;
   limit?: number;
   /**
+   * #614 — symmetric valence weighting in the improve eligibility sort. The
+   * legacy ranking weights feedback NEGATIVE-ONLY (`negative / total`), so
+   * strong POSITIVE feedback never drives attention. When `true`, the feedback
+   * attention term becomes the |valence| MAGNITUDE — both strong positive and
+   * strong negative feedback lift an asset's attention (utility remains the
+   * dominant ordering factor) — and strongly-signed assets are routed to a
+   * lane: high-negative → fix, high-positive → reinforce.
+   *
+   * DEFAULT OFF. Absent or `false` preserves the legacy negative-only ranking
+   * byte-for-byte.
+   */
+  symmetricValence?: boolean;
+  /**
    * End-of-run auto-sync: batch-commit (and optionally push) the primary
    * git-backed stash once an improve run finishes. Default ON for git-backed
    * stashes; push is gated on `config.writable` + a configured remote.

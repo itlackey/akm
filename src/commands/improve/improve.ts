@@ -74,6 +74,7 @@ import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInp
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./extract";
+import { combinedEligibilityScore, computeValenceScore, negativeOnlyRatio } from "./feedback-valence";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ImproveProfileConfig } from "./improve-profiles";
 import {
@@ -2713,27 +2714,50 @@ async function runImprovePreparationStage(args: {
 
   const utilityMap = buildUtilityMap(mergedRefs);
 
-  // Load feedback ratio per ref from the pre-computed summary (no extra DB pass).
-  const feedbackRatios = new Map<string, number>();
+  // #614 — symmetric valence weighting. The legacy attention term is
+  // NEGATIVE-ONLY (`negative / total`), so strong POSITIVE feedback contributes
+  // nothing to attention and a heavily-praised, heavily-used asset is ranked
+  // like a never-rated one. When `symmetricValence` is enabled (DEFAULT OFF —
+  // parity-preserving) the attention term becomes the |valence| MAGNITUDE so
+  // BOTH strong positive and strong negative feedback drive attention, while
+  // utility stays the dominant factor. Strong-signed items are also routed to a
+  // lane: high-negative → "fix", high-positive → "reinforce".
+  const symmetricValence = improveProfile.symmetricValence === true;
+
+  // Per-ref attention term folded into the eligibility sort, plus the routed
+  // feedback lane (only populated under symmetric valence). Computed once from
+  // the pre-aggregated feedback summary (no extra DB pass).
+  const feedbackAttention = new Map<string, number>();
   for (const ref of mergedRefs) {
     const summary = feedbackSummary.get(ref.ref);
-    const positive = summary?.positive ?? 0;
-    const negative = summary?.negative ?? 0;
-    const total = positive + negative;
-    // ratio = negative proportion (high = needs more improvement)
-    feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
+    const counts = { positive: summary?.positive ?? 0, negative: summary?.negative ?? 0 };
+    if (symmetricValence) {
+      const score = computeValenceScore(counts);
+      feedbackAttention.set(ref.ref, score.attention);
+      if (score.lane !== null) {
+        // Stamp the feedback-sign lane onto the shared ref object so it travels
+        // with the ref through the sort / disk-check / loop stages. Orthogonal
+        // to eligibilitySource (origin lane). high-negative → "fix",
+        // high-positive → "reinforce".
+        ref.feedbackLane = score.lane;
+      }
+    } else {
+      // ratio = negative proportion (high = needs more improvement)
+      feedbackAttention.set(ref.ref, negativeOnlyRatio(counts));
+    }
   }
 
-  // Sort: combine utility (desc) with feedback negativity (desc) — high-negative assets rank higher
+  // Sort: combine utility (dominant, desc) with the feedback attention term
+  // (desc). Array.prototype.sort is stable in every supported runtime, so the
+  // pre-existing input order is the implicit tie-break in legacy mode (parity
+  // preserved). Under symmetric valence we add an explicit ref-string tie-break
+  // so the order never depends on input ordering, Date.now(), or Math.random().
   const sorted = [...mergedRefs].sort((a, b) => {
-    const utilA = utilityMap.get(a.ref) ?? 0;
-    const utilB = utilityMap.get(b.ref) ?? 0;
-    const ratioA = feedbackRatios.get(a.ref) ?? 0;
-    const ratioB = feedbackRatios.get(b.ref) ?? 0;
-    // Combined score: 70% utility, 30% negative ratio
-    const scoreA = utilA * 0.7 + ratioA * 0.3;
-    const scoreB = utilB * 0.7 + ratioB * 0.3;
-    return scoreB - scoreA;
+    const scoreA = combinedEligibilityScore(utilityMap.get(a.ref) ?? 0, feedbackAttention.get(a.ref) ?? 0);
+    const scoreB = combinedEligibilityScore(utilityMap.get(b.ref) ?? 0, feedbackAttention.get(b.ref) ?? 0);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    if (!symmetricValence) return 0;
+    return a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0;
   });
 
   // Phase 0: surface coverage gaps from zero-result search queries
