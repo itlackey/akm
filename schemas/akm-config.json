@@ -250,6 +250,10 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "maxSessionsPerRun": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "indexSessions": {
                         "type": "boolean"
                       },
@@ -422,6 +426,10 @@
                         "minimum": 0
                       },
                       "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxSessionsPerRun": {
                         "type": "integer",
                         "minimum": 0
                       },
@@ -600,6 +608,10 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "maxSessionsPerRun": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "indexSessions": {
                         "type": "boolean"
                       },
@@ -772,6 +784,10 @@
                         "minimum": 0
                       },
                       "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxSessionsPerRun": {
                         "type": "integer",
                         "minimum": 0
                       },
@@ -950,6 +966,10 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "maxSessionsPerRun": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "indexSessions": {
                         "type": "boolean"
                       },
@@ -1122,6 +1142,10 @@
                         "minimum": 0
                       },
                       "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxSessionsPerRun": {
                         "type": "integer",
                         "minimum": 0
                       },
@@ -1300,6 +1324,10 @@
                         "type": "integer",
                         "minimum": 0
                       },
+                      "maxSessionsPerRun": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
                       "indexSessions": {
                         "type": "boolean"
                       },
@@ -1472,6 +1500,10 @@
                         "minimum": 0
                       },
                       "minNewSessions": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "maxSessionsPerRun": {
                         "type": "integer",
                         "minimum": 0
                       },
@@ -2267,6 +2299,10 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "maxSessionsPerRun": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "indexSessions": {
                             "type": "boolean"
                           },
@@ -2439,6 +2475,10 @@
                             "minimum": 0
                           },
                           "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxSessionsPerRun": {
                             "type": "integer",
                             "minimum": 0
                           },
@@ -2617,6 +2657,10 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "maxSessionsPerRun": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "indexSessions": {
                             "type": "boolean"
                           },
@@ -2789,6 +2833,10 @@
                             "minimum": 0
                           },
                           "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxSessionsPerRun": {
                             "type": "integer",
                             "minimum": 0
                           },
@@ -2967,6 +3015,10 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "maxSessionsPerRun": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "indexSessions": {
                             "type": "boolean"
                           },
@@ -3139,6 +3191,10 @@
                             "minimum": 0
                           },
                           "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxSessionsPerRun": {
                             "type": "integer",
                             "minimum": 0
                           },
@@ -3317,6 +3373,10 @@
                             "type": "integer",
                             "minimum": 0
                           },
+                          "maxSessionsPerRun": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "indexSessions": {
                             "type": "boolean"
                           },
@@ -3489,6 +3549,10 @@
                             "minimum": 0
                           },
                           "minNewSessions": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "maxSessionsPerRun": {
                             "type": "integer",
                             "minimum": 0
                           },
@@ -4266,6 +4330,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "maxSessionsPerRun": {
+          "type": "integer",
+          "minimum": 0
+        },
         "indexSessions": {
           "type": "boolean"
         },
@@ -4451,6 +4519,10 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "maxSessionsPerRun": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "indexSessions": {
                   "type": "boolean"
                 },
@@ -4623,6 +4695,10 @@
                   "minimum": 0
                 },
                 "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxSessionsPerRun": {
                   "type": "integer",
                   "minimum": 0
                 },
@@ -4801,6 +4877,10 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "maxSessionsPerRun": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "indexSessions": {
                   "type": "boolean"
                 },
@@ -4973,6 +5053,10 @@
                   "minimum": 0
                 },
                 "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxSessionsPerRun": {
                   "type": "integer",
                   "minimum": 0
                 },
@@ -5151,6 +5235,10 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "maxSessionsPerRun": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "indexSessions": {
                   "type": "boolean"
                 },
@@ -5323,6 +5411,10 @@
                   "minimum": 0
                 },
                 "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxSessionsPerRun": {
                   "type": "integer",
                   "minimum": 0
                 },
@@ -5501,6 +5593,10 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "maxSessionsPerRun": {
+                  "type": "integer",
+                  "minimum": 0
+                },
                 "indexSessions": {
                   "type": "boolean"
                 },
@@ -5673,6 +5769,10 @@
                   "minimum": 0
                 },
                 "minNewSessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxSessionsPerRun": {
                   "type": "integer",
                   "minimum": 0
                 },

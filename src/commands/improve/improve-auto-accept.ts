@@ -75,6 +75,29 @@ export interface AutoAcceptGateResult {
   skipped: string[];
   /** Proposal IDs where `promoteProposal` threw — warning already emitted. */
   failed: string[];
+  /**
+   * Why each failed proposal was rejected, bucketed by reason (e.g. a
+   * `validateProposal` finding kind like `description-quality`, or
+   * `promote-error` for non-validation throws). Turns the previously-blind
+   * "passed confidence but failed validation" leak into a measured signal
+   * (surfaced via the gate decision + health `autoAccept.failedByReason`).
+   */
+  failedByReason: Record<string, number>;
+}
+
+/**
+ * Derive a stable, low-cardinality reason bucket from an auto-accept promotion
+ * error. `promoteProposal` throws a `validateProposal` report formatted as
+ * `[kind] message` lines; we extract the first finding kind. Non-validation
+ * throws collapse to `promote-error`.
+ */
+function classifyPromoteFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const finding = /\[([a-z][a-z0-9-]*)\]/i.exec(message);
+  if (finding) return `validation:${finding[1]}`;
+  if (/not pending/i.test(message)) return "not-pending";
+  if (/unknown asset type/i.test(message)) return "unknown-type";
+  return "promote-error";
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +118,7 @@ export async function runAutoAcceptGate(
   cfg: AutoAcceptGateConfig,
   promoteFn: typeof promoteProposal = promoteProposal,
 ): Promise<AutoAcceptGateResult> {
-  const result: AutoAcceptGateResult = { promoted: [], skipped: [], failed: [] };
+  const result: AutoAcceptGateResult = { promoted: [], skipped: [], failed: [], failedByReason: {} };
 
   // --- Guard: gate is disabled or context is incomplete ---
   if (cfg.dryRun || cfg.globalThreshold === undefined || !cfg.stashDir) {
@@ -175,10 +198,21 @@ export async function runAutoAcceptGate(
       );
       result.promoted.push(proposalId);
     } catch (err) {
+      const reason = classifyPromoteFailure(err);
       warn(
-        `[improve] ${cfg.phase} auto-accept failed for ${proposalId}: ${err instanceof Error ? err.message : String(err)}`,
+        `[improve] ${cfg.phase} auto-accept failed for ${proposalId} (${reason}): ${err instanceof Error ? err.message : String(err)}`,
       );
       result.failed.push(proposalId);
+      result.failedByReason[reason] = (result.failedByReason[reason] ?? 0) + 1;
+      // Record WHY on the proposal so `akm proposal show` explains the rejection
+      // and the leak is no longer blind. Best-effort.
+      stamp(proposalId, {
+        outcome: "auto-rejected",
+        reason,
+        confidence,
+        thresholds: { autoAccept: effectiveThreshold },
+        gate: gateLabel,
+      });
     }
   }
 

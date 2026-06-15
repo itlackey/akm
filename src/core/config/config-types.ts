@@ -235,6 +235,15 @@ export interface ImproveProcessConfig {
    */
   minNewSessions?: number;
   /**
+   * Maximum number of NEW (unseen) sessions the `extract` pass will process
+   * (make an LLM call for) in a single run. Bounds per-run wall time + LLM cost
+   * so a backlog of accumulated sessions (e.g. after downtime) can't push one
+   * run past its task timeout. Sessions beyond the cap stay unseen and are
+   * picked up by subsequent runs (no coverage loss). `0` disables the cap.
+   * Absent = a built-in default. Only meaningful on the `extract` process.
+   */
+  maxSessionsPerRun?: number;
+  /**
    * #561 — index agent sessions as a searchable `session` asset. When the
    * `extract` pass distills memory proposals from a session it ADDITIONALLY
    * writes `sessions/<harness>/<id>.md` (LLM `## Summary` + `## Key topics`) so

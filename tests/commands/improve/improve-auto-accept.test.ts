@@ -199,6 +199,25 @@ describe("runAutoAcceptGate — error handling", () => {
     expect(result.failed).toEqual(["p1", "p2"]);
     expect(result.promoted).toEqual([]);
   });
+
+  test("failedByReason captures the validation finding kind (no longer a blind leak)", async () => {
+    const promoteFn = mock(async (_stash, _cfg, id: string) => {
+      if (id === "trunc")
+        throw new Error("Proposal trunc failed validation:\n[description-quality] description is truncated");
+      if (id === "other") throw new Error("disk on fire");
+      return makePromotion(id);
+    });
+    const result = await runAutoAcceptGate(
+      [candidate("trunc", 0.95), candidate("other", 0.95), candidate("ok", 0.95)],
+      baseConfig({ globalThreshold: 90 }),
+      promoteFn as never,
+    );
+    expect(result.failed.sort()).toEqual(["other", "trunc"]);
+    expect(result.promoted).toEqual(["ok"]);
+    // Validation findings are bucketed by kind; non-validation throws → promote-error.
+    expect(result.failedByReason["validation:description-quality"]).toBe(1);
+    expect(result.failedByReason["promote-error"]).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -263,6 +263,33 @@ describe("akmExtract — discovery mode", () => {
     expect(result.sessions).toHaveLength(1);
     expect(result.sessions[0]?.sessionId).toBe("recent");
   });
+
+  test("maxSessionsPerRun caps LLM-processed sessions; overflow stays unseen for the next run", async () => {
+    const stash = makeStashDir();
+    const now = Date.now();
+    const sessions = Array.from({ length: 5 }, (_, i) => fakeSession(`s${i}`, now - (i + 1) * 60_000));
+    const cfg = configEnabled(stash) as AkmConfig & {
+      profiles: { improve: { default: { processes: { extract: Record<string, unknown> } } } };
+    };
+    cfg.profiles.improve.default.processes.extract.maxSessionsPerRun = 3;
+
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: cfg,
+      harnesses: [makeFakeHarness(sessions)],
+      since: "24h",
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(chatCalls).toBe(3); // capped at 3, not all 5
+    expect(result.sessionsProcessed).toBe(3);
+    expect(result.warnings.join(" ")).toMatch(/maxSessionsPerRun=3.*deferred/);
+  });
 });
 
 describe("akmExtract — single-session mode", () => {

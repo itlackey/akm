@@ -192,6 +192,9 @@ export const ImproveProcessConfigSchema = z
     // disables the guard. Only meaningful on the `extract` process. Default 0
     // (disabled) so existing behaviour is preserved; only opted-in profiles set it.
     minNewSessions: z.number().int().min(0).optional(),
+    // Extract process: cap on NEW sessions processed (LLM-called) per run; the
+    // rest roll to the next run (still unseen). 0 disables. Absent = default 25.
+    maxSessionsPerRun: z.number().int().min(0).optional(),
     // #561 — index agent sessions as a searchable `session` asset (extract
     // process). Absent = on-when-an-LLM-is-available (fail-open when offline).
     indexSessions: z.boolean().optional(),

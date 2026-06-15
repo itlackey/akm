@@ -72,6 +72,15 @@ const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
  */
 const DEFAULT_MIN_CONTENT_CHARS = 10;
 
+/**
+ * Default cap on NEW sessions the extract pass will LLM-process in a single run
+ * (`processes.extract.maxSessionsPerRun` overrides; `0` disables). Bounds per-run
+ * wall time + token spend so a backlog of accumulated sessions can't run a single
+ * pass past its scheduled-task timeout. Overflow sessions stay unseen and are
+ * processed by subsequent runs, so coverage is preserved — just spread out.
+ */
+const DEFAULT_MAX_SESSIONS_PER_RUN = 25;
+
 // ── Options + Result envelopes ──────────────────────────────────────────────
 
 export interface AkmExtractOptions {
@@ -584,6 +593,13 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // entirely. Set `processes.extract.minContentChars: 0` to disable the gate.
   const minContentChars =
     typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : DEFAULT_MIN_CONTENT_CHARS;
+  // Cap on NEW sessions LLM-processed per run; 0 disables. Absent = default.
+  // Bounds per-run wall time / LLM cost so a backlog can't push a run past its
+  // task timeout — the overflow stays unseen and is picked up by later runs.
+  const maxSessionsPerRun =
+    typeof extractProcess?.maxSessionsPerRun === "number"
+      ? extractProcess.maxSessionsPerRun
+      : DEFAULT_MAX_SESSIONS_PER_RUN;
   // Default discovery window — process config can override the built-in 24h.
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
 
@@ -741,6 +757,16 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       });
       skippedCount += 1;
       continue;
+    }
+
+    // Per-run cap on LLM-processed sessions (skip-tracked seen sessions above
+    // don't count). Single-session / --force modes bypass the cap (explicit
+    // intent). Overflow sessions are left unseen for the next run.
+    if (!options.sessionId && !options.force && maxSessionsPerRun > 0 && processedCount >= maxSessionsPerRun) {
+      topLevelWarnings.push(
+        `Reached maxSessionsPerRun=${maxSessionsPerRun}; ${candidates.length - processedCount - skippedCount} session(s) deferred to a later run.`,
+      );
+      break;
     }
 
     try {

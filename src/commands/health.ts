@@ -1400,20 +1400,33 @@ function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]
   skipped: number;
   skipReasons: Record<string, number>;
 } {
-  const skipReasons: Record<string, number> = {};
-  let skipped = 0;
+  // Two kinds of skip events:
+  //  - Per-occurrence (no `count`): one event per skipped ref → SUM is correct.
+  //  - Aggregated snapshot (carries `count`): a single per-run event whose count
+  //    is the number of refs that hit a STABLE, whole-stash condition that run
+  //    (`no_new_signal`, `profile_filtered_all_passes`). Each run re-counts the
+  //    same stable set, so summing across the window re-counts it N times (the
+  //    2.7M / 3M inflation). For these we keep the MOST RECENT run's count — the
+  //    current snapshot — matching how memorySummary/profileFilteredRefs are
+  //    handled. Events arrive in chronological (offset) order, so the last
+  //    count-bearing event per reason is the latest run's value.
+  const summed: Record<string, number> = {};
+  const latestSnapshot: Record<string, number> = {};
   for (const event of events) {
     const reason =
       typeof event.metadata?.reason === "string" && event.metadata.reason.trim() ? event.metadata.reason : "unknown";
-    // Aggregated skip events (e.g. `no_new_signal`, `profile_filtered_all_passes`)
-    // carry a `count` of the refs they represent in a single row instead of one
-    // event per ref. Honor that count so the skip histogram reflects the true
-    // number of skipped refs; per-ref events without a count contribute 1.
     const rawCount = event.metadata?.count;
-    const count = typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0 ? rawCount : 1;
-    skipReasons[reason] = (skipReasons[reason] ?? 0) + count;
-    skipped += count;
+    if (typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0) {
+      latestSnapshot[reason] = rawCount; // overwrite → keeps the latest run's snapshot
+    } else {
+      summed[reason] = (summed[reason] ?? 0) + 1;
+    }
   }
+  const skipReasons: Record<string, number> = { ...summed };
+  for (const [reason, count] of Object.entries(latestSnapshot)) {
+    skipReasons[reason] = (skipReasons[reason] ?? 0) + count;
+  }
+  const skipped = Object.values(skipReasons).reduce((a, b) => a + b, 0);
   return { skipped, skipReasons };
 }
 

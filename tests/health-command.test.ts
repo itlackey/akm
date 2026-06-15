@@ -105,6 +105,32 @@ describe("akmHealth", () => {
     expect(result.improve.skipReasons.reflect_cooldown).toBe(1);
   });
 
+  test("aggregated snapshot skip reasons use the latest run's count, not the sum across runs", () => {
+    // Two runs each emit one count-bearing no_new_signal event (a per-run snapshot
+    // of the stable filtered set). Plus two per-occurrence cooldown skips.
+    appendEvent({
+      eventType: "improve_skipped",
+      ref: "memory:_signal",
+      metadata: { reason: "no_new_signal", count: 1800 },
+    });
+    appendEvent({ eventType: "improve_skipped", ref: "memory:a", metadata: { reason: "reflect_cooldown" } });
+    appendEvent({ eventType: "improve_skipped", ref: "memory:b", metadata: { reason: "reflect_cooldown" } });
+    // Later run — its snapshot supersedes (it does NOT add to the earlier 1800).
+    appendEvent({
+      eventType: "improve_skipped",
+      ref: "memory:_signal",
+      metadata: { reason: "no_new_signal", count: 1850 },
+    });
+
+    const result = akmHealth({ since: "7d" });
+    // Snapshot reason: latest count (1850), NOT 1800+1850=3650.
+    expect(result.improve.skipReasons.no_new_signal).toBe(1850);
+    // Per-occurrence reason: still summed.
+    expect(result.improve.skipReasons.reflect_cooldown).toBe(2);
+    // Total reflects latest-snapshot + per-occurrence sum (1850 + 2).
+    expect(result.improve.skipped).toBe(1852);
+  });
+
   test("reports rich improve metrics from improve_runs (Phase 1)", () => {
     const startA = new Date(Date.now() - 60_000).toISOString();
     const endA = new Date(Date.now() - 30_000).toISOString();

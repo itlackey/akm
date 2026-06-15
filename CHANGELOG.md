@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`extract.maxSessionsPerRun`** (default 25) — caps the NEW sessions the
+  extract pass LLM-processes in a single run so a backlog (e.g. after downtime)
+  can't push one run past its scheduled-task timeout. Overflow sessions stay
+  unseen and are picked up by later runs, so coverage is preserved. `0` disables.
+
+### Fixed
+
+- **Auto-accept validation failures are no longer a blind leak.** When a
+  confidence-passing proposal fails promotion validation, the gate now captures
+  the reason (the `validateProposal` finding kind, e.g. `validation:description-quality`),
+  records it on the proposal (`akm proposal show` explains the rejection), logs
+  it, and exposes `failedByReason` on the gate result — so the ~5% leak is
+  diagnosable instead of silently warned-and-dropped.
+- **Inflated skip-reason aggregates in `akm health`.** `no_new_signal` /
+  `profile_filtered_all_passes` are per-run snapshots of a stable set; the
+  window aggregator summed their per-run counts (≈2.7M / 3M). It now uses the
+  most recent run's count for these aggregated-snapshot reasons while still
+  summing genuine per-occurrence skips.
+
 ## [0.9.0-beta.10] - 2026-06-15
 
 ### Added
