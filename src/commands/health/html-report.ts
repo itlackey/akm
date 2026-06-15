@@ -699,6 +699,33 @@ export function buildHealthHtmlReplacements(
     ],
     ["LLM wall time", fmtMs(llm.totalDurationMs), trend.latency],
   ];
+
+  // #612 — auto-accept gate calibration. Only surface when the gate actually
+  // acted on proposals in the window (samples > 0); a default ungated install
+  // reports an empty summary and we omit the rows to keep the table parity-clean.
+  const calibration = improve.calibration;
+  if (calibration && calibration.samples > 0) {
+    summaryRows.push(
+      [
+        "Calibration samples",
+        num(calibration.samples),
+        "flat",
+        "Auto-accept gate decisions (auto-accepted + auto-rejected) the calibration join measured this window.",
+      ],
+      [
+        "Calibration accept rate",
+        String(calibration.overallAcceptRate),
+        "flat",
+        "Realized accept rate of acted-on gate decisions (auto-accepted / total acted-on).",
+      ],
+      [
+        "Calibration gap",
+        String(calibration.calibrationGap),
+        "flat",
+        "Mean predicted confidence minus realized accept rate. Positive = the gate is over-confident.",
+      ],
+    );
+  }
   const summaryRowsHtml = summaryRows
     .map(([label, value, t, tip]) => {
       const labelHtml = tip ? `<abbr title="${esc(tip)}">${esc(label)}</abbr>` : esc(label);

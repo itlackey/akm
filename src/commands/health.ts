@@ -10,6 +10,7 @@ import { getStateDbPathInDataDir } from "../core/paths";
 import {
   type ImproveRunSummaryRow,
   listExistingTableNames,
+  listProposalGateDecisions,
   openStateDatabase,
   queryCompletedTaskIntervals,
   queryImproveRuns,
@@ -23,6 +24,7 @@ import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { LLM_USAGE_EVENT } from "../llm/usage-persist";
 import type { Database } from "../storage/database";
 import { HEALTH_CHECKS, type HealthCheckContext } from "./health/checks";
+import { type CalibrationSummary, gateDecisionsToSamples, summarizeCalibration } from "./improve/calibration";
 
 export interface HealthCheckResult {
   name: string;
@@ -201,6 +203,15 @@ export interface ImproveHealthMetrics {
      */
     validationFailed: number;
   };
+  /**
+   * Auto-accept gate calibration (#612). Joins predicted confidence (from the
+   * gate's per-proposal `gateDecision` records) to the realized accept/reject
+   * outcome over the window, producing a reliability table + an aggregate
+   * calibration gap (predicted vs realized acceptance). Empty (zeros) when no
+   * acted-on gate decisions fall in the window — so the default, ungated
+   * install reports a parity-preserving empty summary.
+   */
+  calibration: CalibrationSummary;
   reflectsWithErrorContext: number;
   coverageGapCount: number;
   evalCasesWritten: number;
@@ -598,6 +609,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       error: 0,
     },
     autoAccept: { promoted: 0, validationFailed: 0 },
+    calibration: summarizeCalibration([]),
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
     evalCasesWritten: 0,
@@ -1652,6 +1664,18 @@ function readLlmUsageAggregate(stateDbPath: string, since: string, until?: strin
   return summarizeLlmUsage(events);
 }
 
+/**
+ * Read the auto-accept gate calibration summary (#612) over `[since, until)`.
+ * Reads every proposal's `gateDecision` from the open state.db, projects the
+ * acted-on (auto-accepted / auto-rejected) decisions into calibration samples
+ * within the window, and aggregates them deterministically.
+ */
+function readCalibration(db: Database, since: string, until?: string): CalibrationSummary {
+  const decisions = listProposalGateDecisions(db);
+  const samples = gateDecisionsToSamples(decisions, { since, ...(until !== undefined ? { until } : {}) });
+  return summarizeCalibration(samples);
+}
+
 function buildWindowMetrics(
   db: Database,
   stateDbPath: string,
@@ -1703,6 +1727,7 @@ function buildWindowMetrics(
   const perRunSummaries = buildPerRunSummaries(db, since, until);
   const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
   improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
+  improveSummary.calibration = readCalibration(db, since, until);
 
   const metrics: HealthMetrics = {
     taskFailRate: roundRate(taskFailRate),
@@ -1805,6 +1830,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const perRunSummaries = buildPerRunSummaries(db, since);
     const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
     improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
+    improveSummary.calibration = readCalibration(db, since);
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {

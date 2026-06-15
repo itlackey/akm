@@ -23,7 +23,7 @@ import type {
 import { classifyImproveAction } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
-import { openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
+import { listProposalGateDecisions, openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import {
   closeDatabase,
@@ -69,6 +69,12 @@ import {
 } from "../proposal/validators/proposals";
 import { runSchemaRepairPass } from "../sources/schema-repair";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
+import {
+  type CalibrationTuneConfig,
+  computeThresholdAutoTune,
+  gateDecisionsToSamples,
+  summarizeCalibration,
+} from "./calibration";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInputType } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
@@ -905,6 +911,80 @@ export function armBudgetWatchdog(
   };
 }
 
+/**
+ * #612 — bounded, opt-in auto-accept threshold auto-tune.
+ *
+ * Reads `improve.calibration` from config. When `autoTune` is enabled, computes
+ * the calibration of recent gate decisions, derives a bounded threshold
+ * adjustment (clamped into the configured band, capped per step), logs it, and
+ * records a `calibration_autotune` event. Returns the new threshold (integer
+ * 0-100) when an adjustment was made, or `undefined` to leave the caller's
+ * threshold unchanged.
+ *
+ * DEFAULT OFF: with no `improve.calibration` block (or `autoTune: false`) this
+ * returns `undefined` immediately, so the gate threshold is unchanged and
+ * behaviour is byte-identical to today.
+ */
+export function maybeAutoTuneThreshold(
+  currentThreshold: number,
+  config: AkmConfig,
+  stateDbPath: string,
+  ctx?: { now?: () => number; appendEventFn?: typeof appendEvent },
+): number | undefined {
+  const cal = config.improve?.calibration;
+  if (!cal?.autoTune) return undefined;
+
+  const tuneConfig: CalibrationTuneConfig = {
+    autoTune: true,
+    minThreshold: cal.minThreshold ?? 0,
+    maxThreshold: cal.maxThreshold ?? 100,
+    maxStep: cal.maxStep ?? 5,
+    minSamples: cal.minSamples ?? 20,
+    targetAcceptRate: cal.targetAcceptRate ?? 0.9,
+  };
+  // Defensive: an inverted band disables tuning rather than clamping to nonsense.
+  if (tuneConfig.minThreshold > tuneConfig.maxThreshold) return undefined;
+
+  const db = openStateDatabase(stateDbPath);
+  let summary: ReturnType<typeof summarizeCalibration>;
+  try {
+    const decisions = listProposalGateDecisions(db);
+    summary = summarizeCalibration(gateDecisionsToSamples(decisions));
+  } finally {
+    db.close();
+  }
+
+  const result = computeThresholdAutoTune(currentThreshold, summary, tuneConfig);
+  if (!result.adjusted) return undefined;
+
+  const appendEventFn = ctx?.appendEventFn ?? appendEvent;
+  info(
+    `[improve] calibration auto-tune: threshold ${result.previousThreshold} -> ${result.newThreshold} ` +
+      `(${result.reason}; samples=${summary.samples}, acceptRate=${summary.overallAcceptRate}, ` +
+      `gap=${summary.calibrationGap}, band=[${tuneConfig.minThreshold},${tuneConfig.maxThreshold}])`,
+  );
+  try {
+    appendEventFn({
+      eventType: "calibration_autotune",
+      ref: "improve:calibration",
+      metadata: {
+        previousThreshold: result.previousThreshold,
+        newThreshold: result.newThreshold,
+        delta: result.delta,
+        reason: result.reason,
+        samples: summary.samples,
+        overallAcceptRate: summary.overallAcceptRate,
+        calibrationGap: summary.calibrationGap,
+        minThreshold: tuneConfig.minThreshold,
+        maxThreshold: tuneConfig.maxThreshold,
+      },
+    });
+  } catch (err) {
+    warn(`[improve] calibration auto-tune event not recorded: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return result.newThreshold;
+}
+
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
   const scope: ImproveScope = resolveImproveScope(options.scope);
   const reflectFn = options.reflectFn ?? akmReflect;
@@ -942,6 +1022,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // timeout root cause). Because beforeEach runs synchronously, env is still the
   // calling test's own at this point; we capture it before yielding the loop.
   const resolvedStateDbPath = getStateDbPathInDataDir();
+
+  // #612 — bounded, OPT-IN auto-accept threshold auto-tune. DEFAULT OFF: when
+  // `improve.calibration.autoTune` is absent/false this is a complete no-op and
+  // the resolved `options.autoAccept` is unchanged (byte-identical parity). When
+  // enabled, the gate threshold is nudged within the configured [min,max] band
+  // toward the target realized accept rate, based on the calibration of recent
+  // gate decisions. Every adjustment is logged + recorded as an event.
+  if (options.autoAccept !== undefined) {
+    try {
+      const tuned = maybeAutoTuneThreshold(options.autoAccept, _earlyConfig, resolvedStateDbPath);
+      if (tuned !== undefined) options = { ...options, autoAccept: tuned };
+    } catch (err) {
+      warn(`[improve] calibration auto-tune skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // #607 Lock decomposition: three per-process locks replace the single
   // `improve.lock`. Each process acquires only the lock(s) it needs, so

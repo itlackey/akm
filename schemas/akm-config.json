@@ -2211,6 +2211,38 @@
         "eventRetentionDays": {
           "type": "number",
           "minimum": 0
+        },
+        "calibration": {
+          "type": "object",
+          "properties": {
+            "autoTune": {
+              "type": "boolean"
+            },
+            "minThreshold": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "maxThreshold": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "maxStep": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "minSamples": {
+              "type": "number",
+              "minimum": 0
+            },
+            "targetAcceptRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -4447,6 +4479,38 @@
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
+            },
+            "calibration": {
+              "type": "object",
+              "properties": {
+                "autoTune": {
+                  "type": "boolean"
+                },
+                "minThreshold": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "maxThreshold": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "maxStep": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "minSamples": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "targetAcceptRate": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

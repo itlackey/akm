@@ -586,6 +586,28 @@ export interface ImproveConfig {
    * Default: 90. Set to 0 to disable purging entirely.
    */
   eventRetentionDays?: number;
+  /**
+   * #612 — auto-accept gate calibration + bounded, opt-in threshold auto-tune.
+   *
+   * Calibration (the reliability summary on `akm health`) is always computed
+   * from gate decisions; this block controls only the OPT-IN threshold
+   * auto-tune. DEFAULT OFF: absent — or `autoTune: false` — means the gate
+   * threshold is never adjusted and behaviour is byte-identical to today.
+   */
+  calibration?: {
+    /** Master switch for the bounded threshold auto-tune. Default false (parity). */
+    autoTune?: boolean;
+    /** Lower bound (0-100) the tuned threshold may never drop below. */
+    minThreshold?: number;
+    /** Upper bound (0-100) the tuned threshold may never rise above. */
+    maxThreshold?: number;
+    /** Maximum adjustment magnitude (points) applied in one tune step. */
+    maxStep?: number;
+    /** Minimum acted-on sample count required before any adjustment. */
+    minSamples?: number;
+    /** Target realized accept rate in [0, 1]. Default 0.9. */
+    targetAcceptRate?: number;
+  };
 }
 
 export interface AkmConfig {

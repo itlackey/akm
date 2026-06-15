@@ -88,6 +88,13 @@ export type EventType =
   | "improve_reflect_outcome"
   /** Per-call LLM usage telemetry (#576) — carries `{stage?, model?, durationMs, *Tokens?, finishReason?}`. */
   | "llm_usage"
+  /**
+   * #612 — emitted by the opt-in auto-accept threshold auto-tune when it nudges
+   * the gate threshold. Metadata carries `{previousThreshold, newThreshold,
+   * delta, reason, samples, overallAcceptRate, calibrationGap, minThreshold,
+   * maxThreshold}`.
+   */
+  | "calibration_autotune"
   | string;
 
 export interface AppendEventInput {
