@@ -50,6 +50,7 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
+import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -106,6 +107,17 @@ export interface AkmExtractOptions {
   ctx?: ProposalsContext;
   /** sourceRun for PROV-DM traceability. Generated when absent. */
   sourceRun?: string;
+  /**
+   * The resolved ACTIVE improve profile, threaded by `akmImprove` so the
+   * feature gate and per-process extract config are read from the profile that
+   * is actually running — not always `profiles.improve.default`. Without it a
+   * non-default profile that enables extract was silently overridden by the
+   * default profile's `extract.enabled: false` (and vice-versa). When absent
+   * (e.g. an explicit `akm extract` invocation) the gate falls back to the
+   * default-profile `session_extraction` feature flag, so explicit runs still
+   * honour `profiles.improve.default.processes.extract.enabled`.
+   */
+  improveProfile?: ImproveProfileConfig;
   /** Hard timeout for each LLM call (ms). Default 60s per session. */
   timeoutMs?: number;
   /**
@@ -504,14 +516,21 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const dryRun = options.dryRun ?? false;
   const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
 
-  // Read the per-process extract config from the active improve profile. Matches
-  // the pattern reflect/distill/consolidate use: `profiles.improve.<active>.processes.extract`.
-  // Only the `default` improve profile is consulted here — extract isn't invoked
-  // with a profile flag yet (parity item for a future change).
-  const extractProcess = config.profiles?.improve?.default?.processes?.extract;
+  // Read the per-process extract config + enabled-state from the ACTIVE improve
+  // profile when `akmImprove` threaded it; otherwise fall back to the `default`
+  // profile (the explicit `akm extract` path, which has no active profile). This
+  // is what stops a non-default profile's `extract.enabled` from being silently
+  // overridden by the default profile and vice-versa.
+  const activeProfile = options.improveProfile;
+  const extractProcess = activeProfile
+    ? activeProfile.processes?.extract
+    : config.profiles?.improve?.default?.processes?.extract;
+  const extractEnabled = activeProfile
+    ? resolveProcessEnabled("extract", activeProfile)
+    : isLlmFeatureEnabled(config, "session_extraction");
 
   // Feature-gate early so we get a clean "skipped because disabled" envelope.
-  if (!isLlmFeatureEnabled(config, "session_extraction")) {
+  if (!extractEnabled) {
     return {
       schemaVersion: 1,
       ok: true,

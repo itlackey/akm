@@ -5,14 +5,14 @@
 /**
  * #593/#594 — the extract gate must respect the ACTIVE improve profile.
  *
- * `isLlmFeatureEnabled(config, "session_extraction")` hardcodes a lookup
- * against `profiles.improve.default.processes.extract.enabled`, so a
- * non-default profile setting `extract.enabled: false` (e.g. the built-in
- * `quick`) was silently ignored and extract ran on every improve call. The
- * fix ANDs the legacy check with `resolveProcessEnabled("extract",
- * improveProfile)` for the active resolved profile. The legacy default-profile
- * check is retained for back-compat (disabling via the default profile still
- * gates every profile's run).
+ * `isLlmFeatureEnabled(config, "session_extraction")` hardcoded a lookup
+ * against `profiles.improve.default.processes.extract.enabled`, so the default
+ * profile acted as a global override: a non-default profile setting
+ * `extract.enabled` (true OR false) was silently ignored. The fix gates solely
+ * on `resolveProcessEnabled("extract", improveProfile)` for the active resolved
+ * profile (and `akmExtract` re-checks that same profile via its `improveProfile`
+ * option). The default profile is now just another profile — it self-gates when
+ * it is the active one, but no longer overrides the others.
  *
  * Detection seam: `extractCandidateCountFn` is invoked ONLY inside the gated
  * extract block (when `minNewSessions > 0` and a harness is available), so a
@@ -152,15 +152,29 @@ describe("#593/#594 extract gate respects the active improve profile", () => {
   );
 
   test(
-    "legacy back-compat: default-profile extract.enabled false gates EVERY profile",
+    "active profile wins: it enables extract even when the default profile disables it",
     async () => {
-      // The active profile enables extract, but the retained legacy
-      // isLlmFeatureEnabled check (default-profile path) still wins.
+      // #593/#594: the ACTIVE profile is the single source of truth. The default
+      // profile's extract.enabled: false is NOT a global kill switch — a
+      // non-default profile that enables extract still runs. (Previously the
+      // legacy default-profile feature-flag check ANDed in here and forced 0;
+      // that was the "non-default profiles lie" bug this gate fixes.)
       const { config } = makeConfig({
         defaultExtractEnabled: false,
         profile: { name: "extractor", extractEnabled: true },
       });
-      expect(await countGateOpens(config, "extractor")).toBe(0);
+      expect(await countGateOpens(config, "extractor")).toBe(1);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "default profile is still self-gating: its own extract.enabled false closes the gate when default is active",
+    async () => {
+      // Disabling extract on the default profile still disables extract for runs
+      // that USE the default profile — it just no longer overrides other profiles.
+      const { config } = makeConfig({ defaultExtractEnabled: false });
+      expect(await countGateOpens(config)).toBe(0);
     },
     TIMEOUT_MS,
   );

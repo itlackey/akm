@@ -51,7 +51,7 @@ import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveImproveProcessRunnerFromProfile, resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
-import { isLlmFeatureEnabled, isProcessEnabled } from "../../llm/feature-gate";
+import { isProcessEnabled } from "../../llm/feature-gate";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
@@ -2066,13 +2066,14 @@ async function runImprovePreparationStage(args: {
   const configuredMinNewSessions = extractConfig.profiles?.improve?.default?.processes?.extract?.minNewSessions;
   const minNewSessions =
     typeof configuredMinNewSessions === "number" ? configuredMinNewSessions : EXTRACT_DEFAULT_MIN_NEW_SESSIONS;
-  // #593: gate on BOTH the legacy feature flag (which only reads
-  // `profiles.improve.default.processes.extract.enabled` — kept for back-compat
-  // with users who disable extract via the default-profile path) AND the active
-  // resolved profile. Without the second check a non-default profile setting
-  // `extract.enabled: false` (e.g. the built-in `quick`) was silently ignored
-  // and extract ran on every improve call regardless.
-  if (isLlmFeatureEnabled(extractConfig, "session_extraction") && resolveProcessEnabled("extract", improveProfile)) {
+  // #593/#594: the ACTIVE resolved improve profile is the single source of
+  // truth for whether extract runs. (Previously this also ANDed in the legacy
+  // `session_extraction` feature flag, which only reads
+  // `profiles.improve.default.processes.extract.enabled`; that made the default
+  // profile a global kill switch, so a non-default profile enabling extract was
+  // silently overridden. The default profile is now just another profile.)
+  // `akmExtract` re-checks the same active profile internally via `improveProfile`.
+  if (resolveProcessEnabled("extract", improveProfile)) {
     const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
     // The guard engages only when minNewSessions > 0; 0 disables it entirely.
     let belowMinNewSessions = false;
@@ -2111,6 +2112,9 @@ async function runImprovePreparationStage(args: {
               type: h.name,
               ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
               config: extractConfig,
+              // Thread the ACTIVE profile so extract's internal gate + per-process
+              // config read the running profile, not always `default`.
+              improveProfile,
               dryRun: options.dryRun ?? false,
               ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
               // C2: pin extract's skip-tracking state.db open to the boundary path.
