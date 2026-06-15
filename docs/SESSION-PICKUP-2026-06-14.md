@@ -63,7 +63,34 @@ NOT broken — it's a test-harness issue.
 - Baseline tag (stash `~/akm`): `baseline/pre-proactive-2026-06-14`.
 - Pilot treatment set: `~/akm/.akm/measurement/treatment-pilot-2026-06-14.txt`.
 
-## ⛔ OPEN BLOCKER #1 — 0.9.0-beta.9 NOT published
+## ✅ BLOCKER #1 RESOLVED (2026-06-14, commit `d29b2fc9`)
+
+The index-db `bun run check` regression is FIXED. Root cause was NOT in today's
+improve commits — it was #607 fallout (`9fca7aef`/`bd7c5fb6`): non-blocking
+`ensureIndex` + removal of the `AKM_INDEX_INLINE` test override, with the read
+paths (search/curate/wiki/show/feedback) left on the default `background` mode.
+An absent index → detached reindex returns immediately → empty results ("no such
+table: entries"). Real first-use UX regression, not just a test artifact.
+
+Fix (`src/indexer/ensure-index.ts` + `src/indexer/db/db.ts`):
+- `ensureIndex` rebuilds INLINE when the index can't serve the stash (absent /
+  no `entries` / zero rows / built for a different stash); content-stale indexes
+  for this stash still refresh in the background (keeps the #607 win).
+- `isIndexStale` gained a clock-independent new-file signal (on-disk file absent
+  from indexed `file_paths`), fixing the flaky feedback-on-just-added-ref test
+  caused by fs-vs-wall-clock skew against the ms-truncated `builtAt`. Companion
+  files excluded by each type's relevance filter, so stabilization still holds.
+- migration-006 characterization test + snapshot updated.
+
+Verified CI-faithfully: `TEST_PARALLEL=1` lint + tsc + test:unit (0 fail) +
+test:integration (0 fail, stable ×2) + build. Committed on branch
+`fix/llm-client-retry-socket-closed`.
+
+**Remaining to publish:** merge to `main`, then re-dispatch
+`gh workflow run release.yml --ref main -f version=0.9.0-beta.9` (version already
+bumped; nothing published yet; reusable).
+
+## ⛔ (historical) OPEN BLOCKER #1 — 0.9.0-beta.9 NOT published
 
 `release.yml` (manual `gh workflow run release.yml --ref main -f version=0.9.0-beta.9`)
 failed twice at `bun run check`:
