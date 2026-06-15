@@ -43,6 +43,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   window; and the trend **deltas** now default their compare window to `--since`
   (like-for-like, e.g. last 7d vs prior 7d) instead of a fixed 24h, which had
   produced nonsensical period-over-period percentages on multi-day reports.
+- **Inflated stash-snapshot metrics in `akm health`.** `memorySummary`
+  (derived/eligible) and `profileFilteredRefs` are whole-stash snapshots recorded
+  on every run, but the window aggregator was **summing** them across all runs —
+  e.g. "915,258 of 1,226,025 eligible" and a 2.4M filtered-ref count. They now
+  take the most recent run's snapshot (the current state). Per-run *work* metrics
+  (promoted, MI written, graph entities, …) remain genuine window sums.
+- **Health report polish:** the akm version is stamped in the header (under the
+  AKM logo) and footer; the steady-state `no new signal since last proposal`
+  distill reason is excluded from the skip-reason chart (it drowned out the
+  actionable reasons); and the Consolidation Output chart now draws Promoted as a
+  line on a secondary right-hand axis (it dwarfs merged/deleted) with merged and
+  deleted as bars on the left axis.
 
 - **#598** — process-level tuning fields (`consolidate.incrementalSince`,
   `minPoolSize`, `neighborsPerChanged`, `extract.minContentChars`, per-process

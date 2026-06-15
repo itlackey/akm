@@ -19,7 +19,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { escapeHtml } from "../../output/html-render";
 import { getDirname } from "../../runtime";
+import { pkgVersion } from "../../version";
 import type { AkmHealthResult, DeltaEntry, HealthCheckResult, ImproveRunSummary } from "../health";
+
+/**
+ * Distill skip-reasons hidden from the breakdown chart. `no new signal since
+ * last proposal` is the steady-state "nothing changed, nothing to do" outcome —
+ * it dominates the histogram and drowns out the actionable reasons, so it is
+ * intentionally excluded from the chart (the count still lives in the data).
+ */
+const DISTILL_REASONS_HIDDEN = new Set(["no new signal since last proposal"]);
 
 const ECHARTS_CDN = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
 const ECHARTS_VENDOR_PATH = path.join(getDirname(import.meta.url), "../../assets/templates/html/vendor/echarts.min.js");
@@ -638,7 +647,9 @@ export function buildHealthHtmlReplacements(
   ].join("\n");
 
   // ── Chart payload ──────────────────────────────────────────────────────────
-  const distillReasons = [...new Set(runs.flatMap((r) => Object.keys(r.distillByReason)))].sort();
+  const distillReasons = [...new Set(runs.flatMap((r) => Object.keys(r.distillByReason)))]
+    .filter((reason) => !DISTILL_REASONS_HIDDEN.has(reason))
+    .sort();
   const runsJsConst = `const RUNS = ${JSON.stringify(runs)};`;
 
   // ── Summary table rows ─────────────────────────────────────────────────────
@@ -852,5 +863,6 @@ export function buildHealthHtmlReplacements(
     "%%PROPOSAL_COUNT%%": String(proposals.length),
     "%%COMMANDS_HTML%%": commandsHtml,
     "%%GENERATED_AT%%": esc(generatedAt),
+    "%%AKM_VERSION%%": esc(pkgVersion),
   };
 }

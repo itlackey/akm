@@ -381,6 +381,58 @@ describe("akmHealth", () => {
     expect(result.improve.wallTime.maxMs).toBe(15_000);
   });
 
+  test("window memorySummary is the latest run's whole-stash snapshot, not the sum across runs", () => {
+    const olderStart = new Date(Date.now() - 120_000).toISOString();
+    const olderEnd = new Date(Date.now() - 110_000).toISOString();
+    const newerStart = new Date(Date.now() - 60_000).toISOString();
+    const newerEnd = new Date(Date.now() - 50_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      for (const [id, start, end, eligible, derived] of [
+        ["run-old", olderStart, olderEnd, 100, 50],
+        ["run-new", newerStart, newerEnd, 120, 60],
+      ] as const) {
+        recordImproveRun(db, {
+          id,
+          startedAt: start,
+          completedAt: end,
+          stashDir: "/tmp/stash",
+          dryRun: false,
+          profile: null,
+          scopeMode: "all",
+          scopeValue: null,
+          guidance: null,
+          ok: true,
+          result: fixtureResult({
+            schemaVersion: 1,
+            ok: true,
+            scope: { mode: "all" },
+            dryRun: false,
+            memorySummary: { eligible, derived },
+            // profileFilteredRefs is also a per-run snapshot — each run lists the
+            // (stable) filtered refs; the window value must be the latest, not summed.
+            profileFilteredRefs: Array.from({ length: eligible === 120 ? 7 : 5 }, (_, i) => ({
+              ref: `script:s${i}`,
+              reason: "profile_filtered_all_passes",
+            })),
+            plannedRefs: [{ ref: "memory:m" }],
+            actions: [{ ref: "memory:m", mode: "distill", result: { outcome: "queued" } }],
+          }),
+        });
+      }
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d" });
+    // Latest run's snapshot (120/60) — NOT the summed 220/110 that inflated the
+    // "915,258 of 1,226,025 eligible" KPI.
+    expect(result.improve.memorySummary.eligible).toBe(120);
+    expect(result.improve.memorySummary.derived).toBe(60);
+    // profileFilteredRefs = latest run's count (7), NOT 7+5=12.
+    expect(result.improve.profileFilteredRefs).toBe(7);
+  });
+
   test("improve run is attributed to its scheduled akm-improve task via the ±5min task_history join", () => {
     const taskStart = new Date(Date.now() - 60_000).toISOString();
     const runStart = new Date(Date.now() - 59_000).toISOString(); // 1s after the task fired

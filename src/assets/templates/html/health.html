@@ -44,7 +44,8 @@
       gap: 12px;
       flex-wrap: wrap;
     }
-    header .logo { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; flex-shrink: 0; }
+    header .logo { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; flex-shrink: 0; display: flex; flex-direction: column; line-height: 1.1; }
+    header .logo-version { font-size: 10px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
     header .meta { color: var(--muted); font-size: 13px; min-width: 0; }
     header .meta .title { font-weight: 600; color: var(--text); }
     header .badges { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -255,7 +256,7 @@
 <body>
 
 <header>
-  <div class="logo">AKM</div>
+  <div class="logo">AKM<span class="logo-version">v%%AKM_VERSION%%</span></div>
   <div class="meta">
     <div class="title">Improve Health Report</div>
     <div>Window: %%WINDOW%% &nbsp;·&nbsp; %%SINCE_HUMAN%% &nbsp;·&nbsp; %%RUN_COUNT%% runs</div>
@@ -349,8 +350,8 @@
       </div>
 
       <div class="chart-panel">
-        <h3>Consolidation Output (promoted / merged / deleted)</h3>
-        <div id="chartConsOutput" class="ec tall" role="img" aria-label="Bar chart of consolidation output per run: promoted, merged, and deleted counts"></div>
+        <h3>Consolidation Output (promoted line · merged / deleted bars)</h3>
+        <div id="chartConsOutput" class="ec tall" role="img" aria-label="Consolidation output per run: promoted as a line on the right axis, merged and deleted as bars on the left axis"></div>
         <div class="empty-overlay" id="emptyConsOutput">No runs in the selected slice.</div>
       </div>
 
@@ -416,7 +417,7 @@
 </main>
 
 <footer>
-  <span>AKM Health Report &nbsp;·&nbsp; Window: %%WINDOW%% &nbsp;·&nbsp; %%REPORT_TITLE%%</span>
+  <span>AKM v%%AKM_VERSION%% &nbsp;·&nbsp; Window: %%WINDOW%% &nbsp;·&nbsp; %%REPORT_TITLE%%</span>
   <span>Generated %%GENERATED_AT%%</span>
 </footer>
 
@@ -588,11 +589,17 @@ mkChart('chartConsOutput', {
   grid: denseGrid,
   dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
-  yAxis: { type: 'value', ...baseAxis },
+  // Promoted dwarfs merged/deleted, so it gets its own right-hand axis and is
+  // drawn as a line; merged/deleted stay as bars on the left axis where their
+  // smaller magnitudes remain readable.
+  yAxis: [
+    { type: 'value', name: 'merged / deleted', nameTextStyle: { color: C.muted, fontSize: 10 }, ...baseAxis },
+    { type: 'value', name: 'promoted', nameTextStyle: { color: C.muted, fontSize: 10 }, position: 'right', ...baseAxis, splitLine: { show: false } },
+  ],
   series: [
-    { name: 'Promoted', type: 'bar', itemStyle: { color: 'rgba(88,166,255,0.75)' }, data: rs.map(r => r.promoted) },
-    { name: 'Merged',   type: 'bar', itemStyle: { color: 'rgba(63,185,80,0.75)' },  data: rs.map(r => r.merged) },
-    { name: 'Deleted',  type: 'bar', itemStyle: { color: 'rgba(248,81,73,0.75)' },  data: rs.map(r => r.deleted) },
+    { name: 'Promoted', type: 'line', yAxisIndex: 1, showSymbol: false, smooth: true, lineStyle: { color: C.accent, width: 1.8 }, itemStyle: { color: C.accent }, data: rs.map(r => r.promoted) },
+    { name: 'Merged',   type: 'bar', yAxisIndex: 0, itemStyle: { color: 'rgba(63,185,80,0.75)' }, data: rs.map(r => r.merged) },
+    { name: 'Deleted',  type: 'bar', yAxisIndex: 0, itemStyle: { color: 'rgba(248,81,73,0.75)' }, data: rs.map(r => r.deleted) },
   ],
 });
 

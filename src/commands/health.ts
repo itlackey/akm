@@ -1002,7 +1002,10 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
  */
 function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetrics): void {
   dst.plannedRefs += src.plannedRefs;
-  dst.profileFilteredRefs += src.profileFilteredRefs;
+  // profileFilteredRefs is the count of refs the planner drops up-front for the
+  // active profile — recomputed against the (stable) stash every run, so it is a
+  // snapshot, NOT a per-run increment. Summing it re-counts the same refs each
+  // run (the ~2.4M bug). Set from the most recent run in summarizeImproveRuns.
   dst.actions.reflect.ok += src.actions.reflect.ok;
   dst.actions.reflect.failed += src.actions.reflect.failed;
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
@@ -1035,8 +1038,10 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.coverageGapCount += src.coverageGapCount;
   dst.evalCasesWritten += src.evalCasesWritten;
   dst.deadUrlCount += src.deadUrlCount;
-  dst.memorySummary.eligible += src.memorySummary.eligible;
-  dst.memorySummary.derived += src.memorySummary.derived;
+  // NOTE: memorySummary (derived/eligible) is a WHOLE-STASH snapshot recorded on
+  // every run, NOT a per-run increment — summing it across the window inflates
+  // it ~N× (the 1.2M-eligible bug). It is set from the most recent run in
+  // summarizeImproveRuns instead, so it is intentionally not merged here.
   dst.memoryCleanup.pruneCandidates += src.memoryCleanup.pruneCandidates;
   dst.memoryCleanup.contradictionCandidates += src.memoryCleanup.contradictionCandidates;
   dst.memoryCleanup.beliefStateTransitions += src.memoryCleanup.beliefStateTransitions;
@@ -1108,6 +1113,12 @@ function summarizeImproveRuns(
     graphExtraction: [] as number[],
   };
 
+  // memorySummary is a whole-stash snapshot per run, so the window value is the
+  // MOST RECENT run's snapshot (current state) — not a sum across runs.
+  let latestStartMs = Number.NEGATIVE_INFINITY;
+  let latestMemorySummary: ImproveHealthMetrics["memorySummary"] | undefined;
+  let latestProfileFilteredRefs = 0;
+
   for (const row of rows) {
     let result: Record<string, unknown>;
     try {
@@ -1117,6 +1128,13 @@ function summarizeImproveRuns(
     }
     const perRow = projectRunMetrics(result);
     mergeImproveMetrics(accum, perRow);
+
+    const startMs = new Date(row.started_at).getTime();
+    if (Number.isFinite(startMs) && startMs >= latestStartMs) {
+      latestStartMs = startMs;
+      latestMemorySummary = perRow.memorySummary;
+      latestProfileFilteredRefs = perRow.profileFilteredRefs;
+    }
 
     // Collect per-phase durations directly off the envelope. consolidation's
     // duration lives inside the sub-object; memoryInference and graphExtraction
@@ -1132,6 +1150,8 @@ function summarizeImproveRuns(
   }
 
   finalizeImproveMetrics(accum);
+  if (latestMemorySummary) accum.memorySummary = latestMemorySummary;
+  accum.profileFilteredRefs = latestProfileFilteredRefs;
   accum.wallTime.byPhase = {
     consolidation: summarizePhaseDurations(phaseDurations.consolidation),
     memoryInference: summarizePhaseDurations(phaseDurations.memoryInference),

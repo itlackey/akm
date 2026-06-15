@@ -110,18 +110,29 @@ describe("buildHealthHtmlReplacements", () => {
     const templateTokens = new Set(fs.readFileSync(resolveTemplatePath("health"), "utf8").match(/%%[A-Z_]+%%/g) ?? []);
     const replacementTokens = new Set(Object.keys(replacements));
 
-    // 18 tokens: the legacy ADVISORY_CARDS_HTML + WATCH_ITEMS_HTML pair was
+    // 19 tokens: the legacy ADVISORY_CARDS_HTML + WATCH_ITEMS_HTML pair was
     // replaced by the merged ACTION_ITEMS_HTML; the report overhaul added
-    // LLM_BY_STAGE_JSON (per-stage chart) and SLICE_OPTIONS_HTML (window-derived
-    // filter slices).
-    expect(replacementTokens.size).toBe(18);
+    // LLM_BY_STAGE_JSON (per-stage chart), SLICE_OPTIONS_HTML (window-derived
+    // filter slices), and AKM_VERSION (header + footer version stamp).
+    expect(replacementTokens.size).toBe(19);
     expect([...replacementTokens].sort()).toEqual([...templateTokens].sort());
     expect(replacementTokens.has("%%OVERALL_STATUS%%")).toBe(false);
     expect(replacementTokens.has("%%ACTION_ITEMS_HTML%%")).toBe(true);
     expect(replacementTokens.has("%%LLM_BY_STAGE_JSON%%")).toBe(true);
     expect(replacementTokens.has("%%SLICE_OPTIONS_HTML%%")).toBe(true);
+    expect(replacementTokens.has("%%AKM_VERSION%%")).toBe(true);
     expect(replacementTokens.has("%%ADVISORY_CARDS_HTML%%")).toBe(false);
     expect(replacementTokens.has("%%WATCH_ITEMS_HTML%%")).toBe(false);
+  });
+
+  test("akm version is stamped and the hidden distill reason is excluded from the chart", () => {
+    seedImproveRun("run-html-ver");
+    const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
+    // Version token is non-empty (semver-ish), used in header + footer.
+    expect(replacements["%%AKM_VERSION%%"]).toMatch(/\d+\.\d+/);
+    // The steady-state "no new signal since last proposal" reason is filtered
+    // out of the distill skip-reason chart categories.
+    expect(replacements["%%DISTILL_REASONS_JSON%%"]).not.toContain("no new signal since last proposal");
   });
 
   test("slice options are derived from the report window (not hard-coded days)", () => {
