@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Improve-tuning work streams (all **default-off / parity-preserving** — no behavior
+change until explicitly enabled).
+
+### Added
+
+- **#617 — deterministic near-duplicate memory dedup** (`processes.consolidate.dedup`,
+  default off). A cheap no-LLM pre-pass in front of consolidation collapses obvious
+  duplicates — `.derived`+origin pairs and content twins (normalized content-hash
+  equality, or embedding cosine ≥ `cosineThreshold`, default 0.97). Each dropped
+  variant is archived + backed up before deletion; hot memories are never
+  collapsed; distinct-but-related memories fall through to the LLM.
+- **#581 — judged-state cache for consolidation** (`processes.consolidate.judgedCache`,
+  default off). New state.db table (`consolidation_judged`) records each memory's
+  content hash + outcome when the LLM judges it; subsequent runs skip
+  judged-unchanged memories, converting coverage from O(time-window) to
+  O(changed/new) so a run can sweep the full corpus. Fails open; failed chunks
+  and dry-runs never poison the cache. (state.db migration `007`.)
+- **#612 — auto-accept gate calibration** (`improve.calibration`, auto-tune default
+  off). Joins predicted gate confidence to realized accept/reject outcomes into a
+  reliability table + calibration gap, surfaced in `akm health` (+ summary rows in
+  the HTML report). Opt-in bounded threshold auto-tune nudges the accept threshold
+  within a configured band toward a target accept rate, logged via a
+  `calibration_autotune` event. (Replay-prioritization from prediction error is
+  deferred — it depends on the #610 replay budget, a 0.10 item.)
+
+### Fixed
+
+- **#614 — symmetric valence weighting** (`profiles.improve.*.symmetricValence`,
+  default off). The eligibility sort weighted feedback negative-only; when enabled
+  it uses a symmetric `|valence|` magnitude so strong positive and strong negative
+  feedback both drive attention (utility stays the dominant factor), routing
+  high-negative → fix and high-positive → reinforce lanes.
+
 ## [0.9.0-beta.11] - 2026-06-15
 
 ### Added
