@@ -103,23 +103,55 @@ function healthResult(): AkmHealthResult {
 }
 
 describe("buildHealthHtmlReplacements", () => {
-  test("returns exactly the 17 tokens the health template consumes (no OVERALL_STATUS)", () => {
+  test("the replacement token set exactly matches the health template tokens", () => {
     seedImproveRun();
     const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
 
     const templateTokens = new Set(fs.readFileSync(resolveTemplatePath("health"), "utf8").match(/%%[A-Z_]+%%/g) ?? []);
     const replacementTokens = new Set(Object.keys(replacements));
 
-    // Token COUNT is unchanged at 17, but the SET evolved: the legacy
-    // ADVISORY_CARDS_HTML + WATCH_ITEMS_HTML pair was replaced by the merged
-    // ACTION_ITEMS_HTML plus the new LLM_BY_STAGE_JSON chart payload.
-    expect(replacementTokens.size).toBe(17);
+    // 18 tokens: the legacy ADVISORY_CARDS_HTML + WATCH_ITEMS_HTML pair was
+    // replaced by the merged ACTION_ITEMS_HTML; the report overhaul added
+    // LLM_BY_STAGE_JSON (per-stage chart) and SLICE_OPTIONS_HTML (window-derived
+    // filter slices).
+    expect(replacementTokens.size).toBe(18);
     expect([...replacementTokens].sort()).toEqual([...templateTokens].sort());
     expect(replacementTokens.has("%%OVERALL_STATUS%%")).toBe(false);
     expect(replacementTokens.has("%%ACTION_ITEMS_HTML%%")).toBe(true);
     expect(replacementTokens.has("%%LLM_BY_STAGE_JSON%%")).toBe(true);
+    expect(replacementTokens.has("%%SLICE_OPTIONS_HTML%%")).toBe(true);
     expect(replacementTokens.has("%%ADVISORY_CARDS_HTML%%")).toBe(false);
     expect(replacementTokens.has("%%WATCH_ITEMS_HTML%%")).toBe(false);
+  });
+
+  test("slice options are derived from the report window (not hard-coded days)", () => {
+    seedImproveRun();
+    // 24h window → only sub-day slices (6h/12h), no day-based options, default All.
+    const opts24 = buildHealthHtmlReplacements(healthResult(), buildOpts({ window: "24h" }));
+    const slices24 = opts24["%%SLICE_OPTIONS_HTML%%"];
+    expect(slices24).toContain('value="all" selected>All (24h)');
+    expect(slices24).toContain("Last 12h");
+    expect(slices24).toContain("Last 6h");
+    expect(slices24).not.toContain("Last 1d");
+    expect(slices24).not.toContain("21d");
+
+    // 7d window → day-based sub-windows, capped below the window.
+    const opts7 = buildHealthHtmlReplacements(healthResult(), buildOpts({ window: "7d" }));
+    const slices7 = opts7["%%SLICE_OPTIONS_HTML%%"];
+    expect(slices7).toContain("All (7d)");
+    expect(slices7).toContain("Last 3d");
+    expect(slices7).toContain("Last 1d");
+    expect(slices7).not.toContain("Last 7d"); // not strictly shorter than the window
+    expect(slices7).not.toContain("Last 14d");
+  });
+
+  test("run taskId from the health summary flows into the report payload (not scope)", () => {
+    seedImproveRun("run-html-task");
+    const result = healthResult();
+    // Stamp a taskId on the summary as akmHealth's task_history join would.
+    if (result.runs?.[0]) (result.runs[0] as { taskId: string }).taskId = "akm-improve-frequent";
+    const replacements = buildHealthHtmlReplacements(result, buildOpts());
+    expect(replacements["%%RUNS_JS_CONST%%"]).toContain('"taskId":"akm-improve-frequent"');
   });
 
   test("rendering the health template leaves no unreplaced tokens", () => {
@@ -267,11 +299,13 @@ describe("buildHealthHtmlReplacements", () => {
     expect(html).not.toMatch(/%%[A-Z_]+%%/);
   });
 
-  test("taskId is derived from the run scope and emitted in the RUNS payload", () => {
+  test("taskId falls back to 'manual' when no scheduled improve task matches the run", () => {
     seedImproveRun("run-html-task");
     const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
-    // Seeded run uses scope { mode: "all" } with no value → taskId falls back to mode.
-    expect(replacements["%%RUNS_JS_CONST%%"]).toContain('"taskId":"all"');
+    // The seeded run has no enclosing akm-improve task_history row, so the
+    // task_history join yields "manual" — NOT the run's scope.mode ("all").
+    expect(replacements["%%RUNS_JS_CONST%%"]).toContain('"taskId":"manual"');
+    expect(replacements["%%RUNS_JS_CONST%%"]).not.toContain('"taskId":"all"');
   });
 
   test("per-stage LLM token aggregate flows into the LLM_BY_STAGE_JSON token", () => {

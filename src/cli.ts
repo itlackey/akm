@@ -375,7 +375,11 @@ const healthCommand = defineCommand({
       // window-compare read for the trend deltas (defaults to 24h,
       // overridable via --compare).
       if (mode.format === "html") {
-        const compare = args.compare ?? windowCompareRaw ?? "24h";
+        // Default the compare window to the report's own `--since` window so the
+        // trend deltas are like-for-like (e.g. last 7d vs the prior 7d). A fixed
+        // 24h default made a `--since 7d` report compare its 7-day totals against
+        // a 24-hour prior window, producing meaningless deltas.
+        const compare = args.compare ?? windowCompareRaw ?? args.since ?? "24h";
         const result = akmHealth({ since: args.since, groupBy: "run" });
         resultStatus = result.status;
         const deltas = akmHealth({ since: args.since, windowCompare: compare }).deltas;

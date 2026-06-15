@@ -303,11 +303,7 @@
   <div class="filter-bar">
     <label for="rangeSelect">Slice</label>
     <select id="rangeSelect">
-      <option value="1">1d</option>
-      <option value="3">3d</option>
-      <option value="7">7d</option>
-      <option value="14">14d</option>
-      <option value="21" selected>21d</option>
+      %%SLICE_OPTIONS_HTML%%
     </select>
 
     <label for="taskFilter">Task</label>
@@ -458,11 +454,11 @@ function latestRunTime(rs) {
 }
 
 function filteredRuns() {
-  const days = Number(document.getElementById('rangeSelect')?.value || 21);
+  const slice = document.getElementById('rangeSelect')?.value || 'all';
   const task = document.getElementById('taskFilter')?.value || 'all';
   const status = document.getElementById('statusFilter')?.value || 'all';
-  const endMs = latestRunTime(RUNS);
-  const startMs = endMs - days * 24 * 60 * 60 * 1000;
+  // slice value is 'all' (full window) or a cutoff in ms relative to the newest run.
+  const startMs = slice === 'all' ? -Infinity : latestRunTime(RUNS) - Number(slice);
   return RUNS.filter(r => {
     const ts = Date.parse(r.completedAt || r.startedAt || 0);
     if (Number.isFinite(ts) && ts < startMs) return false;

@@ -445,6 +445,14 @@ export interface ImproveRunSummary {
   wallTimeMs: number;
   ok: boolean;
   scope: { mode: string; value?: string };
+  /**
+   * The scheduled task that launched this improve run (e.g.
+   * `akm-improve-frequent`), resolved by matching the run's start time to a
+   * `task_history` row with a `task_id` beginning `akm-improve` (±5 min).
+   * `"manual"` when no scheduled task matches (a hand-run `akm improve`).
+   * Drives the health report's Task column + task filter.
+   */
+  taskId: string;
   actions: ImproveHealthMetrics["actions"];
   memorySummary: ImproveHealthMetrics["memorySummary"];
   memoryCleanup: ImproveHealthMetrics["memoryCleanup"];
@@ -1160,7 +1168,7 @@ function summarizePhaseDurations(samples: number[]): {
  * Project an improve_runs row + wall-time lookup into a single ImproveRunSummary.
  * Used by `akm health --detail per-run`.
  */
-function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number): ImproveRunSummary {
+function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number, taskId: string): ImproveRunSummary {
   let result: Record<string, unknown> = {};
   try {
     result = JSON.parse(row.result_json) as Record<string, unknown>;
@@ -1185,6 +1193,7 @@ function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number): Impro
       mode: row.scope_mode,
       ...(row.scope_value ? { value: row.scope_value } : {}),
     },
+    taskId,
     actions: perRow.actions,
     memorySummary: perRow.memorySummary,
     memoryCleanup: perRow.memoryCleanup,
@@ -1257,9 +1266,66 @@ function findContainingTaskInterval(timestampMs: number, intervals: TaskRunInter
   return undefined;
 }
 
+/** A scheduled-task occurrence used to attribute an improve run to its task. */
+interface ImproveTaskRun {
+  taskId: string;
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * Load `task_history` rows whose `task_id` begins `akm-improve` (the scheduled
+ * improve tasks: `akm-improve-frequent`, `akm-improve-proactive-weekly`, …) in
+ * the window, widened ±5 min so a task that fired just before the window opened
+ * still matches a run inside it. Used to attribute each improve run to the task
+ * that launched it.
+ */
+function loadImproveTaskRuns(db: Database, since: string, until?: string): ImproveTaskRun[] {
+  const sinceMs = new Date(since).getTime();
+  const untilMs = until ? new Date(until).getTime() : undefined;
+  const widenedSince = new Date(sinceMs - 5 * 60 * 1000).toISOString();
+  const widenedUntil = untilMs !== undefined ? new Date(untilMs + 5 * 60 * 1000).toISOString() : undefined;
+  const runs: ImproveTaskRun[] = [];
+  for (const row of queryTaskHistory(db, { since: widenedSince, until: widenedUntil })) {
+    if (!row.task_id.startsWith("akm-improve")) continue;
+    const startMs = new Date(row.started_at).getTime();
+    if (!Number.isFinite(startMs)) continue;
+    const endIso = row.completed_at ?? row.failed_at;
+    const endMs = endIso ? new Date(endIso).getTime() : Number.NaN;
+    runs.push({ taskId: row.task_id, startMs, endMs });
+  }
+  return runs;
+}
+
+/**
+ * Attribute an improve run to the scheduled task that launched it by matching
+ * start times within ±5 min, scored by start delta (plus end delta when both
+ * ends are known). Port of the health-report skill's `match_task_id`. Returns
+ * `"manual"` when no scheduled improve task matches.
+ */
+function matchImproveTaskId(startedAt: string, completedAt: string | null, taskRuns: ImproveTaskRun[]): string {
+  const startMs = new Date(startedAt).getTime();
+  if (!Number.isFinite(startMs)) return "manual";
+  const endMs = completedAt ? new Date(completedAt).getTime() : Number.NaN;
+  let best: string | undefined;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const task of taskRuns) {
+    const startDelta = Math.abs(task.startMs - startMs);
+    if (startDelta > 5 * 60 * 1000) continue;
+    let score = startDelta;
+    if (Number.isFinite(endMs) && Number.isFinite(task.endMs)) score += Math.abs(task.endMs - endMs);
+    if (score < bestScore) {
+      bestScore = score;
+      best = task.taskId;
+    }
+  }
+  return best ?? "manual";
+}
+
 function buildPerRunSummaries(db: Database, since: string, until?: string): ImproveRunSummary[] {
   const rows = queryImproveRuns(db, since, until);
   const taskIntervals = loadTaskIntervals(db, since, until);
+  const improveTaskRuns = loadImproveTaskRuns(db, since, until);
   const summaries: ImproveRunSummary[] = [];
   for (const row of rows) {
     const startMs = new Date(row.started_at).getTime();
@@ -1278,7 +1344,8 @@ function buildPerRunSummaries(db: Database, since: string, until?: string): Impr
       const interval = Number.isFinite(startMs) ? findContainingTaskInterval(startMs, taskIntervals) : undefined;
       wallTimeMs = interval?.durationMs ?? 0;
     }
-    summaries.push(projectImproveRunSummary(row, wallTimeMs));
+    const taskId = matchImproveTaskId(row.started_at, row.completed_at, improveTaskRuns);
+    summaries.push(projectImproveRunSummary(row, wallTimeMs, taskId));
   }
   return summaries;
 }

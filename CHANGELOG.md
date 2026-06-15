@@ -34,6 +34,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Health report accuracy** (follow-ups to the overhaul): the per-run **Task**
+  column/filter now show the real scheduled task (`akm-improve-frequent`, …) via
+  a ±5min `task_history` join instead of the run's scope (which is `all` for
+  every scheduled run); the time-**slice** filter options are now derived from
+  the report's `--since` window (e.g. All/3d/1d/12h/6h for a 7d report) and
+  default to "All" — replacing the hard-coded 1d–21d list that didn't match the
+  window; and the trend **deltas** now default their compare window to `--since`
+  (like-for-like, e.g. last 7d vs prior 7d) instead of a fixed 24h, which had
+  produced nonsensical period-over-period percentages on multi-day reports.
+
 - **#598** — process-level tuning fields (`consolidate.incrementalSince`,
   `minPoolSize`, `neighborsPerChanged`, `extract.minContentChars`, per-process
   `enabled` flags) now survive an `akm config` rewrite. They are first-class

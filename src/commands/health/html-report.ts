@@ -162,7 +162,7 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
   const geMs = ge.durationMs || 0;
   return {
     id: r.id,
-    taskId: r.scope.value ?? r.scope.mode ?? "manual",
+    taskId: r.taskId ?? "manual",
     startedAt: r.startedAt,
     completedAt: r.completedAt,
     wallTimeMs: wall,
@@ -314,6 +314,44 @@ function readSemSearch(advisories: HealthCheckResult[]): SemSearchStatus {
 }
 
 // ── ECharts delivery ─────────────────────────────────────────────────────────
+
+/** Parse an akm window string (`24h`, `7d`, `30m`, `2w`) to milliseconds; 0 if unparseable. */
+function windowToMs(window: string): number {
+  const m = /^(\d+)\s*([mhdw])$/i.exec(window.trim());
+  if (!m) return 0;
+  const n = Number(m[1]);
+  const mult =
+    { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2].toLowerCase() as "m" | "h" | "d" | "w"] ?? 0;
+  return n * mult;
+}
+
+/**
+ * Build the time-slice `<option>`s for the report's filter bar, DERIVED from the
+ * actual report window so the choices always make sense (the old hard-coded
+ * 1d–21d list was useless on a 24h or 7d report). "All" is the default; the
+ * sub-window options carry their cutoff in milliseconds (consumed by
+ * filteredRuns), largest first, only those strictly shorter than the window.
+ */
+function buildSliceOptions(window: string): string {
+  const windowMs = windowToMs(window);
+  const HOUR = 3_600_000;
+  const DAY = 86_400_000;
+  const candidates: Array<[number, string]> = [
+    [6 * HOUR, "6h"],
+    [12 * HOUR, "12h"],
+    [DAY, "1d"],
+    [3 * DAY, "3d"],
+    [7 * DAY, "7d"],
+    [14 * DAY, "14d"],
+  ];
+  const subs = candidates
+    .filter(([ms]) => windowMs > 0 && ms < windowMs)
+    .sort((a, b) => b[0] - a[0])
+    .slice(0, 4);
+  const opts = [`<option value="all" selected>All (${esc(window)})</option>`];
+  for (const [ms, label] of subs) opts.push(`<option value="${ms}">Last ${label}</option>`);
+  return opts.join("\n      ");
+}
 
 function buildEchartsTag(opts: HealthHtmlReportOptions): string {
   const mode = opts.echarts ?? (process.env.AKM_ECHARTS === "cdn" ? "cdn" : "inline");
@@ -806,6 +844,7 @@ export function buildHealthHtmlReplacements(
     "%%KPI_CARDS_HTML%%": kpiCards,
     "%%RUNS_JS_CONST%%": runsJsConst,
     "%%DISTILL_REASONS_JSON%%": JSON.stringify(distillReasons),
+    "%%SLICE_OPTIONS_HTML%%": buildSliceOptions(opts.window),
     "%%LLM_BY_STAGE_JSON%%": JSON.stringify(llm.byStage ?? {}),
     "%%SUMMARY_ROWS_HTML%%": summaryRowsHtml,
     "%%ACTION_ITEMS_HTML%%": actionItemsHtml,

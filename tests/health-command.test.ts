@@ -381,6 +381,55 @@ describe("akmHealth", () => {
     expect(result.improve.wallTime.maxMs).toBe(15_000);
   });
 
+  test("improve run is attributed to its scheduled akm-improve task via the ±5min task_history join", () => {
+    const taskStart = new Date(Date.now() - 60_000).toISOString();
+    const runStart = new Date(Date.now() - 59_000).toISOString(); // 1s after the task fired
+    const runEnd = new Date(Date.now() - 40_000).toISOString();
+    const taskEnd = new Date(Date.now() - 39_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "akm-improve-frequent",
+        status: "completed",
+        started_at: taskStart,
+        completed_at: taskEnd,
+        failed_at: null,
+        log_path: null,
+        target_kind: "improve",
+        target_ref: null,
+        metadata_json: "{}",
+      });
+      recordImproveRun(db, {
+        id: "run-sched",
+        startedAt: runStart,
+        completedAt: runEnd,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all", // scope is "all" — taskId must NOT come from scope
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [{ ref: "memory:m" }],
+          actions: [{ ref: "memory:m", mode: "distill", result: { outcome: "queued" } }],
+        }),
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d", groupBy: "run" });
+    const run = result.runs?.find((r) => r.id === "run-sched");
+    expect(run).toBeDefined();
+    expect(run?.taskId).toBe("akm-improve-frequent");
+  });
+
   test("legacy row with started_at==completed_at falls back to containing task_history interval duration (#499)", () => {
     const taskStart = new Date(Date.now() - 60_000).toISOString();
     const taskEnd = new Date(Date.now() - 38_000).toISOString(); // 22s interval
