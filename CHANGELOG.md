@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed (migration required)
+
+- **WS-1 salience vector (#618) — default-on ranking change.** The eligibility sort
+  for all `akm improve` runs (whole-stash, type, and ref scope) has changed from
+  `combinedEligibilityScore = utility·0.7 + negativeOnlyRatio·0.3` to
+  `rankScore = (0.3·encodingSalience + 0.7·retrievalSalience) × sizePenalty`
+  (feedback valence and utility EMA dropped from ordering until WS-2 re-introduces
+  outcome salience). Assets are now ranked by retrieval frequency × recency × type
+  importance rather than by feedback magnitude. A forgetting-safety rank-change report
+  (`improve_salience_rank_change` event) is emitted on the first run to flag any
+  assets that were in the old top-200 but fall below position 500 in the new ranking.
+  The Part-V measurement protocol (T0 baseline via `scripts/akm-eval` + health report,
+  throughput/quality gate) is deferred to the WS-2 milestone, when outcome salience
+  re-joins the projection and re-tuning is triggered.
+
 ## [0.9.0-beta.12] - 2026-06-15
 
 Improve-tuning work streams (all **default-off / parity-preserving** — no behavior

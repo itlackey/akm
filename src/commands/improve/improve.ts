@@ -92,7 +92,15 @@ import { detectAndWriteContradictions } from "./memory/memory-contradiction-dete
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
 import { type AkmReflectResult, akmReflect } from "./reflect";
-import { computeSalience, getLastUseMsByRef, upsertAssetSalience } from "./salience";
+import {
+  buildRankChangeReport,
+  computeSalience,
+  getLastUseMsByRef,
+  getRankScoresByRefs,
+  recordNoOp,
+  resetConsecutiveNoOps,
+  upsertAssetSalience,
+} from "./salience";
 
 // #607 Lock Decomposition: fine-grained per-process locks replace the single
 // `improve.lock`. Three independent locks allow concurrent improve runs when
@@ -2668,10 +2676,14 @@ async function runImprovePreparationStage(args: {
         "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
       );
     }
-    retrievalCounts = getRetrievalCounts(
-      dbForRetrieval,
-      noFeedbackCandidates.map((r) => r.ref),
-    );
+    // Fetch retrieval counts for ALL candidates — not only the zero-feedback pool.
+    // Previously only noFeedbackCandidates were looked up, so feedback-bearing refs
+    // had retrievalFreq=0 in computeSalience(), collapsing their retrievalSalience
+    // to 0 regardless of actual use. Two assets of the same type — one
+    // heavily-retrieved, one never-touched — would receive identical rankScores.
+    // Fix (WS-1 blocker 3): union the feedback pool into the lookup.
+    const allCandidateRefs = [...new Set([...signalFiltered, ...noFeedbackCandidates].map((r) => r.ref))];
+    retrievalCounts = getRetrievalCounts(dbForRetrieval, allCandidateRefs);
     lastUseMsForProactive = getLastUseMsByRef(
       dbForRetrieval,
       noFeedbackCandidates.map((r) => r.ref),
@@ -2881,10 +2893,8 @@ async function runImprovePreparationStage(args: {
   }
 
   // Compute the salience vector for every ref in the merged set.
-  // Retrieve counts are from the noFeedbackCandidates block above; for signal-delta
-  // refs that weren't in the noFeedbackCandidates pool, retrievalCounts may be 0 —
-  // a conservative fallback (the feedback signal already selected them, so retrieval
-  // is not the gate for those refs).
+  // retrievalCounts now covers the full candidate set (feedback-bearing + zero-feedback)
+  // so feedback refs get their genuine retrieval frequency, not a 0-floor fallback.
   const salienceMap = new Map<string, ReturnType<typeof computeSalience>>();
   const nowForSalience = Date.now();
   for (const r of mergedRefs) {
@@ -2912,9 +2922,68 @@ async function runImprovePreparationStage(args: {
 
   // Persist salience vectors to state.db (best-effort, non-blocking).
   // The canonical store enables WS-3 homeostatic demotion and WS-2 outcome reads.
+  //
+  // Forgetting-safety report (plan §WS-1 step 7):
+  // BEFORE persisting the new rankScores, read any existing scores from state.db
+  // and emit a rank-change distribution report. This detects the "silent catastrophic
+  // forgetting" scenario — assets that were top-200 under the old formula but fall
+  // below position 500 under the new WS-1 formula. The report is emitted as a warn
+  // log and an `improve_salience_rank_change` event on the first run where pre-existing
+  // rows exist (subsequent runs are steady-state updates, not formula cutover).
+  //
+  // Measurement-protocol deferral (plan §269, Part-V):
+  // The Part-V T0 baseline (scripts/akm-eval + health report) and the throughput/
+  // quality gate are deferred pending owner sign-off. Risk: the formula change
+  // (from combinedEligibilityScore utility·0.7+negativeOnlyRatio·0.3 to rankScore
+  // w_e=0.3/w_r=0.7 with utility and feedback valence dropped from ordering) ships
+  // default-on. The forgetting-safety report below partially mitigates the
+  // ordering-quality regression risk by flagging dramatic rank drops. Full
+  // measurement requires a before/after `akm health` report comparing throughput
+  // and quality metrics across two runs. Owner-acknowledged deferral: WS-2 landing
+  // will re-introduce outcome salience and trigger the full re-tuning pass at that
+  // time. See WS-2-HOOK in salience.ts.
   try {
     const stateDb = openStateDatabase();
     try {
+      // Step 7: build rank-change report from existing rows BEFORE overwriting them.
+      const refs = [...salienceMap.keys()];
+      const existingScores = getRankScoresByRefs(stateDb, refs);
+      if (existingScores.size > 0) {
+        // Compute 1-indexed rank positions for old scores (existing in DB).
+        const oldRankEntries = [...existingScores.entries()].sort(([, a], [, b]) => b - a);
+        const oldRanks = new Map<string, number>(oldRankEntries.map(([ref], i) => [ref, i + 1]));
+        // Compute 1-indexed rank positions for new scores (from salienceMap).
+        const newRankEntries = [...salienceMap.entries()]
+          .filter(([ref]) => existingScores.has(ref))
+          .sort(([, a], [, b]) => b.rankScore - a.rankScore);
+        const newRanks = new Map<string, number>(newRankEntries.map(([ref], i) => [ref, i + 1]));
+        const report = buildRankChangeReport(oldRanks, newRanks);
+        if (report.forgettingCandidates.length > 0) {
+          warn(
+            `[improve/salience] WS-1 rank-change report: ${report.forgettingCandidates.length} asset(s) fell from top-200 to below position 500. ` +
+              `Top drops: ${report.forgettingCandidates
+                .slice(0, 5)
+                .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
+                .join(", ")}`,
+          );
+        }
+        appendEvent(
+          {
+            eventType: "improve_salience_rank_change",
+            ref: undefined,
+            metadata: {
+              totalChanged: report.allChanges.length,
+              forgettingCandidates: report.forgettingCandidates.length,
+              topDrops: report.forgettingCandidates.slice(0, 10).map((e) => ({
+                ref: e.ref,
+                oldRank: e.oldRank,
+                newRank: e.newRank,
+              })),
+            },
+          },
+          eventsCtx,
+        );
+      }
       for (const [ref, vector] of salienceMap) {
         upsertAssetSalience(stateDb, ref, vector, nowForSalience);
       }
@@ -3427,6 +3496,25 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
             eventsCtx,
           );
 
+          // Plasticity counter (plan §WS-1 step 8): record no-ops so WS-3
+          // consolidation-selection can dampen repeatedly-silent assets.
+          // A no_change reflect means the LLM was invoked but found nothing to
+          // improve — the asset is stable. Track it. A successful reflect means
+          // the asset changed; reset the counter so the dampener lifts.
+          if (isNoChange && eventsCtx?.db) {
+            try {
+              recordNoOp(eventsCtx.db, planned.ref);
+            } catch {
+              // best-effort: plasticity counter failure never blocks the run
+            }
+          } else if (reflectResult.ok && eventsCtx?.db) {
+            try {
+              resetConsecutiveNoOps(eventsCtx.db, planned.ref);
+            } catch {
+              // best-effort
+            }
+          }
+
           if (reflectResult.ok) {
             const reflectGr = await runAutoAcceptGate(
               [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
@@ -3586,6 +3674,21 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
         if (parsedPlannedRef.type === "memory") {
           const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
           if (!promotedToKnowledge) memoryRefsForInference.add(planned.ref);
+        }
+        // Plasticity counter (plan §WS-1 step 8) for the distill path.
+        // quality_rejected: the LLM ran but produced output that didn't pass the
+        // quality gate — the asset is not yielding useful distill output.
+        // queued: a proposal was produced; reset the no-op counter.
+        if (eventsCtx?.db) {
+          try {
+            if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
+              recordNoOp(eventsCtx.db, planned.ref);
+            } else if (distillResult.outcome === "queued") {
+              resetConsecutiveNoOps(eventsCtx.db, planned.ref);
+            }
+          } catch {
+            // best-effort: plasticity counter failure never blocks the run
+          }
         }
         if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
           const slug = planned.ref

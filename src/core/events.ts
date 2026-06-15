@@ -95,6 +95,13 @@ export type EventType =
    * maxThreshold}`.
    */
   | "calibration_autotune"
+  /**
+   * WS-1 forgetting-safety rank-change report (plan §WS-1 step 7). Emitted once
+   * per improve run when existing rank scores are found in state.db before the
+   * new WS-1 rankScores are written. Metadata carries `{totalChanged,
+   * forgettingCandidates, topDrops}`. See `buildRankChangeReport` in salience.ts.
+   */
+  | "improve_salience_rank_change"
   | string;
 
 export interface AppendEventInput {
