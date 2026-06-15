@@ -307,6 +307,120 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
   });
 });
 
+// ── Test 4: consolidation-selection dampener (Blocker: consumer not tested) ──
+
+describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold penalises order)", () => {
+  /**
+   * Scenario:
+   *   - Two skills, `alpha-stable` and `beta-fresh`, written to the isolated stash.
+   *   - Both rows upserted into asset_salience with identical rank_score = 0.6
+   *     (ensures the comparator, not the content, drives order).
+   *   - `alpha-stable` is given consecutive_no_ops = SALIENCE_NO_OP_DAMPEN_THRESHOLD
+   *     (via direct SQL UPDATE) — it is dampened.
+   *   - `beta-fresh` keeps consecutive_no_ops = 0 — it is not dampened.
+   *   - Improve runs with proactive maintenance enabled so both refs reach mergedRefs.
+   *   - Assertions:
+   *     (a) beta-fresh is reflect'd BEFORE alpha-stable (non-dampened first).
+   *     (b) alpha-stable's persisted rank_score is UNCHANGED after the run
+   *         (the dampener is a comparator-only penalty; it never mutates state.db).
+   *
+   * Failure mode if dampener is removed from the comparator:
+   *   Both refs have equal rank_score, so the tie-break is alphabetical: `alpha-stable`
+   *   sorts BEFORE `beta-fresh`. The test inverts that expected order, so removing the
+   *   dampener from the effectiveScore comparator will make assertion (a) fail.
+   */
+  test("dampened ref is ordered after non-dampened ref with equal rankScore, and persisted rank_score is unchanged", async () => {
+    const stash = isolatedStash();
+
+    // Write two skills with identical body so salience computation yields the
+    // same rankScore for both (only the dampener can differentiate them).
+    writeSkill(stash, "alpha-stable", "Stable asset body.");
+    writeSkill(stash, "beta-fresh", "Stable asset body.");
+    await buildIndex(stash);
+
+    // Pre-seed asset_salience rows: equal rank_score, but alpha-stable is dampened.
+    const dbSetup = openStateDatabase();
+    const IDENTICAL_RANK_SCORE = 0.6;
+    try {
+      upsertAssetSalience(dbSetup, "skill:alpha-stable", {
+        encoding: 0.9,
+        outcome: 0,
+        retrieval: 0.5,
+        rankScore: IDENTICAL_RANK_SCORE,
+      });
+      upsertAssetSalience(dbSetup, "skill:beta-fresh", {
+        encoding: 0.9,
+        outcome: 0,
+        retrieval: 0.5,
+        rankScore: IDENTICAL_RANK_SCORE,
+      });
+
+      // Manually set alpha-stable to the dampen threshold.
+      dbSetup
+        .prepare(`UPDATE asset_salience SET consecutive_no_ops = ? WHERE asset_ref = ?`)
+        .run(3 /* SALIENCE_NO_OP_DAMPEN_THRESHOLD */, "skill:alpha-stable");
+    } finally {
+      dbSetup.close();
+    }
+
+    // Track reflect call order without using the comma operator.
+    const reflectOrder: string[] = [];
+    const trackingReflect = (ref: string): AkmReflectResult => {
+      reflectOrder.push(ref);
+      return noChangeReflect(ref);
+    };
+
+    await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      config: minimalConfig(),
+      ...noopIndexFns,
+      reflectFn: async ({ ref }) => trackingReflect(ref ?? ""),
+      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
+    });
+
+    // (a) beta-fresh must appear before alpha-stable in the reflect call order.
+    //
+    // If the dampener is removed from the effectiveScore comparator, alphabetical
+    // tie-break puts alpha-stable FIRST (it sorts before beta-fresh lexicographically).
+    // With the dampener, alpha-stable's effective score is halved, so beta-fresh wins.
+    const alphaIdx = reflectOrder.indexOf("skill:alpha-stable");
+    const betaIdx = reflectOrder.indexOf("skill:beta-fresh");
+    expect(alphaIdx).toBeGreaterThanOrEqual(0); // alpha-stable was processed
+    expect(betaIdx).toBeGreaterThanOrEqual(0); // beta-fresh was processed
+    expect(betaIdx).toBeLessThan(alphaIdx); // beta-fresh came first
+
+    // (b) The dampener must NOT mutate the persisted rank_score.
+    //     upsertAssetSalience is called during the run but writes the raw salience
+    //     vector, which is identical for both refs (same inputs).  The effective
+    //     score multiplier (FACTOR = 0.5) is a comparator-only penalty.
+    const dbCheck = openStateDatabase();
+    try {
+      const alphaRow = dbCheck
+        .prepare(`SELECT rank_score, consecutive_no_ops FROM asset_salience WHERE asset_ref = ?`)
+        .get("skill:alpha-stable") as { rank_score: number; consecutive_no_ops: number } | undefined;
+      const betaRow = dbCheck
+        .prepare(`SELECT rank_score FROM asset_salience WHERE asset_ref = ?`)
+        .get("skill:beta-fresh") as { rank_score: number } | undefined;
+
+      expect(alphaRow).toBeDefined();
+      expect(betaRow).toBeDefined();
+      // rank_score written by the run's upsertAssetSalience is the raw computed
+      // value — the FACTOR was never applied to it.  Both refs have the same
+      // inputs, so their stored rank_scores are equal (within floating-point ε).
+      // Stored rank_scores must be equal — the dampener never touches state.db.
+      expect(alphaRow?.rank_score).toBeCloseTo(betaRow?.rank_score ?? 0, 6);
+
+      // consecutive_no_ops persists; the no_change reflect in this run adds 1.
+      // The important invariant: it is still >= the threshold so the dampener
+      // would fire again on the next run.
+      expect(alphaRow?.consecutive_no_ops).toBeGreaterThanOrEqual(3);
+    } finally {
+      dbCheck.close();
+    }
+  });
+});
+
 // ── Test 4: stash-wide rank positions (Blocker 2 regression) ─────────────────
 
 describe("WS-1 wiring — rank positions are stash-wide, not pool-relative", () => {
