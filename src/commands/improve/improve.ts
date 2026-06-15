@@ -2732,7 +2732,6 @@ async function runImprovePreparationStage(args: {
     const pmCfg = improveProfile.processes?.proactiveMaintenance;
     const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;
     const maxPerRun = pmCfg?.maxPerRun ?? pmCfg?.limit ?? DEFAULT_MAX_PER_RUN;
-    const importanceWeights = pmCfg?.importanceWeights;
 
     // Candidate population: the zero-feedback / non-signal pool — exactly the
     // assets the other two sources would NOT pick this run. Exclude any P0-A
@@ -2758,7 +2757,6 @@ async function runImprovePreparationStage(args: {
       },
       dueDays,
       maxPerRun,
-      importanceWeights,
     });
 
     proactiveRefs = selection.selected;

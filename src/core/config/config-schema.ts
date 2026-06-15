@@ -209,9 +209,6 @@ export const ImproveProcessConfigSchema = z
     // proactiveMaintenance process: top-N bound per run (default 25). Alias for
     // `limit`; `maxPerRun` wins when both are set.
     maxPerRun: positiveInt.optional(),
-    // proactiveMaintenance process: optional per-type importance overrides,
-    // merged over the built-in defaults. Only meaningful on `proactiveMaintenance`.
-    importanceWeights: z.record(z.string().min(1), z.number()).optional(),
     // MemoryInference process: minimum pending memory count to run the pass.
     minPendingCount: z.number().int().min(0).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate

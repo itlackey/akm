@@ -4,17 +4,17 @@
 
 /**
  * Unit tests for the Layer-2 proactive-maintenance selector (pure scoring +
- * selection). Covers: due-gating, priority ordering, top-N bound, rotation
- * cooldown, importance weights, and the dueTotal/neverReflected telemetry.
+ * selection). Covers: due-gating, priority ordering (via computeSalience.rankScore),
+ * top-N bound, rotation cooldown, and the dueTotal/neverReflected telemetry.
  */
 
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_DUE_DAYS,
-  DEFAULT_IMPORTANCE_WEIGHTS,
   DEFAULT_MAX_PER_RUN,
   selectProactiveMaintenanceRefs,
 } from "../../../src/commands/improve/proactive-maintenance";
+import { DEFAULT_TYPE_ENCODING_WEIGHTS } from "../../../src/commands/improve/salience";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
 
 const NOW = Date.parse("2026-06-14T00:00:00.000Z");
@@ -111,7 +111,7 @@ describe("selectProactiveMaintenanceRefs — priority ordering", () => {
       sizeBytesOf: () => 1000,
       now: NOW,
     });
-    // skill weight 1.5 > memory 0.7 => skill ranks first
+    // skill encoding weight (0.9) > memory encoding weight (0.5) in salience.ts => skill ranks first
     expect(res.selected.map((s) => s.ref)).toEqual(["skill:hi", "memory:lo"]);
   });
 
@@ -131,7 +131,9 @@ describe("selectProactiveMaintenanceRefs — priority ordering", () => {
     expect(res.selected.map((s) => s.ref)).toEqual(["skill:hot", "skill:cold"]);
   });
 
-  test("importanceWeights override flips ordering", () => {
+  test("type-encoding weights from salience.ts govern ordering (skill > memory for equal freq/size)", () => {
+    // After WS-1: priority = computeSalience().rankScore which uses DEFAULT_TYPE_ENCODING_WEIGHTS.
+    // skill=0.9 > memory=0.5 — same relative ordering as the old DEFAULT_IMPORTANCE_WEIGHTS.
     const candidates = [ref("memory:m"), ref("skill:s")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
@@ -142,15 +144,13 @@ describe("selectProactiveMaintenanceRefs — priority ordering", () => {
         ["skill:s", 10],
       ]),
       sizeBytesOf: () => 1000,
-      importanceWeights: { memory: 5.0, skill: 0.1 }, // invert defaults
       now: NOW,
     });
-    expect(res.selected.map((s) => s.ref)).toEqual(["memory:m", "skill:s"]);
+    expect(DEFAULT_TYPE_ENCODING_WEIGHTS.skill).toBeGreaterThan(DEFAULT_TYPE_ENCODING_WEIGHTS.memory);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skill:s", "memory:m"]);
   });
 
   test("defaults are exported with the documented values", () => {
-    expect(DEFAULT_IMPORTANCE_WEIGHTS.skill).toBe(1.5);
-    expect(DEFAULT_IMPORTANCE_WEIGHTS.memory).toBe(0.7);
     expect(DEFAULT_DUE_DAYS).toBe(30);
     expect(DEFAULT_MAX_PER_RUN).toBe(25);
   });

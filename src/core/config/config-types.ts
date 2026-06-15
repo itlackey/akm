@@ -329,14 +329,6 @@ export interface ImproveProcessConfig {
    */
   maxPerRun?: number;
   /**
-   * Proactive-maintenance selector (Layer 2): optional override of the
-   * importance multiplier applied per asset type in the composite priority.
-   * Merged over the built-in defaults (skill/agent 1.5, command/workflow 1.3,
-   * lesson 1.2, knowledge 1.0, script 0.9, memory 0.7) — supply only the types
-   * you want to change. Only meaningful on the `proactiveMaintenance` process.
-   */
-  importanceWeights?: Record<string, number>;
-  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.
@@ -416,7 +408,7 @@ export interface ImproveProfileConfig {
      * reflected > `dueDays` ago) into the reflect/distill candidate set so stable
      * high-value assets get refreshed on a schedule even without new feedback.
      * Opt-in (default DISABLED). Knobs: `enabled`, `dueDays` (30),
-     * `maxPerRun`/`limit` (25), `importanceWeights`.
+     * `maxPerRun`/`limit` (25).
      */
     proactiveMaintenance?: ImproveProcessConfig;
   };

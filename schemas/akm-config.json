@@ -260,15 +260,6 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
-                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -469,15 +460,6 @@
                       "maxPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
-                      },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -680,15 +662,6 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
-                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -889,15 +862,6 @@
                       "maxPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
-                      },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -1100,15 +1064,6 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
-                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -1309,15 +1264,6 @@
                       "maxPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
-                      },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -1520,15 +1466,6 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
-                      },
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
@@ -1729,15 +1666,6 @@
                       "maxPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
-                      },
-                      "importanceWeights": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "number"
-                        },
-                        "propertyNames": {
-                          "minLength": 1
-                        }
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -2592,15 +2520,6 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
-                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -2801,15 +2720,6 @@
                           "maxPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
-                          },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -3012,15 +2922,6 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
-                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -3221,15 +3122,6 @@
                           "maxPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
-                          },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -3432,15 +3324,6 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
-                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -3641,15 +3524,6 @@
                           "maxPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
-                          },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -3852,15 +3726,6 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
-                          },
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
@@ -4061,15 +3926,6 @@
                           "maxPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
-                          },
-                          "importanceWeights": {
-                            "type": "object",
-                            "additionalProperties": {
-                              "type": "number"
-                            },
-                            "propertyNames": {
-                              "minLength": 1
-                            }
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -4906,15 +4762,6 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
-        "importanceWeights": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "number"
-          },
-          "propertyNames": {
-            "minLength": 1
-          }
-        },
         "minPendingCount": {
           "type": "integer",
           "minimum": 0
@@ -5126,15 +4973,6 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
-                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -5335,15 +5173,6 @@
                 "maxPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
-                },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
                 },
                 "minPendingCount": {
                   "type": "integer",
@@ -5546,15 +5375,6 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
-                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -5755,15 +5575,6 @@
                 "maxPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
-                },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
                 },
                 "minPendingCount": {
                   "type": "integer",
@@ -5966,15 +5777,6 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
-                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -6175,15 +5977,6 @@
                 "maxPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
-                },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
                 },
                 "minPendingCount": {
                   "type": "integer",
@@ -6386,15 +6179,6 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
-                },
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
@@ -6595,15 +6379,6 @@
                 "maxPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
-                },
-                "importanceWeights": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "propertyNames": {
-                    "minLength": 1
-                  }
                 },
                 "minPendingCount": {
                   "type": "integer",
