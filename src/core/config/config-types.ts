@@ -245,6 +245,13 @@ export interface ImproveProcessConfig {
   dedup?: {
     enabled?: boolean;
     cosineThreshold?: number;
+    /**
+     * Maximum pool size for the O(n²) cosine-similarity twin compare.
+     * Only the first `cosineCandidateLimit` memories (sorted lexicographically)
+     * are cosine-compared; exact-hash matches still run over the full pool.
+     * Default 500 (~125 K comparisons, ≈ 0.1 s). Raise with care — cost is O(n²).
+     */
+    cosineCandidateLimit?: number;
   };
   /**
    * Judged-state cache for the `consolidate` process (#581). When `enabled`,
@@ -372,6 +379,14 @@ export interface ImproveProcessConfig {
     profile?: string;
     timeoutMs?: number | null;
   };
+  /**
+   * Fallback p90 wall-clock time per consolidation chunk in seconds, used for
+   * cold-start budget estimation when no telemetry history exists. The actual
+   * p90 is derived from observed run durations once sufficient history
+   * accumulates; this value is only used on the very first run. Default 30 s.
+   * Only meaningful on the `consolidate` process.
+   */
+  p90ChunkSecondsDefault?: number;
 }
 
 export interface ImproveProfileConfig {

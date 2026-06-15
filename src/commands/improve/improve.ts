@@ -1320,6 +1320,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       eventsCtx,
       initialCleanupWarnings: preEnsureCleanupWarnings,
       improveProfile,
+      budgetSignal: budgetAbortController.signal,
     });
     if (consolidatePrepAcquired) releaseProcessLock(consolidateLPath);
 
@@ -1794,8 +1795,10 @@ async function runConsolidationPass(args: {
   memorySummary: { eligible: number; derived: number };
   improveProfile?: import("./improve-profiles").ImproveProfileConfig;
   eventsCtx?: EventsContext;
+  /** Budget signal forwarded to akmConsolidate for graceful drain on timeout. */
+  budgetSignal?: AbortSignal;
 }): Promise<ConsolidationPassResult> {
-  const { options, primaryStashDir, memorySummary, improveProfile, eventsCtx } = args;
+  const { options, primaryStashDir, memorySummary, improveProfile, eventsCtx, budgetSignal } = args;
 
   const baseConfig = options.config ?? loadConfig();
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
@@ -1997,6 +2000,10 @@ async function runConsolidationPass(args: {
         // options.consolidateOptions.autoAccept (if explicitly provided by caller)
         // still wins because the spread above runs first.
         autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
+        // WS-3a: forward budget signal for graceful abort on timeout, and pass
+        // the profile's p90 estimate for cold-start budget reduction.
+        signal: budgetSignal,
+        p90ChunkSecondsDefault: improveProfile?.processes?.consolidate?.p90ChunkSecondsDefault,
       }),
     );
     {
@@ -2069,6 +2076,8 @@ async function runImprovePreparationStage(args: {
   initialCleanupWarnings?: string[];
   /** Active improve profile, resolved from profile name + config. */
   improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  /** Budget signal forwarded to the consolidation pass for graceful drain on timeout. */
+  budgetSignal?: AbortSignal;
 }): Promise<ImprovePreparationResult> {
   const {
     scope,
@@ -2083,6 +2092,7 @@ async function runImprovePreparationStage(args: {
     eventsCtx,
     initialCleanupWarnings,
     improveProfile,
+    budgetSignal,
   } = args;
 
   const actions: ImproveActionResult[] = [];
@@ -2122,6 +2132,7 @@ async function runImprovePreparationStage(args: {
     memorySummary,
     improveProfile,
     eventsCtx,
+    budgetSignal,
   });
 
   // Phase 0.4 — session-extract pass.

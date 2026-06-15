@@ -24,10 +24,19 @@ import type { Embedder, EmbeddingVector } from "./types";
  */
 export const DEFAULT_LOCAL_MODEL = "Xenova/bge-small-en-v1.5";
 
-type TransformerPipeline = (
+/** Single-text pipeline overload. */
+type TransformerPipelineSingle = (
   text: string,
   options: { pooling: string; normalize: boolean },
 ) => Promise<{ data: Float32Array }>;
+
+/** Batch pipeline overload — array input returns an array of results. */
+type TransformerPipelineBatch = (
+  texts: string[],
+  options: { pooling: string; normalize: boolean },
+) => Promise<Array<{ data: Float32Array }>>;
+
+type TransformerPipeline = TransformerPipelineSingle & TransformerPipelineBatch;
 
 type TransformerPipelineFactory = (
   task: string,
@@ -37,6 +46,14 @@ type TransformerPipelineFactory = (
 
 const LOCAL_EMBEDDER_DTYPE = "fp32";
 const LOCAL_EMBEDDER_FALLBACK_DTYPE = "auto";
+
+/**
+ * Maximum texts per batch for the local transformers pipeline. The pipeline
+ * can run genuine batched inference over a string array; 32 is a safe default
+ * that fits well inside most model context budgets while providing 10–50×
+ * throughput improvement over one-at-a-time calls on the cold minority.
+ */
+const LOCAL_BATCH_SIZE = 32;
 
 /**
  * Return the local model name that will be used for embedding.
@@ -94,14 +111,49 @@ export class LocalEmbedder implements Embedder {
     return this.embedWithModel(text, this.defaultModel);
   }
 
+  /**
+   * Embed a batch of texts. Processes in chunks of `LOCAL_BATCH_SIZE` (32) so
+   * the transformers pipeline can run genuine batched inference rather than one
+   * call per text. Falls back to one-at-a-time if the pipeline does not support
+   * array input (older versions of @huggingface/transformers). Each chunk is
+   * checked against the AbortSignal between calls.
+   */
   async embedBatch(texts: string[], signal?: AbortSignal): Promise<EmbeddingVector[]> {
     if (texts.length === 0) return [];
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
+    }
+    const pipeline = await this.getPipeline(this.defaultModel);
     const results: EmbeddingVector[] = [];
-    for (const text of texts) {
+
+    for (let i = 0; i < texts.length; i += LOCAL_BATCH_SIZE) {
       if (signal?.aborted) {
         throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
       }
-      results.push(await this.embedWithModel(text, this.defaultModel));
+      const chunk = texts.slice(i, i + LOCAL_BATCH_SIZE);
+      try {
+        // @huggingface/transformers feature-extraction pipeline accepts a
+        // string[] and returns Array<{ data: Float32Array }> when batched.
+        const batchResult = await (pipeline as TransformerPipelineBatch)(chunk, {
+          pooling: "mean",
+          normalize: true,
+        });
+        if (!Array.isArray(batchResult)) {
+          throw new Error("batch result is not an array");
+        }
+        for (const r of batchResult) {
+          results.push(Array.from(r.data) as number[]);
+        }
+      } catch {
+        // Fallback: process one-at-a-time (older pipeline versions or mismatched
+        // return type). Fail-open per text: a single failure aborts the chunk.
+        for (const text of chunk) {
+          if (signal?.aborted) {
+            throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
+          }
+          results.push(await this.embedWithModel(text, this.defaultModel));
+        }
+      }
     }
     return results;
   }

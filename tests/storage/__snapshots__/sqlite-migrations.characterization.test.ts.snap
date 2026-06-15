@@ -10,6 +10,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "005-proposal-fs-imports",
     "006-proposals-pending-ref-source",
     "007-consolidation-judged",
+    "008-body-embeddings",
   ],
   "schema": [
     {
@@ -130,6 +131,18 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         ON task_history(task_id)"
 ,
       "type": "index",
+    },
+    {
+      "name": "body_embeddings",
+      "sql": 
+"CREATE TABLE body_embeddings (
+        content_hash TEXT    PRIMARY KEY,
+        embedding    BLOB    NOT NULL,
+        model_id     TEXT    NOT NULL,
+        created_at   INTEGER NOT NULL
+      )"
+,
+      "type": "table",
     },
     {
       "name": "consolidation_judged",

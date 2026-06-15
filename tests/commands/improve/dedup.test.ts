@@ -7,11 +7,15 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   applyProvenance,
+  cacheHash,
+  DEFAULT_COSINE_CANDIDATE_LIMIT,
   type DedupMemory,
+  dedupHash,
   loadDedupMemories,
   normalizeMemoryBody,
   planDedup,
   runDeterministicDedup,
+  stripFrontmatterBody,
 } from "../../../src/commands/improve/dedup";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
@@ -45,6 +49,66 @@ describe("normalizeMemoryBody", () => {
     const a = normalizeMemoryBody("---\ndescription: x\n---\nHello   World\n\n\nFoo");
     const b = normalizeMemoryBody("---\ndescription: y\n---\nhello world foo");
     expect(a).toBe(b);
+  });
+});
+
+describe("stripFrontmatterBody / dedupHash / cacheHash (WS-3a)", () => {
+  test("stripFrontmatterBody strips frontmatter and trims, preserving case", () => {
+    const raw = "---\ndescription: foo\n---\nHello World  ";
+    expect(stripFrontmatterBody(raw)).toBe("Hello World");
+  });
+
+  test("dedupHash is case-insensitive (two memories differing only in case hash identically)", () => {
+    const a = "---\ndescription: x\n---\nHello World";
+    const b = "---\ndescription: y\n---\nhello world";
+    expect(dedupHash(a)).toBe(dedupHash(b));
+  });
+
+  test("cacheHash is case-preserving (different case → different hash)", () => {
+    const a = "---\ndescription: x\n---\nHello World";
+    const b = "---\ndescription: y\n---\nhello world";
+    expect(cacheHash(a)).not.toBe(cacheHash(b));
+  });
+
+  test("cacheHash ignores frontmatter changes (body-only hash)", () => {
+    const body = "The same body content";
+    const a = `---\ndescription: one\nupdated: 2026-01-01\n---\n${body}`;
+    const b = `---\ndescription: two\nupdated: 2026-06-15\n---\n${body}`;
+    expect(cacheHash(a)).toBe(cacheHash(b));
+  });
+
+  test("dedupHash and cacheHash differ for same-case input with whitespace variation", () => {
+    // dedupHash collapses whitespace; cacheHash preserves it
+    const a = "---\n---\nHello  World";
+    const b = "---\n---\nHello World";
+    expect(dedupHash(a)).toBe(dedupHash(b)); // whitespace collapsed → same
+    expect(cacheHash(a)).not.toBe(cacheHash(b)); // whitespace preserved → different
+  });
+
+  test("DEFAULT_COSINE_CANDIDATE_LIMIT is 500", () => {
+    expect(DEFAULT_COSINE_CANDIDATE_LIMIT).toBe(500);
+  });
+});
+
+describe("planDedup — cosineCandidateLimit (WS-3a)", () => {
+  test("warns when pool exceeds cosineCandidateLimit and cosine path is available", () => {
+    // Build 3 memories with embeddings but set a limit of 1.
+    // Pool will be 2 after exact-hash dedup; limit 1 → warning emitted.
+    writeMemory("mem-a", { description: "a" }, "Body about topic one.");
+    writeMemory("mem-b", { description: "b" }, "Body about topic two.");
+    writeMemory("mem-c", { description: "c" }, "Body about topic three.");
+    const memories = loadDedupMemories(storage.stashDir);
+    const fakeEmbeddings = new Map([
+      ["mem-a", [1, 0, 0]],
+      ["mem-b", [0, 1, 0]],
+      ["mem-c", [0, 0, 1]],
+    ]);
+    const plan = planDedup(memories, {
+      cosineThreshold: 0.97,
+      embeddings: fakeEmbeddings,
+      cosineCandidateLimit: 1,
+    });
+    expect(plan.warnings.some((w) => w.includes("cosineCandidateLimit"))).toBe(true);
   });
 });
 

@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -14,7 +13,7 @@ import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
+// Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import {
@@ -25,7 +24,7 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
-import { type DedupConfig, runDeterministicDedup } from "./dedup";
+import { cacheHash, type DedupConfig, runDeterministicDedup } from "./dedup";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
@@ -250,6 +249,22 @@ export interface AkmConsolidateOptions {
    * containing improve run.
    */
   sourceRun?: string;
+  /**
+   * AbortSignal from the caller's budget controller (e.g. `improve.ts`
+   * `budgetAbortController`). When aborted the consolidation loop breaks cleanly
+   * after completing the current chunk, commits work done, and returns with a
+   * `partial_timeout` outcome note in `warnings`. The signal is also forwarded
+   * to `embedBatch` and `runDeterministicDedup` so mid-embedding aborts are
+   * handled gracefully. Absent = run without a budget limit.
+   */
+  signal?: AbortSignal;
+  /**
+   * Fallback p90 wall-clock time per consolidation chunk in seconds, used for
+   * cold-start budget estimation when `signal` is provided. Defaults to 30 s
+   * when absent. Callers (improve.ts) can pass the profile's
+   * `p90ChunkSecondsDefault` config value here.
+   */
+  p90ChunkSecondsDefault?: number;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -620,7 +635,9 @@ export function buildChunkPrompt(
     }
     const parsed = parseFrontmatter(body);
     const isHot = parsed.data.captureMode === "hot";
-    const bodyHash = createHash("sha256").update(parsed.content.trim(), "utf8").digest("hex");
+    // Use cacheHash (case-preserving stripped body) to match the domain used
+    // by loadPendingConsolidateProposalHashes and the body-embedding cache.
+    const bodyHash = cacheHash(body);
     const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
     annotationsByIndex.push({ isHot, isAlreadyQueued, body });
     if (isHot) hotRefs.push(`memory:${m.name}`);
@@ -667,10 +684,10 @@ export function buildChunkPrompt(
 /**
  * Precompute body-hashes of all currently-pending consolidate proposals so
  * the per-chunk prompt can annotate memories whose body would just produce
- * a deterministic `dedup_pending_proposal` skip. Hash domain matches the
- * dedup site at ~line 1510 (sha256 over the post-frontmatter content,
- * trimmed). Empty set on any read/parse error — fail-safe to "annotate
- * nothing" so the LLM still proposes, just slightly more wastefully.
+ * a deterministic `dedup_pending_proposal` skip. Uses `cacheHash` (case-
+ * preserving stripped body) — the same domain used by the body-embedding
+ * cache and `computeMemoryContentHash`. Empty set on any read/parse error
+ * — fail-safe to "annotate nothing" so the LLM still proposes.
  */
 function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
   const hashes = new Set<string>();
@@ -678,8 +695,7 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
     const pending = listProposals(stashDir, { status: "pending" }).filter((p) => p.source === "consolidate");
     for (const p of pending) {
       try {
-        const body = parseFrontmatter(p.payload.content).content.trim();
-        hashes.add(createHash("sha256").update(body, "utf8").digest("hex"));
+        hashes.add(cacheHash(p.payload.content));
       } catch {
         // skip malformed payloads — they can't dedup anyway
       }
@@ -1075,11 +1091,10 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 // ── Judged-state cache (#581) ────────────────────────────────────────────────
 
 /**
- * Stable content hash for a memory file used by the judged-state cache (#581).
- * Hashes the frontmatter-stripped, trimmed body — matching the dedup / pending
- * proposal hash domain elsewhere in this file (sha256 over post-frontmatter
- * content). Two memories that differ only in noise frontmatter (`updated:`
- * timestamps, `inferenceProcessed:` flags) therefore hash identically, so a
+ * Stable content hash for a memory file used by the judged-state cache (#581)
+ * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts:
+ * sha256 of the case-preserving stripped body. Two memories that differ only
+ * in frontmatter (`updated:`, `inferenceProcessed:`) hash identically, so a
  * cosmetic frontmatter touch never forces a needless re-judge — only a body
  * change does. Returns `undefined` on any read/parse error so callers fail
  * open (treat the memory as un-cached → it stays in the LLM pool).
@@ -1087,8 +1102,7 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 function computeMemoryContentHash(filePath: string): string | undefined {
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    const body = parseFrontmatter(raw).content.trim();
-    return createHash("sha256").update(body, "utf8").digest("hex");
+    return cacheHash(raw);
   } catch {
     return undefined;
   }
@@ -1154,18 +1168,24 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   let dedupCollapsed = 0;
   if (opts.dedup?.enabled && !opts.dryRun) {
     const dedupTimestamp = timestampForFilename();
-    const dedupResult = await runDeterministicDedup(stashDir, opts.dedup, config, (variantFilePath, variantName) => {
-      archiveMemory(
-        variantFilePath,
-        stashDir,
-        `memory:${variantName}`,
-        "collapsed by deterministic dedup pre-pass",
-        -1,
-        undefined,
-        warnings,
-      );
-      backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
-    });
+    const dedupResult = await runDeterministicDedup(
+      stashDir,
+      opts.dedup,
+      config,
+      (variantFilePath, variantName) => {
+        archiveMemory(
+          variantFilePath,
+          stashDir,
+          `memory:${variantName}`,
+          "collapsed by deterministic dedup pre-pass",
+          -1,
+          undefined,
+          warnings,
+        );
+        backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
+      },
+      opts.signal,
+    );
     dedupCollapsed = dedupResult.collapsed;
     warnings.push(...dedupResult.warnings);
     if (dedupResult.consumedRefs.length > 0) {
@@ -1355,6 +1375,42 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
   const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
 
+  // ── Cold-start budget estimation ─────────────────────────────────────────────
+  // Estimate wall-clock cost BEFORE issuing any LLM calls. When a signal is
+  // provided and the estimated cost exceeds ~60% of the remaining budget we
+  // auto-reduce the pool and log the reduction so the run never starts work
+  // it cannot finish (avoiding SIGTERM mid-LLM-call).
+  //
+  // Formula: chunks.length × p90_chunk_seconds. The p90 comes from
+  // `opts.p90ChunkSecondsDefault` (caller-supplied, typically from the profile
+  // config); absent = 30 s (conservative default matching a medium local LLM).
+  //
+  // "Remaining budget" is read from a custom property on the AbortSignal if
+  // the caller (improve.ts) has attached one. Without it no auto-reduction
+  // fires but the check is still cheap to run.
+  if (chunks.length > 10 && opts.signal) {
+    const p90Chunk = opts.p90ChunkSecondsDefault ?? 30;
+    const estimatedSeconds = chunks.length * p90Chunk;
+    // remainingBudgetMs is a non-standard extension set by improve.ts when it
+    // creates the budget AbortController. Undefined = no budget information.
+    const budgetMs = (opts.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
+    if (budgetMs !== undefined && budgetMs > 0) {
+      const remainingSeconds = budgetMs / 1000;
+      if (estimatedSeconds > remainingSeconds * 0.6) {
+        const safeCaps = Math.max(1, Math.floor((remainingSeconds * 0.6) / p90Chunk));
+        const removedChunks = chunks.length - safeCaps;
+        if (removedChunks > 0) {
+          const msg =
+            `[consolidate] cold-start budget: estimated ${estimatedSeconds.toFixed(0)}s > 60% of remaining ${remainingSeconds.toFixed(0)}s; ` +
+            `reducing pool from ${chunks.length} to ${safeCaps} chunks (${removedChunks} deferred to next run).`;
+          warn(msg);
+          warnings.push(msg);
+          chunks.splice(safeCaps);
+        }
+      }
+    }
+  }
+
   warn(
     `[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
       ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
@@ -1433,6 +1489,20 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const ABORT_FAILURE_RATE = 0.5;
 
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    // Budget-signal check: break cleanly before the next LLM call if the
+    // caller's budget has been exhausted. Commits work done so far.
+    if (opts.signal?.aborted) {
+      const skipped = chunks.length - chunkIdx;
+      const msg = `[consolidate] budget signal aborted before chunk ${chunkIdx + 1}/${chunks.length}; ${skipped} chunk(s) not processed (partial_timeout — work done so far committed).`;
+      warn(msg);
+      warnings.push(msg);
+      // Account for memories in unprocessed chunks.
+      for (let i = chunkIdx; i < chunks.length; i++) {
+        failedChunkMemories += (chunks[i] as MemoryEntry[]).length;
+      }
+      break;
+    }
+
     // Abort if failure rate >= 50% over at least 4 processed chunks.
     if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
       const failureRate = totalChunksFailed / totalChunksProcessed;
@@ -2126,13 +2196,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       //       is the load-bearing content, so dedup must hash on body only.
       //   (b) A prior run created a proposal for the same body under a
       //       different knowledgeRef slug.
-      const bodyHash = createHash("sha256").update(sourceBody, "utf8").digest("hex");
+      // Use cacheHash (case-preserving stripped body) to match the canonical
+      // hash domain used by the body-embedding cache and pending-proposal set.
+      const bodyHash = cacheHash(sourceBody);
       const allPendingConsolidateProposals = listProposals(stashDir, { status: "pending" }).filter(
         (p) => p.source === "consolidate",
       );
       const contentDupProposal = allPendingConsolidateProposals.find((p) => {
-        const otherBody = parseFrontmatter(p.payload.content).content.trim();
-        return createHash("sha256").update(otherBody, "utf8").digest("hex") === bodyHash;
+        return cacheHash(p.payload.content) === bodyHash;
       });
       if (contentDupProposal) {
         warnings.push(
@@ -2264,35 +2335,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   cleanupJournal(stashDir, timestamp);
 
-  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90).
-  // C-5 / #391: emit an `archive_cleanup` event before each deletion so the
-  // audit trail records what was lost. Outbox pattern (EIP, Hohpe-Woolf) —
-  // any event that is recorded must be queryable; silent deletes are an anti-pattern.
-  const archiveDir = path.join(stashDir, ".akm", "archive");
-  if (fs.existsSync(archiveDir)) {
-    const retentionMs = (config.archiveRetentionDays ?? 90) * 86_400_000;
-    const cutoff = Date.now() - retentionMs;
-    for (const fname of fs.readdirSync(archiveDir)) {
-      const fp = path.join(archiveDir, fname);
-      try {
-        const stat = fs.statSync(fp);
-        if (stat.mtimeMs < cutoff) {
-          // Emit event before deletion so the record survives the purge.
-          appendEvent({
-            eventType: "archive_cleanup",
-            metadata: {
-              file: fname,
-              filePath: fp,
-              ageMs: Date.now() - stat.mtimeMs,
-              retentionMs,
-            },
-          });
-          fs.unlinkSync(fp);
-        }
-      } catch {
-        /* ignore race conditions */
-      }
-    }
+  // [signoff 2026-06-15] TTL archive cleanup machinery RETIRED (WS-3a).
+  // The elaborate archiveRetentionDays / archive-dir scan existed only to satisfy
+  // the old irrecoverability constraint. Stashes are now git-backed, so git
+  // history is the recovery path — no bespoke archive TTL needed. Any files in
+  // .akm/archive/ will stay there harmlessly until the operator prunes them with
+  // `git rm` or `find .akm/archive -mtime +90 -delete`. Changed N files this
+  // run; recover any via `git show <sha>:<path>` or `git restore <path>`.
+  if (merged > 0 || deleted > 0 || dedupCollapsed > 0) {
+    const totalChanged = merged + deleted + dedupCollapsed;
+    warnings.push(
+      `Changed ${totalChanged} file(s) this run. Recover any via git if needed (git history is the backstop).`,
+    );
   }
 
   return {

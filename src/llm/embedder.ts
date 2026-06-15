@@ -92,7 +92,8 @@ export async function embed(
 /**
  * Generate embeddings for multiple texts in batch.
  * Uses the OpenAI-compatible batch API for remote endpoints (batches of 100).
- * Falls back to sequential embedding for the local transformer pipeline.
+ * Uses the LocalEmbedder.embedBatch path for the local transformer pipeline,
+ * which processes texts in chunks of 32 for genuine batched inference.
  */
 export async function embedBatch(
   texts: string[],
@@ -105,8 +106,13 @@ export async function embedBatch(
     return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal);
   }
 
-  // Local transformer: process sequentially (pipeline handles one at a time)
+  // Local transformer: use the batched path (chunks of 32 via LocalEmbedder).
+  // When a localModel override is set we cannot share the singleton (which uses
+  // the default model), so fall back to per-text embedWithModel in that case.
   const localModel = embeddingConfig?.localModel;
+  if (!localModel) {
+    return getLocalEmbedder().embedBatch(texts, signal);
+  }
   const results: EmbeddingVector[] = [];
   for (const text of texts) {
     if (signal?.aborted) {
