@@ -17,8 +17,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **#576** — the `akm health` HTML report now renders the real per-stage LLM
   token/time aggregate (a "🧠 LLM Work" KPI card + LLM token/call/wall-time
   summary rows) from the captured `llm_usage` events, replacing the GPU-time
-  proxy. (The external `akm-health-report` skill template lives in the user
-  stash, outside this repo, and still needs its own swap — flagged separately.)
+  proxy.
+- **Built-in `akm health --format html` report overhaul** — the report is now a
+  strict superset of (and supersedes) the external `akm-health-report` stash
+  skill. Restored the interactive filter bar (time-slice 1d–21d, task, status)
+  with client-side chart/table re-render and the Last-10 "Task" column;
+  reordered sections to a decision-first flow (verdict → action items → KPIs →
+  table → charts); added a synthesized one-sentence **Verdict** (status + 2–3
+  drivers) and a freshness line; merged the duplicate Advisories / What-to-Watch
+  into one prioritized, de-duplicated **Action Items** list (P1/P2/P3 +
+  remediation command); added a per-stage **LLM token** stacked-bar chart and
+  `dataZoom` sliders on dense charts; fixed the failed-run scatter x-alignment
+  (now shape-encoded); KPI-card colors are now health signals (not decoration);
+  added metric-glossary tooltips, chart `aria-label`s, contrast fixes, and
+  empty-state overlays. Deterministic output preserved.
 
 ### Fixed
 

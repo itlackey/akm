@@ -17,12 +17,13 @@
       --surface2:#21262d;
       --border:  #30363d;
       --text:    #e6edf3;
-      --muted:   #8b949e;
+      --muted:   #9ea8b5;
       --accent:  #58a6ff;
       --green:   #3fb950;
       --yellow:  #d29922;
       --red:     #f85149;
       --purple:  #bc8cff;
+      --neutral: #8b949e;
     }
 
     body {
@@ -73,6 +74,8 @@
     h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
     h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 
+    abbr[title] { text-decoration: underline dotted; cursor: help; text-underline-offset: 2px; }
+
     /* ── Executive summary (Discord card) ───────────────────────────────── */
     .exec {
       background: linear-gradient(180deg, var(--surface) 0%, #12161c 100%);
@@ -80,6 +83,17 @@
       border-radius: 10px; padding: 18px 22px; margin-bottom: 28px;
     }
     .exec h2 { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .exec .verdict {
+      font-size: 14px; color: var(--text); margin-bottom: 16px;
+      padding: 10px 14px; background: var(--surface2); border-radius: 8px;
+      border-left: 3px solid var(--accent);
+    }
+    .exec .verdict b { font-weight: 700; }
+    .exec .verdict.pass { border-left-color: var(--green); }
+    .exec .verdict.warn { border-left-color: var(--yellow); }
+    .exec .verdict.fail { border-left-color: var(--red); }
+    .exec .freshness { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+    .exec .freshness.stale { color: var(--yellow); font-weight: 600; }
     .exec .exec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
     @media (max-width: 900px) { .exec .exec-grid { grid-template-columns: 1fr; gap: 16px; } }
     .exec . blk-title, .exec h4 {
@@ -110,10 +124,21 @@
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 10px; margin-bottom: 28px;
     }
+    .filter-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 20px;
+    }
+    .filter-bar label { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .filter-bar select {
+      background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 10px; font-size: 12px;
+    }
+    .filter-note { color: var(--muted); font-size: 12px; margin-left: auto; }
     @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 20px; } }
     .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-    .kpi-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-    .kpi-card .value { font-size: 26px; font-weight: 700; line-height: 1; }
+    .kpi-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .kpi-card .value { font-size: 26px; font-weight: 700; line-height: 1; color: var(--text); }
     .kpi-card .sub   { font-size: 11px; color: var(--muted); margin-top: 4px; }
     @media (max-width: 600px) { .kpi-card .value { font-size: 22px; } }
     .kpi-card.green  .value { color: var(--green); }
@@ -121,6 +146,10 @@
     .kpi-card.red    .value { color: var(--red); }
     .kpi-card.blue   .value { color: var(--accent); }
     .kpi-card.purple .value { color: var(--purple); }
+    .kpi-card.neutral .value { color: var(--text); }
+    .kpi-card.green  { border-left: 3px solid var(--green); }
+    .kpi-card.yellow { border-left: 3px solid var(--yellow); }
+    .kpi-card.red    { border-left: 3px solid var(--red); }
 
     /* ── Chart panels ───────────────────────────────────────────────────── */
     .charts-grid {
@@ -132,11 +161,20 @@
       .charts-grid { grid-template-columns: 1fr; gap: 10px; }
       .chart-panel.full-width { grid-column: auto; }
     }
-    .chart-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .chart-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; position: relative; }
     .chart-panel.full-width { grid-column: 1 / -1; }
     .chart-panel .ec { width: 100%; height: 240px; }
     .chart-panel.full-width .ec { height: 280px; }
+    .chart-panel .ec.tall { height: 300px; }
+    .chart-panel.full-width .ec.tall { height: 320px; }
     @media (max-width: 600px) { .chart-panel .ec { height: 200px; } }
+    .empty-overlay {
+      position: absolute; inset: 44px 16px 16px 16px;
+      display: none; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 13px; text-align: center;
+      pointer-events: none;
+    }
+    .empty-overlay.show { display: flex; }
 
     /* ── Tables ─────────────────────────────────────────────────────────── */
     .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -160,8 +198,12 @@
     .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
     .tag-extract     { background: rgba(88,166,255,0.15);  color: var(--accent); }
     .tag-consolidate { background: rgba(188,140,255,0.15); color: var(--purple); }
+    .prio { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; }
+    .prio.p1 { background: rgba(248,81,73,0.18);  color: var(--red); }
+    .prio.p2 { background: rgba(210,153,34,0.18); color: var(--yellow); }
+    .prio.p3 { background: rgba(139,148,158,0.15);color: var(--muted); }
 
-    /* ── Advisories ─────────────────────────────────────────────────────── */
+    /* ── Advisories / Action items ──────────────────────────────────────── */
     .advisory-list { display: flex; flex-direction: column; gap: 10px; }
     .advisory {
       display: flex; gap: 12px;
@@ -173,6 +215,7 @@
     .advisory-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
     .advisory-body .title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
     .advisory-body .desc  { font-size: 12px; color: var(--muted); word-break: break-word; }
+    .advisory-body .remedy { font-size: 12px; margin-top: 6px; }
 
     /* ── Trend indicators ───────────────────────────────────────────────── */
     .trend      { font-size: 12px; }
@@ -229,9 +272,55 @@
     %%EXEC_SUMMARY_HTML%%
   </section>
 
+  <!-- Action Items (merged + de-duplicated advisories and what-to-watch) -->
+  <div class="section">
+    <h2>Action Items</h2>
+    <div class="advisory-list">
+      %%ACTION_ITEMS_HTML%%
+    </div>
+  </div>
+
   <!-- KPI Row -->
   <div class="kpi-grid">
     %%KPI_CARDS_HTML%%
+  </div>
+
+  <!-- Summary -->
+  <div class="section">
+    <h2>%%WINDOW%% Aggregate Summary</h2>
+    <div class="summary-table">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th><th>Trend</th></tr></thead>
+        <tbody>
+          %%SUMMARY_ROWS_HTML%%
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <label for="rangeSelect">Slice</label>
+    <select id="rangeSelect">
+      <option value="1">1d</option>
+      <option value="3">3d</option>
+      <option value="7">7d</option>
+      <option value="14">14d</option>
+      <option value="21" selected>21d</option>
+    </select>
+
+    <label for="taskFilter">Task</label>
+    <select id="taskFilter"></select>
+
+    <label for="statusFilter">Status</label>
+    <select id="statusFilter">
+      <option value="all" selected>all</option>
+      <option value="ok">ok</option>
+      <option value="failed">failed</option>
+    </select>
+
+    <div class="filter-note">Filters affect charts and the Last 10 Runs table.</div>
   </div>
 
   <!-- Charts -->
@@ -240,64 +329,51 @@
     <div class="charts-grid">
 
       <div class="chart-panel full-width">
-        <h3>Wall Time per Run (min) — with rolling average</h3>
-        <div id="chartWallTime" class="ec"></div>
+        <h3>Wall Time — successful vs failed runs (min)</h3>
+        <div id="chartWallTime" class="ec tall" role="img" aria-label="Line chart of wall time per run in minutes with a rolling average overlay"></div>
+        <div class="empty-overlay" id="emptyWallTime">No runs in the selected slice.</div>
       </div>
 
       <div class="chart-panel full-width">
         <h3>Per-Phase Wall Time Decomposition (stacked, min)</h3>
-        <div id="chartPhases" class="ec"></div>
+        <div id="chartPhases" class="ec tall" role="img" aria-label="Stacked area chart decomposing wall time per run into consolidation, memory inference, graph extraction, and unattributed phases"></div>
+        <div class="empty-overlay" id="emptyPhases">No runs in the selected slice.</div>
+      </div>
+
+      <div class="chart-panel full-width">
+        <h3>LLM Tokens per Stage (stacked: prompt / completion / reasoning)</h3>
+        <div id="chartLlmStages" class="ec" role="img" aria-label="Horizontal stacked bar chart of LLM token usage per pipeline stage, broken into prompt, completion, and reasoning tokens"></div>
+        <div class="empty-overlay" id="emptyLlmStages">No per-stage LLM usage recorded in this window.</div>
       </div>
 
       <div class="chart-panel">
         <h3>Stash Growth (derived vs eligible)</h3>
-        <div id="chartStash" class="ec"></div>
+        <div id="chartStash" class="ec tall" role="img" aria-label="Line chart of stash derived versus eligible asset counts per run"></div>
+        <div class="empty-overlay" id="emptyStash">No runs in the selected slice.</div>
       </div>
 
       <div class="chart-panel">
         <h3>Consolidation Output (promoted / merged / deleted)</h3>
-        <div id="chartConsOutput" class="ec"></div>
+        <div id="chartConsOutput" class="ec tall" role="img" aria-label="Bar chart of consolidation output per run: promoted, merged, and deleted counts"></div>
+        <div class="empty-overlay" id="emptyConsOutput">No runs in the selected slice.</div>
       </div>
 
       <div class="chart-panel">
         <h3>Success / Failures per Run</h3>
-        <div id="chartSuccess" class="ec"></div>
+        <div id="chartSuccess" class="ec" role="img" aria-label="Line chart of wall time for successful runs with failed runs marked as red triangles"></div>
+        <div class="empty-overlay" id="emptySuccess">No runs in the selected slice.</div>
       </div>
 
       <div class="chart-panel">
         <h3>Lint Flagged vs Fixed</h3>
-        <div id="chartLint" class="ec"></div>
+        <div id="chartLint" class="ec" role="img" aria-label="Line chart of lint issues flagged versus fixed per run"></div>
+        <div class="empty-overlay" id="emptyLint">No runs in the selected slice.</div>
       </div>
 
       <div class="chart-panel full-width">
         <h3>Distill Skip-Reason Breakdown (stacked)</h3>
-        <div id="chartDistill" class="ec"></div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- Summary + Advisories -->
-  <div class="section">
-    <h2>%%WINDOW%% Aggregate Summary</h2>
-    <div class="two-col">
-
-      <div class="summary-table">
-        <div class="table-wrap">
-        <table>
-          <thead><tr><th>Metric</th><th>Value</th><th>Trend</th></tr></thead>
-          <tbody>
-            %%SUMMARY_ROWS_HTML%%
-          </tbody>
-        </table>
-        </div>
-      </div>
-
-      <div>
-        <h3 style="margin-bottom:12px;">Decision Quality &amp; Advisories</h3>
-        <div class="advisory-list">
-          %%ADVISORY_CARDS_HTML%%
-        </div>
+        <div id="chartDistill" class="ec tall" role="img" aria-label="Stacked bar chart of distill skip reasons per run"></div>
+        <div class="empty-overlay" id="emptyDistill">No distill skips recorded in this window.</div>
       </div>
 
     </div>
@@ -318,14 +394,6 @@
     </div>
   </div>
 
-  <!-- What to watch -->
-  <div class="section">
-    <h2>What to Watch Next</h2>
-    <div class="advisory-list">
-      %%WATCH_ITEMS_HTML%%
-    </div>
-  </div>
-
   <!-- Last 10 runs -->
   <div class="section">
     <h2>Last 10 Runs</h2>
@@ -333,7 +401,7 @@
       <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Started (UTC)</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
+          <tr><th>Started (UTC)</th><th>Task</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
         </thead>
         <tbody id="lastRunsTable"></tbody>
       </table>
@@ -360,27 +428,61 @@
 // ── Injected run data ─────────────────────────────────────────────────────────
 %%RUNS_JS_CONST%%
 const DISTILL_REASONS = %%DISTILL_REASONS_JSON%%;
+const LLM_BY_STAGE = %%LLM_BY_STAGE_JSON%%;
 
 // ── Theme constants ───────────────────────────────────────────────────────────
 const C = {
   bg: '#161b22', surface2: '#21262d', border: '#30363d',
-  text: '#e6edf3', muted: '#8b949e',
+  text: '#e6edf3', muted: '#9ea8b5',
   accent: '#58a6ff', green: '#3fb950', yellow: '#d29922',
   red: '#f85149', purple: '#bc8cff',
 };
 const SERIES_PALETTE = [C.accent, C.green, C.yellow, C.purple, C.red, '#39c5cf', '#db61a2', '#e3b341'];
 
-// x-axis category labels = run startedAt (UTC, sorted ascending by collect.py)
-const xLabels = RUNS.map(r => {
-  const d = new Date(r.startedAt);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mi = String(d.getUTCMinutes()).padStart(2, '0');
-  return `${mm}-${dd} ${hh}:${mi}`;
-});
-
 const toMin = ms => ms ? +(ms / 60000).toFixed(2) : 0;
+
+function makeXLabels(rs) {
+  return rs.map(r => {
+    const d = new Date(r.startedAt);
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mi = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${mm}-${dd} ${hh}:${mi}`;
+  });
+}
+
+function latestRunTime(rs) {
+  if (!rs.length) return 0;
+  return Math.max(...rs.map(r => Date.parse(r.completedAt || r.startedAt || 0)).filter(Number.isFinite));
+}
+
+function filteredRuns() {
+  const days = Number(document.getElementById('rangeSelect')?.value || 21);
+  const task = document.getElementById('taskFilter')?.value || 'all';
+  const status = document.getElementById('statusFilter')?.value || 'all';
+  const endMs = latestRunTime(RUNS);
+  const startMs = endMs - days * 24 * 60 * 60 * 1000;
+  return RUNS.filter(r => {
+    const ts = Date.parse(r.completedAt || r.startedAt || 0);
+    if (Number.isFinite(ts) && ts < startMs) return false;
+    if (task !== 'all' && (r.taskId || 'manual') !== task) return false;
+    if (status === 'ok' && !r.ok) return false;
+    if (status === 'failed' && r.ok) return false;
+    return true;
+  });
+}
+
+function populateFilters() {
+  const taskSelect = document.getElementById('taskFilter');
+  const tasks = ['all', ...Array.from(new Set(RUNS.map(r => r.taskId || 'manual'))).sort()];
+  taskSelect.innerHTML = tasks.map(t => `<option value="${t}">${t}</option>`).join('');
+}
+
+function toggleEmpty(id, isEmpty) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('show', !!isEmpty);
+}
 
 // Centered rolling average (window = ~10% of runs, min 3) — deterministic.
 function rollingAvg(arr) {
@@ -402,16 +504,20 @@ const baseAxis = {
   splitLine: { lineStyle: { color: 'rgba(48,54,61,0.5)' } },
 };
 const baseGrid = { left: 48, right: 16, top: 28, bottom: 28, containLabel: true };
+const denseGrid = { left: 48, right: 16, top: 28, bottom: 40, containLabel: true };
 const baseTooltip = {
   trigger: 'axis',
   backgroundColor: C.surface2, borderColor: C.border, borderWidth: 1,
   textStyle: { color: C.text, fontSize: 12 },
 };
 const baseLegend = { textStyle: { color: C.muted, fontSize: 11 }, top: 2, type: 'scroll' };
+const denseZoom = [{ type: 'slider', bottom: 4, height: 18, borderColor: C.border, backgroundColor: 'rgba(33,38,45,0.6)', fillerColor: 'rgba(88,166,255,0.18)', handleStyle: { color: C.accent }, textStyle: { color: C.muted, fontSize: 9 } }];
 
 function mkChart(id, option) {
   const el = document.getElementById(id);
   if (!el) return;
+  const prior = echarts.getInstanceByDom(el);
+  if (prior) prior.dispose();
   const chart = echarts.init(el, null, { renderer: 'canvas' });
   // animation off → deterministic first paint & no per-frame randomness
   option.animation = false;
@@ -422,11 +528,21 @@ function mkChart(id, option) {
 }
 
 // ── 1. Wall time per run + rolling avg ────────────────────────────────────────
-const wall = RUNS.map(r => toMin(r.wallTimeMs));
+function renderCharts(rs) {
+const xLabels = makeXLabels(rs);
+toggleEmpty('emptyWallTime', !rs.length);
+toggleEmpty('emptyPhases', !rs.length);
+toggleEmpty('emptyStash', !rs.length);
+toggleEmpty('emptyConsOutput', !rs.length);
+toggleEmpty('emptySuccess', !rs.length);
+toggleEmpty('emptyLint', !rs.length);
+const wall = rs.map(r => toMin(r.wallTimeMs));
+const failPoints = rs.map((r, i) => r.ok ? null : [i, toMin(r.wallTimeMs)]).filter(Boolean);
 mkChart('chartWallTime', {
   tooltip: baseTooltip,
-  legend: { ...baseLegend, data: ['Wall time', 'Rolling avg'] },
-  grid: baseGrid,
+  legend: { ...baseLegend, data: ['Wall time', 'Rolling avg', 'Failed run'] },
+  grid: denseGrid,
+  dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
   yAxis: { type: 'value', name: 'min', nameTextStyle: { color: C.muted }, ...baseAxis },
   series: [
@@ -434,21 +550,24 @@ mkChart('chartWallTime', {
       lineStyle: { color: C.accent, width: 1.5 }, areaStyle: { color: 'rgba(88,166,255,0.08)' } },
     { name: 'Rolling avg', type: 'line', data: rollingAvg(wall), showSymbol: false, smooth: true,
       lineStyle: { color: C.yellow, width: 2, type: 'dashed' } },
+    { name: 'Failed run', type: 'scatter', symbol: 'triangle', symbolSize: 12,
+      itemStyle: { color: C.red }, data: failPoints },
   ],
 });
 
 // ── 2. Per-phase wall time decomposition (stacked area) ──────────────────────
 mkChart('chartPhases', {
   tooltip: baseTooltip,
-  legend: { ...baseLegend, data: ['Consolidation', 'Memory inference', 'Graph extraction', 'Other / LLM'] },
-  grid: baseGrid,
+  legend: { ...baseLegend, data: ['Consolidation', 'Memory inference', 'Graph extraction', 'Unattributed'] },
+  grid: denseGrid,
+  dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
   yAxis: { type: 'value', name: 'min', nameTextStyle: { color: C.muted }, ...baseAxis },
   series: [
-    { name: 'Consolidation',    type: 'line', stack: 'p', areaStyle: { color: 'rgba(88,166,255,0.55)' },  lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.consDurationMs)) },
-    { name: 'Memory inference', type: 'line', stack: 'p', areaStyle: { color: 'rgba(63,185,80,0.55)' },   lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.miDurationMs)) },
-    { name: 'Graph extraction', type: 'line', stack: 'p', areaStyle: { color: 'rgba(188,140,255,0.55)' }, lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.geDurationMs)) },
-    { name: 'Other / LLM',      type: 'line', stack: 'p', areaStyle: { color: 'rgba(210,153,34,0.45)' },  lineStyle: { width: 0 }, showSymbol: false, data: RUNS.map(r => toMin(r.otherMs)) },
+    { name: 'Consolidation',    type: 'line', stack: 'p', areaStyle: { color: 'rgba(88,166,255,0.55)' },  lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.consDurationMs)) },
+    { name: 'Memory inference', type: 'line', stack: 'p', areaStyle: { color: 'rgba(63,185,80,0.55)' },   lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.miDurationMs)) },
+    { name: 'Graph extraction', type: 'line', stack: 'p', areaStyle: { color: 'rgba(188,140,255,0.55)' }, lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.geDurationMs)) },
+    { name: 'Unattributed',     type: 'line', stack: 'p', areaStyle: { color: 'rgba(210,153,34,0.45)' },  lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.otherMs)) },
   ],
 });
 
@@ -456,12 +575,13 @@ mkChart('chartPhases', {
 mkChart('chartStash', {
   tooltip: baseTooltip,
   legend: { ...baseLegend, data: ['Derived', 'Eligible'] },
-  grid: baseGrid,
+  grid: denseGrid,
+  dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
   yAxis: { type: 'value', ...baseAxis },
   series: [
-    { name: 'Derived',  type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.green,  width: 1.8 }, data: RUNS.map(r => r.derived) },
-    { name: 'Eligible', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.accent, width: 1.8 }, data: RUNS.map(r => r.eligible) },
+    { name: 'Derived',  type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.green,  width: 1.8 }, data: rs.map(r => r.derived) },
+    { name: 'Eligible', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.accent, width: 1.8 }, data: rs.map(r => r.eligible) },
   ],
 });
 
@@ -469,24 +589,26 @@ mkChart('chartStash', {
 mkChart('chartConsOutput', {
   tooltip: baseTooltip,
   legend: { ...baseLegend, data: ['Promoted', 'Merged', 'Deleted'] },
-  grid: baseGrid,
+  grid: denseGrid,
+  dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
   yAxis: { type: 'value', ...baseAxis },
   series: [
-    { name: 'Promoted', type: 'bar', itemStyle: { color: 'rgba(88,166,255,0.75)' }, data: RUNS.map(r => r.promoted) },
-    { name: 'Merged',   type: 'bar', itemStyle: { color: 'rgba(63,185,80,0.75)' },  data: RUNS.map(r => r.merged) },
-    { name: 'Deleted',  type: 'bar', itemStyle: { color: 'rgba(248,81,73,0.75)' },  data: RUNS.map(r => r.deleted) },
+    { name: 'Promoted', type: 'bar', itemStyle: { color: 'rgba(88,166,255,0.75)' }, data: rs.map(r => r.promoted) },
+    { name: 'Merged',   type: 'bar', itemStyle: { color: 'rgba(63,185,80,0.75)' },  data: rs.map(r => r.merged) },
+    { name: 'Deleted',  type: 'bar', itemStyle: { color: 'rgba(248,81,73,0.75)' },  data: rs.map(r => r.deleted) },
   ],
 });
 
-// ── 5. Success / failures (failed runs as distinct red scatter) ──────────────
+// ── 5. Success / failures (failed runs as distinct red triangles) ────────────
+const failScatter = rs.map((r, i) => r.ok ? null : [i, toMin(r.wallTimeMs)]).filter(Boolean);
 mkChart('chartSuccess', {
   tooltip: {
     ...baseTooltip,
     formatter: p => {
       const arr = Array.isArray(p) ? p : [p];
       const i = arr[0].dataIndex;
-      return `${xLabels[i]}<br/>${RUNS[i].ok ? '✅ ok' : '❌ failed'} · ${toMin(RUNS[i].wallTimeMs)}m`;
+      return `${xLabels[i]}<br/>${rs[i].ok ? '✅ ok' : '❌ failed'} · ${toMin(rs[i].wallTimeMs)}m`;
     },
   },
   legend: { ...baseLegend, data: ['Wall time (ok)', 'Failed run'] },
@@ -495,10 +617,10 @@ mkChart('chartSuccess', {
   yAxis: { type: 'value', name: 'min', nameTextStyle: { color: C.muted }, ...baseAxis },
   series: [
     { name: 'Wall time (ok)', type: 'line', showSymbol: false, smooth: true,
-      lineStyle: { color: C.green, width: 1.2 }, data: RUNS.map(r => r.ok ? toMin(r.wallTimeMs) : null) },
-    { name: 'Failed run', type: 'scatter', symbolSize: 9,
+      lineStyle: { color: C.green, width: 1.2 }, data: rs.map(r => r.ok ? toMin(r.wallTimeMs) : null) },
+    { name: 'Failed run', type: 'scatter', symbol: 'triangle', symbolSize: 12,
       itemStyle: { color: C.red },
-      data: RUNS.map((r, i) => r.ok ? null : [i, toMin(r.wallTimeMs)]) },
+      data: failScatter },
   ],
 });
 
@@ -510,8 +632,8 @@ mkChart('chartLint', {
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
   yAxis: { type: 'value', ...baseAxis },
   series: [
-    { name: 'Flagged', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.yellow, width: 1.6 }, areaStyle: { color: 'rgba(210,153,34,0.10)' }, data: RUNS.map(r => r.lintFlagged) },
-    { name: 'Fixed',   type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.green,  width: 1.6 }, data: RUNS.map(r => r.lintFixed) },
+    { name: 'Flagged', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.yellow, width: 1.6 }, areaStyle: { color: 'rgba(210,153,34,0.10)' }, data: rs.map(r => r.lintFlagged) },
+    { name: 'Fixed',   type: 'line', showSymbol: false, smooth: true, lineStyle: { color: C.green,  width: 1.6 }, data: rs.map(r => r.lintFixed) },
   ],
 });
 
@@ -521,29 +643,62 @@ const distillSeries = DISTILL_REASONS.map((reason, idx) => ({
   type: 'bar',
   stack: 'd',
   itemStyle: { color: SERIES_PALETTE[idx % SERIES_PALETTE.length] },
-  data: RUNS.map(r => (r.distillByReason && r.distillByReason[reason]) || 0),
+  data: rs.map(r => (r.distillByReason && r.distillByReason[reason]) || 0),
 }));
+const distillEmpty = !rs.length || !DISTILL_REASONS.length;
+toggleEmpty('emptyDistill', distillEmpty);
 mkChart('chartDistill', {
   tooltip: baseTooltip,
   legend: { ...baseLegend, data: DISTILL_REASONS },
-  grid: { ...baseGrid, top: 40 },
+  grid: { ...denseGrid, top: 40 },
+  dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
   yAxis: { type: 'value', ...baseAxis },
   series: distillSeries.length ? distillSeries
-    : [{ name: 'none', type: 'bar', data: RUNS.map(() => 0) }],
+    : [{ name: 'none', type: 'bar', data: rs.map(() => 0) }],
 });
+}
+
+// ── 8. LLM tokens per stage (horizontal stacked bar) — window aggregate ──────
+function humanizeStage(s) {
+  return String(s).replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+function renderLlmStages() {
+  const stages = Object.keys(LLM_BY_STAGE).sort();
+  toggleEmpty('emptyLlmStages', !stages.length);
+  const labels = stages.map(humanizeStage);
+  const prompt = stages.map(s => LLM_BY_STAGE[s].promptTokens || 0);
+  const completion = stages.map(s => LLM_BY_STAGE[s].completionTokens || 0);
+  const reasoning = stages.map(s => LLM_BY_STAGE[s].reasoningTokens || 0);
+  mkChart('chartLlmStages', {
+    tooltip: { ...baseTooltip, trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { ...baseLegend, data: ['Prompt', 'Completion', 'Reasoning'] },
+    grid: { left: 8, right: 24, top: 28, bottom: 8, containLabel: true },
+    xAxis: { type: 'value', ...baseAxis },
+    yAxis: { type: 'category', data: labels, ...baseAxis },
+    series: [
+      { name: 'Prompt',     type: 'bar', stack: 'tok', itemStyle: { color: 'rgba(88,166,255,0.8)' },  data: prompt },
+      { name: 'Completion', type: 'bar', stack: 'tok', itemStyle: { color: 'rgba(63,185,80,0.8)' },   data: completion },
+      { name: 'Reasoning',  type: 'bar', stack: 'tok', itemStyle: { color: 'rgba(188,140,255,0.8)' }, data: reasoning },
+    ],
+  });
+}
 
 // ── Last 10 runs table ────────────────────────────────────────────────────────
+function renderLastRuns(rs) {
 const tbody = document.getElementById('lastRunsTable');
-RUNS.slice(-10).forEach(r => {
+tbody.innerHTML = '';
+rs.slice(-10).forEach(r => {
   const tr = document.createElement('tr');
   const ts  = new Date(r.startedAt).toISOString().replace('T', ' ').slice(0, 16);
   const dur = r.wallTimeMs ? (r.wallTimeMs / 60000).toFixed(1) + 'm' : '—';
+  const task = r.taskId || 'manual';
   const badge = r.ok
     ? '<span class="badge-pill badge-pass" style="padding:2px 8px;font-size:11px;"><span class="dot dot-pass" style="width:6px;height:6px;"></span>&nbsp;ok</span>'
     : '<span class="badge-pill badge-fail" style="padding:2px 8px;font-size:11px;"><span class="dot dot-fail" style="width:6px;height:6px;"></span>&nbsp;failed</span>';
   tr.innerHTML = `
     <td style="font-family:monospace;font-size:12px;">${ts}</td>
+    <td><code>${task}</code></td>
     <td>${dur}</td>
     <td style="color:var(--accent);font-weight:600;">${r.promoted || 0}</td>
     <td>${r.merged || 0}</td>
@@ -555,6 +710,20 @@ RUNS.slice(-10).forEach(r => {
   `;
   tbody.appendChild(tr);
 });
+}
+
+function updateFilteredViews() {
+  const rs = filteredRuns();
+  renderCharts(rs);
+  renderLastRuns(rs);
+}
+
+populateFilters();
+document.getElementById('rangeSelect').addEventListener('change', updateFilteredViews);
+document.getElementById('taskFilter').addEventListener('change', updateFilteredViews);
+document.getElementById('statusFilter').addEventListener('change', updateFilteredViews);
+renderLlmStages();
+updateFilteredViews();
 </script>
 </body>
 </html>

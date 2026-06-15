@@ -110,9 +110,16 @@ describe("buildHealthHtmlReplacements", () => {
     const templateTokens = new Set(fs.readFileSync(resolveTemplatePath("health"), "utf8").match(/%%[A-Z_]+%%/g) ?? []);
     const replacementTokens = new Set(Object.keys(replacements));
 
+    // Token COUNT is unchanged at 17, but the SET evolved: the legacy
+    // ADVISORY_CARDS_HTML + WATCH_ITEMS_HTML pair was replaced by the merged
+    // ACTION_ITEMS_HTML plus the new LLM_BY_STAGE_JSON chart payload.
     expect(replacementTokens.size).toBe(17);
     expect([...replacementTokens].sort()).toEqual([...templateTokens].sort());
     expect(replacementTokens.has("%%OVERALL_STATUS%%")).toBe(false);
+    expect(replacementTokens.has("%%ACTION_ITEMS_HTML%%")).toBe(true);
+    expect(replacementTokens.has("%%LLM_BY_STAGE_JSON%%")).toBe(true);
+    expect(replacementTokens.has("%%ADVISORY_CARDS_HTML%%")).toBe(false);
+    expect(replacementTokens.has("%%WATCH_ITEMS_HTML%%")).toBe(false);
   });
 
   test("rendering the health template leaves no unreplaced tokens", () => {
@@ -204,8 +211,9 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).not.toContain("<script>alert");
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).toContain("tag-extract");
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).toContain("tag-consolidate");
-    expect(replacements["%%ADVISORY_CARDS_HTML%%"]).toContain("2 proposals pending");
-    expect(replacements["%%WATCH_ITEMS_HTML%%"]).toContain("Drain 2 pending proposals");
+    // Advisories + what-to-watch are now merged into a single Action Items list.
+    expect(replacements["%%ACTION_ITEMS_HTML%%"]).toContain("Drain 2 pending proposals");
+    expect(replacements["%%ACTION_ITEMS_HTML%%"]).toContain("akm proposal list");
   });
 
   test("deltas drive the trend pills in the executive summary", () => {
@@ -254,7 +262,84 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%RUN_COUNT%%"]).toBe("0");
     expect(replacements["%%EXEC_SUMMARY_HTML%%"]).toContain("No runs in window");
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).toContain("No pending proposals");
+    expect(replacements["%%LLM_BY_STAGE_JSON%%"]).toBe("{}");
     const html = renderHtml(resolveTemplatePath("health"), replacements);
     expect(html).not.toMatch(/%%[A-Z_]+%%/);
+  });
+
+  test("taskId is derived from the run scope and emitted in the RUNS payload", () => {
+    seedImproveRun("run-html-task");
+    const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
+    // Seeded run uses scope { mode: "all" } with no value → taskId falls back to mode.
+    expect(replacements["%%RUNS_JS_CONST%%"]).toContain('"taskId":"all"');
+  });
+
+  test("per-stage LLM token aggregate flows into the LLM_BY_STAGE_JSON token", () => {
+    seedImproveRun("run-html-stages");
+    appendEvent({
+      eventType: "llm_usage",
+      metadata: {
+        stage: "reflect",
+        model: "m",
+        durationMs: 1000,
+        promptTokens: 100,
+        completionTokens: 40,
+        totalTokens: 140,
+        reasoningTokens: 10,
+      },
+    });
+    const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
+    const byStage = JSON.parse(replacements["%%LLM_BY_STAGE_JSON%%"]) as Record<
+      string,
+      { promptTokens: number; completionTokens: number; reasoningTokens: number }
+    >;
+    expect(byStage.reflect).toBeDefined();
+    expect(byStage.reflect.promptTokens).toBe(100);
+    expect(byStage.reflect.completionTokens).toBe(40);
+    expect(byStage.reflect.reasoningTokens).toBe(10);
+    // The template wires the by-stage chart panel.
+    const html = renderHtml(resolveTemplatePath("health"), replacements);
+    expect(html).toContain('id="chartLlmStages"');
+    expect(html).toContain("LLM_BY_STAGE");
+  });
+
+  test("a synthesized verdict line renders under the exec summary", () => {
+    seedImproveRun("run-html-verdict", false); // failed run → drivers include failures
+    const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
+    const exec = replacements["%%EXEC_SUMMARY_HTML%%"];
+    expect(exec).toContain("Verdict:");
+    expect(exec).toContain('class="verdict');
+    expect(exec).toContain("1 failed run");
+  });
+
+  test("advisories and what-to-watch merge into one prioritized, de-duplicated Action Items list", () => {
+    seedImproveRun("run-html-actions", false); // failed run
+    const replacements = buildHealthHtmlReplacements(
+      healthResult(),
+      buildOpts({
+        proposals: [{ ref: "memory:x", source: "extract", createdAt: "2026-06-10T12:00:00.000Z" }],
+      }),
+    );
+    const actions = replacements["%%ACTION_ITEMS_HTML%%"];
+    // Failed-run item (P1) and drain-proposals item (P2) both present, once each.
+    expect(actions).toContain("failed run");
+    expect(actions).toContain("Drain 1 pending proposal");
+    expect((actions.match(/Drain 1 pending proposal/g) ?? []).length).toBe(1);
+    // Priority badges present and P1 sorts before P2 in the output.
+    expect(actions).toContain('class="prio p1"');
+    expect(actions).toContain('class="prio p2"');
+    expect(actions.indexOf("p1")).toBeLessThan(actions.indexOf("p2"));
+  });
+
+  test("the rendered template includes the filter bar, Task column, and dataZoom", () => {
+    seedImproveRun("run-html-filterbar");
+    const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
+    const html = renderHtml(resolveTemplatePath("health"), replacements);
+    expect(html).toContain('class="filter-bar"');
+    expect(html).toContain('id="taskFilter"');
+    expect(html).toContain("<th>Task</th>");
+    expect(html).toContain("dataZoom");
+    expect(html).toContain("getInstanceByDom");
+    expect(html).toContain("Action Items");
   });
 });

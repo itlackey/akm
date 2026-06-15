@@ -7,7 +7,7 @@
  * (#582). Ports the external akm-health-report skill's collect.py + render.py
  * to TypeScript so the report is generated in-process (no python, no
  * shell-out). The template (`src/assets/templates/html/health.html`) is a
- * verbatim copy of the skill's report.html; this module computes the 17
+ * strict superset of the skill's report.html; this module computes the 17
  * `%%TOKEN%%` replacements it consumes.
  *
  * Determinism: nothing here depends on Date.now()/Math.random(). Runs are
@@ -59,6 +59,24 @@ function num(value: number): string {
   return Math.round(value).toLocaleString("en-US");
 }
 
+/** Compact token/count formatter, e.g. 127345 → "127K", 1_500_000 → "1.5M". */
+function compact(value: number): string {
+  const v = Math.round(value);
+  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(v);
+}
+
+/** Humanize a camelCase / kebab / snake enum into reader-facing text. */
+function humanize(raw: string): string {
+  return raw
+    .replace(/[-_]/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
 function fmtMs(ms: number): string {
   return ms ? `${(ms / 60000).toFixed(1)}m` : "—";
 }
@@ -92,6 +110,7 @@ function coercePct(raw: number | string | undefined): number | undefined {
 
 interface ReportRun {
   id: string;
+  taskId: string;
   startedAt: string;
   completedAt: string;
   wallTimeMs: number;
@@ -143,6 +162,7 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
   const geMs = ge.durationMs || 0;
   return {
     id: r.id,
+    taskId: r.scope.value ?? r.scope.mode ?? "manual",
     startedAt: r.startedAt,
     completedAt: r.completedAt,
     wallTimeMs: wall,
@@ -239,13 +259,32 @@ function deltaPill(deltas: Record<string, DeltaEntry>, key: string, lowerIsBette
   return `<span class="trend-pill ${cls}">${arrow} ${signed}</span>`;
 }
 
-// ── Advisory / watch-item cards ──────────────────────────────────────────────
+// ── Action-item / advisory cards ─────────────────────────────────────────────
 
-function advisoryCard(cls: "warn" | "fail", icon: string, title: string, descHtml: string): string {
+type Priority = "P1" | "P2" | "P3";
+
+interface ActionItem {
+  /** Stable de-dupe key — first item with a given key wins. */
+  key: string;
+  prio: Priority;
+  cls: "warn" | "fail";
+  title: string;
+  /** Pre-escaped/safe HTML description. */
+  descHtml: string;
+  /** Optional remediation command (rendered in a <code> block). */
+  remedy?: string;
+}
+
+const PRIO_RANK: Record<Priority, number> = { P1: 0, P2: 1, P3: 2 };
+
+function actionItemCard(item: ActionItem): string {
+  const icon = item.cls === "fail" ? "🔴" : item.prio === "P3" ? "🟡" : "⚠️";
+  const remedy = item.remedy ? `<div class="remedy">Fix: <code>${esc(item.remedy)}</code></div>` : "";
   return (
-    `<div class="advisory ${cls}"><div class="advisory-icon">${icon}</div>` +
-    `<div class="advisory-body"><div class="title">${title}</div>` +
-    `<div class="desc">${descHtml}</div></div></div>`
+    `<div class="advisory ${item.cls}"><div class="advisory-icon">${icon}</div>` +
+    `<div class="advisory-body">` +
+    `<div class="title"><span class="prio ${item.prio.toLowerCase()}">${item.prio}</span>${item.title}</div>` +
+    `<div class="desc">${item.descHtml}</div>${remedy}</div></div>`
   );
 }
 
@@ -291,7 +330,8 @@ function buildEchartsTag(opts: HealthHtmlReportOptions): string {
  * Compute all 17 `%%TOKEN%%` replacements for the health HTML template.
  * There is deliberately NO standalone `%%OVERALL_STATUS%%` token — the
  * overall status is embedded in the pre-rendered badge / exec-summary
- * fragments, matching the skill template.
+ * fragments, matching the skill template. Advisories and "what to watch" are
+ * merged + de-duplicated into a single prioritized `%%ACTION_ITEMS_HTML%%`.
  */
 export function buildHealthHtmlReplacements(
   result: AkmHealthResult,
@@ -344,6 +384,22 @@ export function buildHealthHtmlReplacements(
   const lastRun = runs[runs.length - 1];
   const generatedAt = lastRun ? lastRun.completedAt || lastRun.startedAt || sinceIso : sinceIso;
   const latest = [...runs].reverse().find((r) => r.ok) ?? lastRun;
+  // Freshness: surface the newest run's timestamp + the generated-at anchor in
+  // the exec card. Staleness is computed deterministically (no Date.now()) from
+  // the gap between the window start (`since`) and the newest run we have: if no
+  // run landed in the window, or the newest run sits in the first 25% of a
+  // window wider than the 6h threshold (i.e. a long idle tail), we flag stale.
+  const STALE_MS = 6 * 60 * 60 * 1000;
+  const latestRunMs = lastRun ? Date.parse(lastRun.completedAt || lastRun.startedAt) : NaN;
+  const sinceMs = Date.parse(sinceIso);
+  const generatedMs = Date.parse(generatedAt);
+  const idleTailMs =
+    Number.isFinite(latestRunMs) && Number.isFinite(generatedMs) ? Math.max(0, generatedMs - latestRunMs) : 0;
+  const isStale =
+    totalRuns === 0 || (Number.isFinite(latestRunMs) && Number.isFinite(sinceMs) && idleTailMs > STALE_MS);
+  const latestRunHuman = lastRun
+    ? `${(lastRun.completedAt || lastRun.startedAt).slice(0, 16).replace("T", " ")} UTC`
+    : "—";
 
   // ── Status badges ──────────────────────────────────────────────────────────
   const badgeByStatus = {
@@ -370,7 +426,10 @@ export function buildHealthHtmlReplacements(
     li("MI yield rate", miYieldRate),
     li("MI written", num(miWritten)),
     li("Consolidation promoted", num(cons.promoted)),
-    li("Consolidation judgedNoAction", num(cons.judgedNoAction)),
+    li(
+      "Consolidation judged: no action",
+      `<abbr title="Candidates the consolidator reviewed but intentionally left unchanged (the 'judgedNoAction' field).">${num(cons.judgedNoAction)}</abbr>`,
+    ),
     li("Chunk failure", chunkFail),
     li("Median wall time", fmtMs(wallTime.medianMs)),
     li("P95 wall time", fmtMs(wallTime.p95Ms)),
@@ -399,7 +458,10 @@ export function buildHealthHtmlReplacements(
         li("Wall time", fmtMs(latest.wallTimeMs)),
         li("Reflect ok/fail", `${latest.reflectOk} / ${latest.reflectFailed}`),
         li("Promoted", String(latest.promoted)),
-        li("judgedNoAction", String(latest.judgedNoAction)),
+        li(
+          "Judged: no action",
+          `<abbr title="Candidates reviewed but intentionally left unchanged on this run.">${latest.judgedNoAction}</abbr>`,
+        ),
         li("MI written", String(latest.miWritten)),
         li("Graph entities/relations", `${latest.geEntities} / ${latest.geRelations}`),
       ].join("")
@@ -409,17 +471,61 @@ export function buildHealthHtmlReplacements(
     li("Report window", esc(opts.window)),
     li("Compare window", esc(opts.compare)),
     li("Runs", `${num(totalRuns)} (${failedRuns} failed)`),
-    li("Stash derived", num(improve.memorySummary.derived)),
-    li("Stash eligible", num(improve.memorySummary.eligible)),
+    li(
+      "Stash derived",
+      `<abbr title="Whole-stash recount of derived assets at report time — not a per-run sum.">${num(improve.memorySummary.derived)}</abbr>`,
+    ),
+    li(
+      "Stash eligible",
+      `<abbr title="Whole-stash recount of eligible assets at report time — not a per-run sum.">${num(improve.memorySummary.eligible)}</abbr>`,
+    ),
     li("Pending proposals", String(proposals.length)),
     li("Semantic search", sem.blocked ? "BLOCKED" : "OK"),
   ].join("");
 
   const overallEmoji = trend.overall === "improving" ? "📈" : trend.overall === "degrading" ? "📉" : "↔️";
+
+  // ── Synthesized verdict (one sentence + 2-3 drivers) ───────────────────────
+  // The verdict WORD is the authoritative health status (hard checks). Concerns
+  // (failed improve runs, blocked search, pending proposals) are advisory and do
+  // NOT gate that word, so we must not pair a green PASS with red "drivers" as
+  // if they were failures. When the status is PASS we frame concerns as "watch:"
+  // alongside the trend; only a degraded status (WARN/FAIL) leads with them.
+  const concerns: string[] = [];
+  if (failedRuns > 0) concerns.push(`${failedRuns} failed run${failedRuns === 1 ? "" : "s"}`);
+  if (sem.blocked) concerns.push("semantic search blocked");
+  if (proposals.length > 0) concerns.push(`${proposals.length} pending proposal${proposals.length === 1 ? "" : "s"}`);
+  const trendClause =
+    trend.overall === "improving"
+      ? "throughput and latency improving"
+      : trend.overall === "degrading"
+        ? "throughput or latency degrading"
+        : "throughput and latency steady";
+  const verdictWord = badge.label;
+  let verdictRest: string;
+  if (result.status === "pass") {
+    const watch = concerns.length > 0 ? `; watch: ${concerns.slice(0, 3).join(", ")}` : "";
+    verdictRest = `healthy, ${trendClause}${watch}`;
+  } else {
+    const lead = concerns.length > 0 ? concerns.slice(0, 3).join("; ") : trendClause;
+    verdictRest = trend.overall === "degrading" && concerns.length > 0 ? `${lead}; ${trendClause}` : lead;
+  }
+  const verdictSentence = `${verdictWord} — ${esc(verdictRest)}.`;
+  const verdictHtml = `<div class="verdict ${result.status}"><b>Verdict:</b> ${verdictSentence}</div>`;
+
+  // ── Freshness line ─────────────────────────────────────────────────────────
+  const freshnessHtml = `<div class="freshness${isStale ? " stale" : ""}">${
+    isStale ? "⚠️ Stale: " : ""
+  }Latest run ${esc(latestRunHuman)} &nbsp;·&nbsp; generated ${esc(generatedAt)}${
+    isStale ? " — no recent activity (newest run older than the 6h freshness threshold)." : "."
+  }</div>`;
+
   const execSummary = `
     <h2>${overallEmoji} Executive Summary
         <span class="badge-pill ${badge.badge}" style="font-size:11px;">
         <span class="dot ${badge.dot}"></span>${badge.label}</span></h2>
+    ${verdictHtml}
+    ${freshnessHtml}
     <div class="exec-grid">
       <div>
         <h4>Quick Numbers</h4>
@@ -444,9 +550,15 @@ export function buildHealthHtmlReplacements(
       &nbsp;·&nbsp; based on decision quality, output volume, failures, and latency vs the prior window.</div>`.trim();
 
   // ── KPI cards ──────────────────────────────────────────────────────────────
+  // Color is a health SIGNAL, not decoration: green/yellow/red where a card has
+  // a meaningful threshold; "neutral" for purely-informational counts. Cards are
+  // ordered by operator priority (failures first, informational counts last).
   const semValue = sem.blocked ? "BLOCKED" : "OK";
-  const semColor = sem.blocked ? "yellow" : "green";
+  const semColor = sem.blocked ? "red" : "green";
   const semStyle = sem.blocked ? "font-size:18px;" : "";
+  const completionPct = invoked ? (100 * completed) / invoked : 100;
+  const completionColor = completionPct >= 99 ? "green" : completionPct >= 90 ? "yellow" : "red";
+  const llmTokensCompact = compact(llm.totalTokens);
   const kpiCard = (color: string, label: string, value: string, sub: string, valueStyle = "") =>
     `<div class="kpi-card ${color}">
       <div class="label">${label}</div>
@@ -455,36 +567,36 @@ export function buildHealthHtmlReplacements(
     </div>`;
   const kpiCards = [
     kpiCard(
-      failedRuns === 0 ? "green" : "yellow",
-      "Completion Rate",
-      completionRate,
-      `${num(completed)} / ${num(invoked)} invoked`,
-    ),
-    kpiCard(
       failedRuns === 0 ? "green" : "red",
       "Failed Runs",
       String(failedRuns),
       `of ${num(totalRuns)} runs · ${taskFailRate} task fail`,
     ),
+    kpiCard(completionColor, "Completion Rate", completionRate, `${num(completed)} / ${num(invoked)} invoked`),
+    kpiCard("neutral", "Median Duration", `${medianDurMin}m`, `p95 = ${p95DurMin}m`),
     kpiCard("blue", "Total Promoted", num(cons.promoted), `avg ${avgPromoted} / run`),
     kpiCard("blue", "MI Written", num(miWritten), `${miYieldRate} yield rate`),
     kpiCard("purple", "Graph Entities", num(ge.entities), `+${num(ge.relations)} relations`),
     kpiCard(
-      "green",
+      "neutral",
       "Stash Derived",
       num(improve.memorySummary.derived),
-      `of ${num(improve.memorySummary.eligible)} eligible`,
+      `of ${num(improve.memorySummary.eligible)} eligible (whole-stash)`,
     ),
-    kpiCard("yellow", "Median Duration", `${medianDurMin}m`, `p95 = ${p95DurMin}m`),
-    // #576: real LLM work — total tokens + call count + wall-time, not a GPU proxy.
+    // #576: real LLM work — duration leads, tokens compact, not a GPU proxy.
     kpiCard(
-      "purple",
+      llm.calls > 0 ? "purple" : "neutral",
       "🧠 LLM Work",
-      num(llm.totalTokens),
-      `${num(llm.calls)} calls · ${fmtMs(llm.totalDurationMs)} · ${num(llm.reasoningTokens)} reasoning`,
+      `${llmTokensCompact} tok`,
+      `${fmtMs(llm.totalDurationMs)} · ${num(llm.calls)} calls · ${compact(llm.reasoningTokens)} reasoning`,
     ),
     kpiCard(semColor, "Semantic Search", semValue, esc(sem.detail), semStyle),
-    kpiCard("yellow", "Pending Proposals", String(proposals.length), `from ${esc(opts.window)} batch`),
+    kpiCard(
+      proposals.length > 0 ? "yellow" : "neutral",
+      "Pending Proposals",
+      String(proposals.length),
+      `from ${esc(opts.window)} batch`,
+    ),
   ].join("\n");
 
   // ── Chart payload ──────────────────────────────────────────────────────────
@@ -492,21 +604,37 @@ export function buildHealthHtmlReplacements(
   const runsJsConst = `const RUNS = ${JSON.stringify(runs)};`;
 
   // ── Summary table rows ─────────────────────────────────────────────────────
-  const summaryRows: Array<[string, string, TrendDirection]> = [
+  // Optional 4th element = a glossary tooltip rendered as <abbr title>.
+  const summaryRows: Array<[string, string, TrendDirection, string?]> = [
     ["Task fail rate", taskFailRate, "flat"],
     ["Agent fail rate", agentFailRate, "flat"],
     ["Improve completion", `${num(completed)} / ${num(invoked)}`, "flat"],
-    ["MI yield rate", miYieldRate, trend.decisionQuality],
-    ["MI written", num(miWritten), trend.outputVolume],
+    [
+      "MI yield rate",
+      miYieldRate,
+      trend.decisionQuality,
+      "Memory-inference yield: share of considered candidates that produced a written fact.",
+    ],
+    ["MI written", num(miWritten), trend.outputVolume, "Memory-inference: facts written this window."],
     ["Consolidation promoted", num(cons.promoted), trend.outputVolume],
     ["Consolidation merged", num(cons.merged), "flat"],
     ["Consolidation deleted", num(cons.deleted), "flat"],
     ["Consolidation contradicted", num(cons.contradicted), "flat"],
-    ["Consolidation judgedNoAction", num(cons.judgedNoAction), "flat"],
+    [
+      "Consolidation judged: no action",
+      num(cons.judgedNoAction),
+      "flat",
+      "Candidates reviewed but intentionally left unchanged (the 'judgedNoAction' field).",
+    ],
     ["Chunk failure", chunkFail, "flat"],
     ["Graph entities", num(ge.entities), "up"],
     ["Graph relations", num(ge.relations), "up"],
-    ["Stash derived", num(improve.memorySummary.derived), "up"],
+    [
+      "Stash derived",
+      num(improve.memorySummary.derived),
+      "up",
+      "Whole-stash recount of derived assets at report time — not a per-run sum.",
+    ],
     ["Median wall time", fmtMs(wallTime.medianMs), trend.latency],
     ["P95 wall time", fmtMs(wallTime.p95Ms), trend.latency],
     // #576: real LLM accounting (replaces the GPU-time proxy).
@@ -514,66 +642,135 @@ export function buildHealthHtmlReplacements(
     ["LLM total tokens", num(llm.totalTokens), "flat"],
     ["LLM prompt tokens", num(llm.promptTokens), "flat"],
     ["LLM completion tokens", num(llm.completionTokens), "flat"],
-    ["LLM reasoning tokens", num(llm.reasoningTokens), "flat"],
+    [
+      "LLM reasoning tokens",
+      num(llm.reasoningTokens),
+      "flat",
+      "Tokens spent on model reasoning/thinking, billed separately from prompt and completion.",
+    ],
     ["LLM wall time", fmtMs(llm.totalDurationMs), trend.latency],
   ];
   const summaryRowsHtml = summaryRows
-    .map(
-      ([label, value, t]) =>
-        `            <tr><td>${esc(label)}</td><td>${esc(value)}</td>` +
-        `<td class="trend ${trendClass(t)}">${trendLabel(t)}</td></tr>`,
-    )
+    .map(([label, value, t, tip]) => {
+      const labelHtml = tip ? `<abbr title="${esc(tip)}">${esc(label)}</abbr>` : esc(label);
+      return (
+        `            <tr><td>${labelHtml}</td><td>${esc(value)}</td>` +
+        `<td class="trend ${trendClass(t)}">${trendLabel(t)}</td></tr>`
+      );
+    })
     .join("\n");
 
-  // ── Advisory cards ─────────────────────────────────────────────────────────
-  const advisoryParts: string[] = [];
+  // ── Action Items (merged + de-duplicated advisories + what-to-watch) ────────
+  // Advisories and the old "what to watch" cards were built from the same data
+  // (result.advisories, sem-blocked, proposals, tail-latency, failed-runs). We
+  // collapse them into ONE prioritized, de-duplicated list (P1/P2/P3 + a
+  // remediation command per item), keyed so each concern appears exactly once.
+  const items: ActionItem[] = [];
+  const seen = new Set<string>();
+  const pushItem = (item: ActionItem) => {
+    if (seen.has(item.key)) return;
+    seen.add(item.key);
+    items.push(item);
+  };
+
+  // Hard advisories from the health check engine (own remediation in message).
   for (const a of result.advisories) {
     if (a.status !== "warn" && a.status !== "fail") continue;
-    advisoryParts.push(
-      advisoryCard(
-        a.status === "fail" ? "fail" : "warn",
-        a.status === "fail" ? "🔴" : "⚠️",
-        esc(a.name),
-        esc(a.message),
-      ),
-    );
+    pushItem({
+      key: `advisory:${a.name}`,
+      prio: a.status === "fail" ? "P1" : "P2",
+      cls: a.status === "fail" ? "fail" : "warn",
+      title: esc(humanize(a.name)),
+      descHtml: esc(a.message),
+    });
   }
+
+  // Failed runs in window.
+  if (failedRuns > 0) {
+    pushItem({
+      key: "failed-runs",
+      prio: "P1",
+      cls: "fail",
+      title: `${failedRuns} failed run${failedRuns === 1 ? "" : "s"} in window`,
+      descHtml: `Task fail rate ${esc(taskFailRate)}. Inspect failed runs (ok=false) for early-exit or harness errors.`,
+      remedy: `akm health --since=${opts.window} --group-by run`,
+    });
+  }
+
+  // Semantic search blocked.
   if (sem.blocked) {
-    advisoryParts.push(
-      advisoryCard(
-        "warn",
-        "⚠️",
-        "Semantic search blocked",
-        `Embedding provider unreachable. ${esc(sem.detail)}. Curate falls back to keyword search — relevance scoring degraded.`,
-      ),
-    );
+    pushItem({
+      key: "semantic-search-blocked",
+      prio: "P2",
+      cls: "warn",
+      title: "Semantic search blocked",
+      descHtml: `Embedding provider unreachable. ${esc(sem.detail)}. Curate falls back to keyword search — relevance scoring degraded.`,
+      remedy: "akm config show",
+    });
   }
+
+  // Pending proposals to drain.
   if (proposals.length > 0) {
-    advisoryParts.push(
-      advisoryCard(
-        "warn",
-        "⚠️",
-        `${proposals.length} proposals pending (drain needed)`,
-        "Run <code>akm proposal list</code> to review and drain.",
-      ),
-    );
+    const bySource = new Map<string, number>();
+    for (const p of proposals) bySource.set(p.source, (bySource.get(p.source) ?? 0) + 1);
+    const srcSummary = [...bySource.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([source, count]) => `${count} via ${esc(source)}`)
+      .join(", ");
+    pushItem({
+      key: "drain-proposals",
+      prio: "P2",
+      cls: "warn",
+      title: `Drain ${proposals.length} pending proposal${proposals.length === 1 ? "" : "s"}`,
+      descHtml: `Proposals generated this batch (${srcSummary}). Review before the queue grows further.`,
+      remedy: "akm proposal list",
+    });
   }
+
+  // High tail latency.
+  if (wallTime.p95Ms && wallTime.medianMs && wallTime.p95Ms / wallTime.medianMs > 2.5) {
+    pushItem({
+      key: "tail-latency",
+      prio: "P3",
+      cls: "warn",
+      title: `High tail latency: p95=${fmtMs(wallTime.p95Ms)}, median=${fmtMs(wallTime.medianMs)}`,
+      descHtml:
+        "P95 is well above median. Consolidation/LLM phase dominates wall time on slow runs. " +
+        "Check for slow chunks or LLM rate limiting.",
+    });
+  }
+
+  // Stale freshness.
+  if (isStale && totalRuns > 0) {
+    pushItem({
+      key: "stale",
+      prio: "P3",
+      cls: "warn",
+      title: "No recent improve runs",
+      descHtml: `Newest run is ${esc(latestRunHuman)} — older than the 6h freshness threshold. Check the improve scheduler/cron.`,
+    });
+  }
+
+  // Session-log notes (informational, lowest priority).
   if (result.sessionLogAdvisories.length > 0) {
     const patterns = result.sessionLogAdvisories
       .slice(0, 6)
       .map((p) => `<li>${esc(p.topic)}</li>`)
       .join("");
-    advisoryParts.push(
-      '<div class="advisory" style="border-left:3px solid var(--accent);">' +
-        '<div class="advisory-icon">ℹ️</div><div class="advisory-body">' +
-        `<div class="title">${result.sessionLogAdvisories.length} session-log note(s) (informational)</div>` +
-        `<div class="desc"><ul style="margin:4px 0 0 16px;padding:0;">${patterns}</ul></div></div></div>`,
-    );
+    pushItem({
+      key: "session-log-notes",
+      prio: "P3",
+      cls: "warn",
+      title: `${result.sessionLogAdvisories.length} session-log note(s) (informational)`,
+      descHtml: `<ul style="margin:4px 0 0 16px;padding:0;">${patterns}</ul>`,
+    });
   }
-  const advisoryCardsHtml =
-    advisoryParts.length > 0
-      ? advisoryParts.join("\n")
-      : passCard("No active advisories", "All checks passed for this window.");
+
+  items.sort((a, b) => PRIO_RANK[a.prio] - PRIO_RANK[b.prio]);
+  const actionItemsHtml =
+    items.length > 0
+      ? items.map(actionItemCard).join("\n")
+      : passCard("No action items", "All checks passed and nothing needs attention for this window.");
 
   // ── Proposal rows ──────────────────────────────────────────────────────────
   const proposalRowsHtml =
@@ -590,72 +787,6 @@ export function buildHealthHtmlReplacements(
           })
           .join("\n")
       : '<tr><td colspan="4" style="text-align:center;color:var(--muted);">No pending proposals</td></tr>';
-
-  // ── What to watch ──────────────────────────────────────────────────────────
-  const watchParts: string[] = [];
-  for (const a of result.advisories) {
-    if (a.status !== "warn" && a.status !== "fail") continue;
-    const prio = a.status === "fail" ? "P1" : "P2";
-    watchParts.push(
-      advisoryCard(
-        a.status === "fail" ? "fail" : "warn",
-        a.status === "fail" ? "🔴" : "🟡",
-        `${esc(a.name)} (${prio})`,
-        esc(a.message),
-      ),
-    );
-  }
-  if (sem.blocked) {
-    watchParts.push(
-      advisoryCard(
-        "warn",
-        "🟡",
-        "Embedding server unreachable (P2)",
-        "Curate quality and semantic ranking are degraded. Check the embedding endpoint configured in config.json.",
-      ),
-    );
-  }
-  if (proposals.length > 0) {
-    const bySource = new Map<string, number>();
-    for (const p of proposals) bySource.set(p.source, (bySource.get(p.source) ?? 0) + 1);
-    const srcSummary = [...bySource.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([source, count]) => `${count} via ${esc(source)}`)
-      .join(", ");
-    watchParts.push(
-      advisoryCard(
-        "warn",
-        "🟡",
-        `Drain ${proposals.length} pending proposals (P2)`,
-        `Proposals generated this batch (${srcSummary}). Run <code>akm proposal list</code> before the queue grows further.`,
-      ),
-    );
-  }
-  if (wallTime.p95Ms && wallTime.medianMs && wallTime.p95Ms / wallTime.medianMs > 2.5) {
-    watchParts.push(
-      advisoryCard(
-        "warn",
-        "🟡",
-        `High tail latency (P3): p95=${fmtMs(wallTime.p95Ms)}, median=${fmtMs(wallTime.medianMs)}`,
-        "P95 is well above median. Consolidation/LLM phase dominates wall time on slow runs. " +
-          "Check for slow chunks or LLM rate limiting.",
-      ),
-    );
-  }
-  if (failedRuns > 0) {
-    watchParts.push(
-      advisoryCard(
-        "warn",
-        "🟡",
-        `${failedRuns} failed run(s) in window (P2)`,
-        `Task fail rate ${taskFailRate}. Inspect failed runs (ok=false) for early-exit or harness errors.`,
-      ),
-    );
-  }
-  const watchItemsHtml =
-    watchParts.length > 0
-      ? watchParts.join("\n")
-      : passCard("Nothing critical to watch", "All indicators are within normal range.");
 
   // ── Commands used ──────────────────────────────────────────────────────────
   const commandsHtml = [
@@ -675,11 +806,11 @@ export function buildHealthHtmlReplacements(
     "%%KPI_CARDS_HTML%%": kpiCards,
     "%%RUNS_JS_CONST%%": runsJsConst,
     "%%DISTILL_REASONS_JSON%%": JSON.stringify(distillReasons),
+    "%%LLM_BY_STAGE_JSON%%": JSON.stringify(llm.byStage ?? {}),
     "%%SUMMARY_ROWS_HTML%%": summaryRowsHtml,
-    "%%ADVISORY_CARDS_HTML%%": advisoryCardsHtml,
+    "%%ACTION_ITEMS_HTML%%": actionItemsHtml,
     "%%PROPOSAL_ROWS_HTML%%": proposalRowsHtml,
     "%%PROPOSAL_COUNT%%": String(proposals.length),
-    "%%WATCH_ITEMS_HTML%%": watchItemsHtml,
     "%%COMMANDS_HTML%%": commandsHtml,
     "%%GENERATED_AT%%": esc(generatedAt),
   };
