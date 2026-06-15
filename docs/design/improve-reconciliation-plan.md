@@ -112,7 +112,7 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 
 - **S1 Salience:** proactive selector + priority formula; `eligibilitySource` attribution; signal-delta gate + high-retrieval (P0-A) fallback; #614 valence (`combinedEligibilityScore`/`negativeOnlyRatio`/the dangling `feedbackLane`); utility EMA (#386); `getRetrievalCounts`; pool-saturation advisory (#603).
 - **S2 Outcome loop:** kill-criterion + `akm-eval` + `proactive-verdict`; #612 calibration + auto-tune; #613 reconsolidation pressure (subsumed by the WS-2 seam; do not build separately); `proactive_selected`/`proactiveDueTotal`/`proactiveNeverReflected`.
-- **S3 Consolidation:** `consolidate` LLM cluster+merge; #617 dedup; #581 judgedCache; #604 hot-probation intake buffer (write-path dedup — a tier of this pipeline, currently unbuilt/deferred); `incrementalSince`/`neighborsPerChanged`/`limit` (beta.6); distill + `requirePlannedRefs`; memoryInference + `minPendingCount`; the content-hash variants.
+- **S3 Consolidation:** `consolidate` LLM cluster+merge; #617 dedup; #581 judgedCache; #604 hot-probation intake buffer (write-path dedup — now **WS-3 step 0c**, the intake tier of this pipeline); `incrementalSince`/`neighborsPerChanged`/`limit` (beta.6); distill + `requirePlannedRefs`; memoryInference + `minPendingCount`; the content-hash variants.
 - **S4 CHANGE gate:** #580 empty-diff/cosmetic suppression; auto-accept gate + #577 gate-decisions + `failedByReason`; #612 threshold; #617 archive-before-delete (`[signoff]` archive machinery retired — git is the recovery path).
 - **S5 Attribution/observability:** `eligibilitySource`; LLM telemetry (#576); pool-saturation (#603); skip-reason aggregation fix; the health-report overhaul (taskId join, slice filter, deltas, snapshot-summing fixes).
 - **Supporting infra (correct, not a seam — leave as-is):** `extract.maxSessionsPerRun` (#2, **default-on at 25**); `minContentChars`/`minNewSessions` (#595/#596/#554); extract active-profile gate (#593/#594); #607 per-process locks + non-blocking ensureIndex; journal sessionId (#599); consolidate event schema (#600); extract negative-examples (#601); config round-trip (#598).
@@ -178,9 +178,9 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 
 ### WS-3 — Unify the CONSOLIDATION pipeline (S3)
 **Splinter:** #617 (own hash/loader/embed), #581 judgedCache, consolidate (own hash/embed), incremental knobs, divergent hashes.
-**Target:** homeostatic step 0 → tiered pipeline, shared primitives, bounded time.
+**Target:** intake + homeostatic step 0 (incl. #604 hot-probation) → tiered pipeline, shared primitives, bounded time.
 
-**Step 0 — `[exp]` Homeostatic pass + schema-similarity gate (Gap 6 partial + Gap 3 partial):**
+**Step 0 — intake + homeostatic tier `[exp]` (homeostatic demotion + schema-similarity gate + hot-probation buffer; Gap 6 partial + Gap 3 partial + #604):**
 - **0a Homeostatic demotion:** before any LLM merge, demote `retrievalSalience`
   (state.db update only — file untouched, content preserved) for stale/low-value
   assets, so the merge pool is bounded and high-SNR. Neuroscience rationale (SHY):
@@ -192,6 +192,21 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
   `schema-consistent` and lower its priority; only schema-inconsistent/contradicting
   candidates get full `encodingSalience`. One embedding lookup; relieves dedup
   pressure *before* it accumulates.
+- **0c Hot-probation intake buffer (#604):** new system-generated extractions
+  enter a `captureMode: hot-probation` state and spend **one consolidation cycle**
+  in probation before promotion to the main stash; during that cycle the dedup +
+  quality second-pass (steps 1–4 below) runs against them. This stops noisy
+  extractions (e.g. the `lesson:invalid-api-key-persistence` phantom) from
+  polluting the stash at the source. It is the **write-path tier** of this same
+  pipeline — the deterministic dedup/quality pass applied at *intake* rather than
+  to the whole corpus, so 0b (schema-similarity) and 0c (probation) together are
+  the "catch it before it lands" front end, and steps 1–4 are the "clean up what's
+  already landed" back end — one mechanism, two entry points, **not** a separate
+  dedup implementation. `captureMode: hot` already exists (user-explicit) in
+  `src/indexer/passes/metadata.ts`; 0c adds the automatic `hot-probation` mode.
+  Reuses the shared `dedupHash` + body-embedding cache (steps 1–2), so probation
+  costs ~one extra cheap pass over the new-extraction delta, not a full re-embed.
+  Default-off behind a flag (per #604's medium-risk note: it touches the write path).
 
 **Steps:**
 1. **One strip primitive, two hash wrappers `[rev]`:** export `stripFrontmatterBody()`; build `dedupHash()` (lowercase+collapse, twins) and `cacheHash()` (case/ws-preserving, change-detection) on it. A single hash cannot serve both. Replace `dedup.ts:106-117` → `dedupHash`; `consolidate.ts:1087` + `623/682` → `cacheHash`.
