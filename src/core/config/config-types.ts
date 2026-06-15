@@ -247,6 +247,22 @@ export interface ImproveProcessConfig {
     cosineThreshold?: number;
   };
   /**
+   * Judged-state cache for the `consolidate` process (#581). When `enabled`,
+   * each memory's frontmatter-stripped content hash is recorded after the LLM
+   * judges its chunk; on a later run a memory whose current hash equals its
+   * cached judged hash is SKIPPED from the LLM pool (judged-unchanged → no
+   * re-judge). This lets a single run sweep the FULL corpus at O(changed/new)
+   * cost rather than narrowing to a recent time-window slice (which leaves a
+   * near-duplicate backlog). Default OFF — when absent the consolidate pass
+   * behaves byte-identically to today and the `incrementalSince` path is
+   * unaffected. Only meaningful on the `consolidate` process.
+   *
+   *   - `enabled`: turn the judged-state cache on. Default `false`.
+   */
+  judgedCache?: {
+    enabled?: boolean;
+  };
+  /**
    * Minimum number of new (unseen, in-window) candidate sessions for the
    * `extract` process. When the candidate-session pool is below this threshold
    * the extract pass skips entirely (emitting an `improve_skipped` event with

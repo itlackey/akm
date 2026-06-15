@@ -190,6 +190,15 @@
                         },
                         "additionalProperties": false
                       },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -379,6 +388,15 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
                           }
                         },
                         "additionalProperties": false
@@ -576,6 +594,15 @@
                         },
                         "additionalProperties": false
                       },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -765,6 +792,15 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
                           }
                         },
                         "additionalProperties": false
@@ -962,6 +998,15 @@
                         },
                         "additionalProperties": false
                       },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -1151,6 +1196,15 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
                           }
                         },
                         "additionalProperties": false
@@ -1348,6 +1402,15 @@
                         },
                         "additionalProperties": false
                       },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -1537,6 +1600,15 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "judgedCache": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
                           }
                         },
                         "additionalProperties": false
@@ -2354,6 +2426,15 @@
                             },
                             "additionalProperties": false
                           },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2543,6 +2624,15 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
                               }
                             },
                             "additionalProperties": false
@@ -2740,6 +2830,15 @@
                             },
                             "additionalProperties": false
                           },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2929,6 +3028,15 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
                               }
                             },
                             "additionalProperties": false
@@ -3126,6 +3234,15 @@
                             },
                             "additionalProperties": false
                           },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -3315,6 +3432,15 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
                               }
                             },
                             "additionalProperties": false
@@ -3512,6 +3638,15 @@
                             },
                             "additionalProperties": false
                           },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -3701,6 +3836,15 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "judgedCache": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
                               }
                             },
                             "additionalProperties": false
@@ -4500,6 +4644,15 @@
           },
           "additionalProperties": false
         },
+        "judgedCache": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "qualityGate": {
           "type": "object",
           "properties": {
@@ -4703,6 +4856,15 @@
                   },
                   "additionalProperties": false
                 },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -4892,6 +5054,15 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -5089,6 +5260,15 @@
                   },
                   "additionalProperties": false
                 },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -5278,6 +5458,15 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -5475,6 +5664,15 @@
                   },
                   "additionalProperties": false
                 },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -5664,6 +5862,15 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -5861,6 +6068,15 @@
                   },
                   "additionalProperties": false
                 },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -6050,6 +6266,15 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "judgedCache": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false

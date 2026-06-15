@@ -31,6 +31,12 @@ import { writeContradictEdge } from "./memory/memory-belief";
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
 
+import {
+  type ConsolidationJudgedRow,
+  getConsolidationJudgedMap,
+  openStateDatabase,
+  upsertConsolidationJudged,
+} from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -223,6 +229,17 @@ export interface AkmConsolidateOptions {
    * Absent / disabled = byte-identical legacy behaviour.
    */
   dedup?: DedupConfig;
+  /**
+   * Judged-state cache (#581). DEFAULT OFF. When `enabled`, memories whose
+   * current frontmatter-stripped content hash equals the hash recorded the last
+   * time the consolidate LLM judged them are SKIPPED from the LLM pool
+   * (judged-unchanged → no re-judge), and every memory the LLM saw in a
+   * successfully-judged chunk has its judged state upserted afterwards. This
+   * lets a single run sweep the FULL corpus at O(changed/new) cost instead of
+   * narrowing to a recent time-window slice. Absent / disabled = byte-identical
+   * legacy behaviour (the `incrementalSince` path is unaffected).
+   */
+  judgedCache?: { enabled?: boolean };
   /**
    * PROV-DM traceability token for proposals created by this run. When set,
    * every `createProposal` call includes it so accept-rate-per-run aggregation
@@ -1055,6 +1072,28 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
   return getDefaultLlmConfig(config);
 }
 
+// ── Judged-state cache (#581) ────────────────────────────────────────────────
+
+/**
+ * Stable content hash for a memory file used by the judged-state cache (#581).
+ * Hashes the frontmatter-stripped, trimmed body — matching the dedup / pending
+ * proposal hash domain elsewhere in this file (sha256 over post-frontmatter
+ * content). Two memories that differ only in noise frontmatter (`updated:`
+ * timestamps, `inferenceProcessed:` flags) therefore hash identically, so a
+ * cosmetic frontmatter touch never forces a needless re-judge — only a body
+ * change does. Returns `undefined` on any read/parse error so callers fail
+ * open (treat the memory as un-cached → it stays in the LLM pool).
+ */
+function computeMemoryContentHash(filePath: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const body = parseFrontmatter(raw).content.trim();
+    return createHash("sha256").update(body, "utf8").digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
@@ -1180,6 +1219,72 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
   }
 
+  // ── Judged-state cache narrowing (#581) ─────────────────────────────────────
+  // DEFAULT OFF. When enabled, skip every memory whose current content hash
+  // equals the hash recorded the last time the consolidate LLM judged it
+  // (judged-unchanged → no re-judge). This converts coverage from O(window) to
+  // O(changed/new) so one run can sweep the whole corpus while the LLM only
+  // sees genuinely new/changed memories. `currentHashByName` is populated for
+  // EVERY surviving memory (whether or not the cache is on) so the post-LLM
+  // recording step can upsert judged state without re-reading the files; when
+  // the cache is off it stays empty and the recording step is a no-op.
+  const judgedCacheEnabled = opts.judgedCache?.enabled === true;
+  const currentHashByName = new Map<string, string>();
+  if (judgedCacheEnabled) {
+    for (const m of memories) {
+      const h = computeMemoryContentHash(m.filePath);
+      if (h !== undefined) currentHashByName.set(m.name, h);
+    }
+    let cachedMap = new Map<string, ConsolidationJudgedRow>();
+    {
+      let stateDb: ReturnType<typeof openStateDatabase> | undefined;
+      try {
+        stateDb = openStateDatabase();
+        cachedMap = getConsolidationJudgedMap(
+          stateDb,
+          memories.map((m) => `memory:${m.name}`),
+        );
+      } catch {
+        // State DB unavailable → fail open: judge the full pool this run.
+        cachedMap = new Map();
+      } finally {
+        stateDb?.close();
+      }
+    }
+    const beforeCount = memories.length;
+    memories = memories.filter((m) => {
+      const cur = currentHashByName.get(m.name);
+      // No readable hash → keep (fail open; let the LLM judge it).
+      if (cur === undefined) return true;
+      const cached = cachedMap.get(`memory:${m.name}`);
+      // Skip only when previously judged AND content is byte-identical since.
+      return !(cached !== undefined && cached.content_hash === cur);
+    });
+    const skipped = beforeCount - memories.length;
+    if (skipped > 0) {
+      warnings.push(
+        `Judged-state cache: skipped ${skipped} memor${skipped === 1 ? "y" : "ies"} judged-unchanged (no LLM); ${memories.length} remain for judging.`,
+      );
+    }
+    if (memories.length === 0) {
+      return {
+        schemaVersion: 1 as const,
+        ok: true,
+        shape: "consolidate-result",
+        dryRun: opts.dryRun ?? false,
+        previewOnly: false,
+        target: opts.target ?? stashDir,
+        processed: 0,
+        merged: 0,
+        deleted: dedupCollapsed,
+        promoted: [],
+        contradicted: 0,
+        warnings,
+        durationMs: Date.now() - startMs,
+      };
+    }
+  }
+
   if (opts.limit !== undefined && memories.length > opts.limit) {
     // Order oldest-modified-first before capping so the limit selects the
     // stalest memories rather than a fixed head of the (rowid-ordered) DB
@@ -1296,6 +1401,13 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
   // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
   let judgedNoAction = 0;
+  // Judged-state cache (#581): coarse outcome per memory NAME the LLM actually
+  // judged in a successfully-parsed chunk this run. "actioned" = an op targeted
+  // it; "no_action" = the LLM saw it and proposed nothing. Populated only when
+  // the cache is enabled (otherwise it stays empty and the post-loop recording
+  // step is a no-op). Memories in failed/aborted chunks are NOT recorded, so a
+  // transient LLM failure never poisons the cache into skipping them next run.
+  const judgedOutcomeByName = new Map<string, "actioned" | "no_action">();
   // 2026-05-27 cross-chunk double-count fix: refs that contributed to
   // judgedNoAction in their own chunk. When a different chunk's op references
   // one of these as a secondary and that op later fails, the ref would land
@@ -1494,11 +1606,48 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       if (!targetRefs.has(memRef)) {
         chunkNoAction++;
         judgedNoActionRefs.add(memRef);
+        // Judged-state cache (#581): the LLM saw this memory and proposed
+        // nothing → record judged-unchanged so the next run can skip it.
+        if (judgedCacheEnabled) judgedOutcomeByName.set(m.name, "no_action");
+      } else if (judgedCacheEnabled) {
+        // An op targeted this memory → it was judged + actioned.
+        judgedOutcomeByName.set(m.name, "actioned");
       }
     }
     judgedNoAction += chunkNoAction;
 
     chunkOpsArrays.push(ops);
+  }
+
+  // ── Judged-state cache recording (#581) ─────────────────────────────────────
+  // Persist judged state for every memory the LLM actually judged this run so
+  // the next run can skip the unchanged ones. Keyed by current content hash so
+  // a later body edit (different hash) re-enters the LLM pool. DEFAULT OFF and
+  // skipped under --dry-run (dry-run mutates nothing). Failed/aborted chunks
+  // contributed no entries to `judgedOutcomeByName`, so a transient LLM outage
+  // never caches a memory as judged.
+  if (judgedCacheEnabled && !opts.dryRun && judgedOutcomeByName.size > 0) {
+    let stateDb: ReturnType<typeof openStateDatabase> | undefined;
+    try {
+      stateDb = openStateDatabase();
+      const judgedAt = new Date(startMs).toISOString();
+      for (const [name, outcome] of judgedOutcomeByName) {
+        const hash = currentHashByName.get(name);
+        // No readable hash → cannot key the cache entry; leave un-cached so the
+        // memory is re-judged next run (correctness over throughput).
+        if (hash === undefined) continue;
+        upsertConsolidationJudged(stateDb, {
+          entryKey: `memory:${name}`,
+          contentHash: hash,
+          judgedAt,
+          outcome,
+        });
+      }
+    } catch (e) {
+      warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
+    } finally {
+      stateDb?.close();
+    }
   }
 
   // Build the known-refs set from the already-filtered memory pool so

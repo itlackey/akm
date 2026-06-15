@@ -1890,6 +1890,11 @@ async function runConsolidationPass(args: {
         // #617 — deterministic near-duplicate dedup pre-pass. DEFAULT OFF; only
         // runs when the profile explicitly sets `consolidate.dedup.enabled`.
         dedup: improveProfile?.processes?.consolidate?.dedup,
+        // #581 — judged-state cache. DEFAULT OFF; only engages when the profile
+        // explicitly sets `consolidate.judgedCache.enabled`. Skips memories
+        // judged-unchanged since their last judge so one run sweeps the full
+        // corpus instead of narrowing to a time-window slice.
+        judgedCache: improveProfile?.processes?.consolidate?.judgedCache,
         // Honor profile.autoAccept (already merged into options.autoAccept at the
         // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
         // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false

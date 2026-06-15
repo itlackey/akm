@@ -9,6 +9,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "004-extract-sessions-seen",
     "005-proposal-fs-imports",
     "006-proposals-pending-ref-source",
+    "007-consolidation-judged",
   ],
   "schema": [
     {
@@ -129,6 +130,18 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         ON task_history(task_id)"
 ,
       "type": "index",
+    },
+    {
+      "name": "consolidation_judged",
+      "sql": 
+"CREATE TABLE consolidation_judged (
+        entry_key    TEXT    PRIMARY KEY,
+        content_hash TEXT    NOT NULL,
+        judged_at    TEXT    NOT NULL,
+        outcome      TEXT    NOT NULL
+      )"
+,
+      "type": "table",
     },
     {
       "name": "events",

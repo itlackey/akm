@@ -167,6 +167,14 @@ export const ImproveProcessConfigSchema = z
       })
       .strict()
       .optional(),
+    // Consolidate process: judged-state cache (#581). When enabled, a memory
+    // whose current content hash equals its cached judged hash is SKIPPED from
+    // the LLM pool (judged-unchanged → no re-judge), letting one run sweep the
+    // whole corpus at O(changed/new) cost instead of narrowing to a recent
+    // time-window slice. Default OFF — when absent the consolidate pass behaves
+    // byte-identically to today (the incrementalSince path is unaffected). Only
+    // meaningful on the `consolidate` process.
+    judgedCache: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     qualityGate: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     // Extract process config (only meaningful for extract process)

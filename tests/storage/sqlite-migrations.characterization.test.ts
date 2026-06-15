@@ -72,6 +72,7 @@ describe("SQLite migration runner characterization", () => {
         "004-extract-sessions-seen",
         "005-proposal-fs-imports",
         "006-proposals-pending-ref-source",
+        "007-consolidation-judged",
       ]);
 
       // The set of durable objects the migrations create.
@@ -80,6 +81,7 @@ describe("SQLite migration runner characterization", () => {
       expect(names).toContain("table:proposals");
       expect(names).toContain("table:task_history");
       expect(names).toContain("table:schema_migrations");
+      expect(names).toContain("table:consolidation_judged");
 
       // Lock the exact DDL snapshot so any drift in the produced schema fails.
       expect(snap).toMatchSnapshot();
