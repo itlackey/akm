@@ -2953,7 +2953,7 @@ async function runImprovePreparationStage(args: {
   // will re-introduce outcome salience and trigger the full re-tuning pass at that
   // time. See WS-2-HOOK in salience.ts.
   try {
-    const stateDb = openStateDatabase();
+    const stateDb = openStateDatabase(eventsCtx?.dbPath);
     try {
       // Step 7: stash-wide rank-change report BEFORE overwriting the table.
       //
