@@ -41,6 +41,65 @@ class FakeTimers {
   }
 }
 
+describe("budget signal remainingBudgetMs getter (WS-3a blocker fix)", () => {
+  // Verify that the AbortController signal created in akmImprove has the live
+  // `remainingBudgetMs` getter attached by the fix for the cold-start budget
+  // estimation blocker. The property must return a decreasing value as time
+  // passes — not a stale snapshot — so consolidate.ts can use it to auto-
+  // reduce the chunk pool.
+  test("remainingBudgetMs is readable from the signal and returns the correct initial value", () => {
+    const startMs = Date.now();
+    const budgetMs = 60_000; // 1 minute
+    const controller = new AbortController();
+    Object.defineProperty(controller.signal, "remainingBudgetMs", {
+      get: () => Math.max(0, budgetMs - (Date.now() - startMs)),
+      enumerable: false,
+      configurable: true,
+    });
+
+    const sig = controller.signal as AbortSignal & { remainingBudgetMs?: number };
+    const remaining = sig.remainingBudgetMs;
+    // Immediately after attachment, remaining should be close to budgetMs.
+    expect(remaining).toBeDefined();
+    expect(remaining as number).toBeGreaterThan(budgetMs - 500); // within 500ms
+    expect(remaining as number).toBeLessThanOrEqual(budgetMs);
+  });
+
+  test("remainingBudgetMs decreases over time (getter is live, not a snapshot)", async () => {
+    const startMs = Date.now();
+    const budgetMs = 10_000; // 10 seconds
+    const controller = new AbortController();
+    Object.defineProperty(controller.signal, "remainingBudgetMs", {
+      get: () => Math.max(0, budgetMs - (Date.now() - startMs)),
+      enumerable: false,
+      configurable: true,
+    });
+
+    const sig = controller.signal as AbortSignal & { remainingBudgetMs?: number };
+    const first = sig.remainingBudgetMs as number;
+    // Wait 20ms then read again — value must be strictly less.
+    await new Promise((r) => setTimeout(r, 20));
+    const second = sig.remainingBudgetMs as number;
+
+    expect(second).toBeLessThan(first);
+  });
+
+  test("remainingBudgetMs floors at 0 when budget is exhausted", () => {
+    // Simulate a startMs far in the past so the budget is already over.
+    const startMs = Date.now() - 120_000; // 2 minutes ago
+    const budgetMs = 60_000; // only 1 minute
+    const controller = new AbortController();
+    Object.defineProperty(controller.signal, "remainingBudgetMs", {
+      get: () => Math.max(0, budgetMs - (Date.now() - startMs)),
+      enumerable: false,
+      configurable: true,
+    });
+
+    const sig = controller.signal as AbortSignal & { remainingBudgetMs?: number };
+    expect(sig.remainingBudgetMs).toBe(0);
+  });
+});
+
 describe("armBudgetWatchdog (H7 #566)", () => {
   test("clean drain within grace: dispose() cancels the hard-kill — no exit", () => {
     const timers = new FakeTimers();

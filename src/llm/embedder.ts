@@ -24,7 +24,7 @@
 
 import type { EmbeddingConnectionConfig } from "../core/config/config";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "./embedders/cache";
-import { isTransformersAvailable, LocalEmbedder } from "./embedders/local";
+import { DEFAULT_LOCAL_MODEL, isTransformersAvailable, LocalEmbedder } from "./embedders/local";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
@@ -130,6 +130,24 @@ export async function embedBatch(
 // facade and its `@huggingface/transformers` import chain. Re-export
 // preserves the existing public API.
 export { cosineSimilarity } from "./embedders/types";
+
+// ── Model ID resolution ─────────────────────────────────────────────────────
+
+/**
+ * Derive a stable string identifier for the embedding model in use.
+ * This is the `model_id` stored in `body_embeddings` (and used for the
+ * drop-all-on-mismatch purge when the model changes).
+ *
+ * Rules:
+ *   - Remote endpoint: use `config.model` (the API-level model name).
+ *   - Local transformers: use `config.localModel ?? DEFAULT_LOCAL_MODEL`.
+ *   - No config: use `DEFAULT_LOCAL_MODEL` (the shared singleton model).
+ */
+export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionConfig): string {
+  if (!embeddingConfig) return DEFAULT_LOCAL_MODEL;
+  if (hasRemoteEndpoint(embeddingConfig)) return embeddingConfig.model ?? "remote";
+  return embeddingConfig.localModel ?? DEFAULT_LOCAL_MODEL;
+}
 
 // ── Availability check ──────────────────────────────────────────────────────
 

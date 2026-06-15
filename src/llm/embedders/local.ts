@@ -24,25 +24,44 @@ import type { Embedder, EmbeddingVector } from "./types";
  */
 export const DEFAULT_LOCAL_MODEL = "Xenova/bge-small-en-v1.5";
 
-/** Single-text pipeline overload. */
-type TransformerPipelineSingle = (
-  text: string,
-  options: { pooling: string; normalize: boolean },
-) => Promise<{ data: Float32Array }>;
+/**
+ * Batch Tensor shape returned by @huggingface/transformers feature-extraction
+ * when given a string[]. The pipeline returns a single Tensor object (NOT an
+ * Array<{data}>). The flat `.data` Float32Array has `batch * dim` elements;
+ * `.dims` is [batch, dim] so each row is `dims[1]` floats wide.
+ */
+interface TransformerBatchTensor {
+  data: Float32Array;
+  dims: number[];
+}
 
-/** Batch pipeline overload — array input returns an array of results. */
-type TransformerPipelineBatch = (
-  texts: string[],
+/**
+ * The pipeline accepts both a single string and a string[]. For a single
+ * string it returns `{ data: Float32Array }` (single embedding); for a string[]
+ * it returns a `TransformerBatchTensor` with `.dims = [batch, dim]`.
+ */
+type TransformerPipeline = (
+  input: string | string[],
   options: { pooling: string; normalize: boolean },
-) => Promise<Array<{ data: Float32Array }>>;
-
-type TransformerPipeline = TransformerPipelineSingle & TransformerPipelineBatch;
+) => Promise<{ data: Float32Array } | TransformerBatchTensor>;
 
 type TransformerPipelineFactory = (
   task: string,
   model: string,
   options?: { dtype?: string },
 ) => Promise<TransformerPipeline>;
+
+/** Type-guard: true when the value looks like a batch Tensor (has .dims). */
+function isBatchTensor(v: unknown): v is TransformerBatchTensor {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    "data" in (v as object) &&
+    "dims" in (v as object) &&
+    Array.isArray((v as TransformerBatchTensor).dims) &&
+    (v as TransformerBatchTensor).dims.length >= 2
+  );
+}
 
 const LOCAL_EMBEDDER_DTYPE = "fp32";
 const LOCAL_EMBEDDER_FALLBACK_DTYPE = "auto";
@@ -133,16 +152,27 @@ export class LocalEmbedder implements Embedder {
       const chunk = texts.slice(i, i + LOCAL_BATCH_SIZE);
       try {
         // @huggingface/transformers feature-extraction pipeline accepts a
-        // string[] and returns Array<{ data: Float32Array }> when batched.
-        const batchResult = await (pipeline as TransformerPipelineBatch)(chunk, {
+        // string[] and returns a batch Tensor (NOT an Array<{data}>).
+        // The Tensor has .data (flat Float32Array, length = batch * dim) and
+        // .dims = [batch, dim]. Slice .data into per-row vectors using .dims.
+        const batchResult = await pipeline(chunk, {
           pooling: "mean",
           normalize: true,
         });
-        if (!Array.isArray(batchResult)) {
-          throw new Error("batch result is not an array");
-        }
-        for (const r of batchResult) {
-          results.push(Array.from(r.data) as number[]);
+        if (isBatchTensor(batchResult)) {
+          const dim = batchResult.dims[1] as number;
+          for (let row = 0; row < chunk.length; row++) {
+            results.push(Array.from(batchResult.data.subarray(row * dim, (row + 1) * dim)) as number[]);
+          }
+        } else if (Array.isArray(batchResult)) {
+          // Older versions of @huggingface/transformers returned Array<{data}>.
+          for (const r of batchResult as Array<{ data: Float32Array }>) {
+            results.push(Array.from(r.data) as number[]);
+          }
+        } else {
+          // Single-text result returned for a chunk — should not happen for
+          // string[] input, but handle defensively.
+          throw new Error("unexpected pipeline return shape for batch input");
         }
       } catch {
         // Fallback: process one-at-a-time (older pipeline versions or mismatched

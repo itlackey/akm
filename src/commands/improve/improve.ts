@@ -1235,6 +1235,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // run past the declared budget.
   // References: Anthropic *Building Effective Agents* (2024); CoALA §5 (arXiv:2309.02427).
   const budgetAbortController = new AbortController();
+  // Attach a live `remainingBudgetMs` getter to the signal so sub-callers
+  // (e.g. consolidate.ts cold-start budget estimation) can read the remaining
+  // wall-clock budget without needing an extra plumbing parameter. The property
+  // is computed at access time via a getter so it always reflects the actual
+  // elapsed time rather than a stale snapshot taken at arm time.
+  Object.defineProperty(budgetAbortController.signal, "remainingBudgetMs", {
+    get: () => Math.max(0, budgetMs - (Date.now() - startMs)),
+    enumerable: false,
+    configurable: true,
+  });
   // Declared in the outer scope so the `finally` can clear the timer even if a
   // throw occurs before/after it is armed. Defaults to a no-op until armed.
   let clearBudgetTimer = (): void => {};

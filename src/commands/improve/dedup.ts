@@ -43,8 +43,10 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig } from "../../core/config/config";
+import type { Database } from "../../core/state-db";
+import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import { cosineSimilarity, embedBatch } from "../../llm/embedder";
+import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 
 /** Default strict cosine floor — high enough to skip distinct-but-related memories. */
 export const DEFAULT_DEDUP_COSINE_THRESHOLD = 0.97;
@@ -440,6 +442,8 @@ export async function runDeterministicDedup(
   akmConfig: AkmConfig,
   onArchive?: (variantFilePath: string, variantName: string) => void,
   signal?: AbortSignal,
+  /** Optional open state.db handle for the body-embedding cache (WS-3a). */
+  stateDb?: Database,
 ): Promise<DedupResult> {
   if (!dedupConfig?.enabled) {
     return { collapsed: 0, consumedRefs: [], warnings: [] };
@@ -466,12 +470,68 @@ export async function runDeterministicDedup(
       const eligible = memories.filter((m) => !m.hot);
       // Use the case-preserving stripped body for embeddings (matching cacheHash
       // canonical input) so the embedding cache can be shared with consolidate.
-      const texts = eligible.map((m) => stripFrontmatterBody(m.raw) || m.name);
-      const vecs = await embedBatch(texts, akmConfig.embedding, signal);
-      if (vecs && vecs.length === eligible.length) {
-        embeddings = new Map();
+      const modelId = resolveEmbeddingModelId(akmConfig.embedding);
+
+      // WS-3a: body-embedding cache — look up all content_hashes in one query,
+      // embed only the misses, then upsert the new vectors in one transaction.
+      const contentHashes = eligible.map((m) => cacheHash(m.raw));
+      const hashToName = new Map<string, string>();
+      for (let i = 0; i < eligible.length; i++) {
+        hashToName.set(contentHashes[i] as string, (eligible[i] as DedupMemory).name);
+      }
+
+      let cachedVecs = new Map<string, number[]>();
+      if (stateDb) {
+        try {
+          cachedVecs = getBodyEmbeddings(stateDb, contentHashes, modelId);
+        } catch {
+          // Fail open: cache read errors degrade to full embed.
+          cachedVecs = new Map();
+        }
+      }
+
+      const missIndices: number[] = [];
+      const missTexts: string[] = [];
+      for (let i = 0; i < eligible.length; i++) {
+        const hash = contentHashes[i] as string;
+        if (!cachedVecs.has(hash)) {
+          missIndices.push(i);
+          missTexts.push(stripFrontmatterBody((eligible[i] as DedupMemory).raw) || (eligible[i] as DedupMemory).name);
+        }
+      }
+
+      let missVecs: number[][] = [];
+      if (missTexts.length > 0) {
+        missVecs = await embedBatch(missTexts, akmConfig.embedding, signal);
+        // Upsert new vectors into cache.
+        if (stateDb && missVecs.length === missTexts.length) {
+          try {
+            const toUpsert = missIndices.map((idx, pos) => ({
+              contentHash: contentHashes[idx] as string,
+              embedding: missVecs[pos] as number[],
+              modelId,
+            }));
+            upsertBodyEmbeddings(stateDb, toUpsert);
+          } catch {
+            // Fail open: cache write errors are non-fatal.
+          }
+        }
+      }
+
+      // Assemble the full embeddings map (cache hits + freshly embedded misses).
+      if (missVecs.length === missTexts.length || cachedVecs.size > 0) {
+        embeddings = new Map<string, number[]>();
+        // Add cache hits.
         for (let i = 0; i < eligible.length; i++) {
-          embeddings.set((eligible[i] as DedupMemory).name, vecs[i] as number[]);
+          const hash = contentHashes[i] as string;
+          const cached = cachedVecs.get(hash);
+          if (cached) embeddings.set((eligible[i] as DedupMemory).name, cached);
+        }
+        // Add freshly embedded misses.
+        for (let pos = 0; pos < missIndices.length; pos++) {
+          const idx = missIndices[pos] as number;
+          const vec = missVecs[pos];
+          if (vec) embeddings.set((eligible[idx] as DedupMemory).name, vec);
         }
       }
     } catch {

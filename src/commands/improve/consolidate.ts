@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -32,8 +33,11 @@ export { hasSupersededStatus, validateProposalFrontmatter };
 
 import {
   type ConsolidationJudgedRow,
+  type Database,
+  getBodyEmbeddings,
   getConsolidationJudgedMap,
   openStateDatabase,
+  upsertBodyEmbeddings,
   upsertConsolidationJudged,
 } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -54,7 +58,7 @@ import {
 } from "../../indexer/db/db";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
-import { cosineSimilarity, embedBatch } from "../../llm/embedder";
+import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -537,8 +541,20 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
  *   - Embedding requests fail (fail-open).
  *   - There are fewer than 3 memories (no benefit to reordering).
  */
-async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmConfig): Promise<MemoryEntry[]> {
+async function clusterMemoriesBySimilarity(
+  memories: MemoryEntry[],
+  config: AkmConfig,
+  stateDb?: Database,
+): Promise<MemoryEntry[]> {
   if (memories.length < 3 || !config.embedding) return memories;
+
+  // WS-3a: cluster uses description+tags as the embedding input (NOT the raw
+  // body) — this is intentionally different from the dedup/body cache because
+  // the clustering goal is semantic grouping, not dedup twin detection.
+  // The body_embeddings cache is keyed by cacheHash(body); clustering inputs
+  // are keyed by cacheHash(description+tags text). Re-use the same table with
+  // a distinct hash so the two lookup sets never collide.
+  const modelId = resolveEmbeddingModelId(config.embedding);
 
   const texts = memories.map((m) => {
     const parts: string[] = [];
@@ -547,13 +563,77 @@ async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmC
     return parts.join(". ") || m.name;
   });
 
-  let embeddings: number[][] | null = null;
-  try {
-    embeddings = await embedBatch(texts, config.embedding);
-  } catch {
-    // Fail open: embedding failures degrade gracefully to original order.
-    return memories;
+  // Compute content hashes for the cluster texts (not bodies — different input).
+  const contentHashes = texts.map((t) => createHash("sha256").update(t, "utf8").digest("hex"));
+
+  let cachedVecs = new Map<string, number[]>();
+  if (stateDb) {
+    try {
+      cachedVecs = getBodyEmbeddings(stateDb, contentHashes, modelId);
+    } catch {
+      // Fail open.
+      cachedVecs = new Map();
+    }
   }
+
+  const missIndices: number[] = [];
+  const missTexts: string[] = [];
+  for (let i = 0; i < texts.length; i++) {
+    if (!cachedVecs.has(contentHashes[i] as string)) {
+      missIndices.push(i);
+      missTexts.push(texts[i] as string);
+    }
+  }
+
+  let missVecs: number[][] = [];
+  if (missTexts.length > 0) {
+    try {
+      missVecs = await embedBatch(missTexts, config.embedding);
+    } catch {
+      // Fail open: embedding failures degrade gracefully to original order.
+      return memories;
+    }
+    // Upsert newly computed vectors into the cache.
+    if (stateDb && missVecs.length === missTexts.length) {
+      try {
+        const toUpsert = missIndices.map((idx, pos) => ({
+          contentHash: contentHashes[idx] as string,
+          embedding: missVecs[pos] as number[],
+          modelId,
+        }));
+        upsertBodyEmbeddings(stateDb, toUpsert);
+      } catch {
+        // Fail open: cache write errors are non-fatal.
+      }
+    }
+  }
+
+  // Assemble the full embedding array in memories order.
+  let embeddings: number[][] | null = null;
+  {
+    const assembled: number[][] = [];
+    let ok = true;
+    for (let i = 0; i < memories.length; i++) {
+      const hash = contentHashes[i] as string;
+      const cached = cachedVecs.get(hash);
+      if (cached) {
+        assembled.push(cached);
+        continue;
+      }
+      const missPos = missIndices.indexOf(i);
+      const vec = missPos >= 0 ? missVecs[missPos] : undefined;
+      if (vec) {
+        assembled.push(vec);
+      } else {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && assembled.length === memories.length) {
+      embeddings = assembled;
+    }
+  }
+
   if (!embeddings || embeddings.length !== memories.length) return memories;
 
   // Greedy nearest-neighbour chain.
@@ -1140,6 +1220,35 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const warnings: string[] = [];
   checkForIncompleteJournal(stashDir, opts.recoveryMode ?? "abort", warnings);
 
+  // WS-3a: open one state.db handle shared by the body-embedding cache (dedup
+  // + cluster) and the judged-state cache. All callers in the function body
+  // receive this handle; it is closed in the `finally` block below.
+  // Fail-open: any open error leaves it `undefined` and all cache paths skip.
+  let sharedStateDb: Database | undefined;
+  try {
+    sharedStateDb = openStateDatabase();
+  } catch {
+    // State DB unavailable → skip the embedding cache for this run.
+  }
+
+  try {
+    return await akmConsolidateInner(opts, config, stashDir, startMs, sourceRun, warnings, sharedStateDb);
+  } finally {
+    sharedStateDb?.close();
+  }
+}
+
+// Inner implementation — all early-return paths are here; sharedStateDb is
+// closed by the outer finally in `akmConsolidate`.
+async function akmConsolidateInner(
+  opts: AkmConsolidateOptions,
+  config: import("../../core/config/config").AkmConfig,
+  stashDir: string,
+  startMs: number,
+  sourceRun: string,
+  warnings: string[],
+  sharedStateDb: Database | undefined,
+): Promise<ConsolidateResult> {
   let memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
   // Pre-flight: filter out stale DB entries whose files no longer exist on
@@ -1185,6 +1294,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
       },
       opts.signal,
+      sharedStateDb,
     );
     dedupCollapsed = dedupResult.collapsed;
     warnings.push(...dedupResult.warnings);
@@ -1257,18 +1367,31 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
     let cachedMap = new Map<string, ConsolidationJudgedRow>();
     {
-      let stateDb: ReturnType<typeof openStateDatabase> | undefined;
-      try {
-        stateDb = openStateDatabase();
-        cachedMap = getConsolidationJudgedMap(
-          stateDb,
-          memories.map((m) => `memory:${m.name}`),
-        );
-      } catch {
-        // State DB unavailable → fail open: judge the full pool this run.
-        cachedMap = new Map();
-      } finally {
-        stateDb?.close();
+      // Use the shared state.db handle if available; open a local one otherwise.
+      const dbForJudged = sharedStateDb;
+      if (dbForJudged) {
+        try {
+          cachedMap = getConsolidationJudgedMap(
+            dbForJudged,
+            memories.map((m) => `memory:${m.name}`),
+          );
+        } catch {
+          cachedMap = new Map();
+        }
+      } else {
+        let localDb: ReturnType<typeof openStateDatabase> | undefined;
+        try {
+          localDb = openStateDatabase();
+          cachedMap = getConsolidationJudgedMap(
+            localDb,
+            memories.map((m) => `memory:${m.name}`),
+          );
+        } catch {
+          // State DB unavailable → fail open: judge the full pool this run.
+          cachedMap = new Map();
+        } finally {
+          localDb?.close();
+        }
       }
     }
     const beforeCount = memories.length;
@@ -1360,7 +1483,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // would otherwise be split across chunks and survive indefinitely.
   // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
   // Fails open: if embeddings are unavailable or fail, original order is used.
-  const clusteredMemories = await clusterMemoriesBySimilarity(memories, config);
+  const clusteredMemories = await clusterMemoriesBySimilarity(memories, config, sharedStateDb);
 
   const chunks: MemoryEntry[][] = [];
   for (let i = 0; i < clusteredMemories.length; i += chunkSize) {
@@ -1697,26 +1820,36 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // contributed no entries to `judgedOutcomeByName`, so a transient LLM outage
   // never caches a memory as judged.
   if (judgedCacheEnabled && !opts.dryRun && judgedOutcomeByName.size > 0) {
-    let stateDb: ReturnType<typeof openStateDatabase> | undefined;
-    try {
-      stateDb = openStateDatabase();
+    // Use the shared state.db handle; open a local one as fallback.
+    const doRecord = (db: ReturnType<typeof openStateDatabase>) => {
       const judgedAt = new Date(startMs).toISOString();
       for (const [name, outcome] of judgedOutcomeByName) {
         const hash = currentHashByName.get(name);
-        // No readable hash → cannot key the cache entry; leave un-cached so the
-        // memory is re-judged next run (correctness over throughput).
         if (hash === undefined) continue;
-        upsertConsolidationJudged(stateDb, {
+        upsertConsolidationJudged(db, {
           entryKey: `memory:${name}`,
           contentHash: hash,
           judgedAt,
           outcome,
         });
       }
-    } catch (e) {
-      warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-    } finally {
-      stateDb?.close();
+    };
+    if (sharedStateDb) {
+      try {
+        doRecord(sharedStateDb);
+      } catch (e) {
+        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
+      }
+    } else {
+      let localDb: ReturnType<typeof openStateDatabase> | undefined;
+      try {
+        localDb = openStateDatabase();
+        doRecord(localDb);
+      } catch (e) {
+        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
+      } finally {
+        localDb?.close();
+      }
     }
   }
 
