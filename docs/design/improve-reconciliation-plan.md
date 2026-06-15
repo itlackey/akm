@@ -13,8 +13,10 @@
 > from the expert reviews. The single biggest `[exp]` change: **S1 is now a
 > salience *vector* (three independently-stored sub-scores), not one scalar** —
 > all three experts independently said the single scalar was the wrong
-> abstraction. One `[exp]` item (derived-layer in-place replacement) touches the
-> non-negotiable and is flagged **OWNER SIGN-OFF REQUIRED** — not adopted unilaterally.
+> abstraction. `[signoff 2026-06-15]` = maintainer decisions after confirming
+> stashes are git-backed: file deletion in the stash and derived-layer in-place
+> replacement are now **adopted** (git history is the recovery backstop), retiring
+> the old archive/TTL machinery.
 
 ## Part I — How it went off course (the explanation)
 
@@ -61,11 +63,22 @@ The failure mode that produced "splintering":
 **Thesis:** the fix is not to delete the patches and not to add a sixth. It is to
 **converge them onto two seams — one salience *model*, one outcome loop — plus one
 consolidation pipeline**, so the *real* Gap-1/2/4/5/6 work (0.10+) extends a
-single coherent thing. Governed by the one non-negotiable divergence
-(doc §"No lossy reconsolidation"): **never adopt lossy reconsolidation — keep raw
-assets, change only through the gate.** `[rev]` (Caveat — see WS-3/WS-4: the
-current archive is TTL-deleted at `archiveRetentionDays`, default 90, so
-"recoverable" is bounded; WS-4 closes this.)
+single coherent thing.
+
+**`[signoff 2026-06-15]` Recovery model — git is the backstop.** Stashes are now
+assumed **git-backed**, and the maintainer has explicitly signed off on (a)
+deleting files in the stash and (b) the derived-layer in-place-replacement
+relaxation below. This changes the old non-negotiable: the brain doc's "no lossy
+reconsolidation — keep raw, never delete" was *both* a quality rule *and* a
+data-safety rule. **The data-safety half is now satisfied by git history** — any
+deletion or in-place rewrite is recoverable and diffable from commits, so the
+elaborate archive/trash/TTL machinery is unnecessary (just delete + commit). What
+**survives** is the *quality* principle, now a design guideline rather than a hard
+constraint: **don't let iterated LLM rewriting silently degrade content** (the
+~54% degradation the brain doc cites) — route every change through the CHANGE gate
+so it's auditable, and lean on git diff/restore rather than bespoke archives. Raw
+vs. derived remains a *fidelity* distinction (the raw episodic layer is the
+high-trust source), not a deletion taboo.
 
 `[exp]` **Note on "one salience score":** all three expert reviews independently
 found that collapsing the inputs into a single scalar is the wrong abstraction —
@@ -84,8 +97,8 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 |---|---|---|
 | **S1 Salience** | 03b amygdala / Gap 1 | `[exp]` A per-asset salience **vector** of three independently-stored, independently-decayable sub-scores: `encodingSalience` (set at `extract`, Gap-1 seeding), `outcomeSalience` (WS-2/Gap-2), `retrievalSalience` (frequency × recency). One documented projection → a scalar for ranking. Every selector READS the vector. |
 | **S2 Outcome loop** | 07 + ⟳ / Gap 2 | One per-asset "was this retrieval useful" signal — `[exp]` **differential (prediction-error-style), not raw count**, with an eligibility-trace decay window → updates `outcomeSalience`. Calibration + verdict are *views* of it. |
-| **S3 Consolidation pipeline** | 04 NREM / Gap 4 + **Gap 6 (partial)** | `[exp]` Step 0 = a lightweight **homeostatic pass** (demote `retrievalSalience` for stale/low-value assets, never delete) to bound a high-SNR merge pool; then tiered: cheap deterministic dedup → judged-cache-covered LLM merge → distill→lessons. One strip primitive, one loader, a shared body-embedding cache. |
-| **S4 CHANGE gate** | (the non-negotiable) | One mutation gate: no-op/cosmetic suppression + per-phase auto-accept + recoverable archive; thresholds resolved in `makeGateConfig`. `[exp]` Adds an exploration budget + generation/fidelity guards. |
+| **S3 Consolidation pipeline** | 04 NREM / Gap 4 + **Gap 6 (partial)** | `[exp]` Step 0 = a lightweight **homeostatic pass** (demote `retrievalSalience` for stale/low-value assets — demotion, not deletion, is the mechanism: re-promotable on re-retrieval) to bound a high-SNR merge pool; then tiered: cheap deterministic dedup → judged-cache-covered LLM merge → distill→lessons. One strip primitive, one loader, a shared body-embedding cache. |
+| **S4 CHANGE gate** | (the quality gate) | One mutation gate: no-op/cosmetic suppression + per-phase auto-accept; every change is a git commit (the recovery mechanism). `[exp]` Adds an exploration budget + generation/fidelity guards; `[signoff]` may replace derived assets in place. |
 | **S5 Attribution / observability** | auditability (correct divergence, not a gap) | One taxonomy (`eligibilitySource`); telemetry / pool-saturation / calibration / `[exp]` degradation + perf metrics are health *views*. |
 
 **Gaps without a full seam home — deferred (not omitted):**
@@ -93,14 +106,14 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 - **Gap 3 schema-primed extraction** — full schema-primed prompting in `extract` is 0.10+. `[exp]` The cheap **schema-similarity gate** (down-prioritize schema-redundant extract candidates via one embedding lookup) is promoted into WS-3 step 0b because it relieves dedup pressure at the source.
 - **Gap 4 REM recombination** — divergent cross-cluster association. 0.10+ (#609). `[exp]` Must be a **two-pass** design (generate `type: hypothesis` → later runs confirm → promote to `type: lesson`), not direct injection — documented now so the future build doesn't take the shortcut.
 - **Gap 5 procedural compilation** — recurring action sequences → skills/workflows. New stage feeding S3/S4. 0.10+ (#615).
-- **Gap 6 forgetting/decay** — `[exp]` **partially promoted** into WS-3 step 0 (retrieval-priority demotion). The existing archive TTL (`consolidate.ts:2267`) is a crude hard-delete eviction; full Gap-6 *extends* the homeostatic demotion, never adds parallel deletion. Remainder 0.10+.
+- **Gap 6 forgetting/decay** — `[exp]` **partially promoted** into WS-3 step 0 (retrieval-priority demotion). `[signoff]` With git-backed recovery, full Gap-6 may also *delete* truly-dead assets (git restores), but demotion stays the default mechanism (a demoted asset is re-promotable on re-retrieval; deletion is for genuine garbage). Remainder 0.10+.
 
 ## Part III — Inventory: every 0.9 improve change → its seam (nothing orphaned)
 
 - **S1 Salience:** proactive selector + priority formula; `eligibilitySource` attribution; signal-delta gate + high-retrieval (P0-A) fallback; #614 valence (`combinedEligibilityScore`/`negativeOnlyRatio`/the dangling `feedbackLane`); utility EMA (#386); `getRetrievalCounts`; pool-saturation advisory (#603).
 - **S2 Outcome loop:** kill-criterion + `akm-eval` + `proactive-verdict`; #612 calibration + auto-tune; #613 reconsolidation pressure (subsumed by the WS-2 seam; do not build separately); `proactive_selected`/`proactiveDueTotal`/`proactiveNeverReflected`.
 - **S3 Consolidation:** `consolidate` LLM cluster+merge; #617 dedup; #581 judgedCache; #604 hot-probation intake buffer (write-path dedup — a tier of this pipeline, currently unbuilt/deferred); `incrementalSince`/`neighborsPerChanged`/`limit` (beta.6); distill + `requirePlannedRefs`; memoryInference + `minPendingCount`; the content-hash variants.
-- **S4 CHANGE gate:** #580 empty-diff/cosmetic suppression; auto-accept gate + #577 gate-decisions + `failedByReason`; #612 threshold; #617 archive-before-delete.
+- **S4 CHANGE gate:** #580 empty-diff/cosmetic suppression; auto-accept gate + #577 gate-decisions + `failedByReason`; #612 threshold; #617 archive-before-delete (`[signoff]` archive machinery retired — git is the recovery path).
 - **S5 Attribution/observability:** `eligibilitySource`; LLM telemetry (#576); pool-saturation (#603); skip-reason aggregation fix; the health-report overhaul (taskId join, slice filter, deltas, snapshot-summing fixes).
 - **Supporting infra (correct, not a seam — leave as-is):** `extract.maxSessionsPerRun` (#2, **default-on at 25**); `minContentChars`/`minNewSessions` (#595/#596/#554); extract active-profile gate (#593/#594); #607 per-process locks + non-blocking ensureIndex; journal sessionId (#599); consolidate event schema (#600); extract negative-examples (#601); config round-trip (#598).
 
@@ -202,20 +215,22 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 2. **Tuned-threshold home:** persist the auto-tuned threshold (state.db, keyed by phase); `makeGateConfig` reads it. Calibration (#612) becomes a reader of WS-2's outcome loop + this store.
 3. **Route dedup archival through the gate:** #617's `onArchive` callback is currently a direct callback, not a gate decision — route it through the one gate or document it as an intentionally separate, audited path.
 4. **`[exp]` Exploration budget:** a fixed fraction (~5%) of proposals per run accepted regardless of confidence, logged `eligibilitySource = "exploration"`, **not** subject to auto-tune; the auto-tune ceiling is bounded (~0.85). Prevents the gate converging to pure exploitation (which would shut down Gap-3/Gap-4 novelty and recreate the throughput collapse this work exists to fix).
-5. **Confirm** #580 suppression, auto-accept + #577 decisions + `failedByReason`, archive-before-delete flow through the one gate with recoverable archive.
-6. **Archive recoverability `[rev/exp]`:** the TTL cleanup (`consolidate.ts:2267-2290`) uses `fs.unlinkSync` (hard delete, default 90 days). **Replace with OS trash / move to `.akm-archive-trash`** (the user's global data-safety rule forbids `rm` on untracked user data), change the default to `never` (or ~3650 days), and make any finite TTL an explicit opt-in with a "permanent deletion" warning. The non-negotiable is incompatible with a default-on hard-delete timer.
+5. **Confirm** #580 suppression, auto-accept + #577 decisions + `failedByReason` flow through the one gate. Every gate-applied mutation is a git commit (the recovery mechanism).
+6. **`[signoff]` Archive machinery — simplify to git.** Stashes are git-backed, so the `consolidate.ts:2267-2290` TTL machinery (`fs.unlinkSync`, `.akm-backup` dirs, `archiveRetentionDays`) can be **removed**, not replaced with trash/never-TTL: dedup/consolidate may delete or overwrite files directly, and `git show`/`git restore` is the recovery path. Keep a one-line "changed N files this run — recover via git if needed" note in the run report. (Net code *reduction* — the elaborate archive paths existed only to satisfy the old irrecoverability constraint.)
 
-> **`[exp]` OWNER SIGN-OFF REQUIRED — proposed relaxation of the non-negotiable, derived layer only.**
-> The neuroscience review argues that the no-lossy rule is correct for **raw**
-> assets (episodic layer, strictly append-only) but *too strong* for the **derived**
-> layer (lessons / distill / memoryInference output ≈ neocortical semantic memory,
-> which the brain adaptively overwrites under contradiction). Additive-only at the
-> derived layer accumulates contradicting lessons that all survive and degrade
-> retrieval precision over time. **Proposal:** allow *gated in-place replacement* of
-> a **contradicted derived asset** (old version archived with a provenance pointer,
-> fully recoverable) — raw layer remains strictly append-only.
-> **This touches the project non-negotiable and is NOT adopted in this plan. It
-> requires the maintainer's explicit decision before any implementation.**
+> **`[signoff 2026-06-15]` Derived-layer in-place replacement — ADOPTED.**
+> The neuroscience review argued the no-lossy rule is right for **raw** assets but
+> too strong for the **derived** layer (lessons / distill / memoryInference output ≈
+> neocortical semantic memory, which the brain adaptively overwrites under
+> contradiction); additive-only there accumulates contradicting lessons that all
+> survive and degrade retrieval precision. With git-backed recovery the maintainer
+> has **signed this off**: when `distill`/`memoryInference` produces a derived asset
+> that contradicts an existing one, the gate may **replace it in place** (the prior
+> version is recoverable via git, no bespoke provenance archive needed). The raw
+> episodic layer stays the high-fidelity source and is not gratuitously rewritten,
+> but it is no longer *prohibited* from change — git is the backstop. The WS-3
+> step-10 distill→source fidelity check still applies: a replacement that
+> contradicts its own cited *raw* sources still routes to human review.
 
 ### WS-5 — Attribution/observability (S5)
 **Steps:** `eligibilitySource` is the one taxonomy; `feedbackLane` removed in WS-1; telemetry (#576), pool-saturation (#603), calibration health, skip-reason aggregation are *views* of the unified S1/S2 model. `[exp]` Add the perf + degradation telemetry from Part V as health views.
@@ -240,12 +255,40 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 
 **Per step:** full `TEST_PARALLEL=1 bun run check`; new tests use sandbox helpers; schema regen for any config change; rebuild `dist`. One seam at a time, reviewed — no agent-velocity pile-on.
 
-**Non-negotiable (doc §"No lossy reconsolidation"):** keep raw assets; change only through the gate; no lossy reconsolidation. Every WS preserves this for the raw layer; WS-4 step 6 closes the archive-TTL hole. The derived-layer relaxation above is **gated on owner sign-off** and not adopted here. **`[exp]` Note:** if that relaxation is ever approved, the provenance archive it creates (old derived versions) is **also** exempt from the WS-4 step-6 TTL — "fully recoverable" must mean the same thing for both raw and derived archives.
+**`[signoff]` Recovery principle (replaces the old non-negotiable):** every mutation goes through the CHANGE gate and lands as a git commit — **git history is the recovery mechanism**, so files may be deleted or replaced in place. The principle that survives is *quality*, not *preservation*: don't let iterated LLM rewriting silently degrade content (gate every change; the raw episodic layer stays the high-fidelity source by default). Derived-layer in-place replacement is **adopted** (WS-4). No bespoke archive/TTL machinery.
 
 **`[exp]` Intentional non-analogs (do NOT "fix" these — recorded here, not just in the brain doc):**
 - **Emotional de-arousal** — the brain strips affective charge from memories during REM. There is no useful analog; **do not implement valence decay** — akm's valence (feedback signal) must be *retained*, not decayed. (Storing valence as a separate field rather than in the content is the correct accidental analog.)
-- **Lossy reconsolidation** — the brain overwrites traces on retrieval; akm keeps raw append-only and changes a derived layer through the gate. Deliberate and permanent (the owner-gated derived-layer relaxation is the only proposed exception).
+- **Lossy reconsolidation** — `[signoff]` the data-safety reason to forbid it is gone (git recovers); the *quality* reason remains a guideline. Raw is the high-trust source by default but no longer prohibited from gated change.
 
 **`[exp]` Cadence note (0.10+):** consider a **second, longer cron tier** (e.g. monthly) for the slow schema-formation components (`memoryInference`, `graphExtraction`, Gap-4 recombination), separate from the nightly consolidation tier — mirrors the brain's distinct fast/slow/very-slow timescales and ensures schema work runs on an already-consolidated corpus.
 
 **Out of scope here (forward roadmap, 0.10+):** Gap 1 full encoding-time estimator at `extract` (#608); Gap 2 rich in-session outcome capture; Gap 3 full schema-primed extraction; Gap 4 two-pass REM recombination (#609); Gap 5 procedural compilation (#615); Gap 6 full forgetting beyond the step-0 demotion. `[exp]` Also document in the brain-analysis doc the two intentional non-analogs: emotional de-arousal (no useful analog — do **not** implement valence decay) and lossy reconsolidation. This plan makes each gap **extend one seam (or one documented deferral)** instead of adding a sixth competing signal.
+
+## Part VI — 0.10.0 milestone: pull-forward analysis
+
+The open 0.10.0 improve issues are #608, #609, #610, #611, #613, #615, #616. The
+question for each: pull it (or a slice of it) into the 0.9 reconciliation now, or
+leave it a clean follow-up? The deciding lens is **retrofit cost**, not feature
+value — pull forward only the *schema / data-capture / architecture hooks that are
+expensive or impossible to add later*; defer the *algorithms and features that
+bolt cleanly onto a well-shaped seam*. Building the seam wrong now (or capturing
+no data) is what forces a rewrite; a deferred feature on a good seam is just work.
+
+| Issue | Gap/seam | Decision | Why (retrofit / perf / functional-gap / rewrite-if-deferred) |
+|---|---|---|---|
+| **#608** automatic salience scoring | Gap 1 → S1 | **Pull forward the STORAGE decision + write-point; defer the scoring algorithm** | WS-1 already creates the salience vector with an `encodingSalience` slot. **#608 says "persist `salience` + `salienceInputs` in frontmatter"; WS-1 stores the vector in `state.db`.** If we don't reconcile *now*, #608 later stands up a *second* salience store in frontmatter — the exact splintering this whole plan exists to kill — and WS-1 gets rewritten. **Rewrite-if-deferred: HIGH.** So decide the canonical store in WS-1 (recommend: `state.db` canonical to avoid git-churn from high-frequency updates; optional frontmatter mirror of the stable `encodingSalience` for portability), and define `encodingSalience` as the field #608 later fills. The novelty/surprise/prediction-error *algorithm* itself defers cheaply (v1 stub = type-importance). |
+| **#613** reconsolidation review pressure | Gap 2 → S2 | **Pull forward into WS-2 (it IS the negative branch of the outcome loop)** | #613 = "repeated low-satisfaction retrievals → a review-pressure counter → a salience input → admit for human review, never mutate content." That is WS-2's outcome loop pointed at negative outcomes, and its "never mutate directly, route through review" matches our gate exactly. WS-2's `asset_outcome` already has `negative_feedback_count`; add a `review_pressure` column there now. **Functional-gap-if-deferred:** negative retrieval signal wouldn't feed salience at all. **Rewrite-if-deferred: MEDIUM** (a separate outcome store). Cost to include the column now: trivial. The admission *policy* (when pressure crosses threshold → enqueue) can be a thin follow-up. |
+| **#615** procedural compilation | Gap 5 → new stage | **Pull forward the EXTRACT-TIME data capture; defer detection/compilation** | The one genuine *data-loss* case. #615 needs "ordered action + outcome data preserved during extraction." The source transcripts `extract` reads are **external (agent-host logs), not akm-controlled** — so re-extraction later is **not guaranteed**; sessions extracted during 0.9→0.10 could permanently lose their ordered-action structure. **Deferral cost: irreversible data loss, not just rework.** So make `extract` preserve ordered action/outcome in the episode it already writes now (cheap additive field) even though the *detection/compilation feature* (recurrence threshold → `workflow:`/`skill:` proposal) defers. Capturing costs little; not capturing is unrecoverable. |
+| **#616** bounded multi-cycle phasing | budget/timeout machinery | **Pull forward the budget-interface design (make it cycle-aware); defer the loop** | WS-3 builds the AbortSignal + cold-start budget estimation + graceful-drain machinery *now*. #616 wraps the generative passes in an N-cycle loop that must "respect the existing timeout watchdog and budget machinery." If WS-3's accounting assumes a single pass, #616 reworks it to spread one run's budget across N cycles. **Rewrite-if-deferred: MEDIUM.** Cheap fix: design the budget interface as "remaining-budget-aware across an arbitrary number of passes" rather than per-pass. The cycle loop itself defers cleanly (`maxCycles: 1` = current behavior). |
+| **#611** hierarchical abstraction (lesson clusters → `knowledge:` schema) | S3 distill | **Defer the feature; pull forward only a design constraint on WS-3's distill rework** | WS-3 restructures the distill/consolidate path. #611 adds a "*distinct* second-order path" and must "not reintroduce the doubled-`-lesson` regression." If WS-3 rewrites distill without leaving room for a second-order path + preserving the first-order recursion guard, #611 becomes a *second* distill refactor. **Rewrite-if-deferred: LOW–MEDIUM** — avoided entirely by keeping the door open. The feature itself is clean follow-up. |
+| **#610** bounded replay budget | S1 selection | **Defer (cheap, default `0` = current); just expose what it needs from WS-1** | #610 revisits top-salience refs without new feedback and "skips replays already converged to `no_change`." That needs (a) the salience ranking (WS-1) and (b) the consecutive-no-ops/plasticity signal — **WS-1 already adds the plasticity column.** Once both exist, #610 is a thin selection layer with no schema change. **Rewrite-if-deferred: NONE** provided WS-1 exposes salience rank + no-op count (it does). Defer. |
+| **#609** cross-episodic recombination (REM, Gap 4) | new `synthesize` stage | **Defer cleanly — already guarded** | A whole new opt-in process; "cluster by relatedness, not similarity" uses tag/graph data that exists. No schema or data-capture retrofit. The plan's Part II two-pass guard (`type: hypothesis` → confirm → `type: lesson`) already prevents the one shortcut a future build might take. **Rewrite-if-deferred: NONE.** Defer. |
+
+**Net effect on the 0.9 work — four cheap hooks land inside the existing WS, no new workstream:**
+1. **WS-1** picks the canonical salience store and defines `encodingSalience` as #608's future write-target (kills the frontmatter-vs-state.db split before it happens); it already exposes salience rank + no-op count, so #610 needs no retrofit.
+2. **WS-2** adds a `review_pressure` column to `asset_outcome` (absorbs #613's data model).
+3. **WS-3** designs the budget interface as multi-pass-aware (so #616 doesn't rework it) and keeps the distill rework from precluding #611's second-order path.
+4. **`extract`** preserves ordered action/outcome data now (the only irreversible-if-deferred item, #615) — feature deferred, data captured.
+
+**Everything else is a true follow-up:** #608's scoring algorithm, #609, #610, #611, #616's cycle loop, and #613's admission policy all bolt onto seams the 0.9 work shapes correctly. None requires a rewrite once the four hooks above are in. The guiding result: **pull forward decisions you can't cheaply reverse (storage shape, data capture, budget interface); defer the code that sits cleanly on top.**
