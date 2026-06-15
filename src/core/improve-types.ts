@@ -61,17 +61,6 @@ export interface ImproveEligibleRef {
    * {@link EligibilitySource} for the lane vocabulary and precedence rule.
    */
   eligibilitySource?: EligibilitySource;
-  /**
-   * #614 — feedback attention lane routed by the SIGN of net valence, set only
-   * when the `symmetricValence` improve-profile flag is enabled and the asset
-   * carries a strong (|valence| ≥ threshold) feedback signal:
-   *   - `"fix"`       — net-negative feedback dominates (needs correction).
-   *   - `"reinforce"` — net-positive feedback dominates (reinforce the win).
-   * Absent under the default (legacy negative-only) ranking, and absent for
-   * weak / mixed feedback. Orthogonal to {@link eligibilitySource} (which lane
-   * SELECTED the asset); this records what the feedback is SAYING about it.
-   */
-  feedbackLane?: "fix" | "reinforce";
 }
 
 /**

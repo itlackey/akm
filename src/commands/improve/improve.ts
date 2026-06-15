@@ -3068,8 +3068,7 @@ async function runImprovePreparationStage(args: {
   // This is the ONLY ranking path — negativeOnlyRatio and the legacy
   // symmetricValence branch are replaced. The three eligibilitySource lanes
   // (signal-delta / high-retrieval / proactive) survive as labels (set above).
-  // feedbackLane (formerly "fix"/"reinforce" from #614) is removed as it was
-  // never read anywhere downstream — it was a dangling field.
+
   const effectiveScore = (ref: string): number => {
     const rankScore = salienceMap.get(ref)?.rankScore ?? 0;
     const noOps = noOpMap.get(ref) ?? 0;
