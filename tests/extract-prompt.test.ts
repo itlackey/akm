@@ -298,4 +298,139 @@ describe("parseExtractPayload", () => {
     expect(out.candidates).toEqual([]);
     expect(out.rationale_if_empty).toMatch(/not parseable/);
   });
+
+  // ── #615 WS-0: orderedActions + outcomeData data-capture hook ──────────────
+
+  test("#615 WS-0: parses orderedActions and outcomeData when present", () => {
+    const payload = {
+      candidates: [
+        {
+          type: "lesson",
+          name: "vpn-deploy-sequence",
+          description: "Connecting to VPN before running deploy.sh prevents silent hangs at the stage-push step.",
+          when_to_use: "When initiating a production deploy from a fresh shell or after a laptop reboot.",
+          body: "Deploy.sh hangs at the 'pushing to stage' step when VPN is not active. The fix is a consistent pre-deploy sequence: check VPN, connect if needed, then run deploy.sh.",
+          confidence: 0.9,
+          evidence: "tool failure at session midpoint + agent recovery",
+          orderedActions: ["check vpn status", "connect to corporate vpn", "run deploy.sh", "verify stage push"],
+          outcomeData: "deploy succeeded after VPN reconnect",
+        },
+      ],
+    };
+    const out = parseExtractPayload(JSON.stringify(payload));
+    expect(out.candidates).toHaveLength(1);
+    const cand = out.candidates[0];
+    expect(cand?.orderedActions).toEqual([
+      "check vpn status",
+      "connect to corporate vpn",
+      "run deploy.sh",
+      "verify stage push",
+    ]);
+    expect(cand?.outcomeData).toBe("deploy succeeded after VPN reconnect");
+  });
+
+  test("#615 WS-0: candidate without orderedActions has no orderedActions/outcomeData fields", () => {
+    const payload = {
+      candidates: [
+        {
+          type: "memory",
+          name: "auth-uses-jwt",
+          description: "Auth pipeline uses JWT tokens with 24h TTL instead of session cookies.",
+          body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.\n",
+          confidence: 0.85,
+          evidence: "user correction mid-session",
+        },
+      ],
+    };
+    const out = parseExtractPayload(JSON.stringify(payload));
+    expect(out.candidates).toHaveLength(1);
+    const cand = out.candidates[0];
+    expect(cand?.orderedActions).toBeUndefined();
+    expect(cand?.outcomeData).toBeUndefined();
+  });
+
+  test("#615 WS-0: orderedActions filters out non-string and too-short entries", () => {
+    const payload = {
+      candidates: [
+        {
+          type: "memory",
+          name: "auth-uses-jwt-24h",
+          description: "Auth pipeline uses JWT tokens with 24h TTL switched from session cookies in May.",
+          body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.",
+          confidence: 0.8,
+          evidence: "user correction",
+          orderedActions: [42, "ok", "valid action step here", "", null, "another valid action"],
+        },
+      ],
+    };
+    const out = parseExtractPayload(JSON.stringify(payload));
+    const cand = out.candidates[0];
+    // 42 (non-string), "ok" (length 2 < 3), "" (empty), null (non-string) are dropped
+    expect(cand?.orderedActions).toEqual(["valid action step here", "another valid action"]);
+  });
+
+  test("#615 WS-0: outcomeData without orderedActions is not captured", () => {
+    const payload = {
+      candidates: [
+        {
+          type: "memory",
+          name: "some-fact",
+          description: "Auth pipeline uses JWT tokens with 24h TTL instead of session cookies.",
+          body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.",
+          confidence: 0.8,
+          evidence: "user correction",
+          // No orderedActions, but outcomeData present — should not be captured
+          outcomeData: "orphaned outcome without actions",
+        },
+      ],
+    };
+    const out = parseExtractPayload(JSON.stringify(payload));
+    const cand = out.candidates[0];
+    expect(cand?.orderedActions).toBeUndefined();
+    expect(cand?.outcomeData).toBeUndefined();
+  });
+
+  test("#615 WS-0: orderedActions is capped at 20 entries", () => {
+    const actions = Array.from({ length: 30 }, (_, i) => `step ${i + 1} of the sequence`);
+    const payload = {
+      candidates: [
+        {
+          type: "lesson",
+          name: "long-sequence",
+          description: "This lesson documents a long multi-step sequence with many discrete actions.",
+          when_to_use: "When executing the full integration test pipeline from a clean environment.",
+          body: "A long sequence with many steps. Each step is documented. Steps must run in order for the pipeline to succeed.",
+          confidence: 0.8,
+          evidence: "full run observed at session end",
+          orderedActions: actions,
+          outcomeData: "pipeline completed after all 30 steps",
+        },
+      ],
+    };
+    const out = parseExtractPayload(JSON.stringify(payload));
+    const cand = out.candidates[0];
+    expect(cand?.orderedActions?.length).toBe(20);
+  });
+
+  test("#615 WS-0: EXTRACT_JSON_SCHEMA includes orderedActions and outcomeData as optional fields", () => {
+    type CandidateProps = {
+      properties: {
+        orderedActions: { type: string; items: { type: string } };
+        outcomeData: { type: string };
+      };
+    };
+    const candItem = (
+      EXTRACT_JSON_SCHEMA as {
+        properties: { candidates: { items: CandidateProps } };
+      }
+    ).properties.candidates.items;
+    expect(candItem.properties.orderedActions).toBeDefined();
+    expect(candItem.properties.orderedActions.type).toBe("array");
+    expect(candItem.properties.outcomeData).toBeDefined();
+    expect(candItem.properties.outcomeData.type).toBe("string");
+    // These fields are NOT required (orderedActions and outcomeData are optional)
+    const required = (candItem as unknown as { required: string[] }).required;
+    expect(required).not.toContain("orderedActions");
+    expect(required).not.toContain("outcomeData");
+  });
 });

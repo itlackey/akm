@@ -265,6 +265,15 @@ function buildCandidateProposal(
   if (candidate.type === "lesson" && candidate.when_to_use) {
     fm.when_to_use = candidate.when_to_use;
   }
+  // #615 WS-0: preserve ordered-action + outcome data in frontmatter so the data
+  // survives even if source transcripts are not re-extractable later. The
+  // procedural-compilation feature (detection/compilation) is deferred to 0.10+.
+  if (candidate.orderedActions && candidate.orderedActions.length > 0) {
+    fm.orderedActions = candidate.orderedActions;
+    if (candidate.outcomeData) {
+      fm.outcomeData = candidate.outcomeData;
+    }
+  }
   const content = assembleAsset(fm, candidate.body);
   return { ref, content, description };
 }
@@ -458,6 +467,13 @@ async function processSession(
               ...(typeof candidate.confidence === "number" ? { confidence: candidate.confidence } : {}),
               sources: [`session:${sessionRef.harness}:${sessionRef.sessionId}`],
               evidence: candidate.evidence,
+              // #615 WS-0: mirror ordered-action + outcome data in the proposal
+              // frontmatter record so downstream tooling can read it without
+              // re-parsing the content body. Omitted when not present.
+              ...(candidate.orderedActions && candidate.orderedActions.length > 0
+                ? { orderedActions: candidate.orderedActions }
+                : {}),
+              ...(candidate.outcomeData ? { outcomeData: candidate.outcomeData } : {}),
             },
           },
         },
