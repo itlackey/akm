@@ -318,8 +318,8 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
       "  to preview a dry-run diff:            akm config migrate --dry-run --print-diff",
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ].join("\n");
-    process.stderr.write(`${banner}\n`);
-    process.stdout.write(`${banner}\n`);
+    process.stderr?.write?.(`${banner}\n`);
+    process.stdout?.write?.(`${banner}\n`);
   } catch (err) {
     // #461: never return migrated bytes when disk write fails — that triggers
     // an infinite re-migrate loop on every load. Hard-error so the user
