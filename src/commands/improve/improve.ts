@@ -3054,7 +3054,7 @@ async function runImprovePreparationStage(args: {
               metadata: {
                 correlation: adequacy.correlation,
                 n: adequacy.n,
-                note: "corr(outcome_score, accepted_change_rate) < −0.3: popular assets are also the most-needing-improvement assets. The 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
+                note: "corr(outcome_score, accepted_change_rate) < −0.3: high-outcome_score assets have LOW accepted-change rates — the proxy's 'doing well' signal is inverted, so the coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
               },
             },
             eventsCtx,

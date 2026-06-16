@@ -815,7 +815,7 @@ export function buildHealthHtmlReplacements(
         "Corpus diversity (Gini)",
         num(degradation.corpusCentroidDistance),
         degradation.entrenchmentFlagged ? "down" : "flat",
-        "Gini coefficient of retrieval_salience for top-100 ranked assets. High Gini (>0.6) = entrenchment risk.",
+        "Gini coefficient of retrieval_salience for top-100 ranked assets. High Gini (>0.35) = entrenchment risk.",
       ],
       [
         "Merge fidelity contradiction rate",
@@ -939,7 +939,7 @@ export function buildHealthHtmlReplacements(
       key: "corpus-entrenchment",
       prio: "P2",
       cls: "warn",
-      title: "Corpus entrenchment risk: retrieval_salience Gini > 0.6",
+      title: "Corpus entrenchment risk: retrieval_salience Gini > 0.35",
       descHtml:
         "A small set of assets dominates retrieval — retrieval diversity is low. " +
         "Review top-ranked assets for stale or over-represented content. " +

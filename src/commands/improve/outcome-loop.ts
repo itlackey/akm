@@ -399,9 +399,12 @@ export interface ProxyAdequacyResult {
  * rows. Returns `{correlation: NaN, n, isInverted: false}` when there is
  * insufficient data (fewer than 3 rows or zero variance in either variable).
  *
- * A NEGATIVE correlation means: assets with high retrieval satisfaction (outcome)
- * also have high accepted_change_rate — i.e. the most-used assets are also the
- * ones most needing fixes. That inverts the proxy: high outcome_score ≠ "doing well".
+ * A NEGATIVE correlation means: assets with a HIGH outcome_score have a LOW
+ * accepted_change_rate — i.e. the assets the proxy rates as "doing well"
+ * (frequently retrieved) are precisely the ones that rarely yield an accepted
+ * improvement. That inverts the proxy: high outcome_score ≠ "doing well", so the
+ * coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich
+ * signal is due. (`isInverted = correlation < -0.3`.)
  */
 export function computeProxyAdequacy(rows: AssetOutcomeRow[]): ProxyAdequacyResult {
   const n = rows.length;
