@@ -27,6 +27,7 @@ import {
   listProposalGateDecisions,
   listStateProposals,
   openStateDatabase,
+  persistPhaseThreshold,
   purgeOldEvents,
   purgeOldImproveRuns,
 } from "../../core/state-db";
@@ -937,7 +938,7 @@ export function armBudgetWatchdog(
 }
 
 /**
- * #612 — bounded, opt-in auto-accept threshold auto-tune.
+ * #612 / WS-4 — bounded, opt-in per-phase auto-accept threshold auto-tune.
  *
  * Reads `improve.calibration` from config. When `autoTune` is enabled, computes
  * the calibration of recent gate decisions, derives a bounded threshold
@@ -945,6 +946,14 @@ export function armBudgetWatchdog(
  * records a `calibration_autotune` event. Returns the new threshold (integer
  * 0-100) when an adjustment was made, or `undefined` to leave the caller's
  * threshold unchanged.
+ *
+ * WS-4 change: accepts an optional `phase` parameter. When provided, the tuned
+ * threshold is persisted to `improve_gate_thresholds` (state.db Migration 012)
+ * keyed by phase so `makeGateConfig` can read it back on the next run and each
+ * phase maintains its own calibrated threshold rather than a shared global.
+ *
+ * WS-4 ceiling: `maxThreshold` defaults to 85 (not 100) to prevent the gate
+ * converging to pure exploitation and shutting down Gap-3/4 novelty throughput.
  *
  * DEFAULT OFF: with no `improve.calibration` block (or `autoTune: false`) this
  * returns `undefined` immediately, so the gate threshold is unchanged and
@@ -955,14 +964,17 @@ export function maybeAutoTuneThreshold(
   config: AkmConfig,
   stateDbPath: string,
   ctx?: { now?: () => number; appendEventFn?: typeof appendEvent },
+  phase?: string,
 ): number | undefined {
   const cal = config.improve?.calibration;
   if (!cal?.autoTune) return undefined;
 
+  // WS-4: default maxThreshold is now 85 (ceiling to prevent pure exploitation).
+  // Callers that explicitly set maxThreshold in config override this default.
   const tuneConfig: CalibrationTuneConfig = {
     autoTune: true,
     minThreshold: cal.minThreshold ?? 0,
-    maxThreshold: cal.maxThreshold ?? 100,
+    maxThreshold: cal.maxThreshold ?? 85,
     maxStep: cal.maxStep ?? 5,
     minSamples: cal.minSamples ?? 20,
     targetAcceptRate: cal.targetAcceptRate ?? 0.9,
@@ -983,8 +995,9 @@ export function maybeAutoTuneThreshold(
   if (!result.adjusted) return undefined;
 
   const appendEventFn = ctx?.appendEventFn ?? appendEvent;
+  const phaseLabel = phase ?? "global";
   info(
-    `[improve] calibration auto-tune: threshold ${result.previousThreshold} -> ${result.newThreshold} ` +
+    `[improve] calibration auto-tune (${phaseLabel}): threshold ${result.previousThreshold} -> ${result.newThreshold} ` +
       `(${result.reason}; samples=${summary.samples}, acceptRate=${summary.overallAcceptRate}, ` +
       `gap=${summary.calibrationGap}, band=[${tuneConfig.minThreshold},${tuneConfig.maxThreshold}])`,
   );
@@ -993,6 +1006,7 @@ export function maybeAutoTuneThreshold(
       eventType: "calibration_autotune",
       ref: "improve:calibration",
       metadata: {
+        phase: phaseLabel,
         previousThreshold: result.previousThreshold,
         newThreshold: result.newThreshold,
         delta: result.delta,
@@ -1007,6 +1021,24 @@ export function maybeAutoTuneThreshold(
   } catch (err) {
     warn(`[improve] calibration auto-tune event not recorded: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  // WS-4: Persist the per-phase threshold so makeGateConfig reads it on the
+  // next run. Best-effort — a write failure must not abort the improve run.
+  if (phase) {
+    try {
+      const persistDb = openStateDatabase(stateDbPath);
+      try {
+        persistPhaseThreshold(persistDb, phase, result.newThreshold);
+      } finally {
+        persistDb.close();
+      }
+    } catch (err) {
+      warn(
+        `[improve] calibration auto-tune: failed to persist phase threshold for ${phase}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   return result.newThreshold;
 }
 
@@ -1048,20 +1080,23 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // calling test's own at this point; we capture it before yielding the loop.
   const resolvedStateDbPath = getStateDbPathInDataDir();
 
-  // #612 — bounded, OPT-IN auto-accept threshold auto-tune. DEFAULT OFF: when
-  // `improve.calibration.autoTune` is absent/false this is a complete no-op and
-  // the resolved `options.autoAccept` is unchanged (byte-identical parity). When
-  // enabled, the gate threshold is nudged within the configured [min,max] band
-  // toward the target realized accept rate, based on the calibration of recent
-  // gate decisions. Every adjustment is logged + recorded as an event.
-  if (options.autoAccept !== undefined) {
-    try {
-      const tuned = maybeAutoTuneThreshold(options.autoAccept, _earlyConfig, resolvedStateDbPath);
-      if (tuned !== undefined) options = { ...options, autoAccept: tuned };
-    } catch (err) {
-      warn(`[improve] calibration auto-tune skipped: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // #612 / WS-4 — bounded, OPT-IN per-phase auto-accept threshold auto-tune.
+  // DEFAULT OFF: `autoTune: false` (or absent) is a complete no-op.
+  //
+  // WS-4 change: thresholds are now PER PHASE. The old single global mutation
+  // of `options.autoAccept` is retired — it caused every phase to share one
+  // calibration signal, so a reflect-dominated run could tighten the consolidate
+  // gate (or vice-versa). Instead:
+  //   - Each `makeGateConfig` call reads the phase's stored threshold from
+  //     state.db (Migration 012) and uses it as `phaseThreshold`, overriding
+  //     the `globalThreshold` (= options.autoAccept) for that phase.
+  //   - Per-phase `maybeAutoTuneThreshold` calls fire AFTER each phase's gate
+  //     has run and persist the new threshold to state.db for the NEXT run.
+  //   - `options.autoAccept` stays unchanged (it is the operator-supplied
+  //     baseline, not a mutable run-time state).
+  //
+  // The global tune call is intentionally removed here. See per-phase calls
+  // below (near each makeGateConfig / runAutoAcceptGate block).
 
   // #607 Lock decomposition: three per-process locks replace the single
   // `improve.lock`. Each process acquires only the lock(s) it needs, so
@@ -1979,6 +2014,7 @@ async function runConsolidationPass(args: {
       stashDir: primaryStashDir,
       config: consolidationConfig,
       eventsCtx,
+      stateDbPath: eventsCtx?.dbPath,
     },
     { minimumThreshold: 95 },
   );
@@ -2093,6 +2129,25 @@ async function runConsolidationPass(args: {
   const consolidationRan =
     !consolidateDisabledByProfile && !poolBelowMinSize && !consolidationOnCooldown && consolidation.processed > 0;
 
+  // WS-4: Per-phase threshold auto-tune for the consolidate phase.
+  // Persists result for the NEXT run's makeGateConfig to read.
+  const consolidateTuneDbPath = eventsCtx?.dbPath;
+  if (options.autoAccept !== undefined && consolidateTuneDbPath) {
+    try {
+      maybeAutoTuneThreshold(
+        consolidateGateCfg.phaseThreshold ?? options.autoAccept,
+        consolidationConfig,
+        consolidateTuneDbPath,
+        undefined,
+        "consolidate",
+      );
+    } catch (err) {
+      warn(
+        `[improve] calibration auto-tune (consolidate) skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   return { consolidation, consolidationRan, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
 }
 
@@ -2201,6 +2256,7 @@ async function runImprovePreparationStage(args: {
     stashDir: primaryStashDir,
     config: extractConfig,
     eventsCtx,
+    stateDbPath: eventsCtx?.dbPath,
   });
   // #554 minNewSessions gate: skip the entire extract pass (ensureIndex was
   // already done upstream; here we elide every akmExtract/processSession call)
@@ -3452,6 +3508,23 @@ async function runImprovePreparationStage(args: {
       (options.limit && deferredCount > 0 ? ` (--limit ${options.limit} applied; ${deferredCount} deferred)` : ""),
   );
 
+  // WS-4: Per-phase threshold auto-tune for the extract phase.
+  // Persists result for the NEXT run's makeGateConfig to read.
+  const extractTuneDbPath = eventsCtx?.dbPath;
+  if (options.autoAccept !== undefined && extractTuneDbPath) {
+    try {
+      maybeAutoTuneThreshold(
+        extractGateCfg.phaseThreshold ?? options.autoAccept,
+        options.config ?? loadConfig(),
+        extractTuneDbPath,
+        undefined,
+        "extract",
+      );
+    } catch (err) {
+      warn(`[improve] calibration auto-tune (extract) skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   return {
     actions,
     cleanupWarnings,
@@ -3631,6 +3704,10 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
     stashDir: primaryStashDir,
     config: options.config ?? loadConfig(),
     eventsCtx,
+    stateDbPath: eventsCtx?.dbPath,
+    // candidateCount drives the exploration budget. loopRefs is the per-phase
+    // set for reflect/distill; pass it so exploration budget is proportional.
+    candidateCount: loopRefs.length,
   });
 
   const distillGateCfg = makeGateConfig("distill", {
@@ -3639,6 +3716,8 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
     stashDir: primaryStashDir,
     config: options.config ?? loadConfig(),
     eventsCtx,
+    stateDbPath: eventsCtx?.dbPath,
+    candidateCount: loopRefs.length,
   });
 
   for (const planned of loopRefs) {
@@ -4090,6 +4169,32 @@ async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoop
     }
     completedCount++;
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+  }
+
+  // WS-4: Per-phase threshold auto-tune — runs AFTER the loop so the gate
+  // has processed all candidates for this run. Persists each phase's tuned
+  // threshold to state.db for the NEXT run's makeGateConfig to read.
+  // Best-effort: a tune failure must never fail the improve run.
+  const stateDbPathForTune = eventsCtx?.dbPath;
+  if (options.autoAccept !== undefined && stateDbPathForTune) {
+    const phaseGateCfgMap: Record<string, typeof reflectGateCfg> = {
+      reflect: reflectGateCfg,
+      distill: distillGateCfg,
+    };
+    for (const phase of ["reflect", "distill"] as const) {
+      const phaseCfg = phaseGateCfgMap[phase];
+      try {
+        maybeAutoTuneThreshold(
+          phaseCfg.phaseThreshold ?? options.autoAccept,
+          options.config ?? loadConfig(),
+          stateDbPathForTune,
+          undefined,
+          phase,
+        );
+      } catch (err) {
+        warn(`[improve] calibration auto-tune (${phase}) skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   return { reflectsWithErrorContext, memoryRefsForInference, gateAutoAcceptedCount, gateAutoAcceptFailedCount };

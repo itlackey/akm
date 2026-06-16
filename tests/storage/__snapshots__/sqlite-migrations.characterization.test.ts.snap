@@ -14,6 +14,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "009-asset-salience",
     "010-asset-outcome",
     "011-asset-salience-homeostatic-demoted-at",
+    "012-improve-gate-thresholds",
   ],
   "schema": [
     {
@@ -243,6 +244,17 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         source_run       TEXT,
         metadata_json    TEXT    NOT NULL DEFAULT '{}',
         PRIMARY KEY (harness, session_id)
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "improve_gate_thresholds",
+      "sql": 
+"CREATE TABLE improve_gate_thresholds (
+        phase       TEXT    NOT NULL PRIMARY KEY,
+        threshold   INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
       )"
 ,
       "type": "table",

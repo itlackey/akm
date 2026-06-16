@@ -55,6 +55,7 @@ export type EligibilitySource =
   | "proactive"
   | "scope"
   | "forgetting-safety"
+  | "exploration"
   | "unknown";
 
 export interface ImproveEligibleRef {

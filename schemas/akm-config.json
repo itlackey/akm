@@ -2908,6 +2908,20 @@
           },
           "additionalProperties": false
         },
+        "exploration": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "budgetFraction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        },
         "salience": {
           "type": "object",
           "properties": {
@@ -5842,6 +5856,20 @@
                   "minimum": 0
                 },
                 "targetAcceptRate": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "exploration": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "budgetFraction": {
                   "type": "number",
                   "minimum": 0,
                   "maximum": 1

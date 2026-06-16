@@ -191,4 +191,45 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(consolidate?.dedup?.cosineThreshold).toBeCloseTo(0.95);
     expect(consolidate?.dedup?.enabled).toBe(true);
   });
+
+  test("WS-4 improve.exploration: enabled + budgetFraction survive a load→save→load round trip", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      improve: {
+        exploration: { enabled: true, budgetFraction: 0.08 },
+      },
+    };
+    saveConfig(config);
+    resetConfigCache();
+    const reloaded = loadConfig();
+    expect(reloaded.improve?.exploration?.enabled).toBe(true);
+    expect(reloaded.improve?.exploration?.budgetFraction).toBeCloseTo(0.08);
+  });
+
+  test("WS-4 improve.exploration: absent default is undefined (no block required)", () => {
+    const config: AkmConfig = { semanticSearchMode: "off" };
+    saveConfig(config);
+    resetConfigCache();
+    const reloaded = loadConfig();
+    expect(reloaded.improve?.exploration).toBeUndefined();
+  });
+
+  test("WS-4 unknown key under improve.exploration hard-errors at load (ImproveExplorationSchema.strict())", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        semanticSearchMode: "off",
+        improve: {
+          exploration: {
+            enabled: true,
+            bogus: "should-be-rejected",
+          },
+        },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
 });

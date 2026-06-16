@@ -722,6 +722,32 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE asset_salience ADD COLUMN homeostatic_demoted_at INTEGER DEFAULT NULL;
     `,
   },
+  // ── Migration 012 — improve_gate_thresholds (WS-4 per-phase threshold store) ─
+  //
+  // Persists the auto-tuned accept-gate threshold PER PHASE so that each phase
+  // (reflect, distill, extract, consolidate) maintains its own calibrated
+  // threshold rather than sharing a single global `options.autoAccept`.
+  //
+  // Schema:
+  //   phase TEXT PK        — phase label, e.g. "reflect", "distill", "extract",
+  //                          "consolidate".
+  //   threshold INTEGER    — tuned threshold (0-100), matches the integer
+  //                          scale used everywhere else in the gate pipeline.
+  //   updated_at INTEGER   — Unix milliseconds of the last update.
+  //
+  // `makeGateConfig` reads the stored threshold for its phase (falling back to
+  // the caller-supplied `globalThreshold` when no row exists yet). WS-4's
+  // `persistPhaseThreshold` writes it after each auto-tune step.
+  {
+    id: "012-improve-gate-thresholds",
+    up: `
+      CREATE TABLE IF NOT EXISTS improve_gate_thresholds (
+        phase       TEXT    NOT NULL PRIMARY KEY,
+        threshold   INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /**
@@ -1100,6 +1126,33 @@ export function listProposalGateDecisions(db: Database): NonNullable<Proposal["g
   }
   decisions.sort((a, b) => new Date(a.decidedAt).getTime() - new Date(b.decidedAt).getTime());
   return decisions;
+}
+
+// ── WS-4: Per-phase gate threshold store (Migration 012) ─────────────────────
+
+/**
+ * Read the persisted auto-tuned threshold for a gate phase.
+ *
+ * Returns `undefined` when no row exists yet (first run, or the phase has
+ * never been tuned). The caller falls back to the global `options.autoAccept`
+ * in that case.
+ */
+export function getPhaseThreshold(db: Database, phase: string): number | undefined {
+  const row = db.prepare("SELECT threshold FROM improve_gate_thresholds WHERE phase = ?").get(phase) as
+    | { threshold: number }
+    | undefined;
+  return row?.threshold;
+}
+
+/**
+ * Persist the auto-tuned threshold for a gate phase.
+ * Uses INSERT OR REPLACE so the call is idempotent (upsert semantics).
+ */
+export function persistPhaseThreshold(db: Database, phase: string, threshold: number): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO improve_gate_thresholds (phase, threshold, updated_at)
+     VALUES (?, ?, ?)`,
+  ).run(phase, Math.round(threshold), Date.now());
 }
 
 /**

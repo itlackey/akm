@@ -661,19 +661,30 @@ export interface ImproveConfig {
    */
   eventRetentionDays?: number;
   /**
-   * #612 — auto-accept gate calibration + bounded, opt-in threshold auto-tune.
+   * #612 / WS-4 — auto-accept gate calibration + bounded, opt-in per-phase
+   * threshold auto-tune.
    *
    * Calibration (the reliability summary on `akm health`) is always computed
    * from gate decisions; this block controls only the OPT-IN threshold
    * auto-tune. DEFAULT OFF: absent — or `autoTune: false` — means the gate
    * threshold is never adjusted and behaviour is byte-identical to today.
+   *
+   * WS-4 change: thresholds are now persisted PER PHASE in state.db (keyed by
+   * phase label). `makeGateConfig` reads the stored value and falls back to
+   * `globalThreshold` when none exists yet. The auto-tune ceiling is bounded at
+   * `maxThreshold` (default 85) to prevent the gate converging to pure
+   * exploitation.
    */
   calibration?: {
     /** Master switch for the bounded threshold auto-tune. Default false (parity). */
     autoTune?: boolean;
     /** Lower bound (0-100) the tuned threshold may never drop below. */
     minThreshold?: number;
-    /** Upper bound (0-100) the tuned threshold may never rise above. */
+    /**
+     * Upper bound (0-100) the tuned threshold may never rise above.
+     * WS-4 default: 85 (prevents gate converging to pure exploitation and
+     * shutting down novelty / exploration throughput).
+     */
     maxThreshold?: number;
     /** Maximum adjustment magnitude (points) applied in one tune step. */
     maxStep?: number;
@@ -681,6 +692,28 @@ export interface ImproveConfig {
     minSamples?: number;
     /** Target realized accept rate in [0, 1]. Default 0.9. */
     targetAcceptRate?: number;
+  };
+  /**
+   * WS-4 — Exploration budget: a fixed fraction of proposals per run are
+   * accepted regardless of confidence to prevent the gate converging to pure
+   * exploitation (which would shut down Gap-3/Gap-4 novelty and recreate the
+   * throughput collapse this work exists to fix).
+   *
+   * DEFAULT OFF: absent means no exploration budget is applied.
+   * Exploration-promoted proposals are logged with
+   * `eligibilitySource = "exploration"` and are NOT subject to auto-tune.
+   */
+  exploration?: {
+    /**
+     * Fraction of proposals per run to accept as exploration regardless of
+     * confidence. Default 0.05 (5%). Range [0, 1].
+     */
+    budgetFraction?: number;
+    /**
+     * When true, exploration budget is active. Default false (parity).
+     * Set to true to enable the exploration lane.
+     */
+    enabled?: boolean;
   };
   /**
    * WS-2 (#613) — salience-weight configuration.

@@ -536,17 +536,20 @@ const ImproveUtilityDecaySchema = z
   })
   .strict();
 
-// #612 — auto-accept gate calibration + bounded, opt-in threshold auto-tune.
-// DEFAULT OFF: when absent (or `autoTune: false`) no tuning occurs, so the gate
-// behaves byte-identically to today. Bounds are validated but inert until the
-// operator opts in.
+// #612 / WS-4 — auto-accept gate calibration + bounded, opt-in per-phase
+// threshold auto-tune. DEFAULT OFF: when absent (or `autoTune: false`) no
+// tuning occurs, so the gate behaves byte-identically to today.
+// WS-4 adds: per-phase persistence (state.db) + auto-tune ceiling default 85.
 const ImproveCalibrationSchema = z
   .object({
     /** Master switch for the bounded threshold auto-tune. Default false (parity). */
     autoTune: z.boolean().optional(),
     /** Lower bound (0-100) the tuned threshold may never drop below. */
     minThreshold: z.number().int().min(0).max(100).optional(),
-    /** Upper bound (0-100) the tuned threshold may never rise above. */
+    /**
+     * Upper bound (0-100) the tuned threshold may never rise above.
+     * WS-4 default: 85 (prevents gate converging to pure exploitation).
+     */
     maxThreshold: z.number().int().min(0).max(100).optional(),
     /** Maximum adjustment magnitude (points) applied in one tune step. */
     maxStep: positiveInt.optional(),
@@ -554,6 +557,23 @@ const ImproveCalibrationSchema = z
     minSamples: nonNegativeNumber.optional(),
     /** Target realized accept rate in [0, 1]. Default 0.9. */
     targetAcceptRate: z.number().finite().min(0).max(1).optional(),
+  })
+  .strict();
+
+// WS-4 — exploration budget: a fixed fraction of proposals accepted per run
+// regardless of confidence. DEFAULT OFF.
+const ImproveExplorationSchema = z
+  .object({
+    /**
+     * Enable the exploration budget lane. Default false (parity).
+     * When true, a fraction of proposals are accepted regardless of confidence.
+     */
+    enabled: z.boolean().optional(),
+    /**
+     * Fraction of proposals per run to accept as exploration [0, 1].
+     * Default 0.05 (5%). Clamped to [0, 1] at read time.
+     */
+    budgetFraction: z.number().finite().min(0).max(1).optional(),
   })
   .strict();
 
@@ -573,6 +593,7 @@ export const ImproveConfigSchema = z
     utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     calibration: ImproveCalibrationSchema.optional(),
+    exploration: ImproveExplorationSchema.optional(),
     salience: ImproveSalienceSchema.optional(),
   })
   .strict();
