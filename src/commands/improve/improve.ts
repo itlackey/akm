@@ -1873,8 +1873,10 @@ async function runConsolidationPass(args: {
   eventsCtx?: EventsContext;
   /** Budget signal forwarded to akmConsolidate for graceful drain on timeout. */
   budgetSignal?: AbortSignal;
+  /** Total run budget in ms, forwarded to akmConsolidate for WS-5 perf telemetry. */
+  runBudgetMs?: number;
 }): Promise<ConsolidationPassResult> {
-  const { options, primaryStashDir, memorySummary, improveProfile, eventsCtx, budgetSignal } = args;
+  const { options, primaryStashDir, memorySummary, improveProfile, eventsCtx, budgetSignal, runBudgetMs } = args;
 
   const baseConfig = options.config ?? loadConfig();
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
@@ -2081,6 +2083,9 @@ async function runConsolidationPass(args: {
         // the profile's p90 estimate for cold-start budget reduction.
         signal: budgetSignal,
         p90ChunkSecondsDefault: improveProfile?.processes?.consolidate?.p90ChunkSecondsDefault,
+        // WS-5: pass total run budget so perfTelemetry.estimatedBudgetFractionUsed
+        // can flag when consolidation alone exceeded the budget.
+        runBudgetMs,
       }),
     );
     {
@@ -2229,6 +2234,7 @@ async function runImprovePreparationStage(args: {
     improveProfile,
     eventsCtx,
     budgetSignal,
+    runBudgetMs: budgetMs,
   });
 
   // Phase 0.4 — session-extract pass.

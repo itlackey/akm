@@ -197,6 +197,60 @@ export interface ConsolidateResult {
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
+  /**
+   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
+   * these are health VIEWS of the pipeline, not truth sources. Omitted on the
+   * early-exit paths (no memories, all judged-unchanged) to keep the envelope
+   * tidy.
+   */
+  perfTelemetry?: ConsolidatePerfTelemetry;
+}
+
+/**
+ * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
+ * All fields are optional so existing callers that spread ConsolidateResult
+ * can adopt the shape incrementally.
+ */
+export interface ConsolidatePerfTelemetry {
+  /**
+   * Pool size BEFORE the judged-state cache narrowing step.
+   * Measures the raw candidate set loaded from disk this run.
+   */
+  dedupPoolSize?: number;
+  /**
+   * Pool size AFTER judged-cache and limit filtering — the memories actually
+   * sent to the LLM for a fresh judgment. `dedupPoolSize − llmPoolSize` is
+   * the effective judgedCacheSkipped + limit-capped count.
+   */
+  llmPoolSize?: number;
+  /**
+   * Memories skipped because the judged-state cache recorded them as
+   * unchanged since the last LLM judgment. 0 when judgedCache is disabled.
+   * Health threshold: >95% hits on an incremental run (warm cache).
+   */
+  judgedCacheSkipped?: number;
+  /**
+   * Wall-clock milliseconds spent in the embedding stage (both cluster
+   * reordering and dedup cosine path). Extracted from timing around embedBatch
+   * calls so the LLM wall-clock accounts only for LLM calls.
+   */
+  embedMs?: number;
+  /**
+   * Number of body-embedding cache hits (content_hash found in body_embeddings).
+   * Healthy incremental run: >95% hits once the cache is warm.
+   */
+  embedCacheHits?: number;
+  /**
+   * Number of body-embedding cache misses (content_hash not found; embedBatch
+   * was called). High misses signal a cold cache or high corpus churn.
+   */
+  embedCacheMisses?: number;
+  /**
+   * Fraction of the run budget consumed by consolidation alone:
+   * `consolidation.durationMs / budgetMs`. Values >1.0 mean this consolidation
+   * pass alone exceeded the caller's declared budget — a SIGTERM risk signal.
+   */
+  estimatedBudgetFractionUsed?: number;
 }
 
 /** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
@@ -279,6 +333,13 @@ export interface AkmConsolidateOptions {
    * `p90ChunkSecondsDefault` config value here.
    */
   p90ChunkSecondsDefault?: number;
+  /**
+   * Total run budget in milliseconds (from `akmImprove`'s `timeoutMs`).
+   * When provided, `perfTelemetry.estimatedBudgetFractionUsed` is populated so
+   * the health report can flag >1.0 (consolidation alone exceeded the budget).
+   * Absent = `estimatedBudgetFractionUsed` is omitted from perf telemetry.
+   */
+  runBudgetMs?: number;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -551,12 +612,20 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
  *   - Embedding requests fail (fail-open).
  *   - There are fewer than 3 memories (no benefit to reordering).
  */
+/** WS-5 embedding telemetry returned alongside cluster results. */
+interface ClusterEmbedTelemetry {
+  embedMs: number;
+  cacheHits: number;
+  cacheMisses: number;
+}
+
 async function clusterMemoriesBySimilarity(
   memories: MemoryEntry[],
   config: AkmConfig,
   stateDb?: Database,
-): Promise<MemoryEntry[]> {
-  if (memories.length < 3 || !config.embedding) return memories;
+): Promise<{ ordered: MemoryEntry[]; embedTelemetry: ClusterEmbedTelemetry }> {
+  const noTelemetry: ClusterEmbedTelemetry = { embedMs: 0, cacheHits: 0, cacheMisses: 0 };
+  if (memories.length < 3 || !config.embedding) return { ordered: memories, embedTelemetry: noTelemetry };
 
   // WS-3a: cluster uses description+tags as the embedding input (NOT the raw
   // body) — this is intentionally different from the dedup/body cache because
@@ -576,6 +645,11 @@ async function clusterMemoriesBySimilarity(
   // Compute content hashes for the cluster texts (not bodies — different input).
   const contentHashes = texts.map((t) => createHash("sha256").update(t, "utf8").digest("hex"));
 
+  // WS-5: track embed cache hits/misses for perf telemetry.
+  let embedMs = 0;
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
   let cachedVecs = new Map<string, number[]>();
   if (stateDb) {
     try {
@@ -592,16 +666,22 @@ async function clusterMemoriesBySimilarity(
     if (!cachedVecs.has(contentHashes[i] as string)) {
       missIndices.push(i);
       missTexts.push(texts[i] as string);
+      cacheMisses++;
+    } else {
+      cacheHits++;
     }
   }
 
   let missVecs: number[][] = [];
   if (missTexts.length > 0) {
+    const embedStart = Date.now();
     try {
       missVecs = await embedBatch(missTexts, config.embedding);
     } catch {
       // Fail open: embedding failures degrade gracefully to original order.
-      return memories;
+      return { ordered: memories, embedTelemetry: { embedMs, cacheHits, cacheMisses } };
+    } finally {
+      embedMs += Date.now() - embedStart;
     }
     // Upsert newly computed vectors into the cache.
     if (stateDb && missVecs.length === missTexts.length) {
@@ -644,7 +724,9 @@ async function clusterMemoriesBySimilarity(
     }
   }
 
-  if (!embeddings || embeddings.length !== memories.length) return memories;
+  const embedTelemetry: ClusterEmbedTelemetry = { embedMs, cacheHits, cacheMisses };
+
+  if (!embeddings || embeddings.length !== memories.length) return { ordered: memories, embedTelemetry };
 
   // Greedy nearest-neighbour chain.
   const used = new Array<boolean>(memories.length).fill(false);
@@ -672,7 +754,7 @@ async function clusterMemoriesBySimilarity(
     current = bestIdx;
   }
 
-  return ordered;
+  return { ordered, embedTelemetry };
 }
 
 // ── Chunk helpers ────────────────────────────────────────────────────────────
@@ -1443,6 +1525,14 @@ async function akmConsolidateInner(
     }
   }
 
+  // WS-5 perf telemetry accumulators. These are collected throughout the run and
+  // merged into `perfTelemetry` on the final ConsolidateResult.
+  // `dedupPoolSize` = memories entering judgedCache narrowing (after dedup+incremental+limit).
+  // `judgedCacheSkipped` = memories skipped by the cache.
+  // `llmPoolSize` = memories actually sent to the LLM.
+  // `embedMs/cacheHits/cacheMisses` = accumulated from clusterMemoriesBySimilarity.
+  const perfMs = { dedupPoolSize: memories.length, judgedCacheSkipped: 0 };
+
   // ── Judged-state cache narrowing (#581) ─────────────────────────────────────
   // DEFAULT OFF. When enabled, skip every memory whose current content hash
   // equals the hash recorded the last time the consolidate LLM judged it
@@ -1498,6 +1588,7 @@ async function akmConsolidateInner(
       return !(cached !== undefined && cached.content_hash === cur);
     });
     const skipped = beforeCount - memories.length;
+    perfMs.judgedCacheSkipped = skipped; // WS-5 perf telemetry
     if (skipped > 0) {
       warnings.push(
         `Judged-state cache: skipped ${skipped} memor${skipped === 1 ? "y" : "ies"} judged-unchanged (no LLM); ${memories.length} remain for judging.`,
@@ -1571,13 +1662,20 @@ async function akmConsolidateInner(
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.target ?? stashDir;
 
+  // WS-5: capture llmPoolSize = memories entering the LLM (after all filtering).
+  const llmPoolSize = memories.length;
+
   // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
   // This ensures that semantically similar memories land in the same LLM
   // context window, allowing the model to detect and merge duplicates that
   // would otherwise be split across chunks and survive indefinitely.
   // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
   // Fails open: if embeddings are unavailable or fail, original order is used.
-  const clusteredMemories = await clusterMemoriesBySimilarity(memories, config, sharedStateDb);
+  const { ordered: clusteredMemories, embedTelemetry } = await clusterMemoriesBySimilarity(
+    memories,
+    config,
+    sharedStateDb,
+  );
 
   // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
   // A small fraction (default 5%) of the pool is shuffled into random positions
@@ -2683,6 +2781,10 @@ async function akmConsolidateInner(
     );
   }
 
+  const runDurationMs = Date.now() - startMs;
+  const budgetFraction =
+    opts.runBudgetMs !== undefined && opts.runBudgetMs > 0 ? runDurationMs / opts.runBudgetMs : undefined;
+
   return {
     schemaVersion: 1 as const,
     ok: true,
@@ -2705,7 +2807,16 @@ async function akmConsolidateInner(
     mergedSecondaries,
     failedChunkMemories,
     warnings,
-    durationMs: Date.now() - startMs,
+    durationMs: runDurationMs,
+    perfTelemetry: {
+      dedupPoolSize: perfMs.dedupPoolSize,
+      llmPoolSize,
+      judgedCacheSkipped: perfMs.judgedCacheSkipped,
+      embedMs: embedTelemetry.embedMs,
+      embedCacheHits: embedTelemetry.cacheHits,
+      embedCacheMisses: embedTelemetry.cacheMisses,
+      ...(budgetFraction !== undefined ? { estimatedBudgetFractionUsed: budgetFraction } : {}),
+    },
   };
 }
 

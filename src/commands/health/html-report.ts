@@ -20,7 +20,14 @@ import path from "node:path";
 import { escapeHtml } from "../../output/html-render";
 import { getDirname } from "../../runtime";
 import { pkgVersion } from "../../version";
-import type { AkmHealthResult, DeltaEntry, HealthCheckResult, ImproveRunSummary } from "../health";
+import type {
+  AkmHealthResult,
+  DeltaEntry,
+  HealthCheckResult,
+  ImproveDegradationMetrics,
+  ImprovePerfTelemetry,
+  ImproveRunSummary,
+} from "../health";
 
 /**
  * Distill skip-reasons hidden from the breakdown chart. `no new signal since
@@ -396,6 +403,19 @@ export function buildHealthHtmlReplacements(
   const mi = improve.memoryInference;
   const ge = improve.graphExtraction;
   const wallTime = improve.wallTime;
+  // WS-5: perf telemetry, coverage, and degradation metrics.
+  const perf: ImprovePerfTelemetry = improve.perfTelemetry ?? {
+    dedupPoolSize: 0,
+    llmPoolSize: 0,
+    judgedCacheSkipped: 0,
+    embedMs: 0,
+    embedCacheHits: 0,
+    embedCacheMisses: 0,
+    overBudgetRuns: 0,
+    runsWithTelemetry: 0,
+  };
+  const coverage = improve.coverage;
+  const degradation: ImproveDegradationMetrics | undefined = improve.degradation;
   // #576: real per-stage LLM token/time accounting (replaces the GPU-time
   // proxy). Optional-guarded so reports built from older health JSON without
   // the aggregate still render.
@@ -726,6 +746,92 @@ export function buildHealthHtmlReplacements(
       ],
     );
   }
+  // WS-5: denominator-fixed coverage rows (only when we have real data).
+  if (coverage && !Number.isNaN(coverage.rate)) {
+    summaryRows.push(
+      [
+        "Coverage rate",
+        pct(coverage.rate, 1),
+        "flat",
+        "Accepted proposals / total stash assets (denominator-fixed). Shows what fraction of the corpus has been touched.",
+      ],
+      [
+        "Eligible fraction",
+        pct(coverage.eligibleFraction, 1),
+        "flat",
+        "Eligible assets / total stash assets. Fraction the improve pipeline actively considers.",
+      ],
+      [
+        "Coverage accepted",
+        num(coverage.acceptedProposals),
+        "up",
+        "Total accepted proposals used for the denominator-fixed coverage rate.",
+      ],
+    );
+  }
+
+  // WS-5: perf telemetry rows (only when at least one run reported telemetry).
+  if (perf.runsWithTelemetry > 0) {
+    const embedCacheTotal = perf.embedCacheHits + perf.embedCacheMisses;
+    const embedCacheHitRate = embedCacheTotal > 0 ? pct(perf.embedCacheHits / embedCacheTotal, 1) : "—";
+    summaryRows.push(
+      [
+        "Embed cache hit rate",
+        embedCacheHitRate,
+        "flat",
+        "Fraction of embedding lookups served from cache (>95% is healthy). Aggregated across WS-5 runs.",
+      ],
+      [
+        "Embed wall time",
+        fmtMs(perf.embedMs),
+        "flat",
+        "Cumulative embedding wall-clock time across consolidation runs in the window.",
+      ],
+      [
+        "Judged-cache skipped",
+        num(perf.judgedCacheSkipped),
+        "flat",
+        "Candidates skipped by the judged-cache (not sent to LLM). Higher = more efficient reuse of prior judgments.",
+      ],
+      [
+        "Dedup pool size",
+        num(perf.dedupPoolSize),
+        "flat",
+        "Average memory pool size after deduplication (before judged-cache narrowing). WS-5 perf telemetry.",
+      ],
+      [
+        "Over-budget consolidation runs",
+        String(perf.overBudgetRuns),
+        perf.overBudgetRuns > 0 ? "down" : "flat",
+        "Runs where consolidation alone exceeded the total run budget (estimatedBudgetFractionUsed > 1.0).",
+      ],
+    );
+  }
+
+  // WS-5: degradation metrics rows.
+  if (degradation) {
+    summaryRows.push(
+      [
+        "Corpus diversity (Gini)",
+        num(degradation.corpusCentroidDistance),
+        degradation.entrenchmentFlagged ? "down" : "flat",
+        "Gini coefficient of retrieval_salience for top-100 ranked assets. High Gini (>0.6) = entrenchment risk.",
+      ],
+      [
+        "Merge fidelity contradiction rate",
+        pct(degradation.mergeFidelityContradictionRate, 1),
+        "flat",
+        "Fraction of consolidated proposals that involved a contradiction, from consolidation result envelopes.",
+      ],
+      [
+        "High-generation fraction",
+        pct(degradation.highGenerationFraction, 1),
+        "flat",
+        "Fraction of assets with consecutive_no_ops >= 2 (proxy for high-generation assets in the salience table).",
+      ],
+    );
+  }
+
   const summaryRowsHtml = summaryRows
     .map(([label, value, t, tip]) => {
       const labelHtml = tip ? `<abbr title="${esc(tip)}">${esc(label)}</abbr>` : esc(label);
@@ -824,6 +930,35 @@ export function buildHealthHtmlReplacements(
       cls: "warn",
       title: "No recent improve runs",
       descHtml: `Newest run is ${esc(latestRunHuman)} — older than the 6h freshness threshold. Check the improve scheduler/cron.`,
+    });
+  }
+
+  // WS-5: corpus entrenchment flag.
+  if (degradation?.entrenchmentFlagged) {
+    pushItem({
+      key: "corpus-entrenchment",
+      prio: "P2",
+      cls: "warn",
+      title: "Corpus entrenchment risk: retrieval_salience Gini > 0.6",
+      descHtml:
+        "A small set of assets dominates retrieval — retrieval diversity is low. " +
+        "Review top-ranked assets for stale or over-represented content. " +
+        `Corpus diversity proxy: ${esc(String(degradation.corpusCentroidDistance))}.`,
+      remedy: "akm health --format json | jq '.improve.degradation'",
+    });
+  }
+
+  // WS-5: over-budget consolidation advisory.
+  if (perf.overBudgetRuns > 0) {
+    pushItem({
+      key: "over-budget-consolidation",
+      prio: "P2",
+      cls: "warn",
+      title: `${perf.overBudgetRuns} consolidation run${perf.overBudgetRuns === 1 ? "" : "s"} exceeded budget`,
+      descHtml:
+        "Consolidation phase wall time exceeded the total run budget on these runs. " +
+        "Consider increasing the timeout or reducing the consolidation pool via profile config.",
+      remedy: "akm config show",
     });
   }
 
