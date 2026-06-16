@@ -201,6 +201,37 @@ describe("computeSalience — outcome sub-score", () => {
     expect(vZero.outcome).toBe(0);
   });
 
+  test("default-off rankScore matches WS-1 parity formula exactly (ranking-invariance assertion)", () => {
+    // Integration invariant: omitting outcomeWeightEnabled must produce rankScore
+    // equal to (W_ENCODING_PARITY * encoding + W_RETRIEVAL_PARITY * retrieval) *
+    // sizePenalty, clamped to [0,1].  This test uses deterministic inputs and
+    // replicates the sizePenalty computation inline so any future accidental drift
+    // of the parity weights (e.g. changing a literal in the else branch) fails here.
+    const SIZE_BYTES = 4_000;
+    const v = computeSalience({
+      ref: "lesson:invariance-check",
+      type: "lesson",
+      retrievalFreq: 8,
+      lastUseMs: NOW - 3 * DAY_MS,
+      sizeBytes: SIZE_BYTES,
+      outcomeSalience: 0.85, // non-zero; must NOT appear in the default-off rankScore
+      now: NOW,
+    });
+
+    // Replicate the sizePenalty the same way salience.ts does it.
+    const SIZE_FLOOR_BYTES = 200;
+    const sizePenalty = 1 / Math.log10(Math.max(SIZE_FLOOR_BYTES, SIZE_BYTES));
+    // Expected rankScore using the WS-1 parity formula (w_o=0 → outcome term absent).
+    const expected = Math.min(
+      1,
+      Math.max(0, (W_ENCODING_PARITY * v.encoding + W_RETRIEVAL_PARITY * v.retrieval) * sizePenalty),
+    );
+
+    expect(v.rankScore).toBeCloseTo(expected, 12);
+    // Confirm the outcome sub-score IS non-zero (proves we tested a non-trivial input).
+    expect(v.outcome).toBeCloseTo(0.85, 9);
+  });
+
   test("outcome is W_OUTCOME-weighted in rankScore when outcomeWeightEnabled=true", () => {
     // With outcomeWeightEnabled=true and outcomeSalience = 1.0 and no retrieval,
     // the outcome term raises rankScore above the zero-outcome baseline.
