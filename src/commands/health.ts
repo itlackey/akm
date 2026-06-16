@@ -1836,16 +1836,23 @@ function readCalibration(db: Database, since: string, until?: string): Calibrati
  * more-inclusive WS-1 ranking cannot spuriously inflate coverage.
  * `eligibleFraction = eligible_assets / total_assets` is reported separately.
  *
+ * Proposals are counted only when their `updatedAt` falls within `[since, until)`
+ * so the rate is genuinely window-scoped (matching the JSDoc on the type).
+ *
  * @param db - Open state.db connection.
  * @param totalAssets - Total stash asset count (eligible + derived) from the
  *   most recent run's memorySummary. 0 = denominator unknown, returns NaN rates.
  * @param eligibleAssets - Eligible (non-derived) asset count from the most recent run.
+ * @param since - Window start (ISO-8601). Proposals accepted before this are excluded.
+ * @param until - Window end (ISO-8601, exclusive). Absent = open-ended (up to now).
  * @param stashDir - Optional: scope accepted proposals to one stash. Absent = all stashes.
  */
 function computeDenominatorFixedCoverage(
   db: Database,
   totalAssets: number,
   eligibleAssets: number,
+  since: string,
+  until?: string,
   stashDir?: string,
 ): ImproveHealthMetrics["coverage"] {
   let acceptedProposals = 0;
@@ -1853,6 +1860,11 @@ function computeDenominatorFixedCoverage(
     const proposals = listStateProposals(db, {
       status: "accepted",
       ...(stashDir ? { stashDir } : {}),
+    }).filter((p) => {
+      const updatedAt = p.updatedAt ?? "";
+      if (updatedAt < since) return false;
+      if (until !== undefined && updatedAt >= until) return false;
+      return true;
     });
     acceptedProposals = proposals.length;
   } catch {
@@ -2062,7 +2074,13 @@ function buildWindowMetrics(
   // WS-5: Compute denominator-fixed coverage from the most recent run's
   // memorySummary (totalAssets = eligible + derived — the fixed denominator).
   const totalAssets = improveSummary.memorySummary.eligible + improveSummary.memorySummary.derived;
-  improveSummary.coverage = computeDenominatorFixedCoverage(db, totalAssets, improveSummary.memorySummary.eligible);
+  improveSummary.coverage = computeDenominatorFixedCoverage(
+    db,
+    totalAssets,
+    improveSummary.memorySummary.eligible,
+    since,
+    until,
+  );
 
   // WS-5: Compute per-run degradation metrics (corpus diversity, merge fidelity,
   // generation distribution, oracle spot-check). Health VIEWS only.
@@ -2182,6 +2200,8 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       db,
       totalAssetsMain,
       improveSummary.memorySummary.eligible,
+      since,
+      until,
     );
     const degradationMain = computeDegradationMetrics(db, since, until);
     if (degradationMain) {

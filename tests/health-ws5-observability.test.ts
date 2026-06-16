@@ -425,6 +425,58 @@ describe("WS-5 denominator-fixed coverage", () => {
     const result = akmHealth({ since: "1h" });
     expect(result.improve.coverage.acceptedProposals).toBe(2);
   });
+
+  test("coverage.acceptedProposals is window-scoped and excludes proposals outside the window", () => {
+    const db = openStateDatabase();
+    try {
+      const now = new Date();
+      const start = new Date(now.getTime() - 60_000).toISOString();
+      const end = now.toISOString();
+
+      recordImproveRun(db, {
+        id: "run-coverage-window",
+        startedAt: start,
+        completedAt: end,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          schemaVersion: 1,
+          ok: true,
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 5, derived: 0 },
+          plannedRefs: [],
+          actions: [],
+        }),
+      });
+
+      // 1 accepted proposal within the window (updatedAt = now).
+      upsertProposal(db, makeAcceptedProposal("p-in-window", "memory:in"), "/tmp/stash");
+
+      // 1 accepted proposal outside the window (updatedAt = 3 hours ago).
+      const oldTime = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString();
+      upsertProposal(
+        db,
+        {
+          ...makeAcceptedProposal("p-old", "memory:old"),
+          updatedAt: oldTime,
+          createdAt: oldTime,
+        },
+        "/tmp/stash",
+      );
+    } finally {
+      db.close();
+    }
+
+    // since=1h: only p-in-window should count; p-old is 3 hours ago and outside window.
+    const result = akmHealth({ since: "1h" });
+    expect(result.improve.coverage.acceptedProposals).toBe(1);
+  });
 });
 
 describe("WS-5 degradation metrics", () => {
