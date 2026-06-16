@@ -24,8 +24,8 @@
 |---|---|---|---|---|---|
 | WS-0 extract-capture (#619) | done | 6904606f, a36142d1 | pass / confirmed-green | none | Prompt fix closes non-schema-LLM gap; types, schema, parser, persistence were already correct. |
 | WS-3a consolidation pipeline (#619) | done | 68467d56 | pass / confirmed-green | none | Fixed Zod schema rejection (cosineCandidateLimit + p90ChunkSecondsDefault) and added behavioral cache-wiring tests; curate-command baseline changes folded in (hygiene smell, non-blocking). |
-| WS-1 salience vector (#618) | in-review | c7db502a, a182f037, bc99cc57, 03652977, d3733862, d4bef793, 12bf2ec7, 889dda29, a316697b, 4d7f97e0, bd1d5995, 226b4bce, 69935201, 4c40a303 | pending | none | Unified S1 vector seam: computeSalience() replaces three independent scorers; dampener wired; stale feedbackLane type removed; proactive selector folded onto rankScore. **See branch-scope note below — cannot be merged in isolation.** |
-| WS-2 outcome loop | not-started | — | — | — | — |
+| WS-1 salience vector (#618) | blocked | c7db502a..a5ef0fe8 (20 commits) | needs-fixes / confirmed-green | 3 rounds / cap-reached-still-dirty | Major blocker: `importanceWeights` hard-removed from `.strict()` schema with no migration — silent `INVALID_CONFIG_FILE` throw for any user who set it (contrast: symmetricValence retained with deprecation warning per plan §step 6). Fix: retain as ignored-with-warning optional field until 0.10 or add auto-migration + CHANGELOG entry. Non-blocking: EligibilitySource precedence doc/code disagreement (labels only, selection correct); T0 measurement gate deferred to WS-2. **Cannot be merged in isolation — carries WS-0 + WS-3a.** |
+| WS-2 outcome loop | not-started | — | — | — | WS-1 leaves W_OUTCOME=0.0 and emits `WS-2-HOOK` comments (2 occurrences in salience.ts) as re-enable sites. Part-V T0 baseline + throughput/quality gate (deferred from WS-1 per CHANGELOG) must be completed here before behavior-changing work ships. |
 | WS-3b consolidation (remaining) | not-started | — | — | — | — |
 | WS-4 CHANGE-gate coherence | not-started | — | — | — | — |
 | WS-5 attribution/observability | not-started | — | — | — | — |
