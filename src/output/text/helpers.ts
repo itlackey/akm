@@ -1023,6 +1023,14 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
     }
     if (item.run) lines.push(`  run: ${String(item.run)}`);
     if (item.followUp) lines.push(`  show: ${String(item.followUp)}`);
+    if (Array.isArray(item.supportRefs) && item.supportRefs.length > 0) {
+      for (const support of item.supportRefs as Array<Record<string, unknown>>) {
+        if (!support.ref) continue;
+        const label = typeof support.type === "string" ? `[${support.type}] ` : "";
+        const why = typeof support.reason === "string" ? ` — ${support.reason}` : "";
+        lines.push(`  support: ${label}${String(support.ref)}${why}`);
+      }
+    }
     if (detail !== "brief" && item.reason) lines.push(`  why: ${String(item.reason)}`);
   }
 

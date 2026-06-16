@@ -31,12 +31,24 @@ const NORMAL_FIELDS = [
   "keys",
   "parameters",
   "run",
+  "supportRefs",
   "followUp",
   "reason",
   "score",
 ];
 // Agent shape: the minimal field set an LLM needs to decide and act.
-const AGENT_FIELDS = ["source", "type", "name", "ref", "id", "description", "followUp", "reason", "score"];
+const AGENT_FIELDS = [
+  "source",
+  "type",
+  "name",
+  "ref",
+  "id",
+  "description",
+  "supportRefs",
+  "followUp",
+  "reason",
+  "score",
+];
 
 function shapeCurateItem(
   item: Record<string, unknown>,
