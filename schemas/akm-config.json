@@ -2235,6 +2235,15 @@
             }
           },
           "additionalProperties": false
+        },
+        "salience": {
+          "type": "object",
+          "properties": {
+            "outcomeWeightEnabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -4492,6 +4501,15 @@
                   "type": "number",
                   "minimum": 0,
                   "maximum": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "salience": {
+              "type": "object",
+              "properties": {
+                "outcomeWeightEnabled": {
+                  "type": "boolean"
                 }
               },
               "additionalProperties": false

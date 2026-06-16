@@ -22,10 +22,12 @@
  *
  * `rankScore = (w_e·encoding + w_o·outcome + w_r·retrieval) × sizePenalty`, normalized [0,1].
  *
- * **WS-2 active:**
- * `w_o = 0.15`; three-way split: `w_e=0.25, w_o=0.15, w_r=0.60`.
- * `outcomeSalience` is now populated from `asset_outcome.outcome_score` (WS-2).
- * Re-tune weights via the Part-V measurement protocol if gate shows regression.
+ * **WS-2 default-off (Part-V gate):**
+ * `w_o = 0.15` is the target but is applied only when `outcomeWeightEnabled=true`
+ * (set via `improve.salience.outcomeWeightEnabled: true` in config after running
+ * Part-V T0 baseline). Default: WS-1 parity weights `w_e=0.30, w_r=0.70, w_o=0`.
+ * `outcomeSalience` is populated from `asset_outcome.outcome_score` (WS-2) for
+ * observability regardless of the flag.
  *
  * ## Plasticity
  *
@@ -63,18 +65,21 @@ const SIZE_FLOOR_BYTES = 200;
 
 // ── Projection weights ────────────────────────────────────────────────────────
 //
-// WS-2 landed: W_OUTCOME is now non-zero. Three-way split:
-//   w_e=0.25, w_o=0.15, w_r=0.60  (sum = 1.0)
+// These constants reflect the WS-2 TARGET values (used when outcomeWeightEnabled=true).
+// Default ranking uses WS-1 parity weights (w_e=0.30, w_r=0.70, w_o=0) until the
+// maintainer opts in via `improve.salience.outcomeWeightEnabled: true` after running
+// the Part-V T0 baseline (scripts/akm-eval + health report).
 //
+// WS-2 opt-in split (w_e=0.25, w_o=0.15, w_r=0.60, sum = 1.0):
 // [exp] Expert recommendation: encoding should be moderate so a type-importance
 // stub does not completely dominate; retrieval should be strong since it directly
 // measures use; outcome provides a quality signal proportional to usefulness.
 //
 // Re-tune via the Part-V measurement protocol if the throughput/quality gate
-// shows regression after WS-2 is active.
-export const W_ENCODING = 0.25; // encoding weight (w_e)
-export const W_OUTCOME = 0.15; // outcome weight (w_o) — WS-2 active
-export const W_RETRIEVAL = 0.6; // retrieval weight (w_r)
+// shows regression after enabling the outcome weight.
+export const W_ENCODING = 0.25; // WS-2 target encoding weight (w_e)
+export const W_OUTCOME = 0.15; // WS-2 target outcome weight (w_o)
+export const W_RETRIEVAL = 0.6; // WS-2 target retrieval weight (w_r)
 
 // Compile-time guard: weights must sum to 1.0 (±ε). The TS initializer runs
 // at module load, not build time, so this acts as a startup assertion.
@@ -146,6 +151,16 @@ export interface SalienceInputs {
   sizeBytes?: number;
   /** Injectable clock (ms). Defaults to Date.now(). */
   now?: number;
+  /**
+   * WS-2 Part-V gate: when `true` the outcome-weight term (`w_o=0.15`) is
+   * active and weights shift to `w_e=0.25, w_o=0.15, w_r=0.60`.
+   *
+   * Default `false` (absent) — WS-1 parity weights `w_e=0.30, w_r=0.70`
+   * until the maintainer runs the Part-V measurement protocol
+   * (`scripts/akm-eval` + health report) and opts in via
+   * `improve.salience.outcomeWeightEnabled: true` in the config.
+   */
+  outcomeWeightEnabled?: boolean;
 }
 
 // ── Output shape ──────────────────────────────────────────────────────────────
@@ -245,7 +260,35 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   // formula used for MemRL utility updates.
   const retrieval = rawRetrieval / (rawRetrieval + 1);
 
-  const rawRankScore = (W_ENCODING * encoding + W_OUTCOME * outcome + W_RETRIEVAL * retrieval) * sizePenalty;
+  // ── Weight selection (Part-V gate) ────────────────────────────────────────
+  //
+  // When `outcomeWeightEnabled` is false/absent (default): use WS-1 parity
+  // weights (w_e=0.30, w_r=0.70, w_o=0) so ranking is unchanged from the WS-1
+  // baseline. The `outcome` sub-score is still computed and stored in the
+  // salience vector for observability, but it does not affect rankScore.
+  //
+  // When `outcomeWeightEnabled` is true (operator opt-in after Part-V run):
+  // use WS-2 weights (w_e=0.25, w_o=0.15, w_r=0.60).
+  //
+  // The constants W_ENCODING, W_OUTCOME, W_RETRIEVAL always reflect the
+  // WS-2 target values for documentation and re-tune reference.
+  let we: number;
+  let wo: number;
+  let wr: number;
+  if (inputs.outcomeWeightEnabled === true) {
+    // WS-2 active: three-way split from Part-V operator opt-in.
+    we = W_ENCODING; // 0.25
+    wo = W_OUTCOME; // 0.15
+    wr = W_RETRIEVAL; // 0.60
+  } else {
+    // WS-1 parity (default): w_o=0, redistribute to WS-1 proportions.
+    // Original WS-1 split was w_e=0.30, w_r=0.70.
+    we = 0.3;
+    wo = 0;
+    wr = 0.7;
+  }
+
+  const rawRankScore = (we * encoding + wo * outcome + wr * retrieval) * sizePenalty;
   const rankScore = Math.min(1, Math.max(0, rawRankScore));
 
   return { encoding, outcome, retrieval, rankScore };

@@ -483,11 +483,23 @@ const ImproveCalibrationSchema = z
   })
   .strict();
 
+const ImproveSalienceSchema = z
+  .object({
+    /**
+     * WS-2 Part-V gate: enable the outcome-weight term in the salience projection.
+     * Default false (parity — WS-1 weights w_e=0.30, w_r=0.70 until Part-V confirms
+     * no regression). Set to true after running scripts/akm-eval + health report.
+     */
+    outcomeWeightEnabled: z.boolean().optional(),
+  })
+  .strict();
+
 export const ImproveConfigSchema = z
   .object({
     utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     calibration: ImproveCalibrationSchema.optional(),
+    salience: ImproveSalienceSchema.optional(),
   })
   .strict();
 

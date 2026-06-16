@@ -8,13 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed (migration required)
 
-- **WS-2 outcome loop (#613) — default-on ranking change (state.db migration 010).**
+- **WS-2 outcome loop (#613) — default-off weight change (state.db migration 010).**
   Every `akm improve` run now writes an `asset_outcome` row per processed asset
-  (state.db migration `010`) and incorporates a differential usefulness signal
-  (`outcome_score`) into the salience projection. The projection weights change from
-  WS-1's two-term split (`w_e=0.30, w_o=0, w_r=0.70`) to a three-term split
-  (`w_e=0.25, w_o=0.15, w_r=0.60`). Every user's salience ranking is affected from
-  the first run on this release.
+  (state.db migration `010`) and computes a differential usefulness signal
+  (`outcome_score`) per ref. The outcome signal is persisted and visible in the
+  health report, but the **weight change is gated behind a config flag** (see
+  below). Ranking is unchanged from WS-1 by default.
+
+  **Opt-in weight change.** The WS-2 projection weights (`w_e=0.25, w_o=0.15,
+  w_r=0.60`) affect ranking only when you explicitly set
+  `improve.salience.outcomeWeightEnabled: true` in your `akm.yaml`. The default
+  (`false`) keeps WS-1 parity weights (`w_e=0.30, w_r=0.70`, `w_o=0`), so
+  existing users see no ranking change on upgrade.
+
+  **Part-V measurement gate.** Before enabling the weight change, run the Part-V
+  T0 baseline (`scripts/akm-eval` + `akm health`; confirm proactive accept
+  ≥ 0.9× reactive; reversion ≤ 0.15; retrieval-delta ≥ 0; coverage not
+  regressed). That gate requires a running production stash and cannot be
+  exercised in CI. Once confirmed, set
+  `improve.salience.outcomeWeightEnabled: true` to activate the three-way split.
 
   **Outcome loop mechanics.** `outcome_score` is a differential prediction-error
   signal: `(retrieval_delta − expected_delta) − PENALTY × retrieval_delta × (1 −
@@ -29,14 +41,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the admission policy** — that is deferred to a later work stream per plan §Part-VI
   #613. The column is present and populated; routing it into the consolidation-
   selection filter is the next step.
-
-  **Part-V measurement gate.** The plan designates the Part-V T0 baseline
-  (`scripts/akm-eval` + health report; proactive accept ≥ 0.9× reactive; reversion
-  ≤ 0.15; retrieval-delta ≥ 0; coverage not regressed) as a hard ship-gate for
-  this weight change. That gate requires a running production stash and cannot be
-  exercised in CI. The weights (`w_e=0.25, w_o=0.15, w_r=0.60`) are an expert prior
-  that can be re-tuned via the Part-V protocol post-deploy; re-tune if the health
-  report shows throughput or quality regression after enabling this release.
 
 - **WS-1 salience vector (#618) — default-on ranking change.** The eligibility sort
   for all `akm improve` runs (whole-stash, type, and ref scope) has changed from

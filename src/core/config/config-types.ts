@@ -615,6 +615,26 @@ export interface ImproveConfig {
     /** Target realized accept rate in [0, 1]. Default 0.9. */
     targetAcceptRate?: number;
   };
+  /**
+   * WS-2 (#613) — salience-weight configuration.
+   *
+   * Controls whether the WS-2 outcome-weight term (`w_o = 0.15`) is active in
+   * the salience projection.
+   *
+   * **DEFAULT OFF** (`outcomeWeightEnabled` absent or `false`): the projection
+   * uses WS-1 weights (`w_e=0.30, w_r=0.70`, `w_o=0`) so ranking is unchanged
+   * from the WS-1 baseline. Set to `true` only after running the Part-V
+   * measurement protocol (`scripts/akm-eval` + health report) and confirming
+   * that throughput quality has not regressed.
+   */
+  salience?: {
+    /**
+     * Enable the WS-2 outcome-weight term in the salience projection.
+     * When `true`, weights shift to `w_e=0.25, w_o=0.15, w_r=0.60`.
+     * Default: `false` (parity — WS-1 weights `w_e=0.30, w_r=0.70`).
+     */
+    outcomeWeightEnabled?: boolean;
+  };
 }
 
 export interface AkmConfig {

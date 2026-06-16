@@ -3023,6 +3023,12 @@ async function runImprovePreparationStage(args: {
   // retrievalCounts now covers the full candidate set (feedback-bearing + zero-feedback)
   // so feedback refs get their genuine retrieval frequency, not a 0-floor fallback.
   // outcomeSalienceByRef is populated by WS-2 above (or empty on first run).
+  //
+  // Part-V gate: read the operator opt-in flag from config. Default false
+  // (WS-1 parity weights) until the maintainer runs scripts/akm-eval and sets
+  // improve.salience.outcomeWeightEnabled: true in the config.
+  const salienceConfig = (options.config ?? loadConfig()).improve?.salience;
+  const outcomeWeightEnabled = salienceConfig?.outcomeWeightEnabled === true;
   const salienceMap = new Map<string, ReturnType<typeof computeSalience>>();
   const nowForSalience = Date.now();
   for (const r of mergedRefs) {
@@ -3045,6 +3051,7 @@ async function runImprovePreparationStage(args: {
       outcomeSalience: outcomeSalienceByRef.get(r.ref),
       sizeBytes,
       now: nowForSalience,
+      outcomeWeightEnabled,
     });
     salienceMap.set(r.ref, vector);
   }

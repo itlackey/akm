@@ -48,14 +48,14 @@ function openTestStateDb() {
 
 // ── Weight contract ────────────────────────────────────────────────────────────
 
-describe("WS-1 weight contract", () => {
+describe("WS-1/WS-2 weight contract", () => {
   test("W_ENCODING + W_OUTCOME + W_RETRIEVAL = 1.0", () => {
     expect(W_ENCODING + W_OUTCOME + W_RETRIEVAL).toBeCloseTo(1.0, 9);
   });
 
-  test("W_OUTCOME is non-zero now that WS-2 has landed", () => {
-    // WS-2 landed: W_OUTCOME = 0.15. The previous WS-1 transient (0) is retired.
-    expect(W_OUTCOME).toBeGreaterThan(0);
+  test("W_OUTCOME constant is 0.15 (WS-2 target value)", () => {
+    // The constant reflects the WS-2 opt-in target. The weight is only
+    // applied in the rankScore projection when outcomeWeightEnabled=true.
     expect(W_OUTCOME).toBe(0.15);
   });
 });
@@ -86,9 +86,9 @@ describe("computeSalience — encoding sub-score", () => {
   });
 });
 
-// ── computeSalience — outcome sub-score (WS-2 active) ────────────────────────
+// ── computeSalience — outcome sub-score ──────────────────────────────────────
 
-describe("computeSalience — outcome sub-score (WS-2 active)", () => {
+describe("computeSalience — outcome sub-score", () => {
   test("outcome is 0 when no outcomeSalience or utilityScore is provided", () => {
     const v = computeSalience({ ref: "skill:foo", type: "skill", retrievalFreq: 100, now: NOW });
     // No outcomeSalience input, no utilityScore → warm-start seed = 0.
@@ -140,8 +140,9 @@ describe("computeSalience — outcome sub-score (WS-2 active)", () => {
     expect(v.outcome).toBe(1.0);
   });
 
-  test("outcome is W_OUTCOME-weighted in rankScore", () => {
-    // With outcomeSalience = 1.0 and no retrieval, the outcome term dominates.
+  test("outcome does NOT affect rankScore by default (Part-V gate, default-off)", () => {
+    // Default: outcomeWeightEnabled absent/false → WS-1 parity weights (w_o=0).
+    // outcomeSalience is stored in the vector but does not change rankScore.
     const vHigh = computeSalience({
       ref: "skill:foo",
       type: "skill",
@@ -154,6 +155,32 @@ describe("computeSalience — outcome sub-score (WS-2 active)", () => {
       type: "skill",
       retrievalFreq: 0,
       outcomeSalience: 0,
+      now: NOW,
+    });
+    // rankScore must be identical — outcome term is zeroed in default mode.
+    expect(vHigh.rankScore).toBe(vZero.rankScore);
+    // outcome sub-score is still stored in the vector for observability.
+    expect(vHigh.outcome).toBe(1.0);
+    expect(vZero.outcome).toBe(0);
+  });
+
+  test("outcome is W_OUTCOME-weighted in rankScore when outcomeWeightEnabled=true", () => {
+    // With outcomeWeightEnabled=true and outcomeSalience = 1.0 and no retrieval,
+    // the outcome term raises rankScore above the zero-outcome baseline.
+    const vHigh = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 1.0,
+      outcomeWeightEnabled: true,
+      now: NOW,
+    });
+    const vZero = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 0,
+      outcomeWeightEnabled: true,
       now: NOW,
     });
     // rankScore with high outcomeSalience should exceed rankScore with zero.
