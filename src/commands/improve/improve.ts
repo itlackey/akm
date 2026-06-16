@@ -3182,6 +3182,15 @@ async function runImprovePreparationStage(args: {
   // rankScore.  The persisted rank_score is left unchanged — this is the whole
   // point of the dampener (stable assets stay fully retrievable).
   //
+  // WIRING NOTE (plan §WS-1 step 8 / "consolidation-selection" disambiguation):
+  // "consolidation-selection" in the plan refers to THIS reflect/distill
+  // eligibility ordering — i.e. which assets are chosen for the reflect/distill
+  // LLM pass — NOT to akmConsolidate (the cluster-merge phase at ~line 1994,
+  // which runs earlier and never reads noOpMap).  The no-op counter originates
+  // from no-change reflect / quality-rejected distill outcomes; the dampener
+  // suppresses repeated LLM attempts on those same assets without touching their
+  // persisted rank_score (so they remain fully retrievable).
+  //
   // This is the ONLY ranking path — negativeOnlyRatio and the legacy
   // symmetricValence branch are replaced. The three eligibilitySource lanes
   // (signal-delta / high-retrieval / proactive) survive as labels (set above).
