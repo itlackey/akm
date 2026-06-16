@@ -374,7 +374,7 @@ export function outcomeScoreToSalience(outcomeScore: number, maxScore: number): 
   }
   const normalised = clipped / maxScore;
   // Apply diversity floor.
-  return Math.max(DIVERSITY_FLOOR_FRACTION * maxScore === 0 ? 0 : DIVERSITY_FLOOR_FRACTION, normalised);
+  return Math.max(DIVERSITY_FLOOR_FRACTION, normalised);
 }
 
 // ── Proxy-adequacy tripwire ───────────────────────────────────────────────────
