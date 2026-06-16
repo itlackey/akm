@@ -2820,7 +2820,7 @@ async function runImprovePreparationStage(args: {
   // dedupe defensively so a ref can never enter the loop twice. `requireFeedbackSignal`
   // still suppresses both fallback sources for callers that want feedback-only runs.
   const signalAndRetrievalRefs = dedupeRefs([...signalFiltered, ...highRetrievalRefs, ...proactiveRefs]);
-  const mergedRefs =
+  let mergedRefs =
     scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
 
   // ── Attribution tagging: stamp each ref with the eligibility lane that
@@ -2950,6 +2950,12 @@ async function runImprovePreparationStage(args: {
   // before/after `akm health` report. Owner-acknowledged deferral: WS-2 landing
   // will re-introduce outcome salience and trigger the full re-tuning pass at that
   // time. See WS-2-HOOK in salience.ts.
+  //
+  // Forgetting-safety collection: populated inside scenario B below, consumed
+  // after the try/catch to union candidates into mergedRefs before the sort.
+  // Only refs from a real pre-existing ordering (scenario B) are collected;
+  // empty on scenario A or when no candidates dropped below the threshold.
+  let pendingForgettingRefs: string[] = [];
   try {
     const stateDb = openStateDatabase(eventsCtx?.dbPath);
     try {
@@ -3004,6 +3010,10 @@ async function runImprovePreparationStage(args: {
                 .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
                 .join(", ")}`,
           );
+          // Collect refs for protective consolidation pass (plan §WS-1 step 7).
+          // These are force-included in the candidate pool (mergedRefs) after
+          // this try block, bypassing cooldown/signal-delta gating.
+          pendingForgettingRefs = report.forgettingCandidates.map((e) => e.ref);
         }
         appendEvent(
           {
@@ -3033,6 +3043,59 @@ async function runImprovePreparationStage(args: {
   } catch (err) {
     rethrowIfTestIsolationError(err);
     // best-effort: salience persistence failure never blocks ranking
+  }
+
+  // ── Protective consolidation pass (plan §WS-1 step 7) ─────────────────────
+  // Forgetting candidates detected in scenario B are force-injected into
+  // mergedRefs here, BEFORE the effectiveScore sort, bypassing cooldown and
+  // signal-delta gating. Any ref already present in mergedRefs keeps its
+  // existing eligibilitySource (stronger reactive signals win); refs not yet in
+  // the pool are synthesised as minimal ImproveEligibleRef stubs and labelled
+  // 'forgetting-safety' so S5/WS-5 can slice by lane. The dedupeRefs call
+  // ensures no ref can enter the loop twice.
+  if (pendingForgettingRefs.length > 0 && scope.mode !== "ref") {
+    const existingRefSet = new Set(mergedRefs.map((r) => r.ref));
+    const newForgettingRefs: ImproveEligibleRef[] = [];
+    for (const ref of pendingForgettingRefs) {
+      if (!existingRefSet.has(ref)) {
+        // Ref not already in the candidate pool — synthesise a stub so it
+        // participates in the reflect/distill loop with proper attribution.
+        newForgettingRefs.push({ ref, reason: "scope-type", eligibilitySource: "forgetting-safety" });
+      }
+      // Always stamp the lane in the attribution map (overwrites weaker lanes;
+      // stronger reactive signals — scope/signal-delta/high-retrieval/proactive
+      // — are written after this block so they take precedence).
+      eligibilitySourceByRef.set(ref, "forgetting-safety");
+    }
+    if (newForgettingRefs.length > 0) {
+      mergedRefs = dedupeRefs([...mergedRefs, ...newForgettingRefs]);
+    }
+    // Re-stamp attribution for any refs whose lane needs updating.
+    // Precedence (weakest → strongest, each overwrites the previous):
+    //   proactive < high-retrieval < forgetting-safety < signal-delta
+    // Scope mode is already excluded by the outer guard (`scope.mode !== "ref"`).
+    // forgetting-safety sits above proactive and high-retrieval so that a ref
+    // flagged as a forgetting candidate is always visible to S5/WS-5 as such,
+    // even when it was also due for a proactive maintenance run. signal-delta
+    // overrides forgetting-safety because a ref with fresh feedback is reactive
+    // and doesn't need the protective pass label for measurement purposes.
+    for (const r of proactiveRefs) eligibilitySourceByRef.set(r.ref, "proactive");
+    for (const r of highRetrievalRefs) eligibilitySourceByRef.set(r.ref, "high-retrieval");
+    // Apply forgetting-safety OVER proactive and high-retrieval (already stamped
+    // in the loop above via `eligibilitySourceByRef.set(ref, "forgetting-safety")`).
+    // No-op here: the set() calls above for proactive/high-retrieval overwrite the
+    // earlier forgetting-safety stamp — so we re-apply forgetting-safety now for
+    // those refs that are both forgetting candidates AND proactive/high-retrieval.
+    for (const ref of pendingForgettingRefs) {
+      eligibilitySourceByRef.set(ref, "forgetting-safety");
+    }
+    // signal-delta is the strongest reactive signal and overrides forgetting-safety.
+    for (const r of signalFiltered) eligibilitySourceByRef.set(r.ref, "signal-delta");
+    // Update eligibilitySource on the ref objects themselves for any refs whose
+    // lane changed (covers both new stubs and pre-existing refs).
+    for (const r of mergedRefs) {
+      r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
+    }
   }
 
   // Build no-op map for consolidation-selection dampener (plan §WS-1 step 8).

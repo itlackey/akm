@@ -20,7 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
-import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
+import type { AkmReflectOptions, AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { getAssetSalience, getConsecutiveNoOps, upsertAssetSalience } from "../../../src/commands/improve/salience";
 import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
@@ -469,5 +469,104 @@ describe("WS-1 wiring — rank positions are stash-wide, not pool-relative", () 
     const meta = events[0]?.metadata as Record<string, unknown> | undefined;
     // stashSize should include the injected extra rows (6), not just the pool (3).
     expect(meta?.stashSize as number).toBeGreaterThanOrEqual(6);
+  });
+});
+
+// ── Test 5: forgetting-safety protective consolidation pass (WS-1 step 7) ─────
+//
+// Scenario B with a manufactured forgetting candidate:
+//   1. Write a victim skill and build the index.
+//   2. Seed the victim's asset_salience row with a very high rank_score (0.99)
+//      so its old rank = 1 (top-200).
+//   3. Inject 501 extra fake refs into asset_salience with rank_score = 0.8
+//      (these don't correspond to real files — they're stash-wide rank fillers).
+//   4. Run akmImprove a second time.  The victim's NEW salienceMap score will
+//      be a genuine low value (no feedback, low retrieval) — call it ~0.
+//      In mergedNewScores: fakes stay at 0.8, victim drops to ~0.
+//      Old ranks: victim = 1, fakes = 2..502.
+//      New ranks: fakes = 1..501, victim = 502.
+//      Verdict: oldRank(1) ≤ 200 AND newRank(502) > 500 → forgetting candidate.
+//   5. Assert that the victim ref is reflected with eligibilitySource='forgetting-safety'.
+//
+// This test guards the Plan §WS-1 step 7 "load-bearing protective ACTION" —
+// the second clause that was dropped before this fix.
+
+describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)", () => {
+  test("forgetting candidate is reflected with eligibilitySource='forgetting-safety' on scenario-B run", async () => {
+    const stash = isolatedStash();
+
+    // Write the victim skill so the indexer and disk-check can find it.
+    writeSkill(stash, "victim", "Victim asset — must not be silently forgotten.");
+    await buildIndex(stash);
+
+    // Seed the victim's salience row with a very high rank_score so it was
+    // rank 1 in the old ordering. We do this BEFORE the first akmImprove call
+    // so the first run overwrites it with whatever the formula computes; then
+    // we overwrite again before the second run to ensure rank 1 position.
+    // Strategy: run once (scenario A / first run), then overwrite the victim
+    // row and inject 501 fakes, then run again (scenario B).
+
+    // First run: seeds asset_salience (scenario A — no rank-change report).
+    await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      config: minimalConfig(),
+      ...noopIndexFns,
+      reflectFn: async ({ ref }) => noChangeReflect(ref ?? ""),
+      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
+    });
+
+    // Overwrite victim's rank_score to 0.99 so its oldRank = 1 in scenario B.
+    const dbSetup = openStateDatabase();
+    try {
+      // Upsert with a very high rank_score to ensure rank-1 position.
+      upsertAssetSalience(dbSetup, "skill:victim", {
+        encoding: 0.99,
+        outcome: 0.99,
+        retrieval: 0.99,
+        rankScore: 0.99,
+      });
+
+      // Inject 501 fake refs with rank_score=0.8 so the victim (at ~0 new
+      // score after the second run) falls to position 502 in newRanks.
+      for (let i = 1; i <= 501; i++) {
+        upsertAssetSalience(dbSetup, `knowledge:rank-filler-${String(i).padStart(4, "0")}`, {
+          encoding: 0.5,
+          outcome: 0,
+          retrieval: 0.5,
+          rankScore: 0.8,
+        });
+      }
+    } finally {
+      dbSetup.close();
+    }
+
+    // Second run: scenario B (table is non-empty). Capture which refs are
+    // reflected and with which eligibilitySource.
+    const capturedEligibility = new Map<string, string | undefined>();
+
+    await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      config: minimalConfig(),
+      ...noopIndexFns,
+      reflectFn: async (opts: AkmReflectOptions) => {
+        capturedEligibility.set(opts.ref ?? "", opts.eligibilitySource);
+        return noChangeReflect(opts.ref ?? "");
+      },
+      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
+    });
+
+    // The rank_change event should have been emitted and report ≥ 1 forgetting candidate.
+    const { events: rankChangeEvents } = readEvents({ type: "improve_salience_rank_change" });
+    expect(rankChangeEvents.length).toBeGreaterThanOrEqual(1);
+    const rcMeta = rankChangeEvents[0]?.metadata as Record<string, unknown> | undefined;
+    expect(rcMeta?.forgettingCandidates as number).toBeGreaterThanOrEqual(1);
+
+    // The victim must have been reflected (present in capturedEligibility).
+    expect(capturedEligibility.has("skill:victim")).toBe(true);
+
+    // The victim's eligibilitySource must be 'forgetting-safety'.
+    expect(capturedEligibility.get("skill:victim")).toBe("forgetting-safety");
   });
 });

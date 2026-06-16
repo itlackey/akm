@@ -32,17 +32,30 @@ import { assertNever } from "./assert";
  *   - `"high-retrieval"` — P0-A fallback: zero-feedback but frequently
  *                          retrieved (the reactive retrieval-spike lane).
  *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
- *   - `"scope"`          — explicit `--scope <ref>` bypass (user intent wins).
- *   - `"unknown"`        — origin lane could not be determined. NOT a silent
- *                          alias for `signal-delta`; only used when the lane
- *                          genuinely cannot be attributed.
+ *   - `"scope"`              — explicit `--scope <ref>` bypass (user intent wins).
+ *   - `"forgetting-safety"` — WS-1 protective consolidation: asset fell from
+ *                             top-200 to below position 500 in the stash-wide
+ *                             salience ranking (scenario B rank-change report).
+ *                             Force-included for one consolidation pass regardless
+ *                             of cooldown / signal-delta status so it is not
+ *                             silently dropped from the candidate pool.
+ *   - `"unknown"`            — origin lane could not be determined. NOT a silent
+ *                              alias for `signal-delta`; only used when the lane
+ *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive`.
+ * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
+ * `forgetting-safety`.
  * A ref with real feedback is attributed to feedback even if it was also due
  * for proactive maintenance.
  */
-export type EligibilitySource = "signal-delta" | "high-retrieval" | "proactive" | "scope" | "unknown";
+export type EligibilitySource =
+  | "signal-delta"
+  | "high-retrieval"
+  | "proactive"
+  | "scope"
+  | "forgetting-safety"
+  | "unknown";
 
 export interface ImproveEligibleRef {
   ref: string;
