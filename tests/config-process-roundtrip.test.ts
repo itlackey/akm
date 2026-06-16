@@ -104,6 +104,57 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 
+  test("WS-2 salience.outcomeWeightEnabled: true survives a load→save→load round trip", () => {
+    const config = {
+      semanticSearchMode: "off",
+      improve: {
+        salience: {
+          outcomeWeightEnabled: true,
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    const reloaded = loadConfig();
+
+    expect(reloaded.improve?.salience?.outcomeWeightEnabled).toBe(true);
+  });
+
+  test("WS-2 salience.outcomeWeightEnabled: absent default is false/undefined (no block required)", () => {
+    const config = {
+      semanticSearchMode: "off",
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    const reloaded = loadConfig();
+
+    const salience = reloaded.improve?.salience;
+    // When the salience block is absent the effective value is falsy — either
+    // undefined or false. Either is acceptable; the key point is no throw.
+    expect(salience?.outcomeWeightEnabled ?? false).toBe(false);
+  });
+
+  test("WS-2 unknown key under improve.salience hard-errors at load (ImproveSalienceSchema.strict())", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        semanticSearchMode: "off",
+        improve: {
+          salience: {
+            outcomeWeightEnabled: true,
+            bogus: "should-be-rejected",
+          },
+        },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
   test("WS-3a: cosineCandidateLimit and p90ChunkSecondsDefault survive a round trip and are not rejected", () => {
     // Regression guard: both fields were added to the TS types but NOT to the
     // Zod schema initially (WS-3a review blocker). Any user who set them in a
