@@ -80,6 +80,7 @@ import { type AkmDistillResult, akmDistill, deriveLessonRef, isDistillRefusedInp
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./extract";
+import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ImproveProfileConfig } from "./improve-profiles";
 import {
@@ -2932,11 +2933,22 @@ async function runImprovePreparationStage(args: {
   //
   // Two distinct scenarios:
   //
-  // A. First WS-1 run (table empty): the old combinedEligibilityScore ordering was
-  //    never captured in state.db (asset_salience is a new WS-1 table), so there is
-  //    no baseline to compare against. Emit `improve_salience_first_run` to mark the
-  //    cutover moment; skip the rank-change report since comparing new→new is
-  //    meaningless for forgetting detection.
+  // A. First WS-1 run (table empty): the old stash-wide combinedEligibilityScore
+  //    ordering was never persisted in state.db (asset_salience is a new WS-1 table).
+  //    However, the old formula's inputs are available in-scope for every candidate
+  //    in the current pool: utility comes from utilityMap and the attention term
+  //    from feedbackSummary (positive/negative counts). We reconstruct the old
+  //    combinedEligibilityScore = utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT
+  //    for every ref in salienceMap and rank them, giving a candidate-pool-scoped
+  //    old ordering. This is a partial reconstruction (only current-pool refs, not
+  //    stash-wide), but it is the most faithful comparison possible at cutover and
+  //    allows the top-200→below-500 forgetting guard to fire if the formula change
+  //    dramatically reorders the candidate pool.
+  //    See docs/design/improve-reconciliation-plan.md §WS-1 step 7 — the stash-wide
+  //    ordering was unreconstructable (no prior state.db snapshot), so this candidate-
+  //    pool partial reconstruction is the documented resolution for the first-run case.
+  //    Emit `improve_salience_first_run` to mark the cutover moment and include the
+  //    reconstructed comparison result in the metadata.
   //
   // B. Subsequent runs (table has rows): use ALL existing rows as old ranks, merge
   //    them with the current run's salienceMap updates for new ranks, and call
@@ -2965,15 +2977,59 @@ async function runImprovePreparationStage(args: {
       const existingAllScores = getAllRankScores(stateDb);
 
       if (existingAllScores.size === 0) {
-        // Scenario A: first WS-1 run — table empty, no baseline for comparison.
-        // Mark the cutover moment without emitting a false rank-change comparison.
+        // Scenario A: first WS-1 run — table empty.
+        //
+        // Reconstruct the old combinedEligibilityScore ordering for the current
+        // candidate pool using inputs that are already in-scope: utility from
+        // utilityMap and the attention term from feedbackSummary (positive/negative
+        // counts). Old formula: score = utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT.
+        //
+        // Limitation: this covers only the current-run candidate pool, not the full
+        // stash. The stash-wide ordering was never persisted (asset_salience is a new
+        // WS-1 table), so this is the most faithful comparison possible at cutover.
+        // See docs/design/improve-reconciliation-plan.md §WS-1 step 7.
+        const reconstructedOldScores = new Map<string, number>();
+        for (const ref of salienceMap.keys()) {
+          const utility = utilityMap.get(ref) ?? 0;
+          const fb = feedbackSummary.get(ref) ?? { positive: 0, negative: 0 };
+          const attention = computeValenceScore(fb).attention;
+          reconstructedOldScores.set(ref, utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT);
+        }
+
+        // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
+        const toRanks = (scores: Map<string, number>): Map<string, number> => {
+          const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
+            b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
+          );
+          return new Map(sorted.map(([ref], i) => [ref, i + 1]));
+        };
+
+        const oldRanks = toRanks(reconstructedOldScores);
+        const newRanks = toRanks(new Map([...salienceMap.entries()].map(([ref, v]) => [ref, v.rankScore])));
+        const firstRunReport = buildRankChangeReport(oldRanks, newRanks);
+        if (firstRunReport.forgettingCandidates.length > 0) {
+          warn(
+            `[improve/salience] WS-1 first-run rank-change report: ${firstRunReport.forgettingCandidates.length} asset(s) fell from top-200 to below position 500 (cutover formula change). ` +
+              `Top drops: ${firstRunReport.forgettingCandidates
+                .slice(0, 5)
+                .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
+                .join(", ")}`,
+          );
+          pendingForgettingRefs = firstRunReport.forgettingCandidates.map((e) => e.ref);
+        }
         appendEvent(
           {
             eventType: "improve_salience_first_run",
             ref: undefined,
             metadata: {
               candidateCount: salienceMap.size,
-              note: "first WS-1 salience run — no pre-existing baseline; combinedEligibilityScore ordering was not captured",
+              note: "first WS-1 salience run — partial reconstruction of old combinedEligibilityScore ordering for candidate pool (stash-wide ordering not available); see improve-reconciliation-plan.md §WS-1 step 7",
+              forgettingCandidates: firstRunReport.forgettingCandidates.length,
+              topDrops: firstRunReport.forgettingCandidates.slice(0, 10).map((e) => ({
+                ref: e.ref,
+                oldRank: e.oldRank,
+                newRank: e.newRank,
+              })),
             },
           },
           eventsCtx,
