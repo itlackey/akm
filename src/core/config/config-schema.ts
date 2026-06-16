@@ -257,6 +257,10 @@ export const ImproveProcessConfigSchema = z
         // Epsilon: cosine similarity threshold above which a candidate is schema-consistent
         // (default 0.85 — looser than dedup's 0.97 since we want to catch conceptual overlap).
         epsilon: z.number().min(0).max(1).optional(),
+        // Multiplicative factor applied to candidate confidence when schema-consistent.
+        // Default 0.5 — halves the confidence so schema-consistent candidates are less likely
+        // to pass the quality gate and create redundant stash entries.
+        confidencePenalty: z.number().min(0).max(1).optional(),
       })
       .strict()
       .optional(),

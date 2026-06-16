@@ -48,6 +48,7 @@
 
 import type { Database } from "../../core/state-db";
 import { warn } from "../../core/warn";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,9 @@ export const DEFAULT_DEMOTION_FACTOR = 0.5;
 
 /** Default epsilon for schema-similarity gate (looser than dedup's 0.97). */
 export const DEFAULT_SCHEMA_SIMILARITY_EPSILON = 0.85;
+
+/** Default multiplicative confidence penalty applied to schema-consistent candidates. */
+export const DEFAULT_SCHEMA_CONFIDENCE_PENALTY = 0.5;
 
 /** Default max generation depth before merge is refused. */
 export const DEFAULT_MAX_GENERATION = 2;
@@ -187,6 +191,8 @@ export function runHomeostaticDemotion(
 export interface SchemaSimilarityConfig {
   enabled?: boolean;
   epsilon?: number;
+  /** Multiplicative factor applied to candidate confidence when schema-consistent. Default 0.5. */
+  confidencePenalty?: number;
 }
 
 /**
@@ -240,6 +246,68 @@ export function isSchemaConsistent(
     return { consistent: true, matchedRef: bestRef, similarity: bestSim };
   }
   return { consistent: false };
+}
+
+/**
+ * Load persisted body embeddings for all indexed **derived-layer**
+ * (lesson + knowledge) entries from index.db. Returns an empty array when
+ * the DB is unavailable, empty, or the embeddings table has no entries for
+ * those types — the caller treats an empty array as "gate inactive".
+ *
+ * FAIL-OPEN: any error emits a debug warning and returns an empty array.
+ * This ensures the extract pass never fails because of a missing index.
+ *
+ * The returned entries are keyed by `entry_key` (e.g. "lesson:foo",
+ * "knowledge:bar"). Only entries whose embedding dimension matches the first
+ * observed dimension are included (mixed-dim BLOBs are silently skipped).
+ *
+ * @param dbPath - Optional path override for index.db (for testing).
+ */
+export function loadDerivedLayerEmbeddings(dbPath?: string): Array<{ ref: string; embedding: number[] }> {
+  let db: ReturnType<typeof openExistingDatabase> | undefined;
+  try {
+    db = openExistingDatabase(dbPath);
+    const rows = db
+      .prepare(
+        `SELECT e.entry_key, emb.embedding
+         FROM entries e
+         JOIN embeddings emb ON emb.id = e.id
+         WHERE e.entry_type IN ('lesson', 'knowledge')`,
+      )
+      .all() as Array<{ entry_key: string; embedding: Buffer }>;
+
+    if (rows.length === 0) return [];
+
+    let expectedDim: number | undefined;
+    const result: Array<{ ref: string; embedding: number[] }> = [];
+    for (const row of rows) {
+      const buf = row.embedding;
+      if (!buf || buf.byteLength === 0 || buf.byteLength % 4 !== 0) continue;
+      const dim = buf.byteLength / 4;
+      if (expectedDim === undefined) expectedDim = dim;
+      if (dim !== expectedDim) continue;
+
+      const aligned = new ArrayBuffer(buf.byteLength);
+      new Uint8Array(aligned).set(buf);
+      const f32 = new Float32Array(aligned);
+      result.push({ ref: row.entry_key, embedding: Array.from(f32) });
+    }
+    return result;
+  } catch (err) {
+    warn(
+      "[homeostatic] loadDerivedLayerEmbeddings: failed to load from index.db — gate inactive:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  } finally {
+    if (db) {
+      try {
+        closeDatabase(db);
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
 }
 
 // ── Anti-collapse guards (step 8) ─────────────────────────────────────────────

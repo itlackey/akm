@@ -311,6 +311,11 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "confidencePenalty": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": false
@@ -593,6 +598,11 @@
                             "type": "boolean"
                           },
                           "epsilon": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "confidencePenalty": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -881,6 +891,11 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "confidencePenalty": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": false
@@ -1163,6 +1178,11 @@
                             "type": "boolean"
                           },
                           "epsilon": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "confidencePenalty": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -1451,6 +1471,11 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "confidencePenalty": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": false
@@ -1733,6 +1758,11 @@
                             "type": "boolean"
                           },
                           "epsilon": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "confidencePenalty": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -2021,6 +2051,11 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "confidencePenalty": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": false
@@ -2303,6 +2338,11 @@
                             "type": "boolean"
                           },
                           "epsilon": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "confidencePenalty": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -3266,6 +3306,11 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "confidencePenalty": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": false
@@ -3548,6 +3593,11 @@
                                 "type": "boolean"
                               },
                               "epsilon": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "confidencePenalty": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -3836,6 +3886,11 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "confidencePenalty": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": false
@@ -4118,6 +4173,11 @@
                                 "type": "boolean"
                               },
                               "epsilon": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "confidencePenalty": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -4406,6 +4466,11 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "confidencePenalty": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": false
@@ -4688,6 +4753,11 @@
                                 "type": "boolean"
                               },
                               "epsilon": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "confidencePenalty": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -4976,6 +5046,11 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "confidencePenalty": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": false
@@ -5258,6 +5333,11 @@
                                 "type": "boolean"
                               },
                               "epsilon": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "confidencePenalty": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -6203,6 +6283,11 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "confidencePenalty": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             }
           },
           "additionalProperties": false
@@ -6498,6 +6583,11 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "confidencePenalty": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": false
@@ -6780,6 +6870,11 @@
                       "type": "boolean"
                     },
                     "epsilon": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "confidencePenalty": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -7068,6 +7163,11 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "confidencePenalty": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": false
@@ -7350,6 +7450,11 @@
                       "type": "boolean"
                     },
                     "epsilon": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "confidencePenalty": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -7638,6 +7743,11 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "confidencePenalty": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": false
@@ -7920,6 +8030,11 @@
                       "type": "boolean"
                     },
                     "epsilon": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "confidencePenalty": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -8208,6 +8323,11 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "confidencePenalty": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": false
@@ -8490,6 +8610,11 @@
                       "type": "boolean"
                     },
                     "epsilon": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "confidencePenalty": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1

@@ -403,6 +403,8 @@ export interface ImproveProcessConfig {
     enabled?: boolean;
     /** Cosine similarity epsilon above which a candidate is schema-consistent. Default 0.85. */
     epsilon?: number;
+    /** Multiplicative factor applied to candidate confidence when schema-consistent. Default 0.5. */
+    confidencePenalty?: number;
   };
   /**
    * WS-3b: Hot-probation intake buffer (#604). New system-generated extractions

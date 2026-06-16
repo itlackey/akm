@@ -46,11 +46,18 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
+import { embed } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
-import { buildHotProbationFrontmatter } from "./homeostatic";
+import {
+  buildHotProbationFrontmatter,
+  DEFAULT_SCHEMA_CONFIDENCE_PENALTY,
+  isSchemaConsistent,
+  loadDerivedLayerEmbeddings,
+  type SchemaSimilarityConfig,
+} from "./homeostatic";
 import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";
 import {
   buildSessionSummaryPrompt,
@@ -161,6 +168,13 @@ export interface AkmExtractOptions {
    * LLM/network call. When session indexing is disabled this is never invoked.
    */
   generateSessionSummary?: SessionSummaryGenerator;
+  /**
+   * WS-3b Step-0b test seam: pre-loaded derived-layer embeddings to use in
+   * place of opening index.db. When provided with `schemaSimilarity.enabled`,
+   * the gate checks these vectors without any I/O. Tests inject synthetic
+   * vectors here to exercise the penalty path without a real index.
+   */
+  schemaSimilarityEmbeddings?: Array<{ ref: string; embedding: number[] }>;
 }
 
 export interface ExtractedSessionResult {
@@ -305,6 +319,11 @@ async function processSession(
     minDurationMinutes: number;
     generate: SessionSummaryGenerator;
   },
+  schemaSimilarityCtx: {
+    config: SchemaSimilarityConfig;
+    derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
+    embeddingConfig: AkmConfig["embedding"];
+  } | null,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -461,6 +480,41 @@ async function processSession(
       continue;
     }
     try {
+      // WS-3b Step-0b: schema-similarity intake gate.
+      // When enabled and the candidate type is lesson/knowledge, check whether
+      // the candidate body embedding is within ε of an existing derived-layer
+      // node. If so, down-prioritize by multiplying confidence by the penalty.
+      // PARITY: schemaSimilarityCtx is null when the flag is off → no effect.
+      let effectiveConfidence: number | undefined =
+        typeof candidate.confidence === "number" ? candidate.confidence : undefined;
+      if (
+        schemaSimilarityCtx !== null &&
+        schemaSimilarityCtx.derivedEmbeddings.length > 0 &&
+        (candidate.type === "lesson" || candidate.type === "knowledge")
+      ) {
+        try {
+          const candidateVec = await embed(candidate.body, schemaSimilarityCtx.embeddingConfig);
+          const check = isSchemaConsistent(
+            candidateVec,
+            schemaSimilarityCtx.derivedEmbeddings,
+            schemaSimilarityCtx.config,
+          );
+          if (check.consistent) {
+            const penalty = schemaSimilarityCtx.config.confidencePenalty ?? DEFAULT_SCHEMA_CONFIDENCE_PENALTY;
+            effectiveConfidence = (effectiveConfidence ?? 1.0) * penalty;
+            warn(
+              `[extract] schema-consistent candidate ${candidate.type}:${candidate.name} ` +
+                `(sim=${check.similarity?.toFixed(3)} vs ${check.matchedRef}) — confidence penalised ×${penalty}`,
+            );
+          }
+        } catch (embedErr) {
+          // Fail open: embed errors must never abort the extraction.
+          warn(
+            `[extract] schema-similarity embed failed for ${candidate.type}:${candidate.name} — skipping gate:`,
+            embedErr instanceof Error ? embedErr.message : String(embedErr),
+          );
+        }
+      }
       const { ref, content, description } = buildCandidateProposal(candidate, sessionRef);
       const result = createProposal(
         stashDir,
@@ -473,7 +527,7 @@ async function processSession(
             frontmatter: {
               description,
               ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
-              ...(typeof candidate.confidence === "number" ? { confidence: candidate.confidence } : {}),
+              ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
               sources: [`session:${sessionRef.harness}:${sessionRef.sessionId}`],
               evidence: candidate.evidence,
               // #615 WS-0: mirror ordered-action + outcome data in the proposal
@@ -768,6 +822,26 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     }
   }
 
+  // WS-3b Step-0b: schema-similarity intake gate.
+  // Load derived-layer (lesson/knowledge) embeddings once per run, but ONLY
+  // when the gate is enabled in config. When disabled (the default) this block
+  // is fully skipped and schemaSimilarityCtx stays null → byte-identical to
+  // prior behaviour.
+  const schemaSimilarityCfg = extractProcess?.schemaSimilarity as SchemaSimilarityConfig | undefined;
+  let schemaSimilarityCtx: {
+    config: SchemaSimilarityConfig;
+    derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
+    embeddingConfig: AkmConfig["embedding"];
+  } | null = null;
+  if (schemaSimilarityCfg?.enabled === true) {
+    const derivedEmbeddings = options.schemaSimilarityEmbeddings ?? loadDerivedLayerEmbeddings();
+    schemaSimilarityCtx = {
+      config: schemaSimilarityCfg,
+      derivedEmbeddings,
+      embeddingConfig: config.embedding,
+    };
+  }
+
   for (const summary of candidates) {
     // Skip-tracking: if this session was already processed AND no new events
     // have arrived since (live endedAt <= recorded endedAt), don't burn an LLM
@@ -815,6 +889,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         maxTotalChars,
         minContentChars,
         sessionIndexing,
+        schemaSimilarityCtx,
       );
       sessions.push(result);
       if (result.skipped) skippedCount += 1;
