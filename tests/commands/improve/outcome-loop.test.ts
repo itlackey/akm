@@ -23,8 +23,6 @@ import {
   getAllAssetOutcomes,
   getAssetOutcome,
   getOutcomeScoresByRef,
-  OUTCOME_EMA_ALPHA,
-  OUTCOME_PENALTY_WEIGHT,
   outcomeScoreToSalience,
   REVIEW_PRESSURE_DECAY,
   REVIEW_PRESSURE_INCREMENT,
