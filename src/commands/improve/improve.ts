@@ -985,7 +985,13 @@ export function maybeAutoTuneThreshold(
   const db = openStateDatabase(stateDbPath);
   let summary: ReturnType<typeof summarizeCalibration>;
   try {
-    const decisions = listProposalGateDecisions(db);
+    const allDecisions = listProposalGateDecisions(db);
+    // WS-4 fix: when called with a phase label, restrict calibration to that
+    // phase's decision pool so a reflect-dominated run cannot tighten the
+    // consolidate gate (or vice-versa). The gate field is `improve:<phase>`,
+    // matching what improve-auto-accept.ts stamps at line ~163.
+    const gateLabel = phase ? `improve:${phase}` : undefined;
+    const decisions = gateLabel ? allDecisions.filter((d) => d.gate === gateLabel) : allDecisions;
     summary = summarizeCalibration(gateDecisionsToSamples(decisions));
   } finally {
     db.close();

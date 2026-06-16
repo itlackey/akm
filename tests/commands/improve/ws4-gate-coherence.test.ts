@@ -509,7 +509,89 @@ describe("makeGateConfig exploration budget from config", () => {
   });
 });
 
-// ── 9. Exploration promotion restores budget on failure ───────────────────────
+// ── 9. Per-phase calibration isolation: distinct histories → distinct thresholds ──
+
+describe("per-phase calibration isolation", () => {
+  /**
+   * WS-4 fix regression test: two phases with entirely different decision
+   * histories must tune to DIFFERENT thresholds. Before the fix,
+   * maybeAutoTuneThreshold always read the full global decision pool so both
+   * phases produced the same summary and the same tuned threshold, defeating
+   * the per-phase mechanism.
+   */
+  test("reflect phase (over-confident) and extract phase (accurate) tune to different thresholds", () => {
+    // Seed reflect with over-confident decisions: 50% accept rate → wants to RAISE
+    for (let i = 0; i < 20; i++) {
+      const created = createProposal(storage.stashDir, {
+        ref: `lesson:reflect-iso-${i}`,
+        source: "reflect",
+        sourceRun: "run-iso",
+        payload: { content: `# reflect-iso-${i}\n\nbody\n` },
+        confidence: 0.95,
+      });
+      if ("skipped" in created) throw new Error("seed skipped");
+      recordGateDecision(storage.stashDir, created.id, {
+        outcome: i % 2 === 0 ? "auto-accepted" : "auto-rejected",
+        reason: "above-threshold",
+        confidence: 0.95,
+        thresholds: { autoAccept: 0.9 },
+        gate: "improve:reflect", // reflect phase
+      });
+    }
+
+    // Seed extract with highly accurate decisions: 100% accept rate → wants to LOWER
+    for (let i = 0; i < 20; i++) {
+      const created = createProposal(storage.stashDir, {
+        ref: `lesson:extract-iso-${i}`,
+        source: "extract",
+        sourceRun: "run-iso",
+        payload: { content: `# extract-iso-${i}\n\nbody\n` },
+        confidence: 0.95,
+      });
+      if ("skipped" in created) throw new Error("seed skipped");
+      recordGateDecision(storage.stashDir, created.id, {
+        outcome: "auto-accepted", // all accepted → want to LOWER threshold
+        reason: "above-threshold",
+        confidence: 0.95,
+        thresholds: { autoAccept: 0.9 },
+        gate: "improve:extract", // extract phase
+      });
+    }
+
+    const config = {
+      improve: {
+        calibration: {
+          autoTune: true,
+          minThreshold: 50,
+          maxThreshold: 100,
+          maxStep: 20, // large step so the difference is observable
+          minSamples: 10,
+          targetAcceptRate: 0.9,
+        },
+      },
+    } as AkmConfig;
+
+    const dbPath = getStateDbPathInDataDir();
+    const startThreshold = 80;
+
+    // reflect: 50% accept rate is below target 0.9 → should RAISE threshold
+    const reflectTuned = maybeAutoTuneThreshold(startThreshold, config, dbPath, undefined, "reflect");
+    // extract: 100% accept rate is above target 0.9 → should LOWER threshold
+    const extractTuned = maybeAutoTuneThreshold(startThreshold, config, dbPath, undefined, "extract");
+
+    // Both phases must have produced a tuned value
+    expect(reflectTuned).toBeDefined();
+    expect(extractTuned).toBeDefined();
+
+    // They must differ in direction: reflect raised, extract lowered (or at minimum they differ)
+    expect(reflectTuned).not.toBe(extractTuned);
+    // More precise: reflect should be ABOVE the start (raised) and extract BELOW (lowered)
+    expect(reflectTuned as number).toBeGreaterThan(startThreshold);
+    expect(extractTuned as number).toBeLessThan(startThreshold);
+  });
+});
+
+// ── 11. Exploration promotion restores budget on failure ───────────────────────
 
 describe("exploration budget restoration on failure", () => {
   test("failed exploration promotion restores budget so next candidate can use it", async () => {
