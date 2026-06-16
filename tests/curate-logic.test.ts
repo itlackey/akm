@@ -153,9 +153,13 @@ describe("curateSearchResults", () => {
 
     expect(result.items).toHaveLength(1);
     const first = result.items[0] as Record<string, unknown>;
-    expect(first.ref).toBe("knowledge:skills/docker-homelab/references/compose");
+    expect(first.ref).toBe("skill:docker-homelab");
     expect(first.supportRefs).toEqual([
-      { ref: "skill:docker-homelab", type: "skill", reason: "Related family asset to inspect next." },
+      {
+        ref: "knowledge:skills/docker-homelab/references/compose",
+        type: "knowledge",
+        reason: "Related family asset to inspect next.",
+      },
       {
         ref: "knowledge:skills/docker-homelab/references/networking",
         type: "knowledge",

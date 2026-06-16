@@ -225,9 +225,13 @@ describe("curate command", () => {
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
     expect(json.items).toHaveLength(1);
-    expect(json.items[0]?.ref).toBe("knowledge:skills/docker-homelab/references/compose");
+    expect(json.items[0]?.ref).toBe("skill:docker-homelab");
     expect(json.items[0]?.supportRefs).toEqual([
-      { ref: "skill:docker-homelab", type: "skill", reason: "Related family asset to inspect next." },
+      {
+        ref: "knowledge:skills/docker-homelab/references/compose",
+        type: "knowledge",
+        reason: "Related family asset to inspect next.",
+      },
       {
         ref: "knowledge:skills/docker-homelab/references/containers",
         type: "knowledge",
@@ -241,7 +245,7 @@ describe("curate command", () => {
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
     expect(json.items.length).toBeGreaterThan(0);
-    expect(String(json.items[0]?.ref)).toContain("docker-homelab");
+    expect(json.items[0]?.ref).toBe("skill:docker-homelab");
   });
 
   test("docker deploy no longer surfaces release-manager filler", async () => {

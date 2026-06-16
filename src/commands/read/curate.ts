@@ -133,6 +133,8 @@ type CollapsedCurateHit = {
   originalIndex: number;
 };
 
+const CURATE_REFERENCE_QUERY_RE = /\b(?:reference|docs?|guide|how|explain|learn|readme|why)\b/;
+
 /**
  * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
  * Never blocks the caller; errors are silently ignored.
@@ -212,8 +214,9 @@ export async function curateSearchResults(
     selectedStashHits = stashHits.slice(0, limit);
   } else {
     const selected = selectCuratedStashHits(query, stashHits, limit);
-    selectedStashHits = selected.selected;
-    supportRefsByRef = selected.supportRefsByRef;
+    const preferred = preferBroadRootRepresentative(query, selected.selected, stashHits, selected.supportRefsByRef);
+    selectedStashHits = preferred.selected;
+    supportRefsByRef = preferred.supportRefsByRef;
   }
 
   const selectedRegistryHits =
@@ -228,39 +231,6 @@ export async function curateSearchResults(
     )),
     ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
   ].slice(0, limit);
-  if (!selectedType || selectedType === "any") {
-    const first = items[0];
-    if (first && "ref" in first && typeof first.ref === "string") {
-      const match = /^knowledge:skills\/([^/]+)\/references\/([^/]+(?:\/[^/]+)*)$/.exec(first.ref);
-      if (match) {
-        const lower = query.toLowerCase();
-        const topicTokens = match[2].split(/[^a-z0-9]+/i).filter(Boolean);
-        const wantsReference =
-          /(reference|docs?|guide|how|explain|learn|readme)/.test(lower) ||
-          topicTokens.some((token) => token.length >= 3 && lower.includes(token.toLowerCase()));
-        if (!wantsReference) {
-          const rootRef = `skill:${match[1]}`;
-          const rootHit = stashHits.find((hit) => hit.ref === rootRef);
-          if (rootHit) {
-            const supportRefs: CurateSupportRef[] = [];
-            if (Array.isArray((first as CuratedStashItem).supportRefs)) {
-              supportRefs.push(...((first as CuratedStashItem).supportRefs ?? []));
-            }
-            supportRefs.push({ ref: first.ref, type: first.type, reason: "Related family asset to inspect next." });
-
-            const promotedSelectedRefs = new Set(
-              items.filter((item): item is CuratedStashItem => "ref" in item).map((item) => item.ref),
-            );
-            promotedSelectedRefs.delete(first.ref);
-            promotedSelectedRefs.add(rootHit.ref);
-
-            items[0] = await enrichCuratedStashHit(query, rootHit, supportRefs, promotedSelectedRefs);
-          }
-        }
-      }
-    }
-  }
-
   return {
     query,
     summary: buildCurateSummary(query, items),
@@ -454,7 +424,7 @@ function parseCurateIntent(query: string): CurateIntent {
     multiStep: /(plan|workflow|steps?|procedure|rollout|review|migration|release|checklist)/.test(lower),
     delegation: /(agent|assistant|planner|reviewer|architect|prompt)/.test(lower),
     recall: /(memory|context|recall|remember)/.test(lower),
-    reference: /(guide|docs?|readme|reference|how|explain|learn|why)/.test(lower),
+    reference: CURATE_REFERENCE_QUERY_RE.test(lower),
   };
 }
 
@@ -534,7 +504,7 @@ function passesCurateScoreFloor(hit: AnnotatedCurateHit, leaderScore: number | u
 function isNarrowReferenceFamilyQuery(query: string, family: CurateFamily | undefined): boolean {
   if (!family || family.role !== "reference") return false;
   const lower = query.toLowerCase();
-  if (/(reference|docs?|guide|how|explain|learn|readme)/.test(lower)) return true;
+  if (CURATE_REFERENCE_QUERY_RE.test(lower)) return true;
   return family.topicTokens.some((token) => token.length >= 3 && lower.includes(token));
 }
 
@@ -628,6 +598,42 @@ function collapseCurateFamilies(
     hits: [...passthrough, ...collapsedFamilies].sort((a, b) => a.originalIndex - b.originalIndex),
     supportRefsByRef,
   };
+}
+
+function preferBroadRootRepresentative(
+  query: string,
+  selected: SourceSearchHit[],
+  allHits: SourceSearchHit[],
+  supportRefsByRef: Map<string, CurateSupportRef[]>,
+): { selected: SourceSearchHit[]; supportRefsByRef: Map<string, CurateSupportRef[]> } {
+  const first = selected[0];
+  if (!first) return { selected, supportRefsByRef };
+
+  const match = /^knowledge:skills\/([^/]+)\/references\/([^/]+(?:\/[^/]+)*)$/.exec(first.ref);
+  if (!match) return { selected, supportRefsByRef };
+
+  const lower = query.toLowerCase();
+  const topicTokens = match[2].split(/[^a-z0-9]+/i).filter(Boolean);
+  const wantsReference = CURATE_REFERENCE_QUERY_RE.test(lower) ||
+    topicTokens.some((token) => token.length >= 3 && lower.includes(token.toLowerCase()));
+  if (wantsReference) return { selected, supportRefsByRef };
+
+  const rootRef = `skill:${match[1]}`;
+  const rootHit = allHits.find((hit) => hit.ref === rootRef);
+  if (!rootHit) return { selected, supportRefsByRef };
+
+  const next = [rootHit, ...selected.filter((hit) => hit.ref !== first.ref && hit.ref !== rootRef)];
+  const merged = new Map(supportRefsByRef);
+  const priorSupport = merged.get(first.ref) ?? [];
+  for (const entry of priorSupport) appendCurateSupportRef(merged, rootRef, entry);
+  appendCurateSupportRef(merged, rootRef, {
+    ref: first.ref,
+    type: first.type,
+    reason: "Related family asset to inspect next.",
+  });
+  merged.delete(first.ref);
+
+  return { selected: next, supportRefsByRef: merged };
 }
 
 function mergeCurateSupportRefs(
