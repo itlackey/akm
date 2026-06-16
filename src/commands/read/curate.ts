@@ -105,7 +105,6 @@ const CURATE_TAIL_SCORE_FLOOR = 0.35;
 const CURATE_RELATIVE_SCORE_FLOOR = 0.7;
 const CURATE_FALLBACK_TOP_SCORE_THRESHOLD = 0.8;
 const CURATE_FALLBACK_STRONG_SCORE_FLOOR = 0.35;
-const CURATE_FAMILY_SCORE_BAND = 0.15;
 const MAX_CURATE_SUPPORT_REFS = 2;
 
 type CurateIntent = {
@@ -116,9 +115,7 @@ type CurateIntent = {
   reference: boolean;
 };
 
-type CurateFamily =
-  | { key: string; role: "root" }
-  | { key: string; role: "reference"; topicTokens: string[] };
+type CurateFamily = { key: string; role: "root" } | { key: string; role: "reference"; topicTokens: string[] };
 
 type AnnotatedCurateHit = {
   hit: SourceSearchHit;
@@ -471,7 +468,12 @@ function getCurateFamily(ref: string): CurateFamily | undefined {
   }
 }
 
-function annotateCurateHit(query: string, hit: SourceSearchHit, index: number, intent: CurateIntent): AnnotatedCurateHit {
+function annotateCurateHit(
+  query: string,
+  hit: SourceSearchHit,
+  index: number,
+  intent: CurateIntent,
+): AnnotatedCurateHit {
   const rawScore = hit.score ?? 0;
   const family = getCurateFamily(hit.ref);
   let adjustedScore = rawScore + computeCurateTypeNudge(hit.type, intent);
@@ -578,7 +580,7 @@ function collapseCurateFamilies(
     const representative =
       group.root && !isNarrowReferenceFamilyQuery(query, getCurateFamily(bestReference?.hit.ref ?? group.root.hit.ref))
         ? group.root
-        : bestReference ?? group.root;
+        : (bestReference ?? group.root);
     if (!representative) continue;
 
     collapsedFamilies.push(representative);
@@ -614,7 +616,8 @@ function preferBroadRootRepresentative(
 
   const lower = query.toLowerCase();
   const topicTokens = match[2].split(/[^a-z0-9]+/i).filter(Boolean);
-  const wantsReference = CURATE_REFERENCE_QUERY_RE.test(lower) ||
+  const wantsReference =
+    CURATE_REFERENCE_QUERY_RE.test(lower) ||
     topicTokens.some((token) => token.length >= 3 && lower.includes(token.toLowerCase()));
   if (wantsReference) return { selected, supportRefsByRef };
 

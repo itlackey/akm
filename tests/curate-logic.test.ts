@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { akmCurate, curateSearchResults, deriveCurateFallbackQueries, mergeCurateSearchResponses } from "../src/commands/read/curate";
+import {
+  akmCurate,
+  curateSearchResults,
+  deriveCurateFallbackQueries,
+  mergeCurateSearchResponses,
+} from "../src/commands/read/curate";
 import { UsageError } from "../src/core/errors";
 import type { RegistrySearchResultHit, SearchResponse, SourceSearchHit } from "../src/sources/types";
 
@@ -50,7 +55,9 @@ describe("deriveCurateFallbackQueries", () => {
 describe("mergeCurateSearchResponses", () => {
   test("keeps the highest-scoring duplicate stash and registry hits and merges warnings", () => {
     const base = searchResponse({
-      hits: [stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/a", score: 0.3 })],
+      hits: [
+        stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/a", score: 0.3 }),
+      ],
       registryHits: [registryHit({ name: "docker-kit", id: "reg-1", score: 0.2 })],
       tip: "No phrase results.",
       warnings: ["base warning"],
@@ -82,10 +89,34 @@ describe("curateSearchResults", () => {
       "release review",
       searchResponse({
         hits: [
-          stashHit({ type: "skill", name: "release-playbook", ref: "skill:release-playbook", path: "/tmp/1", score: 0.99 }),
-          stashHit({ type: "knowledge", name: "release-guide", ref: "knowledge:release-guide", path: "/tmp/2", score: 0.8 }),
-          stashHit({ type: "command", name: "release-manager", ref: "command:release-manager", path: "/tmp/3", score: 0.15 }),
-          stashHit({ type: "agent", name: "release-reviewer", ref: "agent:release-reviewer", path: "/tmp/4", score: 0.05 }),
+          stashHit({
+            type: "skill",
+            name: "release-playbook",
+            ref: "skill:release-playbook",
+            path: "/tmp/1",
+            score: 0.99,
+          }),
+          stashHit({
+            type: "knowledge",
+            name: "release-guide",
+            ref: "knowledge:release-guide",
+            path: "/tmp/2",
+            score: 0.8,
+          }),
+          stashHit({
+            type: "command",
+            name: "release-manager",
+            ref: "command:release-manager",
+            path: "/tmp/3",
+            score: 0.15,
+          }),
+          stashHit({
+            type: "agent",
+            name: "release-reviewer",
+            ref: "agent:release-reviewer",
+            path: "/tmp/4",
+            score: 0.05,
+          }),
         ],
       }),
       4,
@@ -102,8 +133,20 @@ describe("curateSearchResults", () => {
       "release",
       searchResponse({
         hits: [
-          stashHit({ type: "command", name: "release-manager", ref: "command:release-manager", path: "/tmp/1", score: 0.9 }),
-          stashHit({ type: "command", name: "release-notes", ref: "command:release-notes", path: "/tmp/2", score: 0.7 }),
+          stashHit({
+            type: "command",
+            name: "release-manager",
+            ref: "command:release-manager",
+            path: "/tmp/1",
+            score: 0.9,
+          }),
+          stashHit({
+            type: "command",
+            name: "release-notes",
+            ref: "command:release-notes",
+            path: "/tmp/2",
+            score: 0.7,
+          }),
           stashHit({ type: "skill", name: "release-review", ref: "skill:release-review", path: "/tmp/3", score: 1 }),
         ],
       }),
@@ -121,7 +164,9 @@ describe("curateSearchResults", () => {
     const result = await curateSearchResults(
       "deploy",
       searchResponse({
-        hits: [stashHit({ type: "script", name: "deploy-check", ref: "script:deploy-check", path: "/tmp/1", score: 0.8 })],
+        hits: [
+          stashHit({ type: "script", name: "deploy-check", ref: "script:deploy-check", path: "/tmp/1", score: 0.8 }),
+        ],
         registryHits: [
           registryHit({ name: "deploy-kit-a", id: "reg-a", score: 0.95 }),
           registryHit({ name: "deploy-kit-b", id: "reg-b", score: 0.85 }),
@@ -144,8 +189,20 @@ describe("curateSearchResults", () => {
       searchResponse({
         hits: [
           stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/1", score: 1 }),
-          stashHit({ type: "knowledge", name: "skills/docker-homelab/references/compose", ref: "knowledge:skills/docker-homelab/references/compose", path: "/tmp/2", score: 1 }),
-          stashHit({ type: "knowledge", name: "skills/docker-homelab/references/networking", ref: "knowledge:skills/docker-homelab/references/networking", path: "/tmp/3", score: 0.9 }),
+          stashHit({
+            type: "knowledge",
+            name: "skills/docker-homelab/references/compose",
+            ref: "knowledge:skills/docker-homelab/references/compose",
+            path: "/tmp/2",
+            score: 1,
+          }),
+          stashHit({
+            type: "knowledge",
+            name: "skills/docker-homelab/references/networking",
+            ref: "knowledge:skills/docker-homelab/references/networking",
+            path: "/tmp/3",
+            score: 0.9,
+          }),
         ],
       }),
       4,
@@ -174,7 +231,13 @@ describe("curateSearchResults", () => {
       searchResponse({
         hits: [
           stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/1", score: 1 }),
-          stashHit({ type: "knowledge", name: "skills/docker-homelab/references/compose", ref: "knowledge:skills/docker-homelab/references/compose", path: "/tmp/2", score: 1 }),
+          stashHit({
+            type: "knowledge",
+            name: "skills/docker-homelab/references/compose",
+            ref: "knowledge:skills/docker-homelab/references/compose",
+            path: "/tmp/2",
+            score: 1,
+          }),
         ],
       }),
       4,
@@ -196,10 +259,28 @@ describe("akmCurate", () => {
       searchResponse: searchResponse({
         hits: [
           stashHit({ type: "script", name: "deploy-check", ref: "script:deploy-check", path: "/tmp/1", score: 0.9 }),
-          stashHit({ type: "command", name: "deploy-release", ref: "command:deploy-release", path: "/tmp/2", score: 0.8 }),
-          stashHit({ type: "knowledge", name: "deploy-guide", ref: "knowledge:deploy-guide", path: "/tmp/3", score: 0.7 }),
+          stashHit({
+            type: "command",
+            name: "deploy-release",
+            ref: "command:deploy-release",
+            path: "/tmp/2",
+            score: 0.8,
+          }),
+          stashHit({
+            type: "knowledge",
+            name: "deploy-guide",
+            ref: "knowledge:deploy-guide",
+            path: "/tmp/3",
+            score: 0.7,
+          }),
           stashHit({ type: "skill", name: "deploy-skill", ref: "skill:deploy-skill", path: "/tmp/4", score: 0.6 }),
-          stashHit({ type: "agent", name: "deploy-reviewer", ref: "agent:deploy-reviewer", path: "/tmp/5", score: 0.5 }),
+          stashHit({
+            type: "agent",
+            name: "deploy-reviewer",
+            ref: "agent:deploy-reviewer",
+            path: "/tmp/5",
+            score: 0.5,
+          }),
         ],
       }),
     });

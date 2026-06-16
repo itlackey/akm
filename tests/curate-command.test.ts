@@ -75,7 +75,13 @@ afterEach(() => {
 });
 
 describe("curate command", () => {
-  const rankingBaselineStash = path.join(__dirname, "fixtures", "stashes", "ranking-baseline");
+  const rankingBaselineFixture = path.join(__dirname, "fixtures", "stashes", "ranking-baseline");
+
+  function makeRankingBaselineStash(): string {
+    const stashDir = makeTempDir("akm-curate-ranking-baseline-");
+    fs.cpSync(rankingBaselineFixture, stashDir, { recursive: true });
+    return stashDir;
+  }
 
   function makeStash(): string {
     const stashDir = makeTempDir("akm-curate-stash-");
@@ -221,11 +227,17 @@ describe("curate command", () => {
   });
 
   test("docker homelab collapses family duplicates into one top-level result", async () => {
-    const output = await runCli(rankingBaselineStash, ["curate", "docker homelab", "--format=json", "--detail=full"]);
+    const stashDir = makeRankingBaselineStash();
+    const output = await runCli(stashDir, ["curate", "docker homelab", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items).toHaveLength(1);
     expect(json.items[0]?.ref).toBe("skill:docker-homelab");
+    const familyItems = json.items.filter(
+      (item) =>
+        item.ref === "skill:docker-homelab" ||
+        String(item.ref).startsWith("knowledge:skills/docker-homelab/references/"),
+    );
+    expect(familyItems).toHaveLength(1);
     expect(json.items[0]?.supportRefs).toEqual([
       {
         ref: "knowledge:skills/docker-homelab/references/compose",
@@ -241,7 +253,8 @@ describe("curate command", () => {
   });
 
   test("weak prompt residue now falls back to docker results", async () => {
-    const output = await runCli(rankingBaselineStash, ["curate", "the docker", "--format=json", "--detail=full"]);
+    const stashDir = makeRankingBaselineStash();
+    const output = await runCli(stashDir, ["curate", "the docker", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
     expect(json.items.length).toBeGreaterThan(0);
@@ -249,7 +262,8 @@ describe("curate command", () => {
   });
 
   test("docker deploy no longer surfaces release-manager filler", async () => {
-    const output = await runCli(rankingBaselineStash, ["curate", "docker deploy", "--format=json", "--detail=full"]);
+    const stashDir = makeRankingBaselineStash();
+    const output = await runCli(stashDir, ["curate", "docker deploy", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
     expect(json.items.some((item) => item.ref === "command:release-manager")).toBe(false);

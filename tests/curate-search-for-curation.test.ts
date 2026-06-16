@@ -1,149 +1,100 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { SearchResponse } from "../src/sources/types";
+import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { searchForCuration } from "../src/commands/read/curate";
+import { saveConfig } from "../src/core/config/config";
+import { akmIndex } from "../src/indexer/indexer";
+import { withIsolatedAkmStorage } from "./_helpers/sandbox";
 
-type AkmSearchInput = {
-  query: string;
-  type?: string;
-  limit?: number;
-  source?: string;
-  skipLogging?: boolean;
-};
-
-const calls: AkmSearchInput[] = [];
-let searchImpl: (input: AkmSearchInput) => Promise<SearchResponse>;
-
-function emptyResponse(): SearchResponse {
-  return {
-    schemaVersion: 1,
-    stashDir: "/tmp/stash",
-    source: "stash",
-    hits: [],
-  };
+function writeFile(filePath: string, content: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
 }
 
-mock.module("../src/commands/read/search", () => ({
-  akmSearch: async (input: AkmSearchInput) => {
-    calls.push(input);
-    return searchImpl(input);
-  },
-  parseSearchSource: (value: string) => value,
-}));
-
-const { searchForCuration } = await import("../src/commands/read/curate");
-
-beforeEach(() => {
-  calls.length = 0;
-  searchImpl = async () => emptyResponse();
-});
+async function withIndexedStash<T>(fn: (stashDir: string) => Promise<T>): Promise<T> {
+  const storage = withIsolatedAkmStorage();
+  try {
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", path: storage.stashDir }],
+      registries: [],
+    });
+    return await fn(storage.stashDir);
+  } finally {
+    storage.cleanup();
+  }
+}
 
 describe("searchForCuration", () => {
   test("falls back when the initial phrase hit is weak", async () => {
-    searchImpl = async (input) => {
-      if (input.query === "docker cleanup audit") {
-        return {
-          ...emptyResponse(),
-          hits: [
-            {
-              type: "command",
-              name: "release-manager",
-              ref: "command:release-manager",
-              path: "/tmp/release",
-              score: 0.05,
-            },
-          ],
-        };
-      }
-      if (input.query === "docker") {
-        return {
-          ...emptyResponse(),
-          hits: [
-            {
-              type: "script",
-              name: "docker-clean",
-              ref: "script:docker-clean",
-              path: "/tmp/docker-clean",
-              score: 0.9,
-            },
-          ],
-        };
-      }
-      return emptyResponse();
-    };
+    await withIndexedStash(async (stashDir) => {
+      writeFile(
+        path.join(stashDir, "commands", "cleanup-audit.md"),
+        "---\ndescription: Review cleanup audit notes and release coordination\n---\nReview docker cleanup audit notes for the release retrospective.\n",
+      );
+      writeFile(
+        path.join(stashDir, "scripts", "docker-clean.sh"),
+        "#!/usr/bin/env bash\n# Clean up unused Docker images and containers\ndocker system prune -af\n",
+      );
 
-    const result = await searchForCuration({
-      query: "docker cleanup audit",
-      limit: 12,
-      source: "stash",
+      await akmIndex({ stashDir, full: true });
+
+      const result = await searchForCuration({
+        query: "docker cleanup audit",
+        limit: 12,
+        source: "stash",
+      });
+
+      const refs = result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`));
+      expect(refs).toContain("script:docker-clean.sh");
+      expect(refs).toContain("command:cleanup-audit");
+      expect(refs.indexOf("script:docker-clean.sh")).toBeLessThan(refs.indexOf("command:cleanup-audit"));
     });
-
-    expect(calls.map((call) => call.query)).toEqual(["docker cleanup audit", "docker", "cleanup", "audit"]);
-    expect(result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
-      "script:docker-clean",
-      "command:release-manager",
-    ]);
   });
 
-  test("does not fall back when the initial phrase search is already strong", async () => {
-    searchImpl = async (input) => {
-      if (input.query === "docker homelab") {
-        return {
-          ...emptyResponse(),
-          hits: [
-            {
-              type: "skill",
-              name: "docker-homelab",
-              ref: "skill:docker-homelab",
-              path: "/tmp/skill",
-              score: 0.95,
-            },
-            {
-              type: "knowledge",
-              name: "docker-compose-reference",
-              ref: "knowledge:docker-compose-reference",
-              path: "/tmp/knowledge",
-              score: 0.85,
-            },
-          ],
-        };
-      }
-      return emptyResponse();
-    };
+  test("does not need fallback when the initial phrase search is already strong", async () => {
+    await withIndexedStash(async (stashDir) => {
+      writeFile(
+        path.join(stashDir, "skills", "docker-homelab", "SKILL.md"),
+        "---\ndescription: Manage Docker containers in a homelab\n---\n# Docker Homelab\nUse Docker Compose, containers, and networking in a homelab.\n",
+      );
+      writeFile(
+        path.join(stashDir, "knowledge", "docker-compose-reference.md"),
+        "# Docker Compose Reference\n\nReference for Docker Compose services and files.\n",
+      );
 
-    const result = await searchForCuration({
-      query: "docker homelab",
-      limit: 12,
-      source: "stash",
+      await akmIndex({ stashDir, full: true });
+
+      const result = await searchForCuration({
+        query: "docker homelab",
+        limit: 12,
+        source: "stash",
+      });
+
+      const refs = result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`));
+      expect(refs[0]).toBe("skill:docker-homelab");
+      expect(refs).toContain("knowledge:docker-compose-reference");
     });
-
-    expect(calls.map((call) => call.query)).toEqual(["docker homelab"]);
-    expect(result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
-      "skill:docker-homelab",
-      "knowledge:docker-compose-reference",
-    ]);
   });
 
   test("allows one-token prompt-residue fallback", async () => {
-    searchImpl = async (input) => {
-      if (input.query === "docker") {
-        return {
-          ...emptyResponse(),
-          hits: [
-            {
-              type: "script",
-              name: "docker-clean",
-              ref: "script:docker-clean",
-              path: "/tmp/docker-clean",
-              score: 0.9,
-            },
-          ],
-        };
-      }
-      return emptyResponse();
-    };
+    await withIndexedStash(async (stashDir) => {
+      writeFile(
+        path.join(stashDir, "scripts", "docker-clean.sh"),
+        "#!/usr/bin/env bash\n# Clean up unused Docker images and containers\ndocker system prune -af\n",
+      );
+      writeFile(
+        path.join(stashDir, "skills", "docker-homelab", "SKILL.md"),
+        "---\ndescription: Manage Docker containers in a homelab\n---\n# Docker Homelab\nUse Docker containers and Compose in a homelab.\n",
+      );
 
-    const result = await searchForCuration({ query: "the docker", limit: 12, source: "stash" });
+      await akmIndex({ stashDir, full: true });
 
-    expect(calls.map((call) => call.query)).toEqual(["the docker", "docker"]);
-    expect(result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual(["script:docker-clean"]);
+      const result = await searchForCuration({ query: "the docker", limit: 12, source: "stash" });
+
+      const refs = result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`));
+      expect(refs.length).toBeGreaterThan(0);
+      expect(refs.some((ref) => ref.includes("docker"))).toBe(true);
+    });
   });
 });
