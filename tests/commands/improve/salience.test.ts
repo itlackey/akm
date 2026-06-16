@@ -53,8 +53,10 @@ describe("WS-1 weight contract", () => {
     expect(W_ENCODING + W_OUTCOME + W_RETRIEVAL).toBeCloseTo(1.0, 9);
   });
 
-  test("W_OUTCOME = 0 until WS-2 lands", () => {
-    expect(W_OUTCOME).toBe(0);
+  test("W_OUTCOME is non-zero now that WS-2 has landed", () => {
+    // WS-2 landed: W_OUTCOME = 0.15. The previous WS-1 transient (0) is retired.
+    expect(W_OUTCOME).toBeGreaterThan(0);
+    expect(W_OUTCOME).toBe(0.15);
   });
 });
 
@@ -84,12 +86,78 @@ describe("computeSalience — encoding sub-score", () => {
   });
 });
 
-// ── computeSalience — outcome sub-score ───────────────────────────────────────
+// ── computeSalience — outcome sub-score (WS-2 active) ────────────────────────
 
-describe("computeSalience — outcome sub-score (WS-2-HOOK)", () => {
-  test("outcome is always 0 in WS-1 (W_OUTCOME=0, hook not yet wired)", () => {
-    const v = computeSalience({ ref: "skill:foo", type: "skill", retrievalFreq: 100, utilityScore: 0.9, now: NOW });
+describe("computeSalience — outcome sub-score (WS-2 active)", () => {
+  test("outcome is 0 when no outcomeSalience or utilityScore is provided", () => {
+    const v = computeSalience({ ref: "skill:foo", type: "skill", retrievalFreq: 100, now: NOW });
+    // No outcomeSalience input, no utilityScore → warm-start seed = 0.
     expect(v.outcome).toBe(0);
+  });
+
+  test("outcome uses outcomeSalience when provided", () => {
+    const v = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 0.7,
+      now: NOW,
+    });
+    expect(v.outcome).toBeCloseTo(0.7, 9);
+  });
+
+  test("outcome warm-starts from utilityScore clipped to WARM_START_CAP when outcomeSalience absent", () => {
+    const v = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 100,
+      utilityScore: 0.9, // above WARM_START_CAP (0.3)
+      now: NOW,
+    });
+    // utilityScore 0.9 gets clipped to WARM_START_CAP = 0.3.
+    expect(v.outcome).toBeCloseTo(0.3, 9);
+  });
+
+  test("outcome warm-start with low utilityScore below WARM_START_CAP", () => {
+    const v = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      utilityScore: 0.1, // below WARM_START_CAP (0.3)
+      now: NOW,
+    });
+    expect(v.outcome).toBeCloseTo(0.1, 9);
+  });
+
+  test("outcome is clamped to [0,1]", () => {
+    const v = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 1.5, // above 1 → clamped
+      now: NOW,
+    });
+    expect(v.outcome).toBe(1.0);
+  });
+
+  test("outcome is W_OUTCOME-weighted in rankScore", () => {
+    // With outcomeSalience = 1.0 and no retrieval, the outcome term dominates.
+    const vHigh = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 1.0,
+      now: NOW,
+    });
+    const vZero = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 0,
+      now: NOW,
+    });
+    // rankScore with high outcomeSalience should exceed rankScore with zero.
+    expect(vHigh.rankScore).toBeGreaterThan(vZero.rankScore);
   });
 });
 

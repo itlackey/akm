@@ -23,7 +23,13 @@ import type {
 import { classifyImproveAction } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
-import { listProposalGateDecisions, openStateDatabase, purgeOldEvents, purgeOldImproveRuns } from "../../core/state-db";
+import {
+  listProposalGateDecisions,
+  listStateProposals,
+  openStateDatabase,
+  purgeOldEvents,
+  purgeOldImproveRuns,
+} from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import {
   closeDatabase,
@@ -91,6 +97,13 @@ import {
 } from "./improve-profiles";
 import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
+import {
+  computeProxyAdequacy,
+  getAllAssetOutcomes,
+  getOutcomeScoresByRef,
+  outcomeScoreToSalience,
+  updateAssetOutcome,
+} from "./outcome-loop";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import {
@@ -2894,9 +2907,122 @@ async function runImprovePreparationStage(args: {
     if (dbForSalience) closeDatabase(dbForSalience);
   }
 
+  // ── WS-2 Outcome loop ─────────────────────────────────────────────────────
+  //
+  // Update asset_outcome for every ref in the merged set BEFORE computing the
+  // salience vector so the updated outcome_score feeds outcomeSalience this run.
+  //
+  // Inputs per ref:
+  //   - currentRetrievalCount: from retrievalCounts (index DB)
+  //   - lastRetrievedAt: from lastUseMsByRef (utility_scores.last_used_at)
+  //   - negativeFeedbackCount: cumulative negatives from feedbackSummary
+  //   - acceptedChangeCount: accepted proposals for this ref (state.db)
+  //   - valence: net valence from computeValenceScore(feedbackSummary.get(ref))
+  //   - utilityScore: from utilityMap (for warm-start seed on new rows)
+  //
+  // Best-effort: outcome failures never block the salience or ranking pass.
+  const outcomeSalienceByRef = new Map<string, number>();
+  try {
+    const outcomeDb = eventsCtx?.db ?? openStateDatabase(eventsCtx?.dbPath);
+    const ownsOutcomeDb = !eventsCtx?.db;
+    try {
+      // Count accepted proposals per ref in one pass (avoid N separate queries).
+      // Scoped to primaryStashDir when available so multi-stash installs don't
+      // inflate counts with proposals from other stashes.
+      const acceptedCountByRef = new Map<string, number>();
+      try {
+        const acceptedProposals = listStateProposals(outcomeDb, {
+          status: "accepted",
+          ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
+        });
+        for (const p of acceptedProposals) {
+          acceptedCountByRef.set(p.ref, (acceptedCountByRef.get(p.ref) ?? 0) + 1);
+        }
+      } catch {
+        // best-effort: if proposals query fails, accepted counts stay at 0
+      }
+
+      // Update each ref's outcome row and collect the resulting outcome scores.
+      const rawOutcomeScores = new Map<string, number>();
+      const nowForOutcome = Date.now();
+      for (const r of mergedRefs) {
+        const fb = feedbackSummary.get(r.ref) ?? { positive: 0, negative: 0 };
+        const valenceResult = computeValenceScore(fb);
+        try {
+          const result = updateAssetOutcome(outcomeDb, {
+            ref: r.ref,
+            currentRetrievalCount: retrievalCounts.get(r.ref) ?? 0,
+            lastRetrievedAt: lastUseMsByRef.get(r.ref) ?? 0,
+            acceptedChangeCount: acceptedCountByRef.get(r.ref) ?? 0,
+            negativeFeedbackCount: fb.negative,
+            valence: valenceResult.valence,
+            utilityScore: utilityMap.get(r.ref),
+            now: nowForOutcome,
+          });
+          rawOutcomeScores.set(r.ref, result.outcomeScore);
+        } catch {
+          // best-effort per-ref: skip this ref's outcome update on failure
+        }
+      }
+
+      // Compute stash-wide max outcome_score for normalisation (diversity floor).
+      // Read ALL rows (not just this run's batch) so the normalisation is
+      // stash-relative, not pool-relative.
+      let maxOutcomeScore = 0;
+      try {
+        const allOutcomes = getAllAssetOutcomes(outcomeDb);
+        for (const row of allOutcomes) {
+          if (row.outcome_score > maxOutcomeScore) maxOutcomeScore = row.outcome_score;
+        }
+
+        // Proxy-adequacy tripwire: emit a health event if outcome_score is
+        // negatively correlated with accepted_change_rate (inverted proxy).
+        const adequacy = computeProxyAdequacy(allOutcomes);
+        if (adequacy.isInverted) {
+          appendEvent(
+            {
+              eventType: "outcome_proxy_inverted",
+              ref: undefined,
+              metadata: {
+                correlation: adequacy.correlation,
+                n: adequacy.n,
+                note: "corr(outcome_score, accepted_change_rate) < −0.3: popular assets are also the most-needing-improvement assets. The 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
+              },
+            },
+            eventsCtx,
+          );
+        }
+      } catch {
+        // best-effort: tripwire failure never blocks ranking
+      }
+
+      // Convert raw outcome scores → normalised outcomeSalience values in [0,1].
+      for (const [ref, score] of rawOutcomeScores) {
+        const normalised = outcomeScoreToSalience(score, maxOutcomeScore);
+        outcomeSalienceByRef.set(ref, normalised);
+      }
+
+      // Also fetch outcome scores for refs NOT updated this run (stale or absent)
+      // so the outcomeSalience read path works for all refs in the batch.
+      const missingRefs = mergedRefs.map((r) => r.ref).filter((ref) => !rawOutcomeScores.has(ref));
+      if (missingRefs.length > 0) {
+        const storedScores = getOutcomeScoresByRef(outcomeDb, missingRefs);
+        for (const [ref, score] of storedScores) {
+          outcomeSalienceByRef.set(ref, outcomeScoreToSalience(score, maxOutcomeScore));
+        }
+      }
+    } finally {
+      if (ownsOutcomeDb) outcomeDb.close();
+    }
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // best-effort: outcome failures never block salience computation
+  }
+
   // Compute the salience vector for every ref in the merged set.
   // retrievalCounts now covers the full candidate set (feedback-bearing + zero-feedback)
   // so feedback refs get their genuine retrieval frequency, not a 0-floor fallback.
+  // outcomeSalienceByRef is populated by WS-2 above (or empty on first run).
   const salienceMap = new Map<string, ReturnType<typeof computeSalience>>();
   const nowForSalience = Date.now();
   for (const r of mergedRefs) {
@@ -2916,6 +3042,7 @@ async function runImprovePreparationStage(args: {
       retrievalFreq: retrievalCounts.get(r.ref) ?? 0,
       lastUseMs: lastUseMsByRef.get(r.ref),
       utilityScore: utilityMap.get(r.ref),
+      outcomeSalience: outcomeSalienceByRef.get(r.ref),
       sizeBytes,
       now: nowForSalience,
     });

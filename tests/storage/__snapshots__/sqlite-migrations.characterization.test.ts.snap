@@ -12,8 +12,25 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "007-consolidation-judged",
     "008-body-embeddings",
     "009-asset-salience",
+    "010-asset-outcome",
   ],
   "schema": [
+    {
+      "name": "idx_asset_outcome_review_pressure",
+      "sql": 
+"CREATE INDEX idx_asset_outcome_review_pressure
+        ON asset_outcome(review_pressure DESC)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_asset_outcome_score",
+      "sql": 
+"CREATE INDEX idx_asset_outcome_score
+        ON asset_outcome(outcome_score DESC)"
+,
+      "type": "index",
+    },
     {
       "name": "idx_asset_salience_rank",
       "sql": 
@@ -140,6 +157,23 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         ON task_history(task_id)"
 ,
       "type": "index",
+    },
+    {
+      "name": "asset_outcome",
+      "sql": 
+"CREATE TABLE asset_outcome (
+        asset_ref                TEXT    PRIMARY KEY,
+        last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+        retrieval_count          INTEGER NOT NULL DEFAULT 0,
+        expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+        negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+        accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+        review_pressure          INTEGER NOT NULL DEFAULT 0,
+        outcome_score            REAL    NOT NULL DEFAULT 0.0,
+        updated_at               INTEGER NOT NULL DEFAULT 0
+      )"
+,
+      "type": "table",
     },
     {
       "name": "asset_salience",

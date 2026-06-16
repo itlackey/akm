@@ -22,10 +22,10 @@
  *
  * `rankScore = (w_e·encoding + w_o·outcome + w_r·retrieval) × sizePenalty`, normalized [0,1].
  *
- * **WS-1 transient correctness (WS-2 not yet landed):**
- * `w_o = 0`; weights renormalized so `w_e + w_r = 1.0`.
- * When WS-2 lands, re-introduce `w_o` and re-tune via the Part-V measurement protocol.
- * Search for `// WS-2-HOOK` to find the re-enable site.
+ * **WS-2 active:**
+ * `w_o = 0.15`; three-way split: `w_e=0.25, w_o=0.15, w_r=0.60`.
+ * `outcomeSalience` is now populated from `asset_outcome.outcome_score` (WS-2).
+ * Re-tune weights via the Part-V measurement protocol if gate shows regression.
  *
  * ## Plasticity
  *
@@ -50,6 +50,7 @@ import type { AkmAssetType } from "../../core/common";
 import type { Database } from "../../core/state-db";
 import { getAllEntries, getUtilityScoresByIds } from "../../indexer/db/db";
 import type { Database as IndexDatabase } from "../../storage/database";
+import { WARM_START_CAP } from "./outcome-loop";
 
 // ── One day in ms ─────────────────────────────────────────────────────────────
 const DAY_MS = 86_400_000;
@@ -62,20 +63,18 @@ const SIZE_FLOOR_BYTES = 200;
 
 // ── Projection weights ────────────────────────────────────────────────────────
 //
-// WS-1 transient: w_o = 0 (outcomeSalience not yet filled by WS-2).
-// Renormalized so w_e + w_r = 1.0.
+// WS-2 landed: W_OUTCOME is now non-zero. Three-way split:
+//   w_e=0.25, w_o=0.15, w_r=0.60  (sum = 1.0)
 //
 // [exp] Expert recommendation: encoding should be moderate so a type-importance
 // stub does not completely dominate; retrieval should be strong since it directly
-// measures use. Starting point: w_e=0.3, w_r=0.7 (renormalized from a future
-// w_e=0.25, w_o=0.15, w_r=0.60 three-way split).
+// measures use; outcome provides a quality signal proportional to usefulness.
 //
-// WS-2-HOOK: when WS-2 lands, set W_OUTCOME > 0 and adjust W_ENCODING /
-// W_RETRIEVAL accordingly so the three weights still sum to 1.0.
-// The Part-V measurement protocol governs re-tuning.
-export const W_ENCODING = 0.3; // encoding weight (w_e)
-export const W_OUTCOME = 0.0; // WS-2-HOOK: set to ~0.15 when WS-2 lands
-export const W_RETRIEVAL = 0.7; // retrieval weight (w_r)
+// Re-tune via the Part-V measurement protocol if the throughput/quality gate
+// shows regression after WS-2 is active.
+export const W_ENCODING = 0.25; // encoding weight (w_e)
+export const W_OUTCOME = 0.15; // outcome weight (w_o) — WS-2 active
+export const W_RETRIEVAL = 0.6; // retrieval weight (w_r)
 
 // Compile-time guard: weights must sum to 1.0 (±ε). The TS initializer runs
 // at module load, not build time, so this acts as a startup assertion.
@@ -124,10 +123,25 @@ export interface SalienceInputs {
   lastUseMs?: number;
   /**
    * Current MemRL utility score in [0,1] from `getUtilityScoresByIds`.
-   * Used to seed `outcomeSalience` until WS-2 provides the real signal.
+   * Used to seed `outcomeSalience` for the warm-start (WS-2).
    * Optional — defaults to 0.
    */
   utilityScore?: number;
+  /**
+   * Outcome salience from `asset_outcome.outcome_score` via WS-2.
+   * Converted to [0,1] by `outcomeScoreToSalience` before use.
+   * When absent (table not yet written) the warm-start seed from `utilityScore`
+   * is used instead, so `outcomeSalience` is never zero on first run.
+   *
+   * Pass `undefined` when the asset has no row yet in `asset_outcome`.
+   */
+  outcomeSalience?: number;
+  /**
+   * Stash-wide maximum outcome_score (for normalisation in `outcomeSalience`).
+   * Required when `outcomeSalience` is provided; ignored when absent.
+   * Callers compute this once per batch from `getAllAssetOutcomes()`.
+   */
+  maxOutcomeScore?: number;
   /** Asset size in bytes (for the size-cost penalty denominator). Defaults to SIZE_FLOOR_BYTES. */
   sizeBytes?: number;
   /** Injectable clock (ms). Defaults to Date.now(). */
@@ -145,7 +159,8 @@ export interface SalienceVector {
   encoding: number;
   /**
    * Outcome salience in [0,1] — differential usefulness signal (WS-2).
-   * Always 0 in WS-1; WS-2 fills this from `asset_outcome.outcome_score`.
+   * Sourced from `asset_outcome.outcome_score`, normalised by
+   * `outcomeScoreToSalience`. Non-zero once WS-2 has populated the table.
    */
   outcome: number;
   /**
@@ -173,10 +188,26 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   // ── Encoding salience (Gap 1 stub) ──────────────────────────────────────────
   const encoding = DEFAULT_TYPE_ENCODING_WEIGHTS[inputs.type] ?? DEFAULT_ENCODING_SALIENCE;
 
-  // ── Outcome salience (WS-2-HOOK) ──────────────────────────────────────────
-  // WS-2-HOOK: Replace the 0 below with `inputs.outcomeSalience ?? 0`
-  // once WS-2 has populated asset_outcome and passes the value in.
-  const outcome = 0; // WS-2-HOOK
+  // ── Outcome salience (WS-2 active) ────────────────────────────────────────
+  //
+  // When `inputs.outcomeSalience` is provided (WS-2 has populated asset_outcome
+  // for this ref), use it directly — it has already been normalised by
+  // `outcomeScoreToSalience` in outcome-loop.ts (value in [DIVERSITY_FLOOR, 1]).
+  //
+  // When absent (new asset, no WS-2 row yet): fall back to the warm-start seed
+  // from `utilityScore` clipped to [0, WARM_START_CAP], matching the seed
+  // value that `updateAssetOutcome` writes on first row creation. This ensures
+  // `outcomeSalience` is non-zero at launch for assets with utility history
+  // (avoiding the starvation problem described in the plan §WS-2 warm start).
+  let outcome: number;
+  if (inputs.outcomeSalience !== undefined) {
+    // Direct pass-through — caller already normalised via outcomeScoreToSalience.
+    outcome = Math.min(1, Math.max(0, inputs.outcomeSalience));
+  } else {
+    // Warm-start fallback: clip utility to [0, WARM_START_CAP] so the
+    // outcomeSalience term contributes a modest non-zero baseline.
+    outcome = Math.min(WARM_START_CAP, Math.max(0, inputs.utilityScore ?? 0));
+  }
 
   // ── Retrieval salience ─────────────────────────────────────────────────────
   //

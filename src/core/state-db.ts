@@ -649,6 +649,60 @@ const MIGRATIONS: Migration[] = [
         ON asset_salience(rank_score DESC);
     `,
   },
+
+  // ── Migration 010 — asset_outcome (WS-2 outcome loop) ───────────────────────
+  //
+  // Per-asset outcome loop persisted in state.db (S2 seam, WS-2).
+  //
+  // Stores the differential "was this retrieval useful" signal so the salience
+  // vector's `outcomeSalience` sub-score (WS-1 `W_OUTCOME` term) is non-zero.
+  //
+  // Columns:
+  //   asset_ref TEXT PK             — `type:name` asset ref (FK to asset_salience).
+  //   last_retrieved_at INTEGER     — Unix-ms of the most recent retrieval.
+  //   retrieval_count INTEGER       — total retrieval count from the index DB.
+  //   expected_retrieval_rate REAL  — EMA-smoothed expected count per cycle.
+  //   negative_feedback_count INTEGER — cumulative negative-feedback events.
+  //   accepted_change_count INTEGER — cumulative accepted proposals.
+  //   review_pressure INTEGER       — #613 pressure counter: repeated low-satisfaction
+  //                                   retrievals increment it; feeds outcomeSalience.
+  //   outcome_score REAL            — differential outcome signal (can be negative).
+  //   updated_at INTEGER            — Unix-ms timestamp of last update.
+  //
+  // Design:
+  //   - outcome_score is differential (prediction-error shaped), NOT a raw count,
+  //     so it rewards assets that are retrieved MORE than their rolling mean AND
+  //     accepted for change when retrieved. See outcome-loop.ts for the formula.
+  //   - review_pressure (#613): repeated negative-feedback retrievals raise it,
+  //     non-negative cycles decay it. Never mutates asset content directly.
+  //   - warm_start: seeded from utility EMA at row creation, clipped to [0, 0.3]
+  //     so the first negative delta does not cause a spurious rank inversion.
+  //   - Orphaned rows (deleted assets) accumulate harmlessly; operators can prune
+  //     with `DELETE FROM asset_outcome WHERE updated_at < ?` if desired.
+  {
+    id: "010-asset-outcome",
+    up: `
+      CREATE TABLE IF NOT EXISTS asset_outcome (
+        asset_ref                TEXT    PRIMARY KEY,
+        last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+        retrieval_count          INTEGER NOT NULL DEFAULT 0,
+        expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+        negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+        accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+        review_pressure          INTEGER NOT NULL DEFAULT 0,
+        outcome_score            REAL    NOT NULL DEFAULT 0.0,
+        updated_at               INTEGER NOT NULL DEFAULT 0
+      );
+
+      -- Hot path: sort assets by review_pressure DESC for #613 admission.
+      CREATE INDEX IF NOT EXISTS idx_asset_outcome_review_pressure
+        ON asset_outcome(review_pressure DESC);
+
+      -- Secondary: sort by outcome_score DESC for outcomeSalience reads.
+      CREATE INDEX IF NOT EXISTS idx_asset_outcome_score
+        ON asset_outcome(outcome_score DESC);
+    `,
+  },
 ];
 
 /**

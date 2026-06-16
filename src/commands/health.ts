@@ -1832,6 +1832,28 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
     improveSummary.calibration = readCalibration(db, since);
 
+    // WS-2 proxy-adequacy tripwire: surface any outcome_proxy_inverted events
+    // in the health window as an advisory so operators know when the 0.10+
+    // rich in-session signal is no longer deferrable.
+    const proxyInvertedEvents = readEvents({ since, type: "outcome_proxy_inverted" }, { dbPath: stateDbPath }).events;
+    if (proxyInvertedEvents.length > 0) {
+      const lastEvent = proxyInvertedEvents[proxyInvertedEvents.length - 1];
+      const correlation =
+        typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
+      advisories.push({
+        name: "outcome-proxy-adequacy",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `WS-2 outcome proxy inverted (${proxyInvertedEvents.length} event(s) in window). ` +
+          `corr(outcome_score, accepted_change_rate) = ${correlation} < −0.3. ` +
+          "Popular assets are also the most-needing-improvement assets — " +
+          "the retrieval-based proxy is inverted. " +
+          "The 0.10+ rich in-session outcome signal is no longer deferrable. See plan §WS-2.",
+      });
+    }
+
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
       const sinceDays = Math.max(0, Math.ceil((now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
