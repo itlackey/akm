@@ -25,7 +25,17 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
-import { cacheHash, type DedupConfig, runDeterministicDedup } from "./dedup";
+import { cacheHash, type DedupConfig, runDeterministicDedup, stripFrontmatterBody } from "./dedup";
+import {
+  type AntiCollapseConfig,
+  checkGenerationGuard,
+  checkLexicalDiversity,
+  computeMergedGeneration,
+  type HomeostaticDemotionConfig,
+  readAssetGeneration,
+  runHomeostaticDemotion,
+  shouldSkipHotProbationInLlm,
+} from "./homeostatic";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
@@ -1082,6 +1092,33 @@ function backupFile(filePath: string, backupDir: string, name: string): void {
   }
 }
 
+// ── WS-3b: Generation frontmatter injection ───────────────────────────────────
+
+/**
+ * Inject `generation` (and optionally `source_refs`) into merged content.
+ * generation = max(sourceGenerations) + 1.
+ * Fails open — returns original content if frontmatter can't be parsed.
+ */
+function injectGenerationFrontmatter(
+  mergedContent: string,
+  sourceGenerations: number[],
+  allParticipants: string[],
+): string {
+  try {
+    const parsed = parseFrontmatter(mergedContent);
+    const updatedFm: Record<string, unknown> = {
+      ...(parsed.data as Record<string, unknown>),
+      generation: computeMergedGeneration(sourceGenerations),
+    };
+    if (!updatedFm.source_refs) {
+      updatedFm.source_refs = allParticipants;
+    }
+    return assembleAssetFromString(serializeFrontmatter(updatedFm), parsed.content);
+  } catch {
+    return mergedContent; // fail open
+  }
+}
+
 // ── Archive helper (P1-B: soft-invalidation) ─────────────────────────────────
 
 /**
@@ -1263,6 +1300,58 @@ async function akmConsolidateInner(
     );
   }
   memories = memories.filter((m) => fs.existsSync(m.filePath));
+
+  // ── WS-3b Step 0a: Homeostatic demotion ────────────────────────────────────
+  // DEFAULT OFF. Before any LLM merge, demote retrievalSalience in state.db
+  // for stale/low-value assets so the merge pool is bounded and high-SNR.
+  // Demotion is state.db-only (file content untouched); re-promotable on
+  // re-retrieval. Only fires when `homeostaticDemotion.enabled === true`.
+  const homeostaticConfig: HomeostaticDemotionConfig =
+    (config.profiles?.improve?.default?.processes?.consolidate?.homeostaticDemotion as
+      | HomeostaticDemotionConfig
+      | undefined) ?? {};
+  if (homeostaticConfig.enabled && sharedStateDb) {
+    const demotionResult = runHomeostaticDemotion(sharedStateDb, homeostaticConfig);
+    if (demotionResult.demoted > 0) {
+      warnings.push(
+        `Homeostatic demotion: demoted retrievalSalience for ${demotionResult.demoted} stale asset(s) before merge pool assembly.`,
+      );
+    }
+    warnings.push(...demotionResult.warnings);
+  }
+
+  // ── WS-3b Step 0c: Filter hot-probation assets from LLM merge pool ─────────
+  // Hot-probation assets (system-generated, not yet graduated from intake pass)
+  // are processed by the dedup pre-pass but excluded from the LLM clustering.
+  // This prevents noisy extractions from polluting LLM context. The dedup pass
+  // below still runs against them so they're cleaned up deterministically.
+  // DEFAULT OFF — gated on the dedup pre-pass being active (hot-probation assets
+  // should go through the deterministic dedup path first).
+  let hotProbationCount = 0;
+  {
+    const hotProbationMemories: typeof memories = [];
+    const nonProbationMemories: typeof memories = [];
+    for (const m of memories) {
+      try {
+        const raw = fs.readFileSync(m.filePath, "utf8");
+        const parsed = parseFrontmatter(raw);
+        if (shouldSkipHotProbationInLlm(parsed.data as Record<string, unknown>)) {
+          hotProbationMemories.push(m);
+          hotProbationCount++;
+        } else {
+          nonProbationMemories.push(m);
+        }
+      } catch {
+        nonProbationMemories.push(m); // fail open
+      }
+    }
+    if (hotProbationCount > 0) {
+      warnings.push(
+        `Hot-probation: ${hotProbationCount} hot-probation asset(s) routed to dedup-only pass (excluded from LLM merge pool).`,
+      );
+      memories = nonProbationMemories;
+    }
+  }
 
   // ── Deterministic dedup pre-pass (#617) ─────────────────────────────────────
   // Cheap, no-LLM fast path that collapses the obvious near-duplicates
@@ -1485,9 +1574,56 @@ async function akmConsolidateInner(
   // Fails open: if embeddings are unavailable or fail, original order is used.
   const clusteredMemories = await clusterMemoriesBySimilarity(memories, config, sharedStateDb);
 
+  // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
+  // A small fraction (default 5%) of the pool is shuffled into random positions
+  // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
+  // entrenchment where only the most-retrieved assets ever get consolidated.
+  // DEFAULT OFF — gated on antiCollapse.enabled.
+  let finalClusteredMemories = clusteredMemories;
+  {
+    const antiCollapseForCluster: AntiCollapseConfig =
+      (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+    if (antiCollapseForCluster.enabled && clusteredMemories.length > 2) {
+      const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
+      const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
+      // Pick `randomCount` positions to inject random (un-clustered) members.
+      // Use a seeded-ish shuffle: sort by hash of the name so it's deterministic
+      // per run but not strictly similarity-driven.
+      const shuffled = [...clusteredMemories].sort((a, b) => {
+        // Deterministic shuffle: compare sha256-ish (use name hash as proxy).
+        const ha = a.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        const hb = b.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        return ha - hb;
+      });
+      const randomSlice = shuffled.slice(0, randomCount);
+      const randomSet = new Set(randomSlice.map((m) => m.name));
+      // Insert random members at intervals through the clustered sequence.
+      const withRandom: MemoryEntry[] = [];
+      const interval = Math.max(2, Math.floor(clusteredMemories.length / randomCount));
+      let randomIdx = 0;
+      for (let i = 0; i < clusteredMemories.length; i++) {
+        const m = clusteredMemories[i];
+        if (m && !randomSet.has(m.name)) withRandom.push(m);
+        if (i > 0 && i % interval === 0 && randomIdx < randomSlice.length) {
+          const r = randomSlice[randomIdx++];
+          if (r) withRandom.push(r);
+        }
+      }
+      // Append any remaining random members not yet inserted.
+      while (randomIdx < randomSlice.length) {
+        const r = randomSlice[randomIdx++];
+        if (r) withRandom.push(r);
+      }
+      finalClusteredMemories = withRandom;
+      warnings.push(
+        `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
+      );
+    }
+  }
+
   const chunks: MemoryEntry[][] = [];
-  for (let i = 0; i < clusteredMemories.length; i += chunkSize) {
-    chunks.push(clusteredMemories.slice(i, i + chunkSize));
+  for (let i = 0; i < finalClusteredMemories.length; i += chunkSize) {
+    chunks.push(finalClusteredMemories.slice(i, i + chunkSize));
   }
 
   // 2026-05-27 prompt-context fix: precompute body-hashes of pending
@@ -2057,7 +2193,7 @@ async function akmConsolidateInner(
         emitMergeFailureSkips(mergeResult.error);
         continue;
       }
-      const mergedContent = mergeResult.content;
+      let mergedContent = mergeResult.content;
 
       // Validate frontmatter of merged content — must have a `---` block
       // with at minimum a `description` field. We parse via the hand-rolled
@@ -2113,6 +2249,66 @@ async function akmConsolidateInner(
         );
         emitMergeFailureSkips("merge_participant_blocked");
         continue;
+      }
+
+      // WS-3b: Anti-collapse generation guard (step 8a).
+      // DEFAULT OFF. When antiCollapse.enabled, refuse to merge two assets both
+      // above generation N (default 2). This prevents the pipeline from
+      // building ever-deeper LLM-merged trees that lose the source fidelity
+      // of the original episodes.
+      const antiCollapseConfig: AntiCollapseConfig =
+        (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ??
+        {};
+      if (antiCollapseConfig.enabled) {
+        const allParticipants = [op.primary, ...op.secondaries];
+        const sourceGenerations = allParticipants.map((ref) => {
+          const e = memoryByRef.get(ref);
+          if (!e) return 0;
+          try {
+            const raw = fs.readFileSync(e.filePath, "utf8");
+            const parsed = parseFrontmatter(raw);
+            return readAssetGeneration(parsed.data as Record<string, unknown>);
+          } catch {
+            return 0;
+          }
+        });
+
+        const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
+        if (generationCheck.refused) {
+          warnings.push(`Merge: ${generationCheck.reason}`);
+          emitMergeFailureSkips("merge_generation_guard");
+          continue;
+        }
+
+        // WS-3b: Lexical diversity check (step 8b).
+        // Low n-gram diversity ⇒ likely correlated-extraction artifact; raise merge threshold.
+        if (antiCollapseConfig.lexicalDiversityCheck !== false) {
+          const bodies = allParticipants
+            .map((ref) => {
+              const e = memoryByRef.get(ref);
+              if (!e) return "";
+              try {
+                const raw = fs.readFileSync(e.filePath, "utf8");
+                return stripFrontmatterBody(raw);
+              } catch {
+                return "";
+              }
+            })
+            .filter((b) => b.length > 0);
+
+          const diversityCheck = checkLexicalDiversity(bodies, antiCollapseConfig);
+          if (diversityCheck.lowDiversity) {
+            // Low-diversity cluster: just warn (don't refuse merge since the dedup
+            // path handles exact twins). The warning surfaces in health telemetry.
+            warnings.push(
+              `Merge: cluster around ${op.primary} has low lexical diversity (${diversityCheck.diversity?.toFixed(2) ?? "?"} < 0.30) — likely correlated extraction; merge proceeds but review is recommended.`,
+            );
+          }
+        }
+
+        // Inject generation counter into merged content frontmatter (step 8a).
+        // merged.generation = max(sourceGenerations) + 1.
+        mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, allParticipants);
       }
 
       // Backup secondaries before deleting

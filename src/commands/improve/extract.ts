@@ -50,6 +50,7 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
+import { buildHotProbationFrontmatter } from "./homeostatic";
 import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";
 import {
   buildSessionSummaryPrompt,
@@ -446,6 +447,14 @@ async function processSession(
     };
   }
 
+  // WS-3b step 0c: hot-probation intake buffer (#604).
+  // When enabled, system-generated extractions enter captureMode: hot-probation
+  // so they spend ONE consolidation cycle in probation before the deterministic
+  // dedup+quality pass promotes them. Default OFF.
+  const hotProbationEnabled =
+    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
+      ?.enabled === true;
+
   for (const candidate of payload.candidates) {
     if (dryRun) {
       proposalIds.push(`dry-run:${candidate.type}:${candidate.name}`);
@@ -474,6 +483,12 @@ async function processSession(
                 ? { orderedActions: candidate.orderedActions }
                 : {}),
               ...(candidate.outcomeData ? { outcomeData: candidate.outcomeData } : {}),
+              // WS-3b step 0c: tag system-generated extractions as hot-probation
+              // when the feature is enabled. The consolidation pass will exclude
+              // them from the LLM merge pool until the intake dedup+quality pass
+              // runs against them. User-explicit `akm remember` (captureMode: hot)
+              // is unaffected — this only applies to extract-generated proposals.
+              ...(hotProbationEnabled ? buildHotProbationFrontmatter() : {}),
             },
           },
         },

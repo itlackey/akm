@@ -379,6 +379,73 @@ export interface ImproveProcessConfig {
    * Only meaningful on the `consolidate` process.
    */
   p90ChunkSecondsDefault?: number;
+  /**
+   * WS-3b: Homeostatic demotion (step 0a). Before any LLM merge, demote
+   * `retrievalSalience` (state.db only — file content untouched) for
+   * stale/low-value assets so the merge pool is bounded and high-SNR.
+   * Re-promotable on re-retrieval. Default OFF. Only meaningful on the
+   * `consolidate` process.
+   */
+  homeostaticDemotion?: {
+    enabled?: boolean;
+    /** Days since last retrieval to consider an asset stale. Default 30. */
+    staleDays?: number;
+    /** Multiplicative demotion factor on retrievalSalience (0–1). Default 0.5. */
+    demotionFactor?: number;
+  };
+  /**
+   * WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
+   * body embedding is within epsilon of an existing derived-layer lesson/knowledge
+   * node, mark it schema-consistent and lower its priority. Default OFF.
+   * Only meaningful on the `consolidate` and `extract` processes.
+   */
+  schemaSimilarity?: {
+    enabled?: boolean;
+    /** Cosine similarity epsilon above which a candidate is schema-consistent. Default 0.85. */
+    epsilon?: number;
+  };
+  /**
+   * WS-3b: Hot-probation intake buffer (#604). New system-generated extractions
+   * enter `captureMode: hot-probation` and spend ONE consolidation cycle in
+   * probation before promotion; dedup + quality second-pass runs against them.
+   * Default OFF. Only meaningful on the `extract` process.
+   */
+  hotProbation?: {
+    enabled?: boolean;
+  };
+  /**
+   * WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
+   * from collapsing too aggressively and losing diversity.
+   * Default OFF. Only meaningful on the `consolidate` process.
+   */
+  antiCollapse?: {
+    enabled?: boolean;
+    /** Refuse to merge two assets both above this generation. Default 2. */
+    maxGeneration?: number;
+    /** Low n-gram diversity ⇒ raise merge threshold. Default true when enabled. */
+    lexicalDiversityCheck?: boolean;
+    /** Fraction of pool to fill with random (non-similar) clusters. Default 0.05. */
+    randomClusterFraction?: number;
+  };
+  /**
+   * WS-3b: CLS (Complementary Learning System) interleaving (step 9).
+   * distill/memoryInference prompts include embedding-retrieved adjacent
+   * lessons/knowledge to prevent catastrophic interference. Default OFF.
+   * Only meaningful on `distill` and `memoryInference` processes.
+   */
+  cls?: {
+    enabled?: boolean;
+    /** Number of adjacent lessons/knowledge to include in prompts. Default 3. */
+    adjacentCount?: number;
+  };
+  /**
+   * WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
+   * checks it against its cited source memories; a contradiction flag forces human
+   * review. Default OFF. Only meaningful on the `distill` process.
+   */
+  fidelityCheck?: {
+    enabled?: boolean;
+  };
 }
 
 export interface ImproveProfileConfig {

@@ -232,6 +232,80 @@ export const ImproveProcessConfigSchema = z
     // once sufficient history accumulates; this value is only used on the very
     // first run. Default 30 s. Only meaningful on the `consolidate` process.
     p90ChunkSecondsDefault: z.number().finite().positive().optional(),
+    // WS-3b: Homeostatic demotion (step 0a). Before any LLM merge, demote
+    // retrievalSalience for stale/low-value assets so the merge pool is bounded
+    // and high-SNR. Demotion is state.db-only (file content untouched);
+    // re-promotable on re-retrieval. Default OFF. Only meaningful on the
+    // `consolidate` process.
+    homeostaticDemotion: z
+      .object({
+        enabled: z.boolean().optional(),
+        // Minimum days since last retrieval to consider an asset stale (default 30).
+        staleDays: z.number().int().min(0).optional(),
+        // Demotion factor: multiply retrievalSalience by this when stale (default 0.5).
+        demotionFactor: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
+    // body embedding is within epsilon of an existing derived-layer lesson/knowledge
+    // node, mark it schema-consistent and lower its priority. Default OFF.
+    // Only meaningful on the `consolidate` and `extract` processes.
+    schemaSimilarity: z
+      .object({
+        enabled: z.boolean().optional(),
+        // Epsilon: cosine similarity threshold above which a candidate is schema-consistent
+        // (default 0.85 — looser than dedup's 0.97 since we want to catch conceptual overlap).
+        epsilon: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Hot-probation intake buffer (step 0c, #604). New system-generated
+    // extractions enter captureMode: hot-probation and spend ONE consolidation
+    // cycle in probation. Dedup + quality second-pass runs before promotion.
+    // Default OFF. Only meaningful on the `extract` process.
+    hotProbation: z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
+    // from collapsing too aggressively and losing diversity.
+    //   - maxGeneration: refuse to merge two assets both above this generation (default 2).
+    //   - lexicalDiversityCheck: low n-gram diversity ⇒ raise merge threshold.
+    //   - randomClusterFraction: occasional random (non-similar) cluster in pool (default 0.05).
+    // Default OFF. Only meaningful on the `consolidate` process.
+    antiCollapse: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxGeneration: z.number().int().min(1).optional(),
+        lexicalDiversityCheck: z.boolean().optional(),
+        randomClusterFraction: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: CLS (Complementary Learning System) interleaving (step 9).
+    // distill/memoryInference prompts include embedding-retrieved existing adjacent
+    // lessons/knowledge to prevent catastrophic interference with prior generalizations.
+    // Default OFF. Only meaningful on `distill` and `memoryInference` processes.
+    cls: z
+      .object({
+        enabled: z.boolean().optional(),
+        // Number of adjacent lessons/knowledge to include in prompts (default 3).
+        adjacentCount: z.number().int().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
+    // check it against its cited source memories; a contradiction flag forces
+    // human review. Default OFF. Only meaningful on `distill` process.
+    fidelityCheck: z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

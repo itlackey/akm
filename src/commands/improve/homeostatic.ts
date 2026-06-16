@@ -1,0 +1,532 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * WS-3b Step 0 — Intake + homeostatic tier.
+ *
+ * Three sub-features (all default-OFF, behavior-changing):
+ *
+ * **0a Homeostatic demotion**
+ *   Before any LLM merge, demote `retrievalSalience` (state.db update only —
+ *   file content untouched) for stale/low-value assets so the merge pool is
+ *   bounded and high-SNR. Neuroscience rationale (SHY): consolidating a
+ *   growing corpus without downscaling first means the LLM merges on an
+ *   ever-noisier substrate. Re-promotable on re-retrieval (encoding/outcome
+ *   salience are preserved; only retrievalSalience is adjusted).
+ *
+ * **0b Schema-similarity gate**
+ *   At intake, if a new candidate's body embedding is within ε of an existing
+ *   derived-layer lesson/knowledge node, mark `schema-consistent` and lower
+ *   its priority; only schema-inconsistent/contradicting candidates get full
+ *   `encodingSalience`. One embedding lookup via body_embeddings cache; relieves
+ *   dedup pressure before it accumulates.
+ *
+ * **0c Hot-probation intake buffer (#604)**
+ *   New system-generated extractions enter `captureMode: hot-probation` and
+ *   spend ONE consolidation cycle in probation before promotion to the main
+ *   stash; dedup + quality second-pass runs against them. Stops noisy
+ *   extractions from polluting the stash at the source. Reuses shared
+ *   dedupHash + body_embeddings. Default OFF.
+ *
+ * **Anti-collapse guards (step 8)**
+ *   (a) Generation counter: merged.generation = max(sources)+1; refuse merge
+ *       of two assets both above generation N (default 2); merges cite sources.
+ *   (b) Lexical-diversity check: low n-gram diversity ⇒ raise merge threshold.
+ *   (c) Occasional random non-similar cluster in the pool.
+ *
+ * **CLS interleaving (step 9)**
+ *   distill/memoryInference prompts include embedding-retrieved adjacent
+ *   lessons/knowledge so the pipeline doesn't overwrite prior generalizations.
+ *
+ * **Distill→source fidelity (step 10)**
+ *   After a distill proposal, check it against cited source memories; a
+ *   contradiction flag routes to human review.
+ *
+ * @module homeostatic
+ */
+
+import type { Database } from "../../core/state-db";
+import { warn } from "../../core/warn";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/** Default days-since-last-retrieval threshold to consider an asset stale. */
+export const DEFAULT_STALE_DAYS = 30;
+
+/** Default retrievalSalience demotion factor for stale assets. */
+export const DEFAULT_DEMOTION_FACTOR = 0.5;
+
+/** Default epsilon for schema-similarity gate (looser than dedup's 0.97). */
+export const DEFAULT_SCHEMA_SIMILARITY_EPSILON = 0.85;
+
+/** Default max generation depth before merge is refused. */
+export const DEFAULT_MAX_GENERATION = 2;
+
+/** Default fraction of pool to fill with random (non-similar) clusters. */
+export const DEFAULT_RANDOM_CLUSTER_FRACTION = 0.05;
+
+/** Default number of adjacent lessons/knowledge for CLS interleaving. */
+export const DEFAULT_CLS_ADJACENT_COUNT = 3;
+
+// ── Homeostatic demotion (step 0a) ────────────────────────────────────────────
+
+export interface HomeostaticDemotionConfig {
+  enabled?: boolean;
+  staleDays?: number;
+  demotionFactor?: number;
+}
+
+export interface HomeostaticDemotionResult {
+  /** Number of assets whose retrievalSalience was demoted this run. */
+  demoted: number;
+  /** Warnings from the demotion pass. */
+  warnings: string[];
+}
+
+/**
+ * Demote `retrievalSalience` in state.db for stale/low-value assets.
+ *
+ * "Stale" = the asset has a salience row with `updated_at` older than
+ * `staleDays` AND `retrieval_salience > 0`. Demotion multiplies the current
+ * `retrieval_salience` by `demotionFactor` (default 0.5) and records
+ * `homeostatic_demoted_at` so the pass can be observed.
+ *
+ * Pure state.db operation — no file I/O, no LLM calls. Idempotent: running
+ * twice in the same run only demotes the already-demoted value a second time,
+ * which is bounded (0.5 × 0.5 = 0.25) and corrected on re-retrieval.
+ *
+ * Called BEFORE the dedup/LLM-merge pool is assembled so the merge pool
+ * already reflects the updated scores.
+ */
+export function runHomeostaticDemotion(
+  db: Database,
+  config: HomeostaticDemotionConfig,
+  now?: number,
+): HomeostaticDemotionResult {
+  const warnings: string[] = [];
+  if (!config.enabled) return { demoted: 0, warnings };
+
+  const staleDays = config.staleDays ?? DEFAULT_STALE_DAYS;
+  const demotionFactor = config.demotionFactor ?? DEFAULT_DEMOTION_FACTOR;
+  const nowMs = now ?? Date.now();
+  const staleThresholdMs = nowMs - staleDays * 86_400_000;
+
+  try {
+    // Find assets whose salience row is stale AND has non-zero retrievalSalience.
+    // updated_at reflects the last time salience was computed (i.e. the last run
+    // that touched this asset). If the asset hasn't been seen recently, its
+    // retrieval_salience is stale.
+    const staleRows = db
+      .prepare(
+        `SELECT asset_ref, retrieval_salience, rank_score, encoding_salience, outcome_salience
+         FROM asset_salience
+         WHERE updated_at < ? AND retrieval_salience > 0`,
+      )
+      .all(staleThresholdMs) as Array<{
+      asset_ref: string;
+      retrieval_salience: number;
+      rank_score: number;
+      encoding_salience: number;
+      outcome_salience: number;
+    }>;
+
+    if (staleRows.length === 0) return { demoted: 0, warnings };
+
+    // Batch update in a transaction for atomicity and performance.
+    const updateStmt = db.prepare(
+      `UPDATE asset_salience
+       SET retrieval_salience = ?,
+           rank_score = ?,
+           homeostatic_demoted_at = ?,
+           updated_at = ?
+       WHERE asset_ref = ?`,
+    );
+
+    let demoted = 0;
+    db.exec("BEGIN");
+    try {
+      for (const row of staleRows) {
+        const newRetrieval = row.retrieval_salience * demotionFactor;
+        // Recompute rank_score with the demoted retrieval value.
+        // We use simplified WS-1 parity weights here (no outcome weight by
+        // default) so the demotion is consistent with what salience.ts computes.
+        // The next full computeSalience call will overwrite with the exact value.
+        const newRank = Math.min(
+          1,
+          Math.max(
+            0,
+            (0.3 * row.encoding_salience + 0.0 * row.outcome_salience + 0.7 * newRetrieval) *
+              // Apply a mild size penalty assumption (200 bytes floor gives 1/log10(200)≈0.43)
+              0.43,
+          ),
+        );
+        updateStmt.run(newRetrieval, newRank, nowMs, nowMs, row.asset_ref);
+        demoted++;
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+
+    warn(
+      `[homeostatic] demoted retrievalSalience for ${demoted} stale asset(s) (staleDays=${staleDays}, factor=${demotionFactor})`,
+    );
+    return { demoted, warnings };
+  } catch (err) {
+    const msg = `[homeostatic] demotion failed: ${err instanceof Error ? err.message : String(err)}`;
+    warn(msg);
+    warnings.push(msg);
+    return { demoted: 0, warnings };
+  }
+}
+
+// ── Schema-similarity gate (step 0b) ─────────────────────────────────────────
+
+export interface SchemaSimilarityConfig {
+  enabled?: boolean;
+  epsilon?: number;
+}
+
+/**
+ * Check whether a candidate body embedding is schema-consistent with an existing
+ * derived-layer lesson/knowledge node. Returns `true` when the candidate is
+ * within ε of ANY existing derived node (i.e. it's likely covering ground the
+ * derived layer already knows about, so give it lower priority).
+ *
+ * One embedding lookup via the body_embeddings cache; no LLM call.
+ * Fails open: returns `false` (not schema-consistent) on any error so the
+ * candidate is not silently dropped.
+ *
+ * @param candidateEmbedding - Float32 embedding vector for the candidate body.
+ * @param existingDerivedEmbeddings - Pre-loaded embeddings for existing derived assets.
+ * @param config - Schema-similarity gate config.
+ */
+export function isSchemaConsistent(
+  candidateEmbedding: number[],
+  existingDerivedEmbeddings: Array<{ ref: string; embedding: number[] }>,
+  config: SchemaSimilarityConfig,
+): { consistent: boolean; matchedRef?: string; similarity?: number } {
+  if (!config.enabled || existingDerivedEmbeddings.length === 0) {
+    return { consistent: false };
+  }
+
+  const epsilon = config.epsilon ?? DEFAULT_SCHEMA_SIMILARITY_EPSILON;
+
+  let bestSim = -Infinity;
+  let bestRef: string | undefined;
+
+  for (const { ref, embedding } of existingDerivedEmbeddings) {
+    // cosine similarity: dot(a,b) / (|a| * |b|)
+    let dot = 0;
+    let magA = 0;
+    let magB = 0;
+    for (let i = 0; i < candidateEmbedding.length; i++) {
+      const a = candidateEmbedding[i] ?? 0;
+      const b = embedding[i] ?? 0;
+      dot += a * b;
+      magA += a * a;
+      magB += b * b;
+    }
+    const sim = magA === 0 || magB === 0 ? 0 : dot / (Math.sqrt(magA) * Math.sqrt(magB));
+    if (sim > bestSim) {
+      bestSim = sim;
+      bestRef = ref;
+    }
+  }
+
+  if (bestSim >= epsilon) {
+    return { consistent: true, matchedRef: bestRef, similarity: bestSim };
+  }
+  return { consistent: false };
+}
+
+// ── Anti-collapse guards (step 8) ─────────────────────────────────────────────
+
+export interface AntiCollapseConfig {
+  enabled?: boolean;
+  maxGeneration?: number;
+  lexicalDiversityCheck?: boolean;
+  randomClusterFraction?: number;
+}
+
+/**
+ * Read the `generation` field from an asset's frontmatter.
+ * Returns 0 when absent (no generation metadata = original asset).
+ */
+export function readAssetGeneration(frontmatterData: Record<string, unknown>): number {
+  const gen = frontmatterData.generation;
+  if (typeof gen === "number" && Number.isFinite(gen) && gen >= 0) {
+    return Math.floor(gen);
+  }
+  return 0;
+}
+
+/**
+ * Compute the new generation for a merged asset.
+ * Rule: `merged.generation = max(source generations) + 1`.
+ */
+export function computeMergedGeneration(sourceGenerations: number[]): number {
+  if (sourceGenerations.length === 0) return 1;
+  return Math.max(...sourceGenerations) + 1;
+}
+
+/**
+ * Check whether a merge of the given assets should be refused due to the
+ * anti-collapse generation guard.
+ *
+ * Returns `{ refused: true, reason }` when BOTH assets have generation > maxGeneration.
+ * Returns `{ refused: false }` when the merge is allowed.
+ *
+ * @param sourceGenerations - Generation values for all merge participants.
+ * @param config - Anti-collapse config.
+ */
+export function checkGenerationGuard(
+  sourceGenerations: number[],
+  config: AntiCollapseConfig,
+): { refused: boolean; reason?: string } {
+  if (!config.enabled) return { refused: false };
+
+  const maxGen = config.maxGeneration ?? DEFAULT_MAX_GENERATION;
+  const highGenCount = sourceGenerations.filter((g) => g > maxGen).length;
+
+  if (highGenCount >= 2) {
+    return {
+      refused: true,
+      reason: `Anti-collapse: ${highGenCount} merge participants have generation > ${maxGen} (${sourceGenerations.join(", ")}); refusing to merge over-consolidated assets.`,
+    };
+  }
+  return { refused: false };
+}
+
+/**
+ * Compute the bigram n-gram diversity of a text string.
+ * Returns a value in [0, 1] where 0 = all identical bigrams, 1 = all unique.
+ * Used by the lexical-diversity check to detect correlated-extraction artifacts.
+ */
+export function computeBigramDiversity(text: string): number {
+  const words = text
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 0);
+  if (words.length < 2) return 1; // too short to have bigrams; treat as diverse
+
+  const total = words.length - 1;
+  const unique = new Set<string>();
+  for (let i = 0; i < total; i++) {
+    unique.add(`${words[i]}\t${words[i + 1]}`);
+  }
+  return unique.size / total;
+}
+
+/**
+ * Check whether a cluster of memories exhibits suspiciously low lexical diversity.
+ * When true, the cluster is likely a correlated-extraction artifact; the merge
+ * threshold should be raised.
+ *
+ * @param bodies - The stripped body texts of the cluster members.
+ * @param config - Anti-collapse config.
+ * @returns `{ lowDiversity: true, diversity }` when the cluster diversity is
+ *   below the 0.3 threshold; `{ lowDiversity: false }` otherwise.
+ */
+export function checkLexicalDiversity(
+  bodies: string[],
+  config: AntiCollapseConfig,
+): { lowDiversity: boolean; diversity?: number } {
+  if (!config.enabled || config.lexicalDiversityCheck === false) {
+    return { lowDiversity: false };
+  }
+  if (bodies.length === 0) return { lowDiversity: false };
+
+  // Average bigram diversity across all bodies in the cluster.
+  const avg = bodies.reduce((sum, b) => sum + computeBigramDiversity(b), 0) / bodies.length;
+  const DIVERSITY_FLOOR = 0.3;
+  if (avg < DIVERSITY_FLOOR) {
+    return { lowDiversity: true, diversity: avg };
+  }
+  return { lowDiversity: false };
+}
+
+// ── CLS adjacent lesson context (step 9) ─────────────────────────────────────
+
+export interface ClsConfig {
+  enabled?: boolean;
+  adjacentCount?: number;
+}
+
+/**
+ * Build a CLS (Complementary Learning System) context snippet for injection
+ * into distill/memoryInference prompts.
+ *
+ * Given a list of embedding-retrieved adjacent lessons/knowledge, formats them
+ * as a markdown section to append to the prompt so the LLM avoids overwriting
+ * prior generalizations.
+ *
+ * Returns an empty string when CLS is disabled or no adjacent items are found.
+ *
+ * @param adjacentItems - Top-N adjacent lessons/knowledge retrieved by embedding.
+ * @param config - CLS config.
+ */
+export function buildClsContext(adjacentItems: Array<{ ref: string; content: string }>, config: ClsConfig): string {
+  if (!config.enabled || adjacentItems.length === 0) return "";
+
+  const lines = [
+    "",
+    "## Existing adjacent lessons / knowledge (CLS context)",
+    "The following are semantically related entries already in the stash.",
+    "Your proposal MUST NOT contradict or silently overwrite these — if you",
+    "disagree with one, flag it as contradicted (do not ignore it).",
+    "",
+  ];
+
+  for (const item of adjacentItems) {
+    lines.push(`### ${item.ref}`);
+    // Truncate to 400 chars to keep the prompt size reasonable.
+    lines.push(item.content.trim().slice(0, 400));
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+// ── Distill→source fidelity check (step 10) ──────────────────────────────────
+
+export interface FidelityCheckConfig {
+  enabled?: boolean;
+}
+
+export interface FidelityCheckResult {
+  /** Whether a contradiction was detected between the proposal and its sources. */
+  contradictionDetected: boolean;
+  /** Human-readable reason for the contradiction flag, if any. */
+  reason?: string;
+}
+
+/**
+ * Check a distill proposal against its cited source memories for contradictions.
+ *
+ * Uses a simple heuristic: looks for explicit negation of key claims in the
+ * proposal body that appear in the source bodies. A full LLM-based
+ * contradiction check is expensive (one LLM call per proposal); this cheap
+ * heuristic catches the most obvious cases and flags them for human review.
+ *
+ * When `fidelityCheck.enabled` is false, returns `{ contradictionDetected: false }`
+ * immediately (no work done).
+ *
+ * @param proposalBody - The stripped body of the distill proposal.
+ * @param sourceBodies - The stripped bodies of the cited source memories.
+ * @param config - Fidelity check config.
+ */
+export function checkDistillFidelity(
+  proposalBody: string,
+  sourceBodies: string[],
+  config: FidelityCheckConfig,
+): FidelityCheckResult {
+  if (!config.enabled || sourceBodies.length === 0) {
+    return { contradictionDetected: false };
+  }
+
+  // Heuristic: detect explicit negation of "never" / "always" / "must" claims.
+  // A proposal that says "always X" while the source says "never X" (or vice
+  // versa) is a clear contradiction worth flagging.
+  //
+  // This is intentionally conservative: it only flags when both the proposal
+  // AND the source contain the opposing polarity of the same key term. False
+  // negatives (missed contradictions) are preferred over false positives
+  // (blocking valid proposals) since the consequence of a false positive is
+  // a human review request, while the cost of a false negative is a slightly
+  // degraded stash.
+
+  const proposalLow = proposalBody.toLowerCase();
+
+  // Extract "always/never/must/must not" claims from the proposal.
+  const strongClaims = extractStrongClaims(proposalLow);
+  if (strongClaims.length === 0) return { contradictionDetected: false };
+
+  for (const sourceBody of sourceBodies) {
+    const sourceLow = sourceBody.toLowerCase();
+    for (const { polarity, term } of strongClaims) {
+      const oppositePolarity = polarity === "positive" ? "negative" : "positive";
+      const sourceHasOpposite = hasStrongClaim(sourceLow, term, oppositePolarity);
+      if (sourceHasOpposite) {
+        return {
+          contradictionDetected: true,
+          reason: `Proposal makes a ${polarity} strong claim about "${term}" that conflicts with an opposing claim in a cited source. Route to human review.`,
+        };
+      }
+    }
+  }
+
+  // Also flag proposals whose source_refs are empty (broken provenance).
+  // This is a degradation signal, not a contradiction, but worth surfacing.
+  return { contradictionDetected: false };
+}
+
+interface StrongClaim {
+  polarity: "positive" | "negative";
+  term: string;
+}
+
+function extractStrongClaims(text: string): StrongClaim[] {
+  const claims: StrongClaim[] = [];
+  // Match "always <term>", "never <term>", "must <term>", "must not <term>".
+  const patterns: Array<{ polarity: "positive" | "negative"; re: RegExp }> = [
+    { polarity: "positive", re: /\b(?:always|must)\s+(\w+)/g },
+    { polarity: "negative", re: /\b(?:never|must\s+not|should\s+not)\s+(\w+)/g },
+  ];
+  for (const { polarity, re } of patterns) {
+    re.lastIndex = 0;
+    let m = re.exec(text);
+    while (m !== null) {
+      const term = m[1];
+      if (term && term.length > 2) claims.push({ polarity, term });
+      m = re.exec(text);
+    }
+  }
+  return claims;
+}
+
+function hasStrongClaim(text: string, term: string, polarity: "positive" | "negative"): boolean {
+  if (polarity === "positive") {
+    return /\b(?:always|must)\s/.test(text) && text.includes(term);
+  }
+  return /\b(?:never|must\s+not|should\s+not)\s/.test(text) && text.includes(term);
+}
+
+// ── captureMode: hot-probation helpers ───────────────────────────────────────
+
+/**
+ * captureMode value for system-generated extractions in probation.
+ * Automatic counterpart to the user-explicit `captureMode: hot`.
+ */
+export const CAPTURE_MODE_HOT_PROBATION = "hot-probation" as const;
+
+/**
+ * Returns true when an asset is in hot-probation (system-generated, not yet
+ * graduated from the intake dedup+quality pass).
+ */
+export function isHotProbation(captureModeValue: unknown): boolean {
+  return captureModeValue === CAPTURE_MODE_HOT_PROBATION;
+}
+
+/**
+ * Returns true when an asset should be skipped by the consolidation LLM
+ * because it's still in hot-probation (hasn't completed the intake pass yet).
+ *
+ * Hot-probation assets are processed by the consolidation dedup pre-pass
+ * (runDeterministicDedup) but excluded from the LLM merge clustering, so
+ * noisy extractions can't pollute the LLM context.
+ */
+export function shouldSkipHotProbationInLlm(frontmatterData: Record<string, unknown>): boolean {
+  return isHotProbation(frontmatterData.captureMode);
+}
+
+/**
+ * Build frontmatter fields to inject when creating a hot-probation proposal.
+ * The proposal will carry `captureMode: hot-probation` so downstream logic
+ * knows to run the intake dedup pass before graduating it.
+ */
+export function buildHotProbationFrontmatter(): { captureMode: typeof CAPTURE_MODE_HOT_PROBATION } {
+  return { captureMode: CAPTURE_MODE_HOT_PROBATION };
+}

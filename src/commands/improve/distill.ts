@@ -77,7 +77,9 @@ import {
   type ProposalsContext,
 } from "../proposal/validators/proposals";
 import { akmSearch } from "../read/search";
+import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
+import { buildClsContext, checkDistillFidelity } from "./homeostatic";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1218,13 +1220,35 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       contentPreview: p.payload.content.slice(0, 500),
     }));
 
-  const userPrompt = buildDistillPrompt({
+  // WS-3b CLS interleaving (step 9).
+  // When cls.enabled, inject embedding-retrieved adjacent lessons/knowledge
+  // into the distill prompt so the LLM avoids overwriting prior generalizations
+  // (catastrophic interference). DEFAULT OFF.
+  const clsConfig =
+    (config.profiles?.improve?.default?.processes?.distill?.cls as
+      | { enabled?: boolean; adjacentCount?: number }
+      | undefined) ?? {};
+  let clsContext = "";
+  if (clsConfig.enabled) {
+    try {
+      const adjacentCount = clsConfig.adjacentCount ?? 3;
+      // Use the asset content or input ref as the query for adjacent retrieval.
+      const clsQuery = assetContent ? assetContent.slice(0, 500) : inputRef;
+      const adjacentItems = await fetchSimilarLessonsFn(clsQuery, adjacentCount);
+      clsContext = buildClsContext(adjacentItems, clsConfig);
+    } catch {
+      // Fail open — CLS is supplemental, never required.
+    }
+  }
+
+  const baseUserPrompt = buildDistillPrompt({
     inputRef,
     assetContent,
     feedback,
     proposalKind: effectiveProposalKind,
     ...(rejectedForRef.length > 0 ? { rejectedProposals: rejectedForRef } : {}),
   });
+  const userPrompt = clsContext ? `${baseUserPrompt}${clsContext}` : baseUserPrompt;
   const messages: ChatMessage[] = [
     { role: "system", content: effectiveProposalKind === "knowledge" ? KNOWLEDGE_SYSTEM_PROMPT : LESSON_SYSTEM_PROMPT },
     { role: "user", content: userPrompt },
@@ -1610,6 +1634,39 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     // (no LLM / timeout / parse failure) — leave confidence undefined so
     // the auto-accept gate treats the proposal as unscored and skips it.
     if (judgeResult.score > 0) lessonJudgeConfidence = judgeResult.score / 5;
+  }
+
+  // WS-3b: Distill→source fidelity check (step 10).
+  // When fidelityCheck.enabled, check the distill proposal against its cited
+  // source memories. A contradiction flag routes to human review (not auto-accept).
+  // DEFAULT OFF. Fail-open: any error is treated as no-contradiction.
+  const fidelityConfig =
+    (config.profiles?.improve?.default?.processes?.distill?.fidelityCheck as { enabled?: boolean } | undefined) ?? {};
+  if (fidelityConfig.enabled && assetContent) {
+    try {
+      const proposalBody = stripBodyForFidelity(content);
+      const sourceBodies = [stripBodyForFidelity(assetContent)];
+      const fidelityResult = checkDistillFidelity(proposalBody, sourceBodies, fidelityConfig);
+      if (fidelityResult.contradictionDetected) {
+        // Route to human review by writing a quality rejection with reviewNeeded=true.
+        return writeQualityRejection(
+          stash,
+          inputRef,
+          effectiveLessonRef,
+          content,
+          2.0, // below auto-accept threshold, signals review needed
+          fidelityResult.reason ?? "Proposal may contradict cited source memories.",
+          {
+            reviewNeeded: true,
+            fidelityContradiction: true,
+            ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+          },
+          options.eligibilitySource,
+        );
+      }
+    } catch {
+      // Fail open — fidelity check is supplemental.
+    }
   }
 
   // Round-trip the parsed frontmatter so the proposal carries it as a

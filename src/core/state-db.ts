@@ -703,6 +703,25 @@ const MIGRATIONS: Migration[] = [
         ON asset_outcome(outcome_score DESC);
     `,
   },
+  // ── Migration 011 — asset_salience: homeostatic_demoted_at column ─────────────
+  //
+  // WS-3b step 0a (homeostatic demotion). Records the last time `retrievalSalience`
+  // was demoted for this asset so:
+  //   (a) Each run can identify assets that have been demoted but not yet
+  //       re-retrieved (they stay in the demoted state until a retrieval
+  //       re-promotes them via `upsertAssetSalience`).
+  //   (b) The homeostatic pass can log "N assets demoted this run".
+  //
+  // NULL = never demoted (or was re-promoted after last demotion, since a fresh
+  // `upsertAssetSalience` call clears the flag by updating retrieval_salience
+  // from live data rather than the demoted value — the column is informational,
+  // not the canonical source of the salience value).
+  {
+    id: "011-asset-salience-homeostatic-demoted-at",
+    up: `
+      ALTER TABLE asset_salience ADD COLUMN homeostatic_demoted_at INTEGER DEFAULT NULL;
+    `,
+  },
 ];
 
 /**
