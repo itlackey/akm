@@ -291,29 +291,6 @@ export function getAllRankScores(db: Database): Map<string, number> {
   return result;
 }
 
-/**
- * Bulk-load salience rank scores for a set of refs. Returns a Map<ref, rankScore>.
- * Refs not yet in the table get 0.
- */
-export function getRankScoresByRefs(db: Database, refs: string[]): Map<string, number> {
-  const result = new Map<string, number>();
-  if (refs.length === 0) return result;
-
-  // Chunk to stay within SQLITE_MAX_VARIABLE_NUMBER.
-  const CHUNK = 900;
-  for (let i = 0; i < refs.length; i += CHUNK) {
-    const chunk = refs.slice(i, i + CHUNK);
-    const placeholders = chunk.map(() => "?").join(", ");
-    const rows = db
-      .prepare(`SELECT asset_ref, rank_score FROM asset_salience WHERE asset_ref IN (${placeholders})`)
-      .all(...chunk) as Array<{ asset_ref: string; rank_score: number }>;
-    for (const row of rows) {
-      result.set(row.asset_ref, row.rank_score);
-    }
-  }
-  return result;
-}
-
 // ── Plasticity helpers ────────────────────────────────────────────────────────
 
 /**
