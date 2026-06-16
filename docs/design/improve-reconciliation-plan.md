@@ -20,6 +20,12 @@
 
 ## Implementation status
 
+> **Note (2026-06-16):** the per-work-stream commit SHAs below predate the rebase
+> onto `main` (which absorbed PR #622, curate improvements) and were **rewritten**
+> by it — the work is fully intact, only the hashes changed. For current hashes
+> use `git log origin/main..feat/improve-reconciliation`. SHAs are kept here as a
+> historical record of what landed in each work-stream, not as live references.
+
 | Work-stream | Status | Commits | Review | Escalation | Notes |
 |---|---|---|---|---|---|
 | WS-0 extract-capture (#619) | done | 6904606f, a36142d1 | pass / confirmed-green | none | Prompt fix closes non-schema-LLM gap; types, schema, parser, persistence were already correct. |
