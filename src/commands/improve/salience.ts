@@ -297,16 +297,18 @@ export function getAllRankScores(db: Database): Map<string, number> {
  * Increment `consecutive_no_ops` for an asset. Called after a no-op reflect/distill.
  * Has NO effect on `rank_score` — the plasticity counter only dampens consolidation
  * selection, not retrieval ranking. See plan §WS-1 step 8.
+ *
+ * Invariant: recordNoOp must never originate rank_score semantics. If the asset has
+ * no salience row yet (persistence's best-effort try/catch may have swallowed an
+ * error), we do nothing — a no-op counter is meaningless without a rank_score row,
+ * and a synthetic INSERT would fabricate a rank_score=0 entry that could produce
+ * false catastrophic-forgetting signals in buildRankChangeReport.
  */
 export function recordNoOp(db: Database, ref: string): void {
   db.prepare(
-    `INSERT INTO asset_salience
-       (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at)
-     VALUES (?, 0, 0, 0, 0, 1, ?)
-     ON CONFLICT(asset_ref) DO UPDATE SET
-       consecutive_no_ops = consecutive_no_ops + 1,
-       updated_at = excluded.updated_at`,
-  ).run(ref, Date.now());
+    `UPDATE asset_salience SET consecutive_no_ops = consecutive_no_ops + 1, updated_at = ? WHERE asset_ref = ?`,
+  ).run(Date.now(), ref);
+  // If changes === 0 the asset has no salience row yet — leave the table unchanged.
 }
 
 /**

@@ -293,10 +293,11 @@ describe("state.db persistence: upsertAssetSalience / getAssetSalience", () => {
     const { db, tmpDir } = openTestStateDb();
     try {
       const vector = computeSalience({ ref: "lesson:beta", type: "lesson", retrievalFreq: 0, now: NOW });
-      // Manually insert with a known consecutive_no_ops.
+      // Pre-seed the salience row, then increment consecutive_no_ops via recordNoOp.
+      upsertAssetSalience(db, "lesson:beta", vector, NOW);
       recordNoOp(db, "lesson:beta");
       recordNoOp(db, "lesson:beta");
-      // Now upsert — should NOT reset consecutive_no_ops.
+      // Now upsert again — should NOT reset consecutive_no_ops.
       upsertAssetSalience(db, "lesson:beta", vector, NOW);
       const row = getAssetSalience(db, "lesson:beta");
       expect(row?.consecutive_no_ops).toBe(2);
@@ -320,9 +321,31 @@ describe("plasticity: recordNoOp / resetConsecutiveNoOps / getConsecutiveNoOps",
     }
   });
 
-  test("recordNoOp increments consecutive_no_ops", () => {
+  test("recordNoOp on a ref with no salience row leaves the table unchanged (no synthetic rank_score=0 row)", () => {
+    // Invariant: recordNoOp must never fabricate a rank_score=0 row. If salience
+    // persistence's best-effort try/catch swallowed an error, the asset will have
+    // no salience row. A synthetic INSERT would produce a false bottom-of-stash
+    // position that buildRankChangeReport could misread as a catastrophic-forgetting
+    // signal. The UPDATE-only path avoids this by doing nothing when changes === 0.
     const { db, tmpDir } = openTestStateDb();
     try {
+      recordNoOp(db, "skill:absent");
+      expect(getConsecutiveNoOps(db, "skill:absent")).toBe(0);
+      const row = db.prepare("SELECT * FROM asset_salience WHERE asset_ref = ?").get("skill:absent");
+      // bun:sqlite returns null (not undefined) for a missing row.
+      expect(row).toBeNull();
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("recordNoOp increments consecutive_no_ops when a salience row already exists", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      // Pre-seed the salience row so recordNoOp has a row to UPDATE.
+      const vector = computeSalience({ ref: "skill:x", type: "skill", retrievalFreq: 5, now: NOW });
+      upsertAssetSalience(db, "skill:x", vector, NOW);
       expect(getConsecutiveNoOps(db, "skill:x")).toBe(0);
       recordNoOp(db, "skill:x");
       expect(getConsecutiveNoOps(db, "skill:x")).toBe(1);
@@ -338,6 +361,9 @@ describe("plasticity: recordNoOp / resetConsecutiveNoOps / getConsecutiveNoOps",
   test("resetConsecutiveNoOps resets to 0", () => {
     const { db, tmpDir } = openTestStateDb();
     try {
+      // Pre-seed the salience row before exercising no-op/reset cycle.
+      const vector = computeSalience({ ref: "skill:x", type: "skill", retrievalFreq: 5, now: NOW });
+      upsertAssetSalience(db, "skill:x", vector, NOW);
       recordNoOp(db, "skill:x");
       recordNoOp(db, "skill:x");
       expect(getConsecutiveNoOps(db, "skill:x")).toBe(2);
