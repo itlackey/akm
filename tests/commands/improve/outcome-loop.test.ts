@@ -102,7 +102,10 @@ describe("updateAssetOutcome — warm-start on first insert", () => {
       const row = getAssetOutcome(db, "skill:alpha");
       expect(row?.outcome_score).toBe(WARM_START_CAP);
       expect(row?.retrieval_count).toBe(5);
-      expect(row?.expected_retrieval_rate).toBe(5);
+      // Warm-start seeds expected_retrieval_rate = 0 (no delta history yet),
+      // NOT the cumulative retrieval count, to avoid a spurious negative
+      // prediction error on the first real differential cycle.
+      expect(row?.expected_retrieval_rate).toBe(0);
     } finally {
       db.close();
     }
@@ -464,6 +467,160 @@ describe("outcomeScoreToSalience — normalisation + diversity floor", () => {
     // clipped = max(0, 0) = 0, normalised = 0/2 = 0
     // floor = max(DIVERSITY_FLOOR_FRACTION * 2 === 0 ? 0 : 0.1, 0) = 0.1
     expect(s).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ── Two-sided prediction error (fix task 1/5) ────────────────────────────────
+
+describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", () => {
+  test("below-expected delta produces strictly negative predictionError and lowers score", () => {
+    const { db } = openTestDb();
+    try {
+      // Seed a row where expected_retrieval_rate represents a healthy per-cycle delta (5).
+      db.prepare(
+        `INSERT INTO asset_outcome
+           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
+            negative_feedback_count, accepted_change_count, review_pressure,
+            outcome_score, updated_at)
+         VALUES ('skill:two-sided', 0, 100, 5.0, 0, 0, 0, 0.2, ?)`,
+      ).run(NOW);
+
+      // Only delta=1 this cycle vs. expected=5 → predictionError = 1 - 5 = -4 (negative).
+      const result = updateAssetOutcome(db, {
+        ref: "skill:two-sided",
+        currentRetrievalCount: 101, // delta = 1
+        lastRetrievedAt: NOW + 1000,
+        acceptedChangeCount: 0,
+        negativeFeedbackCount: 0,
+        valence: 0,
+        now: NOW + 1000,
+      });
+
+      expect(result.isNewRow).toBe(false);
+      // Score must be strictly less than the prior score (0.2) because predictionError is negative.
+      expect(result.outcomeScore).toBeLessThan(0.2);
+      expect(result.outcomeScore).toBeGreaterThanOrEqual(-1.0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("above-expected delta produces positive predictionError and raises score", () => {
+    const { db } = openTestDb();
+    try {
+      // Seed row where expected_retrieval_rate = 2 (low delta expectation).
+      db.prepare(
+        `INSERT INTO asset_outcome
+           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
+            negative_feedback_count, accepted_change_count, review_pressure,
+            outcome_score, updated_at)
+         VALUES ('skill:above-expected', 0, 100, 2.0, 0, 5, 0, 0.1, ?)`,
+      ).run(NOW);
+
+      // delta=10 this cycle vs. expected=2 → predictionError = 10 - 2 = +8 (positive).
+      const result = updateAssetOutcome(db, {
+        ref: "skill:above-expected",
+        currentRetrievalCount: 110, // delta = 10
+        lastRetrievedAt: NOW + 1000,
+        acceptedChangeCount: 5,
+        negativeFeedbackCount: 0,
+        valence: 0,
+        now: NOW + 1000,
+      });
+
+      expect(result.isNewRow).toBe(false);
+      // Score must be strictly greater than the prior score (0.1).
+      expect(result.outcomeScore).toBeGreaterThan(0.1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("sustained below-expected sequence drives score below 0 (clipped at OUTCOME_SCORE_MIN)", () => {
+    const { db } = openTestDb();
+    try {
+      // Start with a healthy score and high expected delta.
+      db.prepare(
+        `INSERT INTO asset_outcome
+           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
+            negative_feedback_count, accepted_change_count, review_pressure,
+            outcome_score, updated_at)
+         VALUES ('skill:sustained-low', 0, 100, 10.0, 0, 0, 0, 0.5, ?)`,
+      ).run(NOW);
+
+      let base = 100;
+      let lastResult = { outcomeScore: 0.5, reviewPressure: 0, isNewRow: false };
+      for (let i = 1; i <= 10; i++) {
+        base += 1; // only delta=1 per cycle vs. expected≈10
+        lastResult = updateAssetOutcome(db, {
+          ref: "skill:sustained-low",
+          currentRetrievalCount: base,
+          lastRetrievedAt: NOW + i * 1000,
+          acceptedChangeCount: 0,
+          negativeFeedbackCount: 0,
+          valence: 0,
+          now: NOW + i * 1000,
+        });
+      }
+
+      // After 10 cycles of delta=1 vs. expected≈10, score should be well below 0.
+      expect(lastResult.outcomeScore).toBeLessThan(0);
+      expect(lastResult.outcomeScore).toBeGreaterThanOrEqual(-1.0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("EMA advances over observed delta — not cumulative count", () => {
+    const { db } = openTestDb();
+    try {
+      // Seed: retrieval_count=100, expected_retrieval_rate=5.
+      db.prepare(
+        `INSERT INTO asset_outcome
+           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
+            negative_feedback_count, accepted_change_count, review_pressure,
+            outcome_score, updated_at)
+         VALUES ('skill:ema-delta', 0, 100, 5.0, 0, 0, 0, 0.0, ?)`,
+      ).run(NOW);
+
+      // delta=8 this cycle; new EMA = 0.3×8 + 0.7×5 = 2.4 + 3.5 = 5.9
+      updateAssetOutcome(db, {
+        ref: "skill:ema-delta",
+        currentRetrievalCount: 108, // delta = 8
+        lastRetrievedAt: NOW + 1000,
+        acceptedChangeCount: 0,
+        negativeFeedbackCount: 0,
+        valence: 0,
+        now: NOW + 1000,
+      });
+
+      const row = getAssetOutcome(db, "skill:ema-delta");
+      // expected_retrieval_rate should track the DELTA (≈5.9), not the cumulative count (108).
+      expect(row?.expected_retrieval_rate).toBeCloseTo(5.9, 5);
+      expect(row?.expected_retrieval_rate).toBeLessThan(10); // definitely not near 108
+    } finally {
+      db.close();
+    }
+  });
+
+  test("warm-start seeds expected_retrieval_rate = 0, not currentRetrievalCount", () => {
+    const { db } = openTestDb();
+    try {
+      updateAssetOutcome(db, {
+        ref: "skill:warm-zero",
+        currentRetrievalCount: 50,
+        lastRetrievedAt: NOW,
+        acceptedChangeCount: 0,
+        negativeFeedbackCount: 0,
+        utilityScore: 0.2,
+        now: NOW,
+      });
+
+      const row = getAssetOutcome(db, "skill:warm-zero");
+      expect(row?.expected_retrieval_rate).toBe(0);
+    } finally {
+      db.close();
+    }
   });
 });
 

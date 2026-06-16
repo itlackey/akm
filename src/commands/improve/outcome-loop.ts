@@ -18,7 +18,7 @@
  * ```
  *
  * - `retrieval_delta`: retrievals gained since the last window.
- * - `expected_retrieval_delta`: rolling mean retrieval count per window.
+ * - `expected_retrieval_delta`: rolling mean of per-cycle retrieval DELTA.
  * - `PENALTY`: weight on the "retrieved-but-never-improved" penalty.
  * - `accepted_change_rate`: accepted_change_count / max(1, retrieval_count).
  * - `valence`: normalised net feedback valence in [−1, +1].
@@ -214,18 +214,15 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     const seedScore = Math.min(WARM_START_CAP, Math.max(0, inputs.utilityScore ?? 0));
     outcomeScore = seedScore;
     reviewPressure = 0;
-    // Seed expected_retrieval_rate = current retrieval count (will decay on next cycle).
-    expectedRetrievalRate = inputs.currentRetrievalCount;
+    // Seed expected_retrieval_rate = 0 (no delta history yet).
+    // Seeding with currentRetrievalCount would produce a large spurious negative
+    // prediction error on the first real cycle (delta ≪ cumulative count).
+    expectedRetrievalRate = 0;
   } else {
     // ── Differential update ────────────────────────────────────────────────
     //
     // retrieval_delta = current − stored (non-negative — we never go backwards)
     const retrievalDelta = Math.max(0, inputs.currentRetrievalCount - existing.retrieval_count);
-
-    // Update rolling expected rate via EMA:
-    // expected' = α × current + (1−α) × expected
-    expectedRetrievalRate =
-      OUTCOME_EMA_ALPHA * inputs.currentRetrievalCount + (1 - OUTCOME_EMA_ALPHA) * existing.expected_retrieval_rate;
 
     // accepted_change_rate = accepted_count / max(1, retrieval_count)
     const acceptedChangeRate = inputs.acceptedChangeCount / Math.max(1, inputs.currentRetrievalCount);
@@ -234,8 +231,17 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     // outcome = (retrieval_delta − expected_delta)
     //           − PENALTY × retrieval_delta × (1 − accepted_change_rate)
     //           + valence
-    const expectedDelta = Math.max(0, expectedRetrievalRate - existing.retrieval_count);
+    //
+    // Prediction error is computed against the PRIOR stored EMA (before folding
+    // in this cycle's observation), so the current delta cannot leak into its own
+    // expectation. Negative values are intentional — they signal below-average cycles.
+    const expectedDelta = existing.expected_retrieval_rate;
     const predictionError = retrievalDelta - expectedDelta;
+
+    // Advance the EMA over the OBSERVED delta (not the cumulative count).
+    // expected' = α × delta + (1−α) × prior_expected
+    expectedRetrievalRate =
+      OUTCOME_EMA_ALPHA * retrievalDelta + (1 - OUTCOME_EMA_ALPHA) * existing.expected_retrieval_rate;
     const penalty = OUTCOME_PENALTY_WEIGHT * retrievalDelta * (1 - acceptedChangeRate);
 
     // Running sum (EMA approach): new score = α × update + (1−α) × old
