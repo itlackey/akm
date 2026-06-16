@@ -24,11 +24,25 @@
 |---|---|---|---|---|---|
 | WS-0 extract-capture (#619) | done | 6904606f, a36142d1 | pass / confirmed-green | none | Prompt fix closes non-schema-LLM gap; types, schema, parser, persistence were already correct. |
 | WS-3a consolidation pipeline (#619) | done | 68467d56 | pass / confirmed-green | none | Fixed Zod schema rejection (cosineCandidateLimit + p90ChunkSecondsDefault) and added behavioral cache-wiring tests; curate-command baseline changes folded in (hygiene smell, non-blocking). |
-| WS-1 salience vector (#618) | in-review | c7db502a, a182f037, bc99cc57, 03652977, d3733862, d4bef793, 12bf2ec7, 889dda29, a316697b | pending | none | Unified S1 vector seam: computeSalience() replaces three independent scorers; dampener wired; stale feedbackLane type removed; proactive selector folded onto rankScore. |
+| WS-1 salience vector (#618) | in-review | c7db502a, a182f037, bc99cc57, 03652977, d3733862, d4bef793, 12bf2ec7, 889dda29, a316697b, 4d7f97e0, bd1d5995, 226b4bce, 69935201, 4c40a303 | pending | none | Unified S1 vector seam: computeSalience() replaces three independent scorers; dampener wired; stale feedbackLane type removed; proactive selector folded onto rankScore. **See branch-scope note below — cannot be merged in isolation.** |
 | WS-2 outcome loop | not-started | — | — | — | — |
 | WS-3b consolidation (remaining) | not-started | — | — | — | — |
 | WS-4 CHANGE-gate coherence | not-started | — | — | — | — |
 | WS-5 attribution/observability | not-started | — | — | — | — |
+
+### Branch scope — `feat/improve-reconciliation` (as of 2026-06-15)
+
+**True scope:** 26 commits, **36 files**, +4546/−577 lines vs `main`. This branch carries WS-0, WS-3a, and WS-1 together — it is **not a WS-1-only branch**.
+
+**Co-mingled work-streams:**
+- **WS-0** (extract-capture, #619): commits 6904606f, a36142d1 — `extract.ts`, `extract-prompt.ts`, `src/assets/prompts/extract-session.md`, extract tests.
+- **WS-3a** (consolidation core, #619): commit 68467d56 + prior fix-ups — `consolidate.ts`, `dedup.ts`, `embedder.ts`, `local.ts`, `state-db.ts`, body-embedding cache tests.
+- **WS-1** (salience vector, #618): 14 commits (c7db502a … 4c40a303) — `salience.ts`, `improve.ts`, `proactive-maintenance.ts`, `feedback-valence.ts`, salience tests.
+
+**Consequence:** a reviewer who sees "12 files / WS-1" in an earlier status report should treat that as stale. The actual diff is 36 files spanning three work-streams. WS-1 commits cannot be cherry-picked or merged in isolation without also bringing WS-0/WS-3a, because `salience.ts` depends on state-db migrations and embedder batching that WS-3a introduced, and `improve.ts` integrates across all three seams.
+
+**Promotion strategy — merge as a unit:**
+This branch will be merged to `main` as one unit (all three work-streams together) after WS-1 review passes. Rationale: the three work-streams are semantically independent (each addresses a different seam) but **share runtime dependencies** introduced on this branch (body-embedding cache table, batched local embedder, `computeSalience` reading from the same state-db the WS-3a migration adds). Splitting them onto separate branches would require either duplicating the shared infrastructure commits or creating a stacked-branch dependency chain that is harder to review than a single coherent merge. The merge PR description must list all three work-streams, their commits, and the 36-file / +4546/−577 scope so reviewers have the full picture.
 
 ## Part I — How it went off course (the explanation)
 
