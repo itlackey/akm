@@ -50,9 +50,16 @@
  * ## #613 review_pressure
  *
  * Repeated low-satisfaction (negative-feedback) retrievals raise `review_pressure`.
- * It feeds `outcomeSalience` → salience ranking → assets are admitted for
- * consolidation. Content is never mutated directly; the column is cleanly
- * disableable (set `outcomeLoop.enabled = false` in the profile process config).
+ * The column is computed and persisted per asset in `asset_outcome`, but it is
+ * **not yet wired into the salience ranking or consolidation-admission policy** —
+ * that wiring is deferred to the follow-on work stream (plan §Part-VI #613).
+ * The index `idx_asset_outcome_review_pressure` exists for future queries.
+ * Content is never mutated directly by this column.
+ *
+ * Note: there is no `outcomeLoop.enabled` config flag. The WS-2 outcome-loop block
+ * in `improve.ts` runs on every improve pass. Profile-level disabling of specific
+ * processes (consolidate, reflect, etc.) is handled by those processes' own config
+ * keys, not by this module.
  *
  * @module outcome-loop
  */

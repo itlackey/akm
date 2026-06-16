@@ -8,6 +8,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed (migration required)
 
+- **WS-2 outcome loop (#613) — default-on ranking change (state.db migration 010).**
+  Every `akm improve` run now writes an `asset_outcome` row per processed asset
+  (state.db migration `010`) and incorporates a differential usefulness signal
+  (`outcome_score`) into the salience projection. The projection weights change from
+  WS-1's two-term split (`w_e=0.30, w_o=0, w_r=0.70`) to a three-term split
+  (`w_e=0.25, w_o=0.15, w_r=0.60`). Every user's salience ranking is affected from
+  the first run on this release.
+
+  **Outcome loop mechanics.** `outcome_score` is a differential prediction-error
+  signal: `(retrieval_delta − expected_delta) − PENALTY × retrieval_delta × (1 −
+  accepted_change_rate) + valence`, tracked via an EMA (α=0.3). New rows are
+  warm-started from the utility EMA score (clipped to 0.3) so the signal is
+  non-zero from launch. A stash-wide diversity floor (10% of the max score) prevents
+  rare-but-correct assets from being permanently outcompeted. An inverted-proxy
+  tripwire (`corr(outcome_score, accepted_change_rate) < −0.3`) emits an
+  `outcome_proxy_inverted` health event when the signal degrades.
+
+  `review_pressure` is computed and persisted per asset but is **not yet wired into
+  the admission policy** — that is deferred to a later work stream per plan §Part-VI
+  #613. The column is present and populated; routing it into the consolidation-
+  selection filter is the next step.
+
+  **Part-V measurement gate.** The plan designates the Part-V T0 baseline
+  (`scripts/akm-eval` + health report; proactive accept ≥ 0.9× reactive; reversion
+  ≤ 0.15; retrieval-delta ≥ 0; coverage not regressed) as a hard ship-gate for
+  this weight change. That gate requires a running production stash and cannot be
+  exercised in CI. The weights (`w_e=0.25, w_o=0.15, w_r=0.60`) are an expert prior
+  that can be re-tuned via the Part-V protocol post-deploy; re-tune if the health
+  report shows throughput or quality regression after enabling this release.
+
 - **WS-1 salience vector (#618) — default-on ranking change.** The eligibility sort
   for all `akm improve` runs (whole-stash, type, and ref scope) has changed from
   `combinedEligibilityScore = utility·0.7 + negativeOnlyRatio·0.3` to
