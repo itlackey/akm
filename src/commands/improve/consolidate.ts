@@ -1325,10 +1325,15 @@ async function akmConsolidateInner(
   // are processed by the dedup pre-pass but excluded from the LLM clustering.
   // This prevents noisy extractions from polluting LLM context. The dedup pass
   // below still runs against them so they're cleaned up deterministically.
-  // DEFAULT OFF — gated on the dedup pre-pass being active (hot-probation assets
-  // should go through the deterministic dedup path first).
+  // DEFAULT OFF — only active when `processes.extract.hotProbation.enabled === true`
+  // (the flag that causes extract to tag new extractions as hot-probation).
+  // Without that flag no assets will ever carry the hot-probation marker, so
+  // running the filter loop would be pure unnecessary I/O over the full corpus.
+  const hotProbationEnabled =
+    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
+      ?.enabled === true;
   let hotProbationCount = 0;
-  {
+  if (hotProbationEnabled) {
     const hotProbationMemories: typeof memories = [];
     const nonProbationMemories: typeof memories = [];
     for (const m of memories) {
