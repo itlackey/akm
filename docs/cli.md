@@ -422,9 +422,14 @@ akm curate "learn the release workflow" --source both --format text
 | `--limit` | number | `4` | Maximum curated results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
-`akm curate` selects high-signal results, prefers one strong match per asset
-type by default, and includes direct follow-up commands such as `akm show <ref>`
-or `akm add <stash>` so you can immediately inspect or install what it found.
+`akm curate` selects a small relevance-first shortlist. It preserves the
+strongest search hits first, uses only small type-aware nudges for close-score
+ties, can collapse obvious root/reference families into one top-level result,
+and falls back to token searches when the phrase result set is weak. Curate
+includes direct follow-up commands such as `akm show <ref>` or `akm add <stash>`
+so you can immediately inspect or install what it found.
+`--detail` and `--shape agent` both work on curate output; `--shape summary`
+does not.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
 

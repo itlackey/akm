@@ -57,8 +57,12 @@ akm search "deploy" --type script --shape agent
 
 `akm curate` goes beyond keyword matching: it runs a search, then applies a
 task-aware ranking pass to surface the most relevant assets for what you are
-actually about to do. It prefers one strong match per asset type and includes
-follow-up commands (`akm show <ref>`) so you can immediately inspect any result.
+actually about to do. It keeps search ranking as the backbone, uses only small
+type-aware nudges for close calls, falls back when phrase hits are weak, and can
+attach support refs for closely related assets. Curate still includes follow-up
+commands (`akm show <ref>`) so you can immediately inspect any result.
+`--detail` works on curate output, and `--shape agent` trims the result to an
+LLM-friendly field set.
 
 ```sh
 akm curate "plan a release"

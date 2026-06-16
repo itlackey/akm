@@ -75,6 +75,8 @@ afterEach(() => {
 });
 
 describe("curate command", () => {
+  const rankingBaselineStash = path.join(__dirname, "fixtures", "stashes", "ranking-baseline");
+
   function makeStash(): string {
     const stashDir = makeTempDir("akm-curate-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
@@ -112,18 +114,17 @@ describe("curate command", () => {
     }
   });
 
-  test("prefers one strong match per asset type by default", async () => {
+  test("explicit --type keeps the top hits of the requested type", async () => {
     const stashDir = makeStash();
     writeFile(
       path.join(stashDir, "commands", "release-notes.md"),
       "---\ndescription: Draft release notes\n---\nWrite release notes for {{version}}\n",
     );
 
-    const output = await runCli(stashDir, ["curate", "release", "--format=json"]);
+    const output = await runCli(stashDir, ["curate", "release", "--type", "command", "--format=json"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
-    const commandItems = json.items.filter((item) => item.type === "command");
 
-    expect(commandItems.length).toBe(1);
+    expect(json.items.map((item) => item.ref)).toEqual(["command:release", "command:release-notes"]);
   });
 
   test("text output includes direct refs and follow-up commands", async () => {
@@ -217,5 +218,36 @@ describe("curate command", () => {
     // The error envelope is pretty-printed JSON on stderr.
     const parsed = JSON.parse(res.stderr.trim());
     expect(parsed.code).toBe("INVALID_SHAPE_VALUE");
+  });
+
+  test("docker homelab collapses family duplicates into one top-level result", async () => {
+    const output = await runCli(rankingBaselineStash, ["curate", "docker homelab", "--format=json", "--detail=full"]);
+    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0]?.ref).toBe("knowledge:skills/docker-homelab/references/compose");
+    expect(json.items[0]?.supportRefs).toEqual([
+      { ref: "skill:docker-homelab", type: "skill", reason: "Related family asset to inspect next." },
+      {
+        ref: "knowledge:skills/docker-homelab/references/containers",
+        type: "knowledge",
+        reason: "Related family asset to inspect next.",
+      },
+    ]);
+  });
+
+  test("weak prompt residue now falls back to docker results", async () => {
+    const output = await runCli(rankingBaselineStash, ["curate", "the docker", "--format=json", "--detail=full"]);
+    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+
+    expect(json.items.length).toBeGreaterThan(0);
+    expect(String(json.items[0]?.ref)).toContain("docker-homelab");
+  });
+
+  test("docker deploy no longer surfaces release-manager filler", async () => {
+    const output = await runCli(rankingBaselineStash, ["curate", "docker deploy", "--format=json", "--detail=full"]);
+    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+
+    expect(json.items.some((item) => item.ref === "command:release-manager")).toBe(false);
   });
 });
